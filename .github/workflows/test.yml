@@ -1,0 +1,44 @@
+name: test
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: erlang:28-alpine
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install CI tools
+        run: apk add --no-cache curl tar rebar3
+
+      - name: Install Gleam
+        run: |
+          curl -fsSL \
+            -o /tmp/gleam.tar.gz \
+            https://github.com/gleam-lang/gleam/releases/download/v1.15.0/gleam-v1.15.0-x86_64-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/gleam.tar.gz -C /usr/local/bin gleam
+          chmod +x /usr/local/bin/gleam
+          gleam --version
+
+      - run: gleam deps download
+
+      - name: Run tests (warnings as errors)
+        run: |
+          gleam test > /tmp/gleam-test.log 2>&1 || {
+            cat /tmp/gleam-test.log
+            exit 1
+          }
+          cat /tmp/gleam-test.log
+          if grep -E -i "warning:|=WARNING REPORT====" /tmp/gleam-test.log; then
+            echo "Warnings detected in test output. Failing build."
+            exit 1
+          fi
+
+      - run: gleam format --check src test

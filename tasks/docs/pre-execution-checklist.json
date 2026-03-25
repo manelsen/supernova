@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-03-24T02:53:17.840808Z",
+  "requestedAt": "2026-03-24T02:19:50.222Z",
+  "mandatory": [
+    "Read `tasks/docs/gleam-and-dependencies.json` before starting any story.",
+    "Identify target provider/API contracts for the story and read corresponding section in `tasks/docs/provider-contracts.json`.",
+    "Re-fetch target API docs (language + provider contract) and update source timestamp fields before coding.",
+    "Write or update failing tests first (Red phase) for the story acceptance criteria.",
+    "Implement minimal code to make tests pass (Green phase).",
+    "Refactor while preserving passing tests (Refactor phase).",
+    "Run `gleam format --check src test && gleam test` before marking story complete."
+  ],
+  "definitionOfDoneAdditions": [
+    "Contract documentation updated for touched APIs/providers.",
+    "TDD Red->Green->Refactor evidence present in story notes and test deltas.",
+    "No placeholder behavior; acceptance criteria are implemented semantically."
+  ]
+}

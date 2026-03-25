@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: supernova
+      POSTGRES_USER: supernova
+      POSTGRES_PASSWORD: supernova
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supernova"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  supernova:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # LLM provider — set one of these
+      SUPERNOVA_ANTHROPIC_API_KEY: ${SUPERNOVA_ANTHROPIC_API_KEY:-}
+      SUPERNOVA_OPENAI_API_KEY: ${SUPERNOVA_OPENAI_API_KEY:-}
+
+      # Channel tokens — set the ones you use
+      SUPERNOVA_TELEGRAM_TOKEN: ${SUPERNOVA_TELEGRAM_TOKEN:-}
+      SUPERNOVA_DISCORD_TOKEN: ${SUPERNOVA_DISCORD_TOKEN:-}
+      SUPERNOVA_DISCORD_APP_ID: ${SUPERNOVA_DISCORD_APP_ID:-}
+
+      # Database (matches the postgres service above)
+      SUPERNOVA_DB_HOST: postgres
+      SUPERNOVA_DB_PORT: "5432"
+      SUPERNOVA_DB_NAME: supernova
+      SUPERNOVA_DB_USER: supernova
+      SUPERNOVA_DB_PASSWORD: supernova
+    volumes:
+      - ./supernova.yaml:/app/supernova.yaml:ro
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,9 @@
+.git
+.github
+build
+.copilot
+*.md
+test
+tasks
+.env
+*.log

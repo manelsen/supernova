@@ -1,0 +1,571 @@
+{
+  "name": "Supernova P0 Channel UX Parity",
+  "branchName": "ralph/p0-channel-ux-parity",
+  "description": "P0 parity across existing channels with runtime bootstrap, canonical command flow, interactive or guided model selection, session-scoped provider/model state, tool-loop wiring, and automated contract + integration coverage.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create executable documentation pack",
+      "description": "As an implementation agent, I want a local docs bundle for language, dependencies, and provider contracts so that every iteration starts from current references.",
+      "acceptanceCriteria": [
+        "Create `tasks/docs/gleam-and-dependencies.json` with Gleam language references and all project dependencies from `manifest.toml`.",
+        "Create `tasks/docs/provider-contracts.json` with provider-specific API contract differences for openrouter, opencode_zen, openai, anthropic, minimax, and zhipu.",
+        "Create `tasks/docs/pre-execution-checklist.json` describing mandatory pre-read and contract-research steps before each story execution.",
+        "Every entry includes source URLs and retrieval timestamps.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Extend Channel Port contract for interactive UX",
+      "description": "As a channel adapter developer, I want the Port contract to support rich inbound/outbound interaction payloads so that all channels share one semantic contract.",
+      "acceptanceCriteria": [
+        "`src/supernova/channel/port.gleam` models inbound message and callback interaction with channel, user, conversation, and thread identifiers.",
+        "`ChannelReply` supports text plus optional interactive blocks and metadata required by adapters.",
+        "Compatibility helpers preserve plain-text behavior for adapters that do not yet emit interactive payloads.",
+        "Contract tests validate constructor/decoder behavior for message and callback events.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Bootstrap Discord and Telegram in runtime",
+      "description": "As an operator, I want Discord and Telegram to start from runtime config so that inbound events reach the common channel flow.",
+      "acceptanceCriteria": [
+        "`src/supernova.gleam` starts Discord and Telegram adapters when enabled in config.",
+        "Inbound events are wired to the `ChannelHandler` callback without bypassing the Port.",
+        "Startup failures return explicit channel-scoped errors.",
+        "Automated tests cover enabled/disabled startup permutations for both channels.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Bootstrap Slack and Mattermost in runtime",
+      "description": "As an operator, I want Slack and Mattermost wired in runtime startup so that supported channels are genuinely reachable.",
+      "acceptanceCriteria": [
+        "Runtime startup initializes Slack and Mattermost adapters from configuration.",
+        "Both adapters forward inbound payloads through Port-normalized events.",
+        "Configuration errors are surfaced with channel identity and actionable reason.",
+        "Automated startup tests validate both channels.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Bootstrap Matrix and Lark in runtime",
+      "description": "As an operator, I want Matrix and Lark runtime startup connected to the common channel flow so that they are not only wrapper modules.",
+      "acceptanceCriteria": [
+        "Runtime startup initializes Matrix and Lark adapters from configuration.",
+        "Inbound payloads are mapped into Port events and routed through the common pipeline.",
+        "Channel-specific startup errors are explicit and non-silent.",
+        "Automated startup tests validate Matrix and Lark wiring.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Bootstrap Google Chat, WeChat Work, and WhatsApp",
+      "description": "As an operator, I want the remaining channel adapters bootstrapped in runtime so that all declared channels are executable.",
+      "acceptanceCriteria": [
+        "Runtime startup initializes Google Chat, WeChat Work, and WhatsApp adapters from config.",
+        "Inbound payloads from all three channels pass through Port-normalized events.",
+        "Startup failures are surfaced with explicit channel diagnostics.",
+        "Automated startup tests validate all three channels.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Implement graceful channel shutdown lifecycle",
+      "description": "As an operator, I want every started channel to shut down cleanly so that resources and sessions are not leaked.",
+      "acceptanceCriteria": [
+        "Shutdown path closes all started channels and releases runtime resources.",
+        "Shutdown is idempotent and safe when invoked multiple times.",
+        "Channel shutdown errors are surfaced with channel identity.",
+        "Automated tests validate start-stop lifecycle behavior.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-003",
+        "US-004",
+        "US-005",
+        "US-006"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Implement canonical cross-channel command routing",
+      "description": "As an end user, I want canonical command behavior across channels so that /help, /start, /status, and /model are predictable.",
+      "acceptanceCriteria": [
+        "Common routing handles `/help`, `/start`, `/status`, and `/model` for all channels.",
+        "Adapters map native command payloads into one shared command pipeline.",
+        "Unknown command behavior returns deterministic guidance without silent failure.",
+        "Automated tests cover canonical command handling across all channels.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-002",
+        "US-003",
+        "US-004",
+        "US-005",
+        "US-006"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Add real-time model catalog client",
+      "description": "As a user, I want model/provider options loaded from the server API in real time so that picker UI always reflects actual availability.",
+      "acceptanceCriteria": [
+        "Implement server API client to fetch live provider/model catalog for picker flows.",
+        "Enforce fixed page size of 15 models per page.",
+        "Sort free models before paid models in displayed lists.",
+        "Hide unsupported or unavailable models from picker output.",
+        "Automated tests validate pagination, ordering, and hidden unsupported model behavior.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "Persist model selection by session scope",
+      "description": "As a user, I want provider/model selection to persist per channel context so that future messages use my selected model.",
+      "acceptanceCriteria": [
+        "Selection state is keyed by channel + user + conversation/thread scope.",
+        "Concurrent conversations remain isolated and do not leak selections.",
+        "Selection updates are atomic from picker callback to next message execution.",
+        "Automated tests cover state persistence and scope isolation.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-009"
+      ]
+    },
+    {
+      "id": "US-011",
+      "title": "Use selected provider/model during agent bootstrap",
+      "description": "As an end user, I want my selected model applied on subsequent messages so that the runtime behaves according to channel session settings.",
+      "acceptanceCriteria": [
+        "Channel bootstrap resolves selected provider/model from session scope before `executor.run`.",
+        "If no selection exists, configured default provider/model is used deterministically.",
+        "Message history/context remains bound to the same channel session scope.",
+        "Automated tests validate model override propagation across consecutive messages.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-008",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-012",
+      "title": "Wire tool loop into channel runtime path",
+      "description": "As a power user, I want tool calls to execute and return to the channel flow so that agent capabilities work end-to-end.",
+      "acceptanceCriteria": [
+        "`channel_common_router` passes non-empty tool definitions into executor where configured.",
+        "Runtime handles staged responses including tool call, intermediate block, and final response.",
+        "Tool execution errors are surfaced back to the channel with explicit failure context.",
+        "Automated tests cover one full tool-call roundtrip.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-011"
+      ]
+    },
+    {
+      "id": "US-013",
+      "title": "Implement Discord interactive model picker",
+      "description": "As a Discord user, I want to pick provider/model via components so that I do not need to type model identifiers manually.",
+      "acceptanceCriteria": [
+        "`/model` renders Discord interactive components for provider/model selection.",
+        "Pagination works with 15 models per page and free-first ordering from server catalog.",
+        "Selection callback persists session state and confirms selected provider/model.",
+        "Malformed or expired callbacks return deterministic recovery messaging.",
+        "Automated tests validate callback parsing and state transition.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-003",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-014",
+      "title": "Implement Telegram inline model picker",
+      "description": "As a Telegram user, I want provider/model selection via inline keyboard so that model choice is guided and fast.",
+      "acceptanceCriteria": [
+        "`/model` renders Telegram inline keyboard for provider/model selection.",
+        "Pagination callbacks support 15 models per page and free-first ordering.",
+        "Selection callback updates scoped session state and returns confirmation.",
+        "Invalid callback data is handled explicitly without silent fallback.",
+        "Automated tests validate callback routing and persistence behavior.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-003",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-015",
+      "title": "Implement Slack interactive model picker",
+      "description": "As a Slack user, I want interactive provider/model selection so that configuration is done through native UI actions.",
+      "acceptanceCriteria": [
+        "Slack adapter emits interactive picker payloads mapped from Port blocks.",
+        "Picker supports 15-model pagination and free-first ordering.",
+        "Selection callback persists scoped provider/model state and sends confirmation.",
+        "Automated tests validate Slack interaction mapping and callback processing.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-004",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-016",
+      "title": "Implement Mattermost interactive model picker",
+      "description": "As a Mattermost user, I want interactive provider/model selection so that configuration is consistent with channels that support actions.",
+      "acceptanceCriteria": [
+        "Mattermost adapter emits interactive picker payloads from Port interactive blocks.",
+        "Picker supports 15-model pagination and free-first ordering.",
+        "Selection callback persists scoped model state and confirms user choice.",
+        "Automated tests validate interaction payload mapping and callback handling.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-004",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-017",
+      "title": "Implement Lark interactive model picker",
+      "description": "As a Lark user, I want interactive provider/model selection so that I can configure model choice in-channel without free-text commands.",
+      "acceptanceCriteria": [
+        "Lark adapter emits interactive provider/model picker payloads.",
+        "Picker supports 15-model pagination and free-first ordering.",
+        "Selection callbacks update session-scoped model state and return confirmation.",
+        "Automated tests validate payload mapping and callback transitions.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-005",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-018",
+      "title": "Implement Matrix textual model picker fallback",
+      "description": "As a Matrix user, I want a guided textual model picker so that model selection works even without rich native components.",
+      "acceptanceCriteria": [
+        "`/model` displays paginated textual options with exactly 15 models per page.",
+        "Textual commands support page navigation and model selection by deterministic token/index.",
+        "Unsupported models are hidden and free models are listed first.",
+        "Selection updates scoped state and confirms choice in English.",
+        "Automated tests validate parsing, pagination, and persistence.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-005",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-019",
+      "title": "Implement Google Chat textual model picker fallback",
+      "description": "As a Google Chat user, I want a guided textual picker so that model configuration remains usable in constrained interaction surfaces.",
+      "acceptanceCriteria": [
+        "`/model` displays paginated textual options with 15 models per page.",
+        "Navigation and selection commands are deterministic and validated.",
+        "Unsupported models are hidden and free models are sorted first.",
+        "Selection updates scoped state and responds with explicit confirmation.",
+        "Automated tests validate command parsing and state update behavior.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-006",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-020",
+      "title": "Implement WeChat Work textual model picker fallback",
+      "description": "As a WeChat Work user, I want a guided textual model picker so that provider/model choice works in channels without full interactive parity.",
+      "acceptanceCriteria": [
+        "`/model` presents paginated textual provider/model options with 15 models per page.",
+        "Input parser supports deterministic page navigation and selection tokens.",
+        "Unsupported models are hidden and free models are shown first.",
+        "Selection is persisted in scoped session state and confirmed to the user.",
+        "Automated tests validate parsing, ordering, and persistence.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-006",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-021",
+      "title": "Implement WhatsApp textual model picker fallback",
+      "description": "As a WhatsApp user, I want a guided textual model picker so that model choice is available even with constrained UI controls.",
+      "acceptanceCriteria": [
+        "`/model` presents textual options with exactly 15 models per page.",
+        "Selection and pagination commands are validated with explicit error responses.",
+        "Unsupported models are hidden and free models are shown first.",
+        "Chosen provider/model persists for subsequent messages in same session scope.",
+        "Automated tests validate picker flow from list to persisted selection.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-006",
+        "US-008",
+        "US-009",
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-022",
+      "title": "Ship English UX copy with i18n-ready wiring",
+      "description": "As a product team, we want English-first UX text now with i18n wiring so that localization can be added later without rewiring flows.",
+      "acceptanceCriteria": [
+        "All command and model-picker user-facing strings in touched flows are English.",
+        "Strings are emitted from locale-keyed message tables, not hardcoded inline literals.",
+        "Runtime keeps locale selection hook in session/context even if only `en` is provided initially.",
+        "Automated tests validate key resolution fallback to English.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-008"
+      ]
+    },
+    {
+      "id": "US-023",
+      "title": "Create Port-to-Adapter contract test matrix",
+      "description": "As a maintainer, I want contract tests across all channels so that Port semantics remain consistent and regressions are caught early.",
+      "acceptanceCriteria": [
+        "Each channel has tests covering inbound message mapping into Port events.",
+        "Channels with callbacks/actions have tests for callback-to-Port interaction mapping.",
+        "Outbound tests validate reply threading metadata and interactive/text fallback mapping.",
+        "Test failures are channel-identifiable and non-ambiguous.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-002",
+        "US-013",
+        "US-014",
+        "US-015",
+        "US-016",
+        "US-017",
+        "US-018",
+        "US-019",
+        "US-020",
+        "US-021"
+      ]
+    },
+    {
+      "id": "US-024",
+      "title": "Add end-to-end channel integration tests",
+      "description": "As a maintainer, I want full integration tests for command, model selection, and tool loop flows so that parity remains enforceable in CI.",
+      "acceptanceCriteria": [
+        "Integration tests verify `/model` selection and next-message model usage for every channel.",
+        "Tests verify page size 15, free-first ordering, and hidden unsupported models in picker outputs.",
+        "Integration tests verify tool-loop execution returns observable channel responses.",
+        "Regression tests confirm `/help`, `/start`, and `/status` still work across all channels.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-012",
+        "US-013",
+        "US-014",
+        "US-015",
+        "US-016",
+        "US-017",
+        "US-018",
+        "US-019",
+        "US-020",
+        "US-021",
+        "US-022"
+      ]
+    },
+    {
+      "id": "US-025",
+      "title": "Validate concurrency isolation and runtime stability",
+      "description": "As an operator, I want concurrency and lifecycle regression coverage so that multi-session channel operation is safe and deterministic.",
+      "acceptanceCriteria": [
+        "Concurrent conversations on the same channel do not leak selected model/provider state.",
+        "Cross-channel sessions remain isolated under parallel traffic.",
+        "Shutdown during active execution leaves runtime in a recoverable state.",
+        "Automated stress/regression tests capture and assert these behaviors.",
+        "gleam format --check src test && gleam test passes.",
+        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
+        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-007",
+        "US-024"
+      ]
+    }
+  ]
+}

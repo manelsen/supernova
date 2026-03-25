@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-03-24T02:53:17.840808Z",
+  "requestedAt": "2026-03-24T02:19:50.222Z",
+  "files": [
+    "tasks/prd.json",
+    "tasks/docs/gleam-and-dependencies.json",
+    "tasks/docs/provider-contracts.json",
+    "tasks/docs/pre-execution-checklist.json"
+  ],
+  "usage": {
+    "ralphCommand": "ralph-tui run --prd ./tasks/prd.json",
+    "preExecutionRequirement": "Every story execution must start by reading docs bundle and refreshing target API contract references."
+  }
+}
