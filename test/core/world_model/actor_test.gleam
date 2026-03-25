@@ -308,3 +308,15 @@ pub fn versioning_across_assert_and_retract_test() {
   wm_actor.version(wm) |> should.equal(3)
   wm_actor.stop(wm)
 }
+
+pub fn world_model_emit_telemetry_and_audit_commands_do_not_break_flow_test() {
+  let assert Ok(wm) = wm_actor.start()
+
+  let assert Ok(fact_id) =
+    wm_actor.assert_fact(wm, "agent_1", "telemetry check", FactEntity, 0.9)
+
+  let retract_result = wm_actor.retract(wm, "agent_1", fact_id, "cleanup")
+  retract_result |> should.equal(Ok(Nil))
+
+  wm_actor.stop(wm)
+}

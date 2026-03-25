@@ -16,8 +16,9 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option}
 import supernova/core/checkpoint/types.{
-  type Checkpoint, type CheckpointState, type YieldDecision, Checkpoint,
-  CheckpointState, Continue,
+  type Checkpoint, type CheckpointCommand, type CheckpointState,
+  type YieldDecision, Checkpoint, CheckpointState, Continue,
+  EmitCheckpointRestored, EmitCheckpointSaved, WriteYieldAudit,
 }
 import supernova/llm/provider.{type ChatMessage, type ToolCall}
 
@@ -35,7 +36,7 @@ pub fn save(
   pending_tool: Option(ToolCall),
   metadata: dict.Dict(String, String),
   now: Int,
-) -> #(CheckpointState, Result(String, String)) {
+) -> #(CheckpointState, Result(String, String), List(CheckpointCommand)) {
   let checkpoint_id = "ckpt_" <> int.to_string(state.next_id)
   let cp =
     Checkpoint(
@@ -53,7 +54,10 @@ pub fn save(
       checkpoints: new_checkpoints,
       next_id: state.next_id + 1,
     )
-  #(new_state, Ok(checkpoint_id))
+  let commands = [
+    EmitCheckpointSaved(checkpoint_id: checkpoint_id, session_id: session_id),
+  ]
+  #(new_state, Ok(checkpoint_id), commands)
 }
 
 /// Restore a checkpoint by its ID.
@@ -63,10 +67,15 @@ pub fn save(
 pub fn restore(
   state: CheckpointState,
   checkpoint_id: String,
-) -> #(CheckpointState, Result(Checkpoint, String)) {
+) -> #(CheckpointState, Result(Checkpoint, String), List(CheckpointCommand)) {
   case dict.get(state.checkpoints, checkpoint_id) {
-    Ok(cp) -> #(state, Ok(cp))
-    Error(_) -> #(state, Error("Checkpoint not found: " <> checkpoint_id))
+    Ok(cp) -> #(state, Ok(cp), [
+      EmitCheckpointRestored(
+        checkpoint_id: checkpoint_id,
+        session_id: cp.session_id,
+      ),
+    ])
+    Error(_) -> #(state, Error("Checkpoint not found: " <> checkpoint_id), [])
   }
 }
 
@@ -79,15 +88,22 @@ pub fn restore(
 pub fn should_yield(
   state: CheckpointState,
   session_id: String,
-) -> #(CheckpointState, YieldDecision) {
+) -> #(CheckpointState, YieldDecision, List(CheckpointCommand)) {
   case dict.get(state.forced_yields, session_id) {
     Ok(decision) -> {
       // Consume the forced yield (one-shot)
       let new_yields = dict.delete(state.forced_yields, session_id)
       let new_state = CheckpointState(..state, forced_yields: new_yields)
-      #(new_state, decision)
+      let #(decision_name, reason) = decision_to_audit_parts(decision)
+      #(new_state, decision, [
+        WriteYieldAudit(
+          session_id: session_id,
+          decision: decision_name,
+          reason:,
+        ),
+      ])
     }
-    Error(_) -> #(state, Continue)
+    Error(_) -> #(state, Continue, [])
   }
 }
 
@@ -129,4 +145,12 @@ pub fn list_for_session(
 ) -> List(Checkpoint) {
   dict.values(state.checkpoints)
   |> list.filter(fn(cp) { cp.session_id == session_id })
+}
+
+fn decision_to_audit_parts(decision: YieldDecision) -> #(String, String) {
+  case decision {
+    Continue -> #("continue", "")
+    types.Pause(reason) -> #("pause", reason)
+    types.Abort(reason) -> #("abort", reason)
+  }
 }

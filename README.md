@@ -130,6 +130,8 @@ discord:
 
 See [examples/quickstart/supernova.yaml](examples/quickstart/supernova.yaml) for a complete annotated example.
 
+You can also declare MCP servers under `mcp_servers` in `supernova.yaml`. On startup, Supernova now parses and registers these servers automatically via the MCP manager.
+
 ---
 
 ## Development

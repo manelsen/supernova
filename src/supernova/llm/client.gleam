@@ -10,9 +10,13 @@
 //// let result = client.chat(messages, config, [])
 //// ```
 
-import gleam/option.{None}
+import gleam/list
+import gleam/option.{None, Some}
+import gleam/string
 import supernova/llm/provider
+import supernova/llm/providers/anthropic
 import supernova/llm/providers/minimax
+import supernova/llm/providers/openai
 import supernova/llm/providers/opencode_zen
 import supernova/llm/providers/openrouter
 import supernova/llm/providers/zhipu
@@ -32,8 +36,8 @@ pub fn chat(
 ) -> Result(provider.ChatResponse, provider.LLMError) {
   case config.name {
     "mock" -> mock_chat(messages, config, tools)
-    "openai" -> openai_chat(messages, config, tools)
-    "anthropic" -> anthropic_chat(messages, config, tools)
+    "openai" -> openai.chat(messages, config, tools)
+    "anthropic" -> anthropic.chat(messages, config, tools)
     "opencode_zen" -> opencode_zen.chat(messages, config, tools)
     "openrouter" -> openrouter.chat(messages, config, tools)
     "zhipu" -> zhipu.chat(messages, config, tools)
@@ -49,40 +53,57 @@ pub fn chat(
 
 /// Mock chat completion — returns a canned response.
 fn mock_chat(
-  _messages: List(provider.ChatMessage),
+  messages: List(provider.ChatMessage),
   _config: provider.ProviderConfig,
-  _tools: List(provider.ToolDefinition),
+  tools: List(provider.ToolDefinition),
 ) -> Result(provider.ChatResponse, provider.LLMError) {
-  Ok(provider.ChatResponse(
-    role: "assistant",
-    content: "Mock response",
-    tool_calls: None,
-    reasoning_content: None,
-  ))
+  let has_tool_result =
+    list.any(messages, fn(message) { message.role == "tool" })
+  let has_tool_error =
+    list.any(messages, fn(message) {
+      message.role == "tool" && string.starts_with(message.content, "ERROR:")
+    })
+
+  case tools, has_tool_result {
+    [], _ ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "Mock response",
+        tool_calls: None,
+        reasoning_content: None,
+      ))
+    _, True ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: case has_tool_error {
+          True -> "Mock tool error"
+          False -> "Mock response"
+        },
+        tool_calls: None,
+        reasoning_content: None,
+      ))
+    [first_tool, ..], False ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: first_tool.name,
+            arguments: mock_arguments_for_tool(first_tool.name),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+  }
 }
 
-// ============================================================================
-// OpenAI Provider (placeholder — full impl in 2.3)
-// ============================================================================
-
-/// OpenAI chat completion — placeholder.
-fn openai_chat(
-  _messages: List(provider.ChatMessage),
-  _config: provider.ProviderConfig,
-  _tools: List(provider.ToolDefinition),
-) -> Result(provider.ChatResponse, provider.LLMError) {
-  Error(provider.ConfigError(reason: "OpenAI provider not yet implemented"))
-}
-
-// ============================================================================
-// Anthropic Provider (placeholder — full impl in 2.4)
-// ============================================================================
-
-/// Anthropic chat completion — placeholder.
-fn anthropic_chat(
-  _messages: List(provider.ChatMessage),
-  _config: provider.ProviderConfig,
-  _tools: List(provider.ToolDefinition),
-) -> Result(provider.ChatResponse, provider.LLMError) {
-  Error(provider.ConfigError(reason: "Anthropic provider not yet implemented"))
+fn mock_arguments_for_tool(tool_name: String) -> String {
+  case tool_name {
+    "safe_shell" -> "{\"command\":\"pwd\"}"
+    "web_fetch" -> "{\"url\":\"https://example.com\"}"
+    "git_inspect" -> "{\"action\":\"status\"}"
+    "file_system" -> "{\"action\":\"list\",\"path\":\".\"}"
+    _ -> "{}"
+  }
 }

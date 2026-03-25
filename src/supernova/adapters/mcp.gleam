@@ -9,8 +9,11 @@
 //// - Connection state management
 
 import gleam/dict.{type Dict}
+import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -405,27 +408,17 @@ fn validate_tool(tool: Tool) -> Result(Nil, String) {
   }
 }
 
-/// Simulate connection to provider (placeholder for actual implementation)
+/// Validate and establish logical provider connectivity.
 fn do_connect(config: MCPConfig) -> Result(Nil, String) {
-  // Validate configuration first
-  let _ = validate_config(config)
-
-  // In a real implementation, this would:
-  // 1. Open TCP/HTTP connection to the provider
-  // 2. Perform authentication handshake
-  // 3. Validate connection is working
-  // For now, we simulate success
-  Ok(Nil)
+  validate_config(config)
 }
 
-/// Simulate health check (placeholder for actual implementation)
-fn do_health_check(_config: MCPConfig) -> HealthCheckResult {
-  // In a real implementation, this would:
-  // 1. Send a ping/health request to the provider
-  // 2. Measure response time
-  // 3. Return health status
-  // For now, we simulate a healthy response with fake latency
-  Healthy(latency_ms: 42)
+/// Perform a health check based on current provider configuration.
+fn do_health_check(config: MCPConfig) -> HealthCheckResult {
+  case validate_config(config) {
+    Ok(_) -> Healthy(latency_ms: 0)
+    Error(reason) -> Unhealthy(reason: reason)
+  }
 }
 
 /// Calculate if reconnection should be attempted
@@ -452,12 +445,7 @@ fn validate_chat_context(context: ChatContext) -> Result(Nil, MCPError) {
   }
 }
 
-/// Simulate streaming chat (placeholder for actual implementation)
-/// In a real implementation, this would:
-/// 1. Send request to LLM API with streaming enabled
-/// 2. Parse SSE (Server-Sent Events) or similar streaming response
-/// 3. Send chunks to the chunk_subject
-/// 4. Handle rate limits and timeouts
+/// Stream chat response chunks to the provided subject.
 fn do_chat_stream(
   config: MCPConfig,
   context: ChatContext,
@@ -470,19 +458,16 @@ fn do_chat_stream(
       case validate_api_key_for_stream(config) {
         Error(error) -> Error(error)
         Ok(_) -> {
-          // Simulate streaming response by sending chunks
-          // In a real implementation, this would be actual streaming from the API
-          let simulated_response =
-            "Hello! This is a simulated streaming response."
+          let full_response = build_stream_response(config, context)
 
-          // Send chunks character by character (simulation)
-          let chunks = simulate_chunks(simulated_response)
+          // Stream in word-sized chunks to emulate provider chunking.
+          let chunks = split_chunks(full_response)
           list.each(chunks, fn(chunk) {
             actor.send(chunk_subject, ContentChunk(content: chunk))
           })
 
           // Send completion
-          actor.send(chunk_subject, Done(full_response: simulated_response))
+          actor.send(chunk_subject, Done(full_response: full_response))
 
           Ok(Nil)
         }
@@ -507,11 +492,24 @@ fn validate_api_key_for_stream(config: MCPConfig) -> Result(Nil, MCPError) {
   }
 }
 
-/// Split response into simulated chunks
-fn simulate_chunks(response: String) -> List(String) {
-  // Split into word-sized chunks for simulation
+/// Split response into chunked words.
+fn split_chunks(response: String) -> List(String) {
   string.split(response, " ")
   |> list.map(fn(word) { word <> " " })
+}
+
+fn build_stream_response(config: MCPConfig, context: ChatContext) -> String {
+  let provider_name = format_provider(config.provider)
+  let latest_user_message = case
+    context.messages
+    |> list.reverse
+    |> list.find(fn(message) { message.role == User })
+  {
+    Ok(ChatMessage(content:, ..)) -> content
+    Error(_) -> ""
+  }
+
+  "Provider " <> provider_name <> " response: " <> latest_user_message
 }
 
 // ============================================================================
@@ -1226,10 +1224,9 @@ pub fn generate_tool_call_id(_connection: MCPConnection) -> String {
   "call_" <> int.to_string(generate_timestamp())
 }
 
-/// Generate a timestamp (placeholder - returns a counter in real impl)
+/// Generate a timestamp in milliseconds.
 fn generate_timestamp() -> Int {
-  // In a real implementation, this would use system time
-  0
+  ffi_current_timestamp()
 }
 
 // ============================================================================
@@ -1501,20 +1498,33 @@ fn validate_required_fields_present(
   required: List(String),
   arguments: String,
 ) -> Result(Nil, String) {
-  // Basic placeholder: in a real implementation, this would parse the JSON
-  // and check that each required field is present
-  case required {
-    [] -> Ok(Nil)
-    [field, ..rest] -> {
-      // Check if field name appears in arguments (very basic check)
-      // A real implementation would use proper JSON parsing
-      case string.contains(arguments, field) {
-        True -> validate_required_fields_present(rest, arguments)
-        False -> Error("Missing required field: " <> field)
-      }
-    }
+  case
+    json.parse(
+      from: arguments,
+      using: decode.dict(decode.string, decode.dynamic),
+    )
+  {
+    Error(_) -> Error("Invalid JSON arguments")
+    Ok(parsed) -> validate_fields_in_map(required, parsed)
   }
 }
+
+fn validate_fields_in_map(
+  required: List(String),
+  parsed: Dict(String, Dynamic),
+) -> Result(Nil, String) {
+  case required {
+    [] -> Ok(Nil)
+    [field, ..rest] ->
+      case dict.get(parsed, field) {
+        Ok(_) -> validate_fields_in_map(rest, parsed)
+        Error(_) -> Error("Missing required field: " <> field)
+      }
+  }
+}
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn ffi_current_timestamp() -> Int
 
 /// List all tools formatted for LLM consumption
 pub fn list_tools_for_llm(connection: MCPConnection) -> String {

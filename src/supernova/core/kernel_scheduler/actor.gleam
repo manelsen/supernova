@@ -19,6 +19,7 @@ import gleam/otp/actor
 import supernova/core/kernel_scheduler/pure
 import supernova/core/kernel_scheduler/types.{
   type AgentInfo, type KernelSchedulerState, type SchedulerPriority,
+  EmitBudgetExhaustedTelemetry, EmitStarvationTelemetry, WriteSchedulerAudit,
 }
 
 // ============================================================================
@@ -28,6 +29,14 @@ import supernova/core/kernel_scheduler/types.{
 /// Get current timestamp in milliseconds (Erlang FFI).
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn ffi_current_timestamp() -> Int
+
+/// Emit telemetry event (Erlang FFI).
+@external(erlang, "supernova_telemetry_ffi", "write_event")
+fn ffi_write_event(
+  name: String,
+  timestamp: Int,
+  agent_id: String,
+) -> Result(Nil, String)
 
 // ============================================================================
 // Types
@@ -154,9 +163,31 @@ fn handle_message(
 /// Execute commands returned by pure functions.
 fn execute_commands(commands: List(types.SchedulerCommand)) -> Nil {
   list.each(commands, fn(cmd) {
-    let _ = cmd
-    // TODO: Integrate with telemetry/audit systems when available
-    Nil
+    case cmd {
+      EmitStarvationTelemetry(agent_id, old_priority, new_priority) -> {
+        let _ =
+          ffi_write_event(
+            "scheduler.starvation." <> old_priority <> "_to_" <> new_priority,
+            ffi_current_timestamp(),
+            agent_id,
+          )
+        Nil
+      }
+      EmitBudgetExhaustedTelemetry(agent_id) -> {
+        let _ =
+          ffi_write_event(
+            "scheduler.budget_exhausted",
+            ffi_current_timestamp(),
+            agent_id,
+          )
+        Nil
+      }
+      WriteSchedulerAudit(action, agent_id, timestamp) -> {
+        let _ =
+          ffi_write_event("scheduler.audit." <> action, timestamp, agent_id)
+        Nil
+      }
+    }
   })
 }
 
