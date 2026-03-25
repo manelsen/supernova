@@ -9,8 +9,11 @@
 //// 6. Graceful shutdown: channels → sessions → MCP servers
 
 import gleam/erlang/process
+import gleam/int
 import gleam/io
+import gleam/list
 import gleam/result
+import supernova/adapters/mcp/config_loader
 import supernova/adapters/mcp_manager
 import supernova/config
 import supernova/core/session/supervisor
@@ -126,11 +129,40 @@ fn start_services(_cfg: config.Config) -> Result(Services, String) {
   )
   io.println("✓ MCP Manager started")
 
+  // Register MCP servers from supernova.yaml, if present
+  let mcp_servers = config_loader.parse_servers_from_file("supernova.yaml")
+  case list.length(mcp_servers) {
+    0 -> io.println("✓ No MCP servers configured")
+    count -> {
+      io.println("✓ Registering MCP servers: " <> int.to_string(count))
+      case register_mcp_servers(mcp_mgr, mcp_servers) {
+        Ok(_) -> io.println("✓ MCP servers registered")
+        Error(reason) ->
+          io.println("⚠ MCP server registration issue: " <> reason)
+      }
+    }
+  }
+
   // TODO: Start channel adapters based on config
   // - Telegram / Discord adapters
   // - Matrix / Lark / Google Chat / Slack / Mattermost / WeChat Work / WhatsApp
 
   Ok(Services(session_supervisor: session_sup, mcp_manager: mcp_mgr))
+}
+
+fn register_mcp_servers(
+  manager: mcp_manager.MCPManager,
+  servers: List(mcp_manager.ServerConfig),
+) -> Result(Nil, String) {
+  case servers {
+    [] -> Ok(Nil)
+    [server, ..rest] ->
+      case mcp_manager.register(manager, server) {
+        Ok(_) -> register_mcp_servers(manager, rest)
+        Error(reason) ->
+          Error("failed to register " <> server.name <> ": " <> reason)
+      }
+  }
 }
 
 /// Graceful shutdown of all services

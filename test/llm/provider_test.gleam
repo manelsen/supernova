@@ -130,3 +130,39 @@ pub fn client_with_mock_provider_test() {
     Error(_) -> should.fail()
   }
 }
+
+pub fn client_openai_without_key_uses_real_provider_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "openai",
+      api_key: None,
+      base_url: None,
+      default_model: "gpt-4o-mini",
+    )
+
+  let messages = [provider.user_message("Hello")]
+  let result = client.chat(messages, config, [])
+
+  result
+  |> should.equal(
+    Error(provider.ConfigError(reason: "No API key configured for OpenAI")),
+  )
+}
+
+pub fn client_anthropic_without_key_uses_real_provider_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "anthropic",
+      api_key: None,
+      base_url: None,
+      default_model: "claude-haiku-4-5",
+    )
+
+  let messages = [provider.user_message("Hello")]
+  let result = client.chat(messages, config, [])
+
+  result
+  |> should.equal(
+    Error(provider.ConfigError(reason: "No API key configured for Anthropic")),
+  )
+}

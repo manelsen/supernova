@@ -35,6 +35,14 @@ import supernova/core/world_model/types.{
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn ffi_current_timestamp() -> Int
 
+/// Emit telemetry event (Erlang FFI).
+@external(erlang, "supernova_telemetry_ffi", "write_event")
+fn ffi_write_event(
+  name: String,
+  timestamp: Int,
+  agent_id: String,
+) -> Result(Nil, String)
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -131,13 +139,33 @@ fn execute_commands(
             False -> Nil
           }
         })
-      }
-      WriteAssertAudit(_, _, _) -> {
-        // TODO: integrate with audit_log actor when wired up
+        let _ =
+          ffi_write_event(
+            "world_model.notify_change",
+            ffi_current_timestamp(),
+            fact.author,
+          )
         Nil
       }
-      WriteRetractAudit(_, _) -> {
-        // TODO: integrate with audit_log actor when wired up
+      WriteAssertAudit(fact_id, author, fact_type) -> {
+        let _ =
+          ffi_write_event(
+            "world_model.assert." <> fact_type,
+            ffi_current_timestamp(),
+            author,
+          )
+        let _ = fact_id
+        Nil
+      }
+      WriteRetractAudit(fact_id, reason) -> {
+        let _ =
+          ffi_write_event(
+            "world_model.retract",
+            ffi_current_timestamp(),
+            "system",
+          )
+        let _ = fact_id
+        let _ = reason
         Nil
       }
     }

@@ -22,6 +22,7 @@ import gleam/otp/actor
 import supernova/core/checkpoint/pure
 import supernova/core/checkpoint/types.{
   type Checkpoint, type CheckpointState, type YieldDecision,
+  EmitCheckpointRestored, EmitCheckpointSaved, WriteYieldAudit,
 }
 import supernova/llm/provider.{type ChatMessage, type ToolCall}
 
@@ -32,6 +33,14 @@ import supernova/llm/provider.{type ChatMessage, type ToolCall}
 /// Get current timestamp in milliseconds (Erlang FFI).
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn ffi_current_timestamp() -> Int
+
+/// Emit telemetry event (Erlang FFI).
+@external(erlang, "supernova_telemetry_ffi", "write_event")
+fn ffi_write_event(
+  name: String,
+  timestamp: Int,
+  agent_id: String,
+) -> Result(Nil, String)
 
 // ============================================================================
 // Types
@@ -81,22 +90,24 @@ fn handle_message(
   case message {
     Save(reply_to, session_id, history, pending_tool, metadata) -> {
       let now = ffi_current_timestamp()
-      let #(new_state, result) =
+      let #(new_state, result, commands) =
         pure.save(state, session_id, history, pending_tool, metadata, now)
-      execute_commands([])
+      execute_commands(commands)
       actor.send(reply_to, result)
       actor.continue(new_state)
     }
 
     Restore(reply_to, checkpoint_id) -> {
-      let #(new_state, result) = pure.restore(state, checkpoint_id)
-      execute_commands([])
+      let #(new_state, result, commands) = pure.restore(state, checkpoint_id)
+      execute_commands(commands)
       actor.send(reply_to, result)
       actor.continue(new_state)
     }
 
     ShouldYield(reply_to, session_id) -> {
-      let #(new_state, decision) = pure.should_yield(state, session_id)
+      let #(new_state, decision, commands) =
+        pure.should_yield(state, session_id)
+      execute_commands(commands)
       actor.send(reply_to, decision)
       actor.continue(new_state)
     }
@@ -128,9 +139,37 @@ fn handle_message(
 
 /// Execute commands returned by pure functions.
 fn execute_commands(commands: List(types.CheckpointCommand)) -> Nil {
-  list.each(commands, fn(_cmd) {
-    // TODO: Integrate with telemetry/audit systems when available
-    Nil
+  list.each(commands, fn(cmd) {
+    case cmd {
+      EmitCheckpointSaved(checkpoint_id, session_id) -> {
+        let _ =
+          ffi_write_event(
+            "checkpoint.saved." <> checkpoint_id,
+            ffi_current_timestamp(),
+            session_id,
+          )
+        Nil
+      }
+      EmitCheckpointRestored(checkpoint_id, session_id) -> {
+        let _ =
+          ffi_write_event(
+            "checkpoint.restored." <> checkpoint_id,
+            ffi_current_timestamp(),
+            session_id,
+          )
+        Nil
+      }
+      WriteYieldAudit(session_id, decision, reason) -> {
+        let _ =
+          ffi_write_event(
+            "checkpoint.yield." <> decision,
+            ffi_current_timestamp(),
+            session_id,
+          )
+        let _ = reason
+        Nil
+      }
+    }
   })
 }
 

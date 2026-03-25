@@ -146,7 +146,7 @@ To see resource accounting per agent:
 
 - Read [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) for the full architecture overview
 - Adjust `budgets` in `supernova.yaml` to control per-agent token limits
-- Add MCP servers under `mcp:` in `supernova.yaml` to extend tool capabilities
+- Add MCP servers under `mcp_servers:` in `supernova.yaml` to extend tool capabilities
 - Set `environment: production` and `log_level: warn` before deploying
 
 ---

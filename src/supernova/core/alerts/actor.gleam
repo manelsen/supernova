@@ -32,6 +32,14 @@ import supernova/core/resource_ledger/actor as ledger_actor
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn ffi_current_timestamp() -> Int
 
+/// Emit telemetry event (Erlang FFI).
+@external(erlang, "supernova_telemetry_ffi", "write_event")
+fn ffi_write_event(
+  name: String,
+  timestamp: Int,
+  agent_id: String,
+) -> Result(Nil, String)
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -66,17 +74,18 @@ pub type AlertsHandle =
 fn execute_commands(commands: List(AlertCommand)) -> Nil {
   list.each(commands, fn(cmd) {
     case cmd {
-      EmitTelemetry(alert_type, agent_id, severity, measurements) -> {
-        // TODO: Integrate with actual telemetry system when available
-        let _ = alert_type
-        let _ = agent_id
-        let _ = severity
-        let _ = measurements
+      EmitTelemetry(alert_type, agent_id, severity, _measurements) -> {
+        let event_name = "alerts." <> alert_type <> "." <> severity
+        let _ = ffi_write_event(event_name, ffi_current_timestamp(), agent_id)
         Nil
       }
       LogAlert(alert) -> {
-        // Log alert to operational log
-        let _ = alert
+        let _ =
+          ffi_write_event(
+            "alerts.logged." <> types.alert_type_to_string(alert.alert_type),
+            alert.timestamp,
+            alert.agent_id,
+          )
         Nil
       }
     }

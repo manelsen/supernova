@@ -75,3 +75,15 @@ database:
   user: supernova                   # or: SUPERNOVA_DB_USER
   # password: supernova             # or: SUPERNOVA_DB_PASSWORD
   pool_size: 10
+
+# ── MCP Servers (optional) ────────────────────────────────────────────────────
+#
+# Register local MCP servers at startup. Each server is started via command/args
+# and discovered by the MCP manager using JSON-RPC over STDIO.
+#
+# mcp_servers:
+#   filesystem:
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-filesystem"]
+#     env:
+#       NODE_ENV: production

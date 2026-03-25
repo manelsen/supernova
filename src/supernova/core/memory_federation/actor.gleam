@@ -27,6 +27,18 @@ import supernova/core/memory_federation/types.{
 import supernova/core/world_model/actor as world_model_actor
 import supernova/core/world_model/types as wm_types
 
+/// Emit telemetry event (Erlang FFI).
+@external(erlang, "supernova_telemetry_ffi", "write_event")
+fn ffi_write_event(
+  name: String,
+  timestamp: Int,
+  agent_id: String,
+) -> Result(Nil, String)
+
+/// Get current timestamp in milliseconds (Erlang FFI).
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn ffi_current_timestamp() -> Int
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -65,12 +77,31 @@ pub type FederationHandle =
 fn execute_commands(commands: List(types.FederationCommand)) -> Nil {
   list.each(commands, fn(cmd) {
     case cmd {
-      EmitTelemetry(_name, _measurements) -> {
-        // TODO: integrate with telemetry actor when wired up
+      EmitTelemetry(name, measurements) -> {
+        let agent_id = measurement_value(measurements, "agent_id")
+        let _ = ffi_write_event(name, ffi_current_timestamp(), agent_id)
         Nil
       }
     }
   })
+}
+
+fn measurement_value(
+  measurements: List(#(String, String)),
+  key: String,
+) -> String {
+  case
+    list.find(measurements, fn(entry) {
+      let #(entry_key, _) = entry
+      entry_key == key
+    })
+  {
+    Ok(entry) -> {
+      let #(_, value) = entry
+      value
+    }
+    Error(_) -> "unknown"
+  }
 }
 
 /// Promote a list of candidates to the WorldModel.

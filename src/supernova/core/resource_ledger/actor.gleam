@@ -39,6 +39,14 @@ fn ffi_write_audit(
   timestamp: Int,
 ) -> Result(Nil, String)
 
+/// Emit telemetry event (Erlang FFI).
+@external(erlang, "supernova_telemetry_ffi", "write_event")
+fn ffi_write_event(
+  name: String,
+  timestamp: Int,
+  agent_id: String,
+) -> Result(Nil, String)
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -109,12 +117,31 @@ fn execute_commands(commands: List(LedgerCommand)) -> Nil {
         let _ = ffi_write_audit(agent_id, resource, amount, timestamp)
         Nil
       }
-      EmitTelemetry(_name, _measurements) -> {
-        // TODO: Integrate with actual telemetry system when available
+      EmitTelemetry(name, measurements) -> {
+        let agent_id = measurement_value(measurements, "agent_id")
+        let _ = ffi_write_event(name, ffi_current_timestamp(), agent_id)
         Nil
       }
     }
   })
+}
+
+fn measurement_value(
+  measurements: List(#(String, String)),
+  key: String,
+) -> String {
+  case
+    list.find(measurements, fn(entry) {
+      let #(entry_key, _) = entry
+      entry_key == key
+    })
+  {
+    Ok(entry) -> {
+      let #(_, value) = entry
+      value
+    }
+    Error(_) -> "unknown"
+  }
 }
 
 /// Handle incoming messages and update state.

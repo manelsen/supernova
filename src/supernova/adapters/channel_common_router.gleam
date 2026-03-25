@@ -71,7 +71,7 @@ pub fn handle_message(
                 executor.run(
                   [provider.user_message(msg.content)],
                   llm_config,
-                  [],
+                  executor.builtin_tools(),
                 )
               {
                 Ok(chat_response) ->
@@ -191,7 +191,7 @@ fn handle_inbound_message(
                         executor.run(
                           [provider.user_message(msg.content)],
                           llm_config,
-                          [],
+                          executor.builtin_tools(),
                         )
                       {
                         Ok(chat_response) -> #(

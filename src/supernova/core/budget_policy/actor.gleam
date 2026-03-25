@@ -31,6 +31,14 @@ import supernova/core/budget_policy/types.{
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn ffi_current_timestamp() -> Int
 
+/// Emit telemetry event (Erlang FFI).
+@external(erlang, "supernova_telemetry_ffi", "write_event")
+fn ffi_write_event(
+  name: String,
+  timestamp: Int,
+  agent_id: String,
+) -> Result(Nil, String)
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -83,12 +91,15 @@ pub type BudgetPolicy =
 fn execute_commands(commands: List(BudgetCommand)) -> Nil {
   list.each(commands, fn(cmd) {
     case cmd {
-      EmitBudgetViolation(_agent_id, _resource, _current, _limit) -> {
-        // TODO: Integrate with actual telemetry system when available
+      EmitBudgetViolation(agent_id, resource, current, limit) -> {
+        let event_name = "budget.violation." <> resource
+        let _ = ffi_write_event(event_name, ffi_current_timestamp(), agent_id)
+        let _ = current
+        let _ = limit
         Nil
       }
-      WriteBudgetAudit(_agent_id, _action, _timestamp) -> {
-        // TODO: Integrate with actual audit system when available
+      WriteBudgetAudit(agent_id, action, timestamp) -> {
+        let _ = ffi_write_event("budget.audit." <> action, timestamp, agent_id)
         Nil
       }
     }
