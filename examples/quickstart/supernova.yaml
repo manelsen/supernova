@@ -1,0 +1,77 @@
+# Supernova — Quickstart Configuration
+#
+# Copy this file to the project root as supernova.yaml and fill in your tokens.
+# Sensitive values can be set as environment variables instead of inline here.
+#
+# Environment variable names follow the pattern SUPERNOVA_<FIELD>.
+# Example: SUPERNOVA_TELEGRAM_TOKEN overrides telegram.token below.
+
+app_name: my-assistant
+environment: development   # development | production
+log_level: info            # debug | info | warn | error
+
+# ── LLM Providers ────────────────────────────────────────────────────────────
+#
+# Configure at least one provider. The first enabled provider is used by default.
+# Set api_key inline (not recommended) or via environment variable.
+#
+providers:
+  default:
+    provider: anthropic           # anthropic | openai | local
+    model: claude-haiku-4-5       # any model supported by the provider
+    # api_key: sk-ant-...         # or: SUPERNOVA_ANTHROPIC_API_KEY
+    timeout_ms: 30000
+
+  # Uncomment to add a fallback provider
+  # fallback:
+  #   provider: openai
+  #   model: gpt-4o-mini
+  #   # api_key: sk-...           # or: SUPERNOVA_OPENAI_API_KEY
+
+# ── Budget Limits ─────────────────────────────────────────────────────────────
+#
+# Supernova enforces these limits per agent. A sub-agent inherits a fraction
+# of its parent's remaining budget (inheritance_ratio %).
+# Set to -1 for unlimited (not recommended in production).
+#
+budgets:
+  default:
+    tokens_per_hour: 100000         # LLM tokens (prompt + completion)
+    tool_calls_per_minute: 60       # tool invocations
+    max_recursion_depth: 25         # max sub-agent nesting depth
+    max_sub_agents: 10              # concurrent sub-agents
+  inheritance_ratio: 20             # sub-agents get 20% of parent's budget
+
+  # Per-agent overrides (agent_id is set in the agent's capability manifest)
+  # agents:
+  #   researcher:
+  #     tokens_per_hour: 50000
+  #     tool_calls_per_minute: 30
+
+# ── Channels ──────────────────────────────────────────────────────────────────
+#
+# Enable the channels you want. At least one must be enabled.
+
+telegram:
+  enabled: true
+  # token: 123456:ABC-DEF...       # or: SUPERNOVA_TELEGRAM_TOKEN
+  # Run `gleam run -- wizard` to get a guided setup with BotFather instructions.
+
+discord:
+  enabled: false
+  # token: ...                     # or: SUPERNOVA_DISCORD_TOKEN
+  # app_id: ...                    # or: SUPERNOVA_DISCORD_APP_ID
+  # guild_id: ...                  # optional, for dev server slash commands
+
+# ── Database ──────────────────────────────────────────────────────────────────
+#
+# PostgreSQL is required for WorldModel, AuditLog, and persistent memory.
+# Use `docker compose up -d postgres` to start a local instance.
+#
+database:
+  host: localhost                   # or: SUPERNOVA_DB_HOST
+  port: 5432                        # or: SUPERNOVA_DB_PORT
+  database: supernova               # or: SUPERNOVA_DB_NAME
+  user: supernova                   # or: SUPERNOVA_DB_USER
+  # password: supernova             # or: SUPERNOVA_DB_PASSWORD
+  pool_size: 10

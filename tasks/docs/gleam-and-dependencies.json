@@ -1,0 +1,218 @@
+{
+  "generatedAt": "2026-03-24T02:53:17.840808Z",
+  "requestedAt": "2026-03-24T02:19:50.222Z",
+  "language": {
+    "name": "Gleam",
+    "sources": [
+      "https://gleam.run/documentation/",
+      "https://gleam.run/writing-gleam/",
+      "https://tour.gleam.run/"
+    ],
+    "note": "Use this as mandatory pre-read before each implementation story."
+  },
+  "dependencies": [
+    {
+      "name": "backoff",
+      "pinnedVersion": "1.1.6",
+      "latestObservedVersion": "1.1.6",
+      "docsUrl": "https://hexdocs.pm/backoff/",
+      "hexApiUrl": "https://hex.pm/api/packages/backoff"
+    },
+    {
+      "name": "certifi",
+      "pinnedVersion": "2.15.0",
+      "latestObservedVersion": "2.16.0",
+      "docsUrl": "https://hexdocs.pm/certifi/",
+      "hexApiUrl": "https://hex.pm/api/packages/certifi"
+    },
+    {
+      "name": "envoy",
+      "pinnedVersion": "1.1.0",
+      "latestObservedVersion": "1.1.0",
+      "docsUrl": "https://hexdocs.pm/envoy/",
+      "hexApiUrl": "https://hex.pm/api/packages/envoy"
+    },
+    {
+      "name": "exception",
+      "pinnedVersion": "2.1.0",
+      "latestObservedVersion": "2.1.0",
+      "docsUrl": "https://hexdocs.pm/exception/",
+      "hexApiUrl": "https://hex.pm/api/packages/exception"
+    },
+    {
+      "name": "gleam_crypto",
+      "pinnedVersion": "1.5.1",
+      "latestObservedVersion": "1.5.1",
+      "docsUrl": "https://hexdocs.pm/gleam_crypto/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleam_crypto"
+    },
+    {
+      "name": "gleam_erlang",
+      "pinnedVersion": "1.3.0",
+      "latestObservedVersion": "1.3.0",
+      "docsUrl": "https://hexdocs.pm/gleam_erlang/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleam_erlang"
+    },
+    {
+      "name": "gleam_hackney",
+      "pinnedVersion": "1.3.3",
+      "latestObservedVersion": "1.3.3",
+      "docsUrl": "https://hexdocs.pm/gleam_hackney/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleam_hackney"
+    },
+    {
+      "name": "gleam_http",
+      "pinnedVersion": "4.3.0",
+      "latestObservedVersion": "4.3.0",
+      "docsUrl": "https://hexdocs.pm/gleam_http/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleam_http"
+    },
+    {
+      "name": "gleam_json",
+      "pinnedVersion": "3.1.0",
+      "latestObservedVersion": "3.1.0",
+      "docsUrl": "https://hexdocs.pm/gleam_json/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleam_json"
+    },
+    {
+      "name": "gleam_otp",
+      "pinnedVersion": "1.2.0",
+      "latestObservedVersion": "1.2.0",
+      "docsUrl": "https://hexdocs.pm/gleam_otp/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleam_otp"
+    },
+    {
+      "name": "gleam_stdlib",
+      "pinnedVersion": "0.70.0",
+      "latestObservedVersion": "0.70.0",
+      "docsUrl": "https://hexdocs.pm/gleam_stdlib/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleam_stdlib"
+    },
+    {
+      "name": "gleam_time",
+      "pinnedVersion": "1.7.0",
+      "latestObservedVersion": "1.7.0",
+      "docsUrl": "https://hexdocs.pm/gleam_time/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleam_time"
+    },
+    {
+      "name": "gleeunit",
+      "pinnedVersion": "1.9.0",
+      "latestObservedVersion": "1.9.0",
+      "docsUrl": "https://hexdocs.pm/gleeunit/",
+      "hexApiUrl": "https://hex.pm/api/packages/gleeunit"
+    },
+    {
+      "name": "gramps",
+      "pinnedVersion": "6.0.0",
+      "latestObservedVersion": "6.0.0",
+      "docsUrl": "https://hexdocs.pm/gramps/",
+      "hexApiUrl": "https://hex.pm/api/packages/gramps"
+    },
+    {
+      "name": "hackney",
+      "pinnedVersion": "1.25.0",
+      "latestObservedVersion": "3.2.1",
+      "docsUrl": "https://hexdocs.pm/hackney/",
+      "hexApiUrl": "https://hex.pm/api/packages/hackney"
+    },
+    {
+      "name": "idna",
+      "pinnedVersion": "6.1.1",
+      "latestObservedVersion": "7.1.0",
+      "docsUrl": "https://hexdocs.pm/idna/",
+      "hexApiUrl": "https://hex.pm/api/packages/idna"
+    },
+    {
+      "name": "logging",
+      "pinnedVersion": "1.3.0",
+      "latestObservedVersion": "1.3.0",
+      "docsUrl": "https://hexdocs.pm/logging/",
+      "hexApiUrl": "https://hex.pm/api/packages/logging"
+    },
+    {
+      "name": "metrics",
+      "pinnedVersion": "1.0.1",
+      "latestObservedVersion": "2.5.0",
+      "docsUrl": "https://hexdocs.pm/metrics/",
+      "hexApiUrl": "https://hex.pm/api/packages/metrics"
+    },
+    {
+      "name": "mimerl",
+      "pinnedVersion": "1.4.0",
+      "latestObservedVersion": "1.4.0",
+      "docsUrl": "https://hexdocs.pm/mimerl/",
+      "hexApiUrl": "https://hex.pm/api/packages/mimerl"
+    },
+    {
+      "name": "opentelemetry_api",
+      "pinnedVersion": "1.5.0",
+      "latestObservedVersion": "1.5.0",
+      "docsUrl": "https://hexdocs.pm/opentelemetry_api/",
+      "hexApiUrl": "https://hex.pm/api/packages/opentelemetry_api"
+    },
+    {
+      "name": "parse_trans",
+      "pinnedVersion": "3.4.1",
+      "latestObservedVersion": "3.4.2",
+      "docsUrl": "https://hexdocs.pm/parse_trans/",
+      "hexApiUrl": "https://hex.pm/api/packages/parse_trans"
+    },
+    {
+      "name": "pg_types",
+      "pinnedVersion": "0.6.0",
+      "latestObservedVersion": "0.6.0",
+      "docsUrl": "https://hexdocs.pm/pg_types/",
+      "hexApiUrl": "https://hex.pm/api/packages/pg_types"
+    },
+    {
+      "name": "pgo",
+      "pinnedVersion": "0.20.0",
+      "latestObservedVersion": "0.20.0",
+      "docsUrl": "https://hexdocs.pm/pgo/",
+      "hexApiUrl": "https://hex.pm/api/packages/pgo"
+    },
+    {
+      "name": "pog",
+      "pinnedVersion": "4.1.0",
+      "latestObservedVersion": "4.1.0",
+      "docsUrl": "https://hexdocs.pm/pog/",
+      "hexApiUrl": "https://hex.pm/api/packages/pog"
+    },
+    {
+      "name": "ssl_verify_fun",
+      "pinnedVersion": "1.1.7",
+      "latestObservedVersion": "1.1.7",
+      "docsUrl": "https://hexdocs.pm/ssl_verify_fun/",
+      "hexApiUrl": "https://hex.pm/api/packages/ssl_verify_fun"
+    },
+    {
+      "name": "stratus",
+      "pinnedVersion": "2.0.0",
+      "latestObservedVersion": "2.0.0",
+      "docsUrl": "https://hexdocs.pm/stratus/",
+      "hexApiUrl": "https://hex.pm/api/packages/stratus"
+    },
+    {
+      "name": "unicode_util_compat",
+      "pinnedVersion": "0.7.1",
+      "latestObservedVersion": "0.7.1",
+      "docsUrl": "https://hexdocs.pm/unicode_util_compat/",
+      "hexApiUrl": "https://hex.pm/api/packages/unicode_util_compat"
+    },
+    {
+      "name": "yamerl",
+      "pinnedVersion": "0.10.0",
+      "latestObservedVersion": "0.10.0",
+      "docsUrl": "https://hexdocs.pm/yamerl/",
+      "hexApiUrl": "https://hex.pm/api/packages/yamerl"
+    },
+    {
+      "name": "yay",
+      "pinnedVersion": "2.0.2",
+      "latestObservedVersion": "2.0.2",
+      "docsUrl": "https://hexdocs.pm/yay/",
+      "hexApiUrl": "https://hex.pm/api/packages/yay"
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "generatedAt": "2026-03-24T02:53:17.840808Z",
+  "requestedAt": "2026-03-24T02:19:50.222Z",
+  "globalRules": {
+    "hideUnsupportedModels": true,
+    "modelsPerPage": 15,
+    "uiLanguage": "en",
+    "i18nWiringRequired": true,
+    "contractResearchPolicy": "Before implementing each story, re-validate target provider contract and refresh this file."
+  },
+  "providers": [
+    {
+      "provider": "openrouter",
+      "runtimePath": "src/supernova/llm/providers/openrouter.gleam",
+      "chatEndpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "modelCatalogEndpoint": "https://openrouter.ai/api/v1/models",
+      "auth": "Bearer token",
+      "headers": [
+        "HTTP-Referer",
+        "X-OpenRouter-Title",
+        "X-OpenRouter-Categories"
+      ],
+      "requestStyle": "OpenAI-compatible chat/completions schema",
+      "notes": [
+        "OpenRouter normalizes provider differences but supported parameters still vary by model.",
+        "Use model catalog endpoint for real-time model availability and metadata."
+      ],
+      "sourceUrls": [
+        "https://openrouter.ai/docs/api-reference/overview",
+        "https://openrouter.ai/docs/api-reference/parameters",
+        "https://openrouter.ai/api/v1/models"
+      ]
+    },
+    {
+      "provider": "opencode_zen",
+      "runtimePath": "src/supernova/llm/providers/opencode_zen.gleam",
+      "endpoints": {
+        "anthropicFormat": "https://opencode.ai/zen/v1/messages",
+        "openaiCompatFormat": "https://opencode.ai/zen/v1/chat/completions"
+      },
+      "auth": "Bearer token",
+      "routingRule": "claude-* models => Anthropic format, otherwise OpenAI-compatible format",
+      "notes": [
+        "Current runtime marks GPT Responses API and Gemini native endpoint as not implemented for this provider path.",
+        "Provider-specific model family rules must be validated before wiring new model families."
+      ],
+      "sourceUrls": [
+        "https://opencode.ai/docs",
+        "https://opencode.ai/zen"
+      ]
+    },
+    {
+      "provider": "openai",
+      "runtimePath": "src/supernova/llm/providers/openai.gleam",
+      "chatEndpoint": "https://api.openai.com/v1/chat/completions",
+      "auth": "Bearer token",
+      "requestStyle": "OpenAI chat/completions",
+      "notes": [
+        "Public docs pages returned 403 in fetch probe; endpoint probe returned 401 without credentials.",
+        "Re-check official API docs before story execution because model families may require different endpoint styles."
+      ],
+      "sourceUrls": [
+        "https://api.openai.com/v1/chat/completions"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "runtimePath": "src/supernova/llm/providers/anthropic.gleam",
+      "messagesEndpoint": "https://api.anthropic.com/v1/messages",
+      "auth": "x-api-key + anthropic-version header",
+      "requestStyle": "Anthropic Messages API",
+      "notes": [
+        "System prompt is separate field, not standard chat role entry.",
+        "Tool schema uses input_schema instead of OpenAI function schema."
+      ],
+      "sourceUrls": [
+        "https://docs.anthropic.com/en/api/messages",
+        "https://api.anthropic.com/v1/messages"
+      ]
+    },
+    {
+      "provider": "minimax",
+      "runtimePath": "src/supernova/llm/providers/minimax.gleam",
+      "chatEndpoint": "https://api.minimax.io/v1/text/chatcompletion_v2",
+      "auth": "Bearer token",
+      "requestStyle": "OpenAI-compatible with provider-specific base_resp and sensitive flags",
+      "notes": [
+        "Provider may return semantic errors via base_resp even on HTTP 200.",
+        "Re-validate docs URL and endpoint behavior before implementation."
+      ],
+      "sourceUrls": [
+        "https://platform.minimaxi.com/document/ChatCompletion%20v2",
+        "https://api.minimax.io/v1/text/chatcompletion_v2"
+      ]
+    },
+    {
+      "provider": "zhipu",
+      "runtimePath": "src/supernova/llm/providers/zhipu.gleam",
+      "endpoints": {
+        "general": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "coding": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+      },
+      "auth": "Bearer token; JWT generation when key is id.secret format",
+      "requestStyle": "OpenAI-compatible with optional thinking injection for supported models",
+      "notes": [
+        "Zhipu docs endpoint fetch timed out in probe; endpoint probe returned 401 without credentials.",
+        "Contract differences must be rechecked when touching GLM or CodeGeeX model families."
+      ],
+      "sourceUrls": [
+        "https://open.bigmodel.cn/dev/api",
+        "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+      ]
+    }
+  ]
+}
