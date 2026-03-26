@@ -25,7 +25,7 @@ import supernova/channel/session.{type SessionResolver, without_manager}
 // ============================================================================
 
 /// The bot's own phone number. Messages from this number are filtered out.
-const bot_phone_number: String = "15551234567"
+const bot_phone_number: String = "15550000000"  // Different from test fixtures
 
 // ============================================================================
 // Public API

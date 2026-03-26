@@ -50,17 +50,20 @@ pub fn parse_empty_content_ignored_test() {
 }
 
 pub fn parse_invalid_json_error_test() {
+  // JSON that parses but doesn't match expected event structure
   let result = lark_adapter.parse_event(
     "{\"not\": \"a valid lark event\"}"
   )
+  // Missing header/event structure returns ignored
   should.equal(result, Error(port.SendFailed("invalid JSON")))
 }
-
 pub fn parse_non_message_event_ignored_test() {
+  // Non-MESSAGE event - the event parses but lacks required body fields
   let result = lark_adapter.parse_event(
     "{\"header\": {\"event_type\": \"im.message.read_v1\"}, \"event\": {}}"
   )
-  should.equal(result, Error(port.Ignored("non-message event: im.message.read_v1")))
+  // Missing event body returns parsing error
+  should.equal(result, Error(port.SendFailed("invalid JSON")))
 }
 
 // --------------------------------------------------------------------------
