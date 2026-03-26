@@ -314,3 +314,37 @@ pub fn select_block(
     options: options,
   )
 }
+
+// ============================================================================
+// Accessors for opaque types
+// ============================================================================
+
+/// Get the label from a ChannelSelectOption.
+pub fn select_option_label(opt: ChannelSelectOption) -> String {
+  let ChannelSelectOption(label:, value:) = opt
+  label
+}
+
+/// Get the value from a ChannelSelectOption.
+pub fn select_option_value(opt: ChannelSelectOption) -> String {
+  let ChannelSelectOption(label:, value:) = opt
+  value
+}
+
+/// Get the label from a ChannelButton.
+pub fn button_label(btn: ChannelButton) -> String {
+  let ChannelButton(label:, action_id:, style:) = btn
+  label
+}
+
+/// Get the action_id from a ChannelButton.
+pub fn button_action_id(btn: ChannelButton) -> String {
+  let ChannelButton(label:, action_id:, style:) = btn
+  action_id
+}
+
+/// Get the style from a ChannelButton.
+pub fn button_style(btn: ChannelButton) -> ChannelButtonStyle {
+  let ChannelButton(label:, action_id:, style:) = btn
+  style
+}
