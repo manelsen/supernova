@@ -1,35 +1,26 @@
-//// WeChat Work Router — adapter contract entrypoint for WeChat Work channel.
-
+//// WeChat Work Router — wrapper integrating generic router pattern.
+///
 import gleam/otp/actor
 import supernova/adapters/generic_channel_router as generic
 import supernova/channel/port
 import supernova/llm/provider
 
-pub type WechatWorkRouteResult =
-  generic.RouteResult
+pub type WeChatWorkRouteResult = generic.RouteResult
+pub type WeChatWorkRouter = generic.GenericChannelRouter
 
-pub type WechatWorkRouter =
-  generic.GenericChannelRouter
-
-/// Starts the WeChat Work router actor.
-pub fn start(
-  llm_config: provider.ProviderConfig,
-) -> Result(WechatWorkRouter, actor.StartError) {
+pub fn start(llm_config: provider.ProviderConfig) -> Result(WeChatWorkRouter, actor.StartError) {
   generic.start("wechat_work", llm_config)
 }
 
-/// Routes a normalized WeChat Work message through the generic router.
-pub fn route(
-  router: WechatWorkRouter,
-  msg: port.ChannelMessage,
-) -> WechatWorkRouteResult {
+pub fn route(router: WeChatWorkRouter, msg: port.ChannelMessage) -> WeChatWorkRouteResult {
   generic.route(router, msg)
 }
 
-/// Routes a normalized WeChat Work inbound event through the generic router.
-pub fn route_inbound(
-  router: WechatWorkRouter,
-  inbound: port.ChannelInbound,
-) -> WechatWorkRouteResult {
+pub fn route_inbound(router: WeChatWorkRouter, inbound: port.ChannelInbound) -> WeChatWorkRouteResult {
   generic.route_inbound(router, inbound)
+}
+
+pub fn resolve_session_id(msg: port.ChannelMessage) -> String {
+  // WeCom uses FromUserName as user_id
+  "wechat_work:" <> msg.channel_id <> ":" <> msg.user_id
 }
