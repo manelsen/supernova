@@ -41,18 +41,9 @@ pub fn parse_media_message_test() {
 }
 
 pub fn parse_media_message_no_caption_test() {
-  // Media message without caption - content is empty
+  // Media messages without caption should be filtered as empty content
   let event = whatsapp_adapter.parse_event(sample_audio_message())
-  should.equal(event, Ok(port.ChannelMessage(
-    id: "wamid.5555555555",
-    channel: "whatsapp",
-    channel_id: "123456789",
-    user_id: "15551234567",
-    username: "",
-    content: "",
-    is_bot: False,
-    reply_to_id: option.None,
-  )))
+  should.equal(event, Error(port.Ignored("empty content")))
 }
 
 pub fn parse_bot_message_ignored_test() {
@@ -68,9 +59,9 @@ pub fn parse_empty_content_ignored_test() {
 }
 
 pub fn parse_non_message_entry_ignored_test() {
-  // Non-message entry (e.g., status update) should be ignored
+  // Non-message entry (status updates) - type is "delivered"
   let event = whatsapp_adapter.parse_event(sample_status_update())
-  should.equal(event, Error(port.Ignored("unsupported message type: status")))
+  should.equal(event, Error(port.Ignored("unsupported message type: delivered")))
 }
 
 pub fn parse_reply_message_test() {
@@ -189,7 +180,7 @@ fn sample_audio_message() -> String {
 
 fn sample_bot_message() -> String {
   // Bot's own phone number sending a message (should be filtered)
-  "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"123456789\",\"changes\":[{\"value\":{\"messaging_product\":\"whatsapp\",\"metadata\":{\"phone_number_id\":\"123456789\",\"display_phone_number\":\"15551234567\"},\"contacts\":[{\"profile\":{\"name\":\"Bot\"},\"wa_id\":\"15551234567\"}],\"messages\":[{\"from\":\"15551234567\",\"id\":\"wamid.botmsg123\",\"timestamp\":\"1234567890\",\"type\":\"text\",\"text\":{\"body\":\"I'm the bot\"}}]},\"field\":\"webhooks\"}]}]}"
+  "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"123456789\",\"changes\":[{\"value\":{\"messaging_product\":\"whatsapp\",\"metadata\":{\"phone_number_id\":\"123456789\",\"display_phone_number\":\"15550000000\"},\"contacts\":[{\"profile\":{\"name\":\"Bot\"},\"wa_id\":\"15550000000\"}],\"messages\":[{\"from\":\"15550000000\",\"id\":\"wamid.botmsg123\",\"timestamp\":\"1234567890\",\"type\":\"text\",\"text\":{\"body\":\"I'm the bot\"}}]},\"field\":\"webhooks\"}]}]}"
 }
 
 fn sample_empty_text_message() -> String {

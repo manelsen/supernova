@@ -21,77 +21,47 @@ pub fn start(
 }
 
 pub fn parse_event(event_json: String) -> Result(port.ChannelMessage, port.ChannelError) {
-  case extract_event_type(event_json) {
-    Ok("MESSAGE") -> {
-      case extract_space_name(event_json) {
-        Ok(space_name) -> {
-          case extract_msg_name(event_json) {
-            Ok(msg_name) -> {
-              case extract_msg_text(event_json) {
-                Ok(msg_text) -> {
-                  case extract_sender_name(event_json) {
-                    Ok(sender_name) -> {
-                      case extract_sender_type(event_json) {
-                        sender_type -> {
-                          normalize_message(space_name, msg_name, msg_text, sender_name, sender_type)
-                        }
-                      }
-                    }
-                    Error(_) -> Error(port.SendFailed("invalid JSON"))
-                  }
-                }
-                Error(_) -> Error(port.SendFailed("invalid JSON"))
+  case string.contains(event_json, "\"type\":\"MESSAGE\"") {
+    True -> parse_message_event(event_json)
+    False -> Error(port.Ignored("non-message event"))
+  }
+}
+
+fn parse_message_event(json: String) -> Result(port.ChannelMessage, port.ChannelError) {
+  let space_name = get_field_2(json, "\"space\"", "\"name\":\"")
+  let msg_name = get_field_2(json, "\"message\"", "\"name\":\"")
+  let msg_text = get_opt_field_2(json, "\"message\"", "\"text\":\"")
+  let sender_name = get_field_3(json, "\"message\"", "\"sender\"", "\"name\":\"")
+  let sender_type = get_opt_field_3(json, "\"message\"", "\"sender\"", "\"type\":\"")
+  let thread_name = get_opt_field_4(json, "\"message\"", "\"thread\"", "\"replyToMessage\"", "\"name\":\"")
+  
+  case space_name, msg_name, sender_name {
+    Some(space), Some(msg), Some(sender) -> {
+      case sender_type {
+        Some("BOT") -> Error(port.Ignored("bot sender filtered"))
+        _ -> {
+          case msg_text {
+            Some(text) -> {
+              case string.length(text) {
+                0 -> Error(port.Ignored("empty content"))
+                _ -> Ok(port.ChannelMessage(
+                  id: msg,
+                  channel: "google_chat",
+                  channel_id: space,
+                  user_id: sender,
+                  username: "",
+                  content: text,
+                  is_bot: False,
+                  reply_to_id: thread_name,
+                ))
               }
             }
-            Error(_) -> Error(port.SendFailed("invalid JSON"))
+            None -> Error(port.Ignored("empty content"))
           }
         }
-        Error(_) -> Error(port.SendFailed("invalid JSON"))
       }
     }
-    Ok(_) -> Error(port.Ignored("non-message event"))
-    Error(_) -> Error(port.SendFailed("invalid JSON"))
-  }
-}
-
-fn normalize_message(
-  space_name: String,
-  msg_name: String,
-  msg_text: Option(String),
-  sender_name: String,
-  sender_type: Option(String),
-) -> Result(port.ChannelMessage, port.ChannelError) {
-  // Check for bot sender
-  case sender_type {
-    Some("BOT") -> Error(port.Ignored("bot sender filtered"))
-    _ -> {
-      // Check for empty text
-      case msg_text {
-        Some(text) -> {
-          case is_empty_string(text) {
-            True -> Error(port.Ignored("empty content"))
-            False -> Ok(port.ChannelMessage(
-              id: msg_name,
-              channel: "google_chat",
-              channel_id: space_name,
-              user_id: sender_name,
-              username: "",
-              content: text,
-              is_bot: False,
-              reply_to_id: None,
-            ))
-          }
-        }
-        None -> Error(port.Ignored("empty content"))
-      }
-    }
-  }
-}
-
-fn is_empty_string(s: String) -> Bool {
-  case string.length(s) {
-    0 -> True
-    _ -> False
+    _, _, _ -> Error(port.SendFailed("missing required fields"))
   }
 }
 
@@ -115,75 +85,91 @@ pub fn session_resolver() -> SessionResolver {
 }
 
 // ============================================================================
-// Internal: Simple JSON Field Extraction
+// Internal: JSON Field Extraction
 // ============================================================================
 
-fn extract_event_type(json: String) -> Result(String, String) {
-  extract_quoted_field(json, "type")
-}
-
-fn extract_space_name(json: String) -> Result(String, String) {
-  case extract_quoted_field(json, "space") {
-    Ok(v) -> Ok(v)
-    Error(_) -> {
-      // Try nested: "space": {"name": "..."}
-      case extract_quoted_field(json, "name") {
-        Ok(v) -> Ok(v)
-        Error(e) -> Error(e)
+// 2-level extraction: parent -> field
+fn get_field_2(json: String, parent: String, field: String) -> Option(String) {
+  case string.split_once(json, parent) {
+    Ok(#(_, rest)) -> {
+      case string.split_once(rest, field) {
+        Ok(#(_, value_rest)) -> {
+          case string.split_once(value_rest, "\"") {
+            Ok(#(value, _)) -> Some(value)
+            Error(_) -> None
+          }
+        }
+        Error(_) -> None
       }
     }
-  }
-}
-
-fn extract_msg_name(json: String) -> Result(String, String) {
-  case extract_quoted_field(json, "name") {
-    Ok(v) -> Ok(v)
-    Error(_) -> {
-      case extract_quoted_field(json, "message") {
-        Ok(v) -> Ok(v)
-        Error(e) -> Error(e)
-      }
-    }
-  }
-}
-
-fn extract_msg_text(json: String) -> Result(Option(String), String) {
-  case extract_quoted_field(json, "text") {
-    Ok(v) -> Ok(Some(v))
-    Error(_) -> Ok(None)
-  }
-}
-
-fn extract_sender_name(json: String) -> Result(String, String) {
-  case extract_quoted_field(json, "sender") {
-    Ok(v) -> Ok(v)
-    Error(_) -> {
-      case extract_quoted_field(json, "name") {
-        Ok(v) -> Ok(v)
-        Error(e) -> Error(e)
-      }
-    }
-  }
-}
-
-fn extract_sender_type(json: String) -> Option(String) {
-  case extract_quoted_field(json, "type") {
-    Ok(v) -> Some(v)
     Error(_) -> None
   }
 }
 
-fn extract_quoted_field(json: String, field: String) -> Result(String, String) {
-  let pattern = "\"" <> field <> "\":\""
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      case string.split_once(rest, "\"") {
-        Ok(#(value, _)) -> Ok(value)
-        Error(_) -> Error("field not found: " <> field)
+// 2-level optional extraction
+fn get_opt_field_2(json: String, p1: String, field: String) -> Option(String) {
+  get_field_2(json, p1, field)
+}
+
+// 3-level extraction: parent1 -> parent2 -> field
+fn get_field_3(json: String, p1: String, p2: String, field: String) -> Option(String) {
+  case string.split_once(json, p1) {
+    Ok(#(_, after_p1)) -> {
+      case string.split_once(after_p1, p2) {
+        Ok(#(_, after_p2)) -> {
+          case string.split_once(after_p2, field) {
+            Ok(#(_, value_rest)) -> {
+              case string.split_once(value_rest, "\"") {
+                Ok(#(value, _)) -> Some(value)
+                Error(_) -> None
+              }
+            }
+            Error(_) -> None
+          }
+        }
+        Error(_) -> None
       }
     }
-    Error(_) -> Error("field not found: " <> field)
+    Error(_) -> None
   }
+}
+
+// 3-level optional extraction
+fn get_opt_field_3(json: String, p1: String, p2: String, field: String) -> Option(String) {
+  get_field_3(json, p1, p2, field)
+}
+
+// 4-level extraction: parent1 -> parent2 -> parent3 -> field
+fn get_field_4(json: String, p1: String, p2: String, p3: String, field: String) -> Option(String) {
+  case string.split_once(json, p1) {
+    Ok(#(_, after_p1)) -> {
+      case string.split_once(after_p1, p2) {
+        Ok(#(_, after_p2)) -> {
+          case string.split_once(after_p2, p3) {
+            Ok(#(_, after_p3)) -> {
+              case string.split_once(after_p3, field) {
+                Ok(#(_, value_rest)) -> {
+                  case string.split_once(value_rest, "\"") {
+                    Ok(#(value, _)) -> Some(value)
+                    Error(_) -> None
+                  }
+                }
+                Error(_) -> None
+              }
+            }
+            Error(_) -> None
+          }
+        }
+        Error(_) -> None
+      }
+    }
+    Error(_) -> None
+  }
+}
+
+// 4-level optional extraction
+fn get_opt_field_4(json: String, p1: String, p2: String, p3: String, field: String) -> Option(String) {
+  get_field_4(json, p1, p2, p3, field)
 }
 
 // ============================================================================

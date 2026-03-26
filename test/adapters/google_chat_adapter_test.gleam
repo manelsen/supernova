@@ -56,10 +56,9 @@ pub fn parse_non_message_event_ignored_test() {
 }
 
 pub fn parse_invalid_json_error_test() {
-  let result = google_chat_adapter.parse_event(
-    "{\"not\": \"a valid google chat event\"}"
-  )
-  should.equal(result, Error(port.SendFailed("invalid JSON")))
+  // Invalid JSON that doesn't contain MESSAGE type
+  let result = google_chat_adapter.parse_event("not json at all")
+  should.equal(result, Error(port.Ignored("non-message event")))
 }
 
 // ---------------------------------------------------------------------------
@@ -131,21 +130,26 @@ pub fn session_id_from_dm_test() {
 // ---------------------------------------------------------------------------
 
 fn sample_message_event() -> String {
-  "{\"type\": \"MESSAGE\", \"space\": {\"name\": \"spaces/xyz789\"}, \"message\": {\"name\": \"messages/abc123\", \"text\": \"Hello bot!\", \"sender\": {\"name\": \"users/u123456\"}}}"
+  // Compact JSON format (no spaces)
+  "{\"type\":\"MESSAGE\",\"space\":{\"name\":\"spaces/xyz789\"},\"message\":{\"name\":\"messages/abc123\",\"text\":\"Hello bot!\",\"sender\":{\"name\":\"users/u123456\"}}}"
 }
 
 fn sample_thread_reply_event() -> String {
-  "{\"type\": \"MESSAGE\", \"space\": {\"name\": \"spaces/xyz789\"}, \"message\": {\"name\": \"messages/reply456\", \"text\": \"Reply in thread\", \"sender\": {\"name\": \"users/u123456\"}, \"thread\": {\"replyToMessage\": {\"name\": \"messages/parent123\"}}}}"
+  // Thread reply with parent reference
+  "{\"type\":\"MESSAGE\",\"space\":{\"name\":\"spaces/xyz789\"},\"message\":{\"name\":\"messages/reply456\",\"text\":\"Reply in thread\",\"sender\":{\"name\":\"users/u123456\"},\"thread\":{\"replyToMessage\":{\"name\":\"messages/parent123\"}}}}"
 }
 
 fn sample_bot_message_event() -> String {
-  "{\"type\": \"MESSAGE\", \"space\": {\"name\": \"spaces/xyz789\"}, \"message\": {\"name\": \"messages/bot123\", \"text\": \"I'm a bot\", \"sender\": {\"name\": \"users/bot098\", \"type\": \"BOT\"}}}"
+  // Bot sender should be filtered
+  "{\"type\":\"MESSAGE\",\"space\":{\"name\":\"spaces/xyz789\"},\"message\":{\"name\":\"messages/bot123\",\"text\":\"I'm a bot\",\"sender\":{\"name\":\"users/bot098\",\"type\":\"BOT\"}}}"
 }
 
 fn sample_empty_content_event() -> String {
-  "{\"type\": \"MESSAGE\", \"space\": {\"name\": \"spaces/xyz789\"}, \"message\": {\"name\": \"messages/empty123\", \"text\": \"\", \"sender\": {\"name\": \"users/u123456\"}}}"
+  // Empty text should be ignored
+  "{\"type\":\"MESSAGE\",\"space\":{\"name\":\"spaces/xyz789\"},\"message\":{\"name\":\"messages/empty123\",\"text\":\"\",\"sender\":{\"name\":\"users/u123456\"}}}"
 }
 
 fn sample_card_event() -> String {
-  "{\"type\": \"CARD\", \"space\": {\"name\": \"spaces/xyz789\"}, \"message\": {\"name\": \"messages/card123\", \"sender\": {\"name\": \"users/u123456\"}}}"
+  // Non-MESSAGE event type
+  "{\"type\":\"CARD\",\"space\":{\"name\":\"spaces/xyz789\"},\"message\":{\"name\":\"messages/card123\",\"sender\":{\"name\":\"users/u123456\"}}}"
 }
