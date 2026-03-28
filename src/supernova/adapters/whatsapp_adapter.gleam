@@ -1,35 +1,56 @@
-//// WhatsApp Adapter — implements the ChannelPort contract for WhatsApp Cloud API.
+//// WhatsApp Adapter — implements the ChannelPort contract for WhatsApp.
 ////
-//// WhatsApp uses the Cloud API webhooks format. This adapter normalizes
-//// incoming webhook events to `ChannelMessage` and renders `ChannelReply`
-//// back to WhatsApp Cloud API message format.
+//// WhatsApp uses a Docker bridge server (e.g., go-whatsapp-web-multidevice)
+//// This adapter connects to the bridge REST API for sending messages.
 ////
-//// ## WhatsApp Cloud API Specifics
+//// ## WhatsApp Bridge Specifics
 ////
-//// - **Phone Number ID:** The `phone_number_id` from metadata is the channel_id
-//// - **User ID:** The user's WhatsApp number (`from` field) is the user_id
-//// - **Message Types:** text, image, audio, video, document, sticker, etc.
-//// - **Threading:** Via `context.message_id` field for replies
+//// - **Bridge URL:** Local Docker bridge server URL
+//// - **Authentication:** Via X-Device-Id header and/or Basic Auth
+//// - **Session ID:** chat_id format: `{phone}@s.whatsapp.net`
+//// - **Message Types:** text, image, audio, video, document, sticker
+//// - **Threading:** Via context/message_id field for replies
 ////
 
 import gleam/dynamic/decode
+import gleam/hackney
+import gleam/http
+import gleam/http/request
+import gleam/http/response.{type Response}
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import gleam/int
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
+
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
 /// The bot's own phone number. Messages from this number are filtered out.
-const bot_phone_number: String = "15550000000"  // Different from test fixtures
+const bot_phone_number: String = "15550000000"
 
-// ============================================================================
-// Public API
-// ============================================================================
+/// Default bridge URL when running in Docker
+const default_bridge_url = "http://localhost:3000"
+
+/// Start the WhatsApp adapter with the given bridge config.
+/// Returns a `ChannelAdapter` that the core uses to send replies.
+pub fn start(
+  bridge_url: String,
+  _handler: port.ChannelHandler,
+) -> Result(port.ChannelAdapter, String) {
+  let send_fn = fn(reply: port.ChannelReply) -> Result(Nil, port.ChannelError) {
+    do_send(bridge_url, reply)
+  }
+
+  Ok(port.ChannelAdapter(
+    name: "whatsapp",
+    send: send_fn,
+  ))
+}
 
 /// Parse a raw WhatsApp Cloud API webhook event JSON into a normalized `ChannelMessage`.
 /// Returns `Error(port.Ignored(...))` for events that should be filtered.
@@ -415,25 +436,83 @@ fn build_buttons(buttons: List(port.ChannelButton)) -> json.Json {
   })
 }
 
-// ============================================================================
-// Internal: Sending (Stub)
-// ============================================================================
+/// Internal: Sending via Docker bridge
+/// ============================================================================
 
 fn do_send(
-  _phone_number_id: String,
-  _access_token: String,
+  bridge_url: String,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
+  // Build the message payload for WhatsApp
   case build_reply_payload(reply) {
     Error(e) -> Error(e)
-    Ok(_payload) -> {
-      // TODO: Implement actual HTTP POST to WhatsApp Cloud API
-      // POST https://graph.facebook.com/v18.0/{phone_number_id}/messages
-      // Headers: Authorization: Bearer {access_token}
-      // Body: {payload}
-      //
-      // For now, return NotConnected to indicate this needs implementation
-      Error(port.NotConnected)
+    Ok(wa_payload) -> {
+      // Convert to bridge API format (go-whatsapp-web-multidevice)
+      let bridge_payload = build_bridge_payload(reply, wa_payload)
+      let body = json.to_string(bridge_payload)
+
+      // Build URL for sending text message
+      let url = bridge_url <> "/send/text"
+
+      // Create HTTP POST request
+      case request.to(url) {
+        Error(_) -> Error(port.SendFailed("invalid bridge URL"))
+        Ok(req) -> {
+          let req =
+            req
+            |> request.set_method(http.Post)
+            |> request.set_header("Content-Type", "application/json")
+            |> request.set_body(body)
+
+          case hackney.send(req) {
+            Ok(response) -> handle_bridge_response(response)
+            Error(hackney.InvalidUtf8Response) ->
+              Error(port.SendFailed("Invalid UTF-8 response from bridge"))
+            Error(hackney.Other(reason)) ->
+              Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+          }
+        }
+      }
     }
+  }
+}
+
+/// Build the bridge API payload from a ChannelReply.
+/// Converts to go-whatsapp-web-multidevice format.
+fn build_bridge_payload(reply: port.ChannelReply, _wa_payload: String) -> json.Json {
+  // go-whatsapp-web-multidevice expects: { "chat_id": "...", "text": "..." }
+  // The chat_id should be in format: {phone}@s.whatsapp.net
+  let chat_id = case string.contains(reply.channel_id, "@s.whatsapp.net") {
+    True -> reply.channel_id
+    False -> reply.channel_id <> "@s.whatsapp.net"
+  }
+
+  json.object([
+    #("chat_id", json.string(chat_id)),
+    #("text", json.string(reply.content)),
+  ])
+}
+
+/// Handle HTTP response from WhatsApp bridge.
+fn handle_bridge_response(response: Response(String)) -> Result(Nil, port.ChannelError) {
+  case response.status {
+    200 | 201 -> Ok(Nil)
+    400 -> Error(port.SendFailed("Bad request - invalid payload or chat_id"))
+    401 | 403 -> Error(port.SendFailed("Unauthorized - check bridge credentials"))
+    404 -> Error(port.SendFailed("Chat not found or session not ready"))
+    429 -> {
+      let retry_after = parse_bridge_retry_after(response.body)
+      Error(port.RateLimited(retry_after_seconds: retry_after))
+    }
+    503 -> Error(port.SendFailed("Bridge unavailable - WhatsApp session disconnected"))
+    status -> Error(port.SendFailed("Bridge error: " <> int.to_string(status)))
+  }
+}
+
+/// Parse retry_after from rate limit response.
+fn parse_bridge_retry_after(body: String) -> Int {
+  case json.parse(body, decode.field("retry_after", decode.int, fn(v) { decode.success(v) })) {
+    Ok(value) -> value
+    Error(_) -> 30
   }
 }
