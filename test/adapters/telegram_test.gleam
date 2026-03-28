@@ -669,6 +669,8 @@ fn decode_update() -> decode.Decoder(telegram.Update) {
     inline_query: inline_query,
     chosen_inline_result: chosen_inline_result,
     callback_query: callback_query,
+    poll_answer: None,
+    message_reaction: None,
   ))
 }
 
