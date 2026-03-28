@@ -211,7 +211,6 @@ fn handle_message(
               role: role,
               content: content,
               timestamp: 0,
-              // Placeholder - in production use :erlang.system_time(:millisecond) via FFI
             )
 
           // Add to memory

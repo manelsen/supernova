@@ -14,6 +14,11 @@
 ////
 
 import gleam/dynamic/decode
+import gleam/hackney
+import gleam/http
+import gleam/http/request
+import gleam/http/response.{type Response}
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -229,19 +234,84 @@ fn escape_json(s: String) -> String {
 // ============================================================================
 
 fn do_send(
-  _bot_token: String,
+  bot_token: String,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
+  // Build the message payload
   case build_reply_payload(reply) {
     Error(e) -> Error(e)
-    Ok(_payload) -> {
-      // TODO: Implement actual HTTP POST to Slack API
-      // POST https://slack.com/api/chat.postMessage
-      // Headers: Authorization: Bearer {bot_token}
-      // Body: {payload}
-      //
-      // For now, return NotConnected to indicate this needs implementation
-      Error(port.NotConnected)
+    Ok(payload) -> send_to_slack(bot_token, payload)
+  }
+}
+
+fn send_to_slack(bot_token: String, payload: String) -> Result(Nil, port.ChannelError) {
+  // Slack API endpoint for sending messages
+  let url = "https://slack.com/api/chat.postMessage"
+
+  // Build HTTP POST request using pipe operator
+  let req =
+    request.new()
+    |> request.set_method(http.Post)
+    |> request.set_header("Authorization", "Bearer " <> bot_token)
+    |> request.set_header("Content-Type", "application/json")
+
+  // Set the URL and body
+  let req_with_url = request.set_host(req, url)
+  let req_with_body = request.set_body(req_with_url, payload)
+
+  // Send the request
+  case hackney.send(req_with_body) {
+    Ok(response) -> handle_slack_response(response)
+    Error(hackney.InvalidUtf8Response) ->
+      Error(port.SendFailed("Invalid UTF-8 response from Slack"))
+    Error(hackney.Other(reason)) ->
+      Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+  }
+}
+
+/// Handle HTTP response from Slack API.
+fn handle_slack_response(response: Response(String)) -> Result(Nil, port.ChannelError) {
+  case response.status {
+    200 -> {
+      // Slack returns {"ok": true} on success
+      let ok_decoder = {
+        use ok <- decode.field("ok", decode.bool)
+        decode.success(ok)
+      }
+      case json.parse(from: response.body, using: ok_decoder) {
+        Ok(True) -> Ok(Nil)
+        Ok(False) -> {
+          // Extract error message from response
+          let error_decoder = {
+            use error <- decode.field("error", decode.string)
+            decode.success(error)
+          }
+          let error = case json.parse(from: response.body, using: error_decoder) {
+            Ok(msg) -> msg
+            Error(_) -> "Unknown error"
+          }
+          Error(port.SendFailed("Slack API error: " <> error))
+        }
+        Error(_) -> Error(port.SendFailed("Invalid Slack response"))
+      }
     }
+    401 -> Error(port.SendFailed("Unauthorized - check bot token"))
+    429 -> {
+      let retry_after = parse_slack_retry_after(response.body)
+      Error(port.RateLimited(retry_after_seconds: retry_after))
+    }
+    status -> Error(port.SendFailed("Slack error: " <> int.to_string(status)))
+  }
+}
+
+/// Parse retry_after from rate limit response.
+fn parse_slack_retry_after(body: String) -> Int {
+  let decoder = {
+    use value <- decode.field("retry_after", decode.int)
+    decode.success(value)
+  }
+  case json.parse(from: body, using: decoder) {
+    Ok(value) -> value
+    Error(_) -> 30
   }
 }

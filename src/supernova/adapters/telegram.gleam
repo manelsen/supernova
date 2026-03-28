@@ -160,6 +160,8 @@ pub type Update {
     inline_query: Option(InlineQuery),
     chosen_inline_result: Option(ChosenInlineResult),
     callback_query: Option(CallbackQuery),
+    poll_answer: Option(PollAnswer),
+    message_reaction: Option(MessageReaction),
   )
 }
 
@@ -188,6 +190,36 @@ pub type ChosenInlineResult {
 /// Telegram Location
 pub type Location {
   Location(latitude: Float, longitude: Float)
+}
+
+/// A single reaction (emoji, custom emoji, or paid star)
+pub type ReactionType {
+  ReactionType(
+    reaction_type: String,
+    emoji: Option(String),
+    custom_emoji_id: Option(String),
+  )
+}
+
+/// Poll answer submitted by a user
+pub type PollAnswer {
+  PollAnswer(
+    poll_id: String,
+    user: Option(User),
+    option_ids: List(Int),
+  )
+}
+
+/// Reaction change on a message
+pub type MessageReaction {
+  MessageReaction(
+    chat: Chat,
+    message_id: Int,
+    user: Option(User),
+    date: Int,
+    old_reaction: List(ReactionType),
+    new_reaction: List(ReactionType),
+  )
 }
 
 // ============================================================================
@@ -469,30 +501,50 @@ fn parse_updates_response(body: String) -> Result(List(Update), TelegramError) {
 /// Decode Update object
 fn decode_update() -> decode.Decoder(Update) {
   use update_id <- decode.field("update_id", decode.int)
-  use message <- decode.field("message", decode.optional(decode_message()))
-  use edited_message <- decode.field(
+  use message <- decode.optional_field(
+    "message",
+    None,
+    decode.optional(decode_message()),
+  )
+  use edited_message <- decode.optional_field(
     "edited_message",
+    None,
     decode.optional(decode_message()),
   )
-  use channel_post <- decode.field(
+  use channel_post <- decode.optional_field(
     "channel_post",
+    None,
     decode.optional(decode_message()),
   )
-  use edited_channel_post <- decode.field(
+  use edited_channel_post <- decode.optional_field(
     "edited_channel_post",
+    None,
     decode.optional(decode_message()),
   )
-  use inline_query <- decode.field(
+  use inline_query <- decode.optional_field(
     "inline_query",
+    None,
     decode.optional(decode_inline_query()),
   )
-  use chosen_inline_result <- decode.field(
+  use chosen_inline_result <- decode.optional_field(
     "chosen_inline_result",
+    None,
     decode.optional(decode_chosen_inline_result()),
   )
-  use callback_query <- decode.field(
+  use callback_query <- decode.optional_field(
     "callback_query",
+    None,
     decode.optional(decode_callback_query()),
+  )
+  use poll_answer <- decode.optional_field(
+    "poll_answer",
+    None,
+    decode.optional(decode_poll_answer()),
+  )
+  use message_reaction <- decode.optional_field(
+    "message_reaction",
+    None,
+    decode.optional(decode_message_reaction()),
   )
 
   decode.success(Update(
@@ -504,33 +556,51 @@ fn decode_update() -> decode.Decoder(Update) {
     inline_query: inline_query,
     chosen_inline_result: chosen_inline_result,
     callback_query: callback_query,
+    poll_answer: poll_answer,
+    message_reaction: message_reaction,
   ))
 }
 
 /// Decode Message object
 fn decode_message() -> decode.Decoder(Message) {
   use message_id <- decode.field("message_id", decode.int)
-  use from <- decode.field("from", decode.optional(decode_user()))
-  use sender_chat <- decode.field("sender_chat", decode.optional(decode_chat()))
+  use from <- decode.optional_field("from", None, decode.optional(decode_user()))
+  use sender_chat <- decode.optional_field(
+    "sender_chat",
+    None,
+    decode.optional(decode_chat()),
+  )
   use date <- decode.field("date", decode.int)
   use chat <- decode.field("chat", decode_chat())
-  use forward_from <- decode.field(
+  use forward_from <- decode.optional_field(
     "forward_from",
+    None,
     decode.optional(decode_user()),
   )
-  use forward_date <- decode.field("forward_date", decode.optional(decode.int))
-  use text <- decode.field("text", decode.optional(decode.string))
-  use caption <- decode.field("caption", decode.optional(decode.string))
-  use entities <- decode.field(
+  use forward_date <- decode.optional_field(
+    "forward_date",
+    None,
+    decode.optional(decode.int),
+  )
+  use text <- decode.optional_field("text", None, decode.optional(decode.string))
+  use caption <- decode.optional_field(
+    "caption",
+    None,
+    decode.optional(decode.string),
+  )
+  use entities <- decode.optional_field(
     "entities",
+    None,
     decode.optional(decode.list(decode_message_entity())),
   )
-  use caption_entities <- decode.field(
+  use caption_entities <- decode.optional_field(
     "caption_entities",
+    None,
     decode.optional(decode.list(decode_message_entity())),
   )
-  use reply_to_message <- decode.field(
+  use reply_to_message <- decode.optional_field(
     "reply_to_message",
+    None,
     decode.optional(decode.dynamic),
   )
   let reply_to_message_id = case reply_to_message {
@@ -571,10 +641,19 @@ fn decode_user() -> decode.Decoder(User) {
   use id <- decode.field("id", decode.int)
   use is_bot <- decode.field("is_bot", decode.bool)
   use first_name <- decode.field("first_name", decode.string)
-  use last_name <- decode.field("last_name", decode.optional(decode.string))
-  use username <- decode.field("username", decode.optional(decode.string))
-  use language_code <- decode.field(
+  use last_name <- decode.optional_field(
+    "last_name",
+    None,
+    decode.optional(decode.string),
+  )
+  use username <- decode.optional_field(
+    "username",
+    None,
+    decode.optional(decode.string),
+  )
+  use language_code <- decode.optional_field(
     "language_code",
+    None,
     decode.optional(decode.string),
   )
 
@@ -592,10 +671,22 @@ fn decode_user() -> decode.Decoder(User) {
 fn decode_chat() -> decode.Decoder(Chat) {
   use id <- decode.field("id", decode.int)
   use chat_type_str <- decode.field("type", decode.string)
-  use title <- decode.field("title", decode.optional(decode.string))
-  use username <- decode.field("username", decode.optional(decode.string))
-  use first_name <- decode.field("first_name", decode.optional(decode.string))
-  use last_name <- decode.field("last_name", decode.optional(decode.string))
+  use title <- decode.optional_field("title", None, decode.optional(decode.string))
+  use username <- decode.optional_field(
+    "username",
+    None,
+    decode.optional(decode.string),
+  )
+  use first_name <- decode.optional_field(
+    "first_name",
+    None,
+    decode.optional(decode.string),
+  )
+  use last_name <- decode.optional_field(
+    "last_name",
+    None,
+    decode.optional(decode.string),
+  )
 
   let chat_type = parse_chat_type(chat_type_str)
 
@@ -672,17 +763,28 @@ fn parse_message_entity_type(type_str: String) -> MessageEntityType {
 
 /// Decode CallbackQuery object
 fn decode_callback_query() -> decode.Decoder(CallbackQuery) {
-  use id <- decode.field("id", decode.string)
+  // Telegram's API specifies id as String, but some clients/sanitized fixtures
+  // may emit it as an integer — accept both.
+  use id <- decode.field(
+    "id",
+    decode.one_of(decode.string, [decode.map(decode.int, int.to_string)]),
+  )
   use from <- decode.field("from", decode_user())
-  use message <- decode.field("message", decode.optional(decode_message()))
-  use inline_message_id <- decode.field(
+  use message <- decode.optional_field(
+    "message",
+    None,
+    decode.optional(decode_message()),
+  )
+  use inline_message_id <- decode.optional_field(
     "inline_message_id",
+    None,
     decode.optional(decode.string),
   )
   use chat_instance <- decode.field("chat_instance", decode.string)
-  use data <- decode.field("data", decode.optional(decode.string))
-  use game_short_name <- decode.field(
+  use data <- decode.optional_field("data", None, decode.optional(decode.string))
+  use game_short_name <- decode.optional_field(
     "game_short_name",
+    None,
     decode.optional(decode.string),
   )
 
@@ -745,6 +847,65 @@ fn decode_location() -> decode.Decoder(Location) {
   use longitude <- decode.field("longitude", decode.float)
 
   decode.success(Location(latitude: latitude, longitude: longitude))
+}
+
+/// Decode ReactionType object
+fn decode_reaction_type() -> decode.Decoder(ReactionType) {
+  use reaction_type <- decode.field("type", decode.string)
+  use emoji <- decode.optional_field("emoji", None, decode.optional(decode.string))
+  use custom_emoji_id <- decode.optional_field(
+    "custom_emoji_id",
+    None,
+    decode.optional(decode.string),
+  )
+
+  decode.success(ReactionType(
+    reaction_type: reaction_type,
+    emoji: emoji,
+    custom_emoji_id: custom_emoji_id,
+  ))
+}
+
+/// Decode PollAnswer object
+fn decode_poll_answer() -> decode.Decoder(PollAnswer) {
+  use poll_id <- decode.field("poll_id", decode.string)
+  use user <- decode.optional_field(
+    "user",
+    None,
+    decode.optional(decode_user()),
+  )
+  use option_ids <- decode.field("option_ids", decode.list(decode.int))
+
+  decode.success(PollAnswer(poll_id: poll_id, user: user, option_ids: option_ids))
+}
+
+/// Decode MessageReaction object
+fn decode_message_reaction() -> decode.Decoder(MessageReaction) {
+  use chat <- decode.field("chat", decode_chat())
+  use message_id <- decode.field("message_id", decode.int)
+  use user <- decode.optional_field(
+    "user",
+    None,
+    decode.optional(decode_user()),
+  )
+  use date <- decode.field("date", decode.int)
+  use old_reaction <- decode.field(
+    "old_reaction",
+    decode.list(decode_reaction_type()),
+  )
+  use new_reaction <- decode.field(
+    "new_reaction",
+    decode.list(decode_reaction_type()),
+  )
+
+  decode.success(MessageReaction(
+    chat: chat,
+    message_id: message_id,
+    user: user,
+    date: date,
+    old_reaction: old_reaction,
+    new_reaction: new_reaction,
+  ))
 }
 
 // ============================================================================
@@ -922,7 +1083,11 @@ pub fn get_chat_id(update: Update) -> Option(ChatId) {
                 Some(message) -> Some(message.chat.id)
                 None -> None
               }
-            None -> None
+            None ->
+              case update.message_reaction {
+                Some(reaction) -> Some(reaction.chat.id)
+                None -> None
+              }
           }
       }
   }
@@ -935,7 +1100,15 @@ pub fn get_user(update: Update) -> Option(User) {
     None ->
       case update.callback_query {
         Some(callback) -> Some(callback.from)
-        None -> None
+        None ->
+          case update.poll_answer {
+            Some(answer) -> answer.user
+            None ->
+              case update.message_reaction {
+                Some(reaction) -> reaction.user
+                None -> None
+              }
+          }
       }
   }
 }
@@ -1388,6 +1561,34 @@ pub fn send_or_edit_message(
     None -> send_message_with_options(config, chat_id, text, options)
     Some(id) ->
       edit_message_text_with_options(config, chat_id, id, text, options)
+  }
+}
+
+// ============================================================================
+// Public Parse Helpers (for testing and direct JSON ingestion)
+// ============================================================================
+
+/// Parse a single Update object from a JSON string.
+pub fn parse_update(json_str: String) -> Result(Update, String) {
+  case json.parse(from: json_str, using: decode_update()) {
+    Ok(update) -> Ok(update)
+    Error(err) -> Error(string.inspect(err))
+  }
+}
+
+/// Parse a raw JSON array of Update objects (not the API envelope).
+pub fn parse_updates_array(json_str: String) -> Result(List(Update), String) {
+  case json.parse(from: json_str, using: decode.list(decode_update())) {
+    Ok(updates) -> Ok(updates)
+    Error(err) -> Error(string.inspect(err))
+  }
+}
+
+/// Parse a single CallbackQuery object from a JSON string.
+pub fn parse_callback_query(json_str: String) -> Result(CallbackQuery, String) {
+  case json.parse(from: json_str, using: decode_callback_query()) {
+    Ok(cb) -> Ok(cb)
+    Error(err) -> Error(string.inspect(err))
   }
 }
 
