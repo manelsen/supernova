@@ -15,12 +15,19 @@
 ////
 
 import gleam/dynamic/decode
+import gleam/erlang/reference
+import gleam/hackney
+import gleam/http
+import gleam/http/request
+import gleam/http/response.{type Response}
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
+
 
 // ============================================================================
 // Public API
@@ -295,21 +302,77 @@ fn strip_remaining_tags(s: String) -> String {
 // ============================================================================
 
 fn do_send(
-  _homeserver_url: String,
-  _access_token: String,
+  homeserver_url: String,
+  access_token: String,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
   // Build the message payload
   case build_send_payload(reply) {
     Error(e) -> Error(e)
-    Ok(_payload) -> {
-      // TODO: Implement actual HTTP PUT to homeserver
-      // PUT /_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}
-      // Headers: Authorization: Bearer {access_token}
-      // Body: {payload}
-      //
-      // For now, return NotConnected to indicate this needs implementation
-      Error(port.NotConnected)
+    Ok(payload) -> {
+      let room_id = reply.channel_id
+      let txn_id = generate_txn_id()
+      let encoded_room_id = string.replace(room_id, each: ":", with: "%3A")
+      let url =
+        homeserver_url
+        <> "/_matrix/client/v3/rooms/"
+        <> encoded_room_id
+        <> "/send/m.room.message/"
+        <> txn_id
+
+      case request.to(url) {
+        Error(_) -> Error(port.SendFailed("invalid URL"))
+        Ok(req) -> {
+          let req =
+            req
+            |> request.set_method(http.Put)
+            |> request.set_header("Authorization", "Bearer " <> access_token)
+            |> request.set_header("Content-Type", "application/json")
+            |> request.set_body(payload)
+
+          case hackney.send(req) {
+            Ok(response) -> handle_matrix_response(response)
+            Error(hackney.InvalidUtf8Response) ->
+              Error(port.SendFailed("Invalid UTF-8 response from homeserver"))
+            Error(hackney.Other(reason)) ->
+              Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+          }
+        }
+      }
     }
+  }
+}
+
+/// Generate a unique transaction ID for message sending.
+/// Uses a new Erlang reference to guarantee uniqueness.
+fn generate_txn_id() -> String {
+  let ref = reference.new()
+  "m" <> string.replace(string.inspect(ref), each: "#Ref<", with: "")
+  |> string.replace(each: ">", with: "")
+  |> string.replace(each: ".", with: "_")
+}
+
+/// Handle HTTP response from Matrix homeserver.
+fn handle_matrix_response(response: Response(String)) -> Result(Nil, port.ChannelError) {
+  case response.status {
+    200 | 201 -> Ok(Nil)
+    401 -> Error(port.SendFailed("Unauthorized - check access token"))
+    403 -> Error(port.SendFailed("Forbidden - no permission to send in room"))
+    404 -> Error(port.SendFailed("Room not found"))
+    429 -> {
+      // Rate limited - try to parse retry_after
+      let retry_after = parse_retry_after(response.body)
+      Error(port.RateLimited(retry_after_seconds: retry_after))
+    }
+    status -> Error(port.SendFailed("Homeserver error: " <> int.to_string(status)))
+  }
+}
+
+/// Parse retry_after from rate limit response.
+fn parse_retry_after(body: String) -> Int {
+  let decoder = decode.field("retry_after_ms", decode.int, fn(v) { decode.success(v) })
+  case json.parse(body, decoder) {
+    Ok(ms) -> ms / 1000
+    Error(_) -> 30
   }
 }

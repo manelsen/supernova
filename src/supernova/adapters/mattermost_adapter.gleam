@@ -13,9 +13,14 @@
 //// - **Message format:** Uses `message` field for text content
 
 import gleam/dynamic/decode
+import gleam/hackney
+import gleam/http
+import gleam/http/request
+import gleam/http/response.{type Response}
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import gleam/int
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
 
@@ -156,24 +161,56 @@ fn normalize_user_event(event: MattermostEvent) -> Result(port.ChannelMessage, p
   }
 }
 
-// ============================================================================
-// Internal: Sending
-// ============================================================================
-
 fn do_send(
-  _webhook_url: String,
+  webhook_url: String,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
+  // Build the message payload
   case build_reply_payload(reply) {
     Error(e) -> Error(e)
-    Ok(_payload) -> {
-      // TODO: Implement actual HTTP POST to Mattermost webhook/API
-      // POST {webhook_url}
-      // Headers: Content-Type: application/json
-      // Body: {payload}
-      //
-      // For now, return NotConnected to indicate this needs implementation
-      Error(port.NotConnected)
+    Ok(payload) -> {
+      case request.to(webhook_url) {
+        Error(_) -> Error(port.SendFailed("invalid webhook URL"))
+        Ok(req) -> {
+          let req =
+            req
+            |> request.set_method(http.Post)
+            |> request.set_header("Content-Type", "application/json")
+            |> request.set_body(payload)
+
+          case hackney.send(req) {
+            Ok(response) -> handle_mattermost_response(response)
+            Error(hackney.InvalidUtf8Response) ->
+              Error(port.SendFailed("Invalid UTF-8 response from Mattermost"))
+            Error(hackney.Other(reason)) ->
+              Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+          }
+        }
+      }
     }
+  }
+}
+
+/// Handle HTTP response from Mattermost webhook.
+fn handle_mattermost_response(response: Response(String)) -> Result(Nil, port.ChannelError) {
+  case response.status {
+    200 | 201 -> Ok(Nil)
+    400 -> Error(port.SendFailed("Bad request - invalid payload"))
+    401 -> Error(port.SendFailed("Unauthorized - check webhook URL"))
+    403 -> Error(port.SendFailed("Forbidden - no permission to post"))
+    429 -> {
+      let retry_after = parse_mattermost_retry_after(response.body)
+      Error(port.RateLimited(retry_after_seconds: retry_after))
+    }
+    status -> Error(port.SendFailed("Mattermost error: " <> int.to_string(status)))
+  }
+}
+
+/// Parse retry_after from rate limit response.
+fn parse_mattermost_retry_after(body: String) -> Int {
+  // Mattermost may include retry_after in response body
+  case json.parse(body, decode.field("retry_after", decode.int, fn(v) { decode.success(v) })) {
+    Ok(value) -> value
+    Error(_) -> 30
   }
 }
