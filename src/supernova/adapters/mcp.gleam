@@ -551,7 +551,6 @@ fn handle_message(
               ConnectionState(
                 ..state,
                 last_health_check: 0,
-                // Placeholder timestamp
                 failed_health_checks: 0,
               )
             Unhealthy(_) ->
