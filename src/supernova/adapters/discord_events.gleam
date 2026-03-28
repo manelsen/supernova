@@ -864,11 +864,12 @@ pub fn parse_event(event_name: String, raw_data: String) -> ParsedEvent {
 
 /// Parse a MESSAGE_CREATE event
 pub fn parse_message(data: String) -> Result(Message, Nil) {
+  let top = strip_nested_objects(data)
   case
-    json_decode_string_field(data, "id"),
-    json_decode_string_field(data, "channel_id"),
-    json_decode_string_field(data, "content"),
-    json_decode_string_field(data, "timestamp")
+    json_decode_string_field(top, "id"),
+    json_decode_string_field(top, "channel_id"),
+    json_decode_string_field(top, "content"),
+    json_decode_string_field(top, "timestamp")
   {
     Some(id), Some(channel_id), Some(content), Some(timestamp) -> {
       let author_data = json_decode_object_field(data, "author")
@@ -877,24 +878,24 @@ pub fn parse_message(data: String) -> Result(Message, Nil) {
       Ok(Message(
         id: id,
         channel_id: channel_id,
-        guild_id: json_decode_string_field(data, "guild_id"),
+        guild_id: json_decode_string_field(top, "guild_id"),
         author: author,
         member: parse_optional_member(data),
         content: content,
         timestamp: timestamp,
-        edited_timestamp: json_decode_string_field(data, "edited_timestamp"),
-        tts: json_decode_bool_field(data, "tts") |> option.unwrap(False),
-        mention_everyone: json_decode_bool_field(data, "mention_everyone")
+        edited_timestamp: json_decode_string_field(top, "edited_timestamp"),
+        tts: json_decode_bool_field(top, "tts") |> option.unwrap(False),
+        mention_everyone: json_decode_bool_field(top, "mention_everyone")
           |> option.unwrap(False),
         mentions: parse_mentions(data),
         mention_roles: parse_mention_roles(data),
         attachments: [],
         embeds: [],
         reactions: [],
-        pinned: json_decode_bool_field(data, "pinned") |> option.unwrap(False),
-        webhook_id: json_decode_string_field(data, "webhook_id"),
+        pinned: json_decode_bool_field(top, "pinned") |> option.unwrap(False),
+        webhook_id: json_decode_string_field(top, "webhook_id"),
         message_reference: parse_message_reference(data),
-        flags: json_decode_int_field(data, "flags"),
+        flags: json_decode_int_field(top, "flags"),
       ))
     }
     _, _, _, _ -> Error(Nil)
@@ -903,19 +904,18 @@ pub fn parse_message(data: String) -> Result(Message, Nil) {
 
 /// Parse a MESSAGE_UPDATE event (partial message data)
 fn parse_message_update(data: String) -> ParsedEvent {
-  let id = json_decode_string_field(data, "id") |> option.unwrap("unknown")
+  let top = strip_nested_objects(data)
+  let id = json_decode_string_field(top, "id") |> option.unwrap("unknown")
   let channel_id =
-    json_decode_string_field(data, "channel_id") |> option.unwrap("unknown")
-  let guild_id = json_decode_string_field(data, "guild_id")
-  let content = json_decode_string_field(data, "content")
-  let edited_timestamp = json_decode_string_field(data, "edited_timestamp")
+    json_decode_string_field(top, "channel_id") |> option.unwrap("unknown")
+  let guild_id = json_decode_string_field(top, "guild_id")
+  let content = json_decode_string_field(top, "content")
+  let edited_timestamp = json_decode_string_field(top, "edited_timestamp")
 
-  let author = case json_decode_string_field(data, "author") {
-    Some(_) -> {
-      let author_data = json_decode_object_field(data, "author")
-      Some(parse_user(author_data))
-    }
-    None -> None
+  let author_data = json_decode_object_field(data, "author")
+  let author = case author_data == "{}" {
+    True -> None
+    False -> Some(parse_user(author_data))
   }
 
   EventMessageUpdate(
@@ -940,11 +940,12 @@ fn parse_message_delete(data: String) -> ParsedEvent {
 
 /// Parse an INTERACTION_CREATE event
 pub fn parse_interaction(data: String) -> Result(Interaction, Nil) {
+  let top = strip_nested_objects(data)
   case
-    json_decode_string_field(data, "id"),
-    json_decode_string_field(data, "application_id"),
-    json_decode_int_field(data, "type"),
-    json_decode_string_field(data, "token")
+    json_decode_string_field(top, "id"),
+    json_decode_string_field(top, "application_id"),
+    json_decode_int_field(top, "type"),
+    json_decode_string_field(top, "token")
   {
     Some(id), Some(app_id), Some(type_code), Some(token) -> {
       let interaction_type = int_to_interaction_type(type_code)
@@ -954,15 +955,15 @@ pub fn parse_interaction(data: String) -> Result(Interaction, Nil) {
         application_id: app_id,
         interaction_type: interaction_type,
         data: parse_interaction_data(data),
-        guild_id: json_decode_string_field(data, "guild_id"),
-        channel_id: json_decode_string_field(data, "channel_id"),
+        guild_id: json_decode_string_field(top, "guild_id"),
+        channel_id: json_decode_string_field(top, "channel_id"),
         member: parse_optional_member(data),
         user: parse_optional_user(data),
         token: token,
-        version: json_decode_int_field(data, "version") |> option.unwrap(1),
-        app_permissions: json_decode_string_field(data, "app_permissions"),
-        locale: json_decode_string_field(data, "locale"),
-        guild_locale: json_decode_string_field(data, "guild_locale"),
+        version: json_decode_int_field(top, "version") |> option.unwrap(1),
+        app_permissions: json_decode_string_field(top, "app_permissions"),
+        locale: json_decode_string_field(top, "locale"),
+        guild_locale: json_decode_string_field(top, "guild_locale"),
       ))
     }
     _, _, _, _ -> Error(Nil)
@@ -1306,6 +1307,104 @@ fn int_to_option_type(code: Int) -> ApplicationCommandOptionType {
 // ============================================================================
 // JSON Parsing Helpers
 // ============================================================================
+
+/// Strip all nested objects/arrays from a JSON object string, replacing each
+/// with `{}` or `[]`. This lets scalar field extraction via split_once
+/// operate on top-level fields only, avoiding false matches in nested objects.
+fn strip_nested_objects(json: String) -> String {
+  do_strip_nested(string.to_graphemes(json), 0, False, [])
+}
+
+fn do_strip_nested(
+  chars: List(String),
+  depth: Int,
+  in_string: Bool,
+  acc: List(String),
+) -> String {
+  case chars {
+    [] -> string.concat(list.reverse(acc))
+    [first, ..rest] ->
+      case in_string {
+        True ->
+          case first {
+            "\\" ->
+              case rest {
+                [] -> string.concat(list.reverse([first, ..acc]))
+                [escaped, ..rest2] ->
+                  do_strip_nested(rest2, depth, True, [escaped, first, ..acc])
+              }
+            "\"" -> do_strip_nested(rest, depth, False, [first, ..acc])
+            _ -> do_strip_nested(rest, depth, True, [first, ..acc])
+          }
+        False ->
+          case first {
+            "\"" -> do_strip_nested(rest, depth, True, [first, ..acc])
+            "{" ->
+              case depth >= 1 {
+                True -> {
+                  let remaining = skip_nested(rest, "{", "}", 1)
+                  do_strip_nested(remaining, depth, False, ["}", "{", ..acc])
+                }
+                False ->
+                  do_strip_nested(rest, depth + 1, False, [first, ..acc])
+              }
+            "}" -> do_strip_nested(rest, depth - 1, False, [first, ..acc])
+            "[" ->
+              case depth >= 1 {
+                True -> {
+                  let remaining = skip_nested(rest, "[", "]", 1)
+                  do_strip_nested(remaining, depth, False, ["]", "[", ..acc])
+                }
+                False ->
+                  do_strip_nested(rest, depth + 1, False, [first, ..acc])
+              }
+            "]" -> do_strip_nested(rest, depth - 1, False, [first, ..acc])
+            _ -> do_strip_nested(rest, depth, False, [first, ..acc])
+          }
+      }
+  }
+}
+
+fn skip_nested(
+  chars: List(String),
+  open: String,
+  close: String,
+  depth: Int,
+) -> List(String) {
+  case chars {
+    [] -> []
+    [first, ..rest] ->
+      case first {
+        "\"" -> skip_nested(skip_string_chars(rest), open, close, depth)
+        _ ->
+          case first == open {
+            True -> skip_nested(rest, open, close, depth + 1)
+            False ->
+              case first == close {
+                True ->
+                  case depth - 1 {
+                    0 -> rest
+                    new_depth -> skip_nested(rest, open, close, new_depth)
+                  }
+                False -> skip_nested(rest, open, close, depth)
+              }
+          }
+      }
+  }
+}
+
+fn skip_string_chars(chars: List(String)) -> List(String) {
+  case chars {
+    [] -> []
+    ["\\", ..rest] ->
+      case rest {
+        [] -> []
+        [_, ..rest2] -> skip_string_chars(rest2)
+      }
+    ["\"", ..rest] -> rest
+    [_, ..rest] -> skip_string_chars(rest)
+  }
+}
 
 /// Decode a string field from JSON string
 fn json_decode_string_field(json: String, field: String) -> Option(String) {
