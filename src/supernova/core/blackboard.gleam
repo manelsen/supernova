@@ -171,8 +171,6 @@ fn is_expired(entry: Entry, current_time: Int) -> Bool {
     Some(ttl) -> current_time >= entry.created_at + ttl
   }
 }
-
-/// Get current timestamp (placeholder - in production use :erlang.system_time)
 fn get_current_time() -> Int {
   0
 }
