@@ -8,6 +8,7 @@
 //// 5. Awaiting shutdown signal (Ctrl+C)
 //// 6. Graceful shutdown: channels → sessions → MCP servers
 
+import gleam/dict
 import gleam/erlang/process
 import gleam/int
 import gleam/io
@@ -17,6 +18,7 @@ import supernova/adapters/mcp/config_loader
 import supernova/adapters/mcp_manager
 import supernova/config
 import supernova/core/session/supervisor
+import supernova/channel/registry
 
 /// Starts Supernova, boots core services, and waits for shutdown.
 pub fn main() -> Nil {
@@ -110,11 +112,12 @@ pub type Services {
   Services(
     session_supervisor: supervisor.SessionSupervisor,
     mcp_manager: mcp_manager.MCPManager,
+    channel_registry: registry.ChannelRegistry,
   )
 }
 
 /// Start all core services
-fn start_services(_cfg: config.Config) -> Result(Services, String) {
+fn start_services(cfg: config.Config) -> Result(Services, String) {
   // Start Session Supervisor
   use session_sup <- result.try(
     supervisor.start()
@@ -142,12 +145,22 @@ fn start_services(_cfg: config.Config) -> Result(Services, String) {
       }
     }
   }
+  // Start channel adapters based on config
+  io.println("")
+  io.println("Starting channel adapters...")
+  let channel_reg = case registry.start_channels(cfg) {
+    Ok(reg) -> reg
+    Error(reason) -> {
+      io.println("Warning: Failed to start some channels: " <> reason)
+      registry.ChannelRegistry(channels: dict.new())
+    }
+  }
 
-  // TODO: Start channel adapters based on config
-  // - Telegram / Discord adapters
-  // - Matrix / Lark / Google Chat / Slack / Mattermost / WeChat Work / WhatsApp
-
-  Ok(Services(session_supervisor: session_sup, mcp_manager: mcp_mgr))
+  Ok(Services(
+    session_supervisor: session_sup,
+    mcp_manager: mcp_mgr,
+    channel_registry: channel_reg,
+  ))
 }
 
 fn register_mcp_servers(
@@ -171,8 +184,7 @@ fn shutdown_services(services: Services) -> Nil {
   io.println("🛑 Shutting down...")
 
   // 1. Stop channels first (no new messages)
-  // TODO: Stop Telegram poller
-  // TODO: Stop Discord gateway
+  registry.stop_channels(services.channel_registry)
 
   // 2. Stop sessions (complete ongoing conversations)
   supervisor.stop(services.session_supervisor)
