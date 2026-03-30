@@ -7,7 +7,7 @@
 //// ## Usage
 ////
 //// ```gleam
-//// let assert Ok(router) = discord_router.start(session_mgr, llm_config)
+//// let assert Ok(router) = discord_router.start(llm_config)
 //// let msg =
 ////   port.ChannelMessage(
 ////     id: "msg_1",
@@ -23,10 +23,12 @@
 //// ```
 
 import gleam/erlang/process.{type Subject}
+import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import supernova/adapters/channel_common_router
-import supernova/adapters/discord_session
 import supernova/channel/port
+import supernova/channel/session
+import supernova/core/session/supervisor
 import supernova/llm/provider
 
 // ============================================================================
@@ -41,15 +43,23 @@ pub type IncomingMessage =
 pub type RouteResult =
   Result(port.ChannelReply, port.ChannelError)
 
+pub type HandlerRouteResult =
+  Result(port.ChannelHandlerResult, port.ChannelError)
+
 /// Messages for the router actor.
 pub type RouterMessage {
   HandleInbound(reply_to: Subject(RouteResult), inbound: port.ChannelInbound)
+  HandleInboundForHandler(
+    reply_to: Subject(HandlerRouteResult),
+    inbound: port.ChannelInbound,
+    stream_events: Subject(port.ChannelStreamEvent),
+  )
 }
 
 /// Router state.
 type RouterState {
   RouterState(
-    session_mgr: discord_session.DiscordSessionManager,
+    session_supervisor: Option(supervisor.SessionSupervisor),
     llm_config: provider.ProviderConfig,
     interactive_state: channel_common_router.InteractiveRouterState,
   )
@@ -69,14 +79,52 @@ fn handle_message(
 ) -> actor.Next(RouterState, RouterMessage) {
   case message {
     HandleInbound(reply_to, inbound) -> {
-      let #(next_interactive_state, result) =
-        channel_common_router.handle_inbound(
-          "discord",
-          inbound,
-          state.llm_config,
-          state.interactive_state,
-          resolve_session(state.session_mgr),
-        )
+      let #(next_interactive_state, result) = case state.session_supervisor {
+        Some(session_supervisor) ->
+          channel_common_router.handle_inbound_with_session_supervisor(
+            "discord",
+            inbound,
+            state.llm_config,
+            state.interactive_state,
+            resolve_session,
+            session_supervisor,
+          )
+        None ->
+          channel_common_router.handle_inbound(
+            "discord",
+            inbound,
+            state.llm_config,
+            state.interactive_state,
+            resolve_session,
+          )
+      }
+      actor.send(reply_to, result)
+      actor.continue(
+        RouterState(..state, interactive_state: next_interactive_state),
+      )
+    }
+    HandleInboundForHandler(reply_to, inbound, stream_events) -> {
+      let #(next_interactive_state, result) = case state.session_supervisor {
+        Some(session_supervisor) ->
+          channel_common_router.handle_inbound_with_session_supervisor_for_handler(
+            "discord",
+            inbound,
+            state.llm_config,
+            state.interactive_state,
+            resolve_session,
+            session_supervisor,
+            stream_events,
+          )
+        None ->
+          channel_common_router.handle_inbound_for_handler(
+            "discord",
+            inbound,
+            state.llm_config,
+            state.interactive_state,
+            resolve_session,
+            stream_events,
+          )
+      }
       actor.send(reply_to, result)
       actor.continue(
         RouterState(..state, interactive_state: next_interactive_state),
@@ -91,12 +139,26 @@ fn handle_message(
 
 /// Start a new Discord message router.
 pub fn start(
-  session_mgr: discord_session.DiscordSessionManager,
+  llm_config: provider.ProviderConfig,
+) -> Result(DiscordRouter, actor.StartError) {
+  start_with_optional_session_supervisor(None, llm_config)
+}
+
+/// Start a new Discord message router backed by the shared session supervisor.
+pub fn start_with_session_supervisor(
+  session_supervisor: supervisor.SessionSupervisor,
+  llm_config: provider.ProviderConfig,
+) -> Result(DiscordRouter, actor.StartError) {
+  start_with_optional_session_supervisor(Some(session_supervisor), llm_config)
+}
+
+fn start_with_optional_session_supervisor(
+  session_supervisor: Option(supervisor.SessionSupervisor),
   llm_config: provider.ProviderConfig,
 ) -> Result(DiscordRouter, actor.StartError) {
   let initial_state =
     RouterState(
-      session_mgr: session_mgr,
+      session_supervisor: session_supervisor,
       llm_config: llm_config,
       interactive_state: channel_common_router.new_interactive_state(),
     )
@@ -126,13 +188,19 @@ pub fn route_inbound(
   actor.call(router, waiting: 30_000, sending: HandleInbound(_, inbound))
 }
 
-fn resolve_session(
-  session_mgr: discord_session.DiscordSessionManager,
-) -> channel_common_router.ResolveSessionFromParticipant {
-  fn(channel_id, user_id) {
-    case discord_session.get_or_create(session_mgr, channel_id, user_id) {
-      Ok(id) -> id
-      Error(_) -> "discord:" <> channel_id <> ":" <> user_id
-    }
-  }
+/// Route an inbound Discord event for the channel runtime handler.
+pub fn route_inbound_for_handler(
+  router: DiscordRouter,
+  inbound: port.ChannelInbound,
+  stream_events: Subject(port.ChannelStreamEvent),
+) -> HandlerRouteResult {
+  actor.call(router, waiting: 30_000, sending: HandleInboundForHandler(
+    _,
+    inbound,
+    stream_events,
+  ))
+}
+
+fn resolve_session(channel_id: String, user_id: String) -> String {
+  session.discord_session_id(channel_id, user_id)
 }

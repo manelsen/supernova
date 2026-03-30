@@ -954,7 +954,7 @@ pub fn parse_interaction(data: String) -> Result(Interaction, Nil) {
         id: id,
         application_id: app_id,
         interaction_type: interaction_type,
-        data: parse_interaction_data(data),
+        data: parse_interaction_data(data, interaction_type),
         guild_id: json_decode_string_field(top, "guild_id"),
         channel_id: json_decode_string_field(top, "channel_id"),
         member: parse_optional_member(data),
@@ -1154,14 +1154,16 @@ fn parse_string_list_field(data: String, field: String) -> List(String) {
 }
 
 /// Parse interaction data
-fn parse_interaction_data(data: String) -> Option(InteractionData) {
+fn parse_interaction_data(
+  data: String,
+  interaction_type: InteractionType,
+) -> Option(InteractionData) {
   let int_data = json_decode_object_field(data, "data")
   case string.is_empty(int_data) || int_data == "{}" {
     True -> None
     False -> {
-      case json_decode_int_field(int_data, "type") {
-        Some(2) | Some(3) | Some(4) -> {
-          // Application command
+      case interaction_type {
+        ApplicationCommand | ApplicationCommandAutocomplete ->
           Some(ApplicationCommandData(
             id: json_decode_string_field(int_data, "id")
               |> option.unwrap("unknown"),
@@ -1174,10 +1176,54 @@ fn parse_interaction_data(data: String) -> Option(InteractionData) {
             resolved: None,
             target_id: json_decode_string_field(int_data, "target_id"),
           ))
-        }
+        MessageComponent ->
+          Some(MessageComponentData(
+            custom_id: json_decode_string_field(int_data, "custom_id")
+              |> option.unwrap("unknown"),
+            component_type: int_to_component_type(
+              json_decode_int_field(int_data, "component_type")
+              |> option.unwrap(2),
+            ),
+            values: parse_component_values(int_data),
+            resolved: None,
+          ))
+        ModalSubmit ->
+          Some(
+            ModalSubmitData(
+              custom_id: json_decode_string_field(int_data, "custom_id")
+                |> option.unwrap("unknown"),
+              components: [],
+            ),
+          )
         _ -> None
       }
     }
+  }
+}
+
+fn parse_component_values(data: String) -> Option(List(String)) {
+  let values_data = json_decode_array_field(data, "values")
+
+  case string.starts_with(values_data, "[") {
+    True -> {
+      let inner = string.drop_start(values_data, 1)
+      let inner = string.drop_end(inner, 1)
+
+      case string.is_empty(string.trim(inner)) {
+        True -> None
+        False ->
+          inner
+          |> string.split(",")
+          |> list.map(fn(value) {
+            value
+            |> string.trim()
+            |> string.replace("\"", "")
+          })
+          |> list.filter(fn(value) { !string.is_empty(value) })
+          |> Some
+      }
+    }
+    False -> None
   }
 }
 
@@ -1304,6 +1350,20 @@ fn int_to_option_type(code: Int) -> ApplicationCommandOptionType {
   }
 }
 
+fn int_to_component_type(code: Int) -> ComponentType {
+  case code {
+    1 -> ActionRowType
+    2 -> ButtonType
+    3 -> StringSelectType
+    4 -> TextInputType
+    5 -> UserSelectType
+    6 -> RoleSelectType
+    7 -> MentionableSelectType
+    8 -> ChannelSelectType
+    _ -> UnknownComponentType(code)
+  }
+}
+
 // ============================================================================
 // JSON Parsing Helpers
 // ============================================================================
@@ -1345,8 +1405,7 @@ fn do_strip_nested(
                   let remaining = skip_nested(rest, "{", "}", 1)
                   do_strip_nested(remaining, depth, False, ["}", "{", ..acc])
                 }
-                False ->
-                  do_strip_nested(rest, depth + 1, False, [first, ..acc])
+                False -> do_strip_nested(rest, depth + 1, False, [first, ..acc])
               }
             "}" -> do_strip_nested(rest, depth - 1, False, [first, ..acc])
             "[" ->
@@ -1355,8 +1414,7 @@ fn do_strip_nested(
                   let remaining = skip_nested(rest, "[", "]", 1)
                   do_strip_nested(remaining, depth, False, ["]", "[", ..acc])
                 }
-                False ->
-                  do_strip_nested(rest, depth + 1, False, [first, ..acc])
+                False -> do_strip_nested(rest, depth + 1, False, [first, ..acc])
               }
             "]" -> do_strip_nested(rest, depth - 1, False, [first, ..acc])
             _ -> do_strip_nested(rest, depth, False, [first, ..acc])

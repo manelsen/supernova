@@ -26,7 +26,8 @@ pub fn fixture_message_create_parses_channel_and_guild_test() {
   // Source: gateway_message_create.json — first event "d" field
   // Verifies that channel_id, guild_id and content survive the real fixture's
   // undocumented fields (collectibles, primary_guild, clan, etc.).
-  let event = events.parse_event("MESSAGE_CREATE", fixture_message_create_basic())
+  let event =
+    events.parse_event("MESSAGE_CREATE", fixture_message_create_basic())
 
   case event {
     events.EventMessageCreate(msg) -> {
@@ -44,7 +45,10 @@ pub fn fixture_message_create_parses_channel_and_guild_test() {
 pub fn fixture_message_create_with_reply_reference_test() {
   // Source: gateway_message_create.json — second event "d" field (reply)
   let event =
-    events.parse_event("MESSAGE_CREATE", fixture_message_create_with_reference())
+    events.parse_event(
+      "MESSAGE_CREATE",
+      fixture_message_create_with_reference(),
+    )
 
   case event {
     events.EventMessageCreate(msg) -> {
@@ -64,7 +68,8 @@ pub fn fixture_message_create_with_reply_reference_test() {
 pub fn fixture_message_create_extra_discord_fields_dont_break_parsing_test() {
   // Fixtures include undocumented fields: collectibles, primary_guild, clan,
   // display_name_styles, avatar_decoration_data — parser must ignore them.
-  let event = events.parse_event("MESSAGE_CREATE", fixture_message_create_basic())
+  let event =
+    events.parse_event("MESSAGE_CREATE", fixture_message_create_basic())
 
   case event {
     events.EventUnknown(_, _) -> should.fail()
@@ -75,7 +80,8 @@ pub fn fixture_message_create_extra_discord_fields_dont_break_parsing_test() {
 
 pub fn fixture_message_create_author_discriminator_zero_test() {
   // Modern Discord accounts have discriminator "0" (not "0000")
-  let event = events.parse_event("MESSAGE_CREATE", fixture_message_create_basic())
+  let event =
+    events.parse_event("MESSAGE_CREATE", fixture_message_create_basic())
 
   case event {
     events.EventMessageCreate(msg) ->
@@ -86,7 +92,8 @@ pub fn fixture_message_create_author_discriminator_zero_test() {
 
 pub fn fixture_message_create_no_reply_has_no_message_reference_test() {
   // First fixture event has no message_reference — plain message, not a reply
-  let event = events.parse_event("MESSAGE_CREATE", fixture_message_create_basic())
+  let event =
+    events.parse_event("MESSAGE_CREATE", fixture_message_create_basic())
 
   case event {
     events.EventMessageCreate(msg) ->

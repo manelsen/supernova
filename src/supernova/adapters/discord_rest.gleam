@@ -97,6 +97,34 @@ pub type MessageReference {
   )
 }
 
+/// Action row container for interactive message components.
+pub type MessageComponentRow {
+  MessageComponentRow(components: List(MessageComponent))
+}
+
+/// Message component supported by the send-message endpoint.
+pub type MessageComponent {
+  MessageButton(style: MessageButtonStyle, label: String, custom_id: String)
+  MessageStringSelect(
+    custom_id: String,
+    placeholder: Option(String),
+    options: List(MessageSelectOption),
+  )
+}
+
+/// Button styles for interactive message components.
+pub type MessageButtonStyle {
+  PrimaryButtonStyle
+  SecondaryButtonStyle
+  SuccessButtonStyle
+  DangerButtonStyle
+}
+
+/// Select menu option for a string select component.
+pub type MessageSelectOption {
+  MessageSelectOption(label: String, value: String)
+}
+
 // ============================================================================
 // Types - Send Message Options
 // ============================================================================
@@ -110,6 +138,7 @@ pub type SendMessageOptions {
     attachments: List(MessageAttachment),
     message_reference: Option(MessageReference),
     allowed_mentions: Option(AllowedMentions),
+    components: List(MessageComponentRow),
   )
 }
 
@@ -213,13 +242,24 @@ pub type RestClientMessage {
     channel_id: Snowflake,
     options: SendMessageOptions,
   )
+  EditMessage(
+    reply_to: Subject(Result(SentMessage, DiscordRestError)),
+    channel_id: Snowflake,
+    message_id: Snowflake,
+    options: SendMessageOptions,
+  )
   SendMessageSimple(
     reply_to: Subject(Result(SentMessage, DiscordRestError)),
     channel_id: Snowflake,
     content: String,
   )
+  TriggerTyping(
+    reply_to: Subject(Result(Nil, DiscordRestError)),
+    channel_id: Snowflake,
+  )
   GetRateLimitInfo(reply_to: Subject(Dict(String, BucketState)), route: String)
   ClearRateLimits(reply_to: Subject(Nil))
+  Stop(reply_to: Subject(Nil))
 }
 
 /// REST client type (actor subject)
@@ -301,6 +341,34 @@ pub fn send_message_with_options(
   ))
 }
 
+/// Edit an existing message with full options.
+pub fn edit_message_with_options(
+  client: RestClient,
+  channel_id: Snowflake,
+  message_id: Snowflake,
+  options: SendMessageOptions,
+) -> Result(SentMessage, DiscordRestError) {
+  actor.call(client, waiting: 60_000, sending: EditMessage(
+    _,
+    channel_id,
+    message_id,
+    options,
+  ))
+}
+
+/// Trigger Discord's typing indicator for a channel or thread.
+pub fn trigger_typing_indicator(
+  client: RestClient,
+  channel_id: Snowflake,
+) -> Result(Nil, DiscordRestError) {
+  actor.call(client, waiting: 60_000, sending: TriggerTyping(_, channel_id))
+}
+
+/// Stop the REST client actor.
+pub fn stop(client: RestClient) -> Nil {
+  actor.call(client, waiting: 5000, sending: Stop)
+}
+
 // ============================================================================
 // Public API - Message Options Builder
 // ============================================================================
@@ -314,6 +382,7 @@ pub fn new_message_options() -> SendMessageOptions {
     attachments: [],
     message_reference: None,
     allowed_mentions: None,
+    components: [],
   )
 }
 
@@ -379,6 +448,68 @@ pub fn with_allowed_mentions(
   mentions: AllowedMentions,
 ) -> SendMessageOptions {
   SendMessageOptions(..opts, allowed_mentions: Some(mentions))
+}
+
+/// Attach interactive message components.
+pub fn with_components(
+  opts: SendMessageOptions,
+  components: List(MessageComponentRow),
+) -> SendMessageOptions {
+  SendMessageOptions(..opts, components: components)
+}
+
+/// Create an action row from components.
+pub fn action_row(components: List(MessageComponent)) -> MessageComponentRow {
+  MessageComponentRow(components: components)
+}
+
+/// Create a primary button component.
+pub fn primary_button(custom_id: String, label: String) -> MessageComponent {
+  MessageButton(style: PrimaryButtonStyle, label: label, custom_id: custom_id)
+}
+
+/// Create a secondary button component.
+pub fn secondary_button(custom_id: String, label: String) -> MessageComponent {
+  MessageButton(style: SecondaryButtonStyle, label: label, custom_id: custom_id)
+}
+
+/// Create a success button component.
+pub fn success_button(custom_id: String, label: String) -> MessageComponent {
+  MessageButton(style: SuccessButtonStyle, label: label, custom_id: custom_id)
+}
+
+/// Create a danger button component.
+pub fn danger_button(custom_id: String, label: String) -> MessageComponent {
+  MessageButton(style: DangerButtonStyle, label: label, custom_id: custom_id)
+}
+
+/// Create a string select menu component.
+pub fn string_select(
+  custom_id: String,
+  options: List(MessageSelectOption),
+) -> MessageComponent {
+  MessageStringSelect(custom_id: custom_id, placeholder: None, options: options)
+}
+
+/// Create a select option for string select components.
+pub fn select_option(label: String, value: String) -> MessageSelectOption {
+  MessageSelectOption(label: label, value: value)
+}
+
+/// Set a placeholder on a string select component.
+pub fn select_with_placeholder(
+  component: MessageComponent,
+  placeholder: String,
+) -> MessageComponent {
+  case component {
+    MessageStringSelect(custom_id, _, options) ->
+      MessageStringSelect(
+        custom_id: custom_id,
+        placeholder: Some(placeholder),
+        options: options,
+      )
+    _ -> component
+  }
 }
 
 // ============================================================================
@@ -592,6 +723,18 @@ fn handle_message(
       actor.continue(state)
     }
 
+    EditMessage(reply_to, channel_id, message_id, options) -> {
+      let result = do_edit_message(state, channel_id, message_id, options)
+      process.send(reply_to, result)
+      actor.continue(state)
+    }
+
+    TriggerTyping(reply_to, channel_id) -> {
+      let result = do_trigger_typing(state, channel_id)
+      process.send(reply_to, result)
+      actor.continue(state)
+    }
+
     GetRateLimitInfo(reply_to, _) -> {
       process.send(reply_to, state.rate_limits)
       actor.continue(state)
@@ -600,6 +743,11 @@ fn handle_message(
     ClearRateLimits(reply_to) -> {
       process.send(reply_to, Nil)
       actor.continue(RestClientState(..state, rate_limits: dict.new()))
+    }
+
+    Stop(reply_to) -> {
+      process.send(reply_to, Nil)
+      actor.stop()
     }
   }
 }
@@ -618,32 +766,93 @@ fn do_send_message(
     None, [], [] ->
       Error(BadRequest("Message must have content, embeds, or attachments"))
     _, _, _ -> {
-      // Build the request
-      let url =
-        get_base_url(state.config) <> "/channels/" <> channel_id <> "/messages"
-      let body = encode_send_message_options(options)
-
-      let req =
-        request.new()
-        |> request.set_method(http.Post)
-        |> request.prepend_header(
-          "Authorization",
-          "Bot " <> state.config.bot_token,
-        )
-        |> request.prepend_header("Content-Type", "application/json")
-        |> request.prepend_header(
-          "User-Agent",
-          "SupernovaBot (https://supernova.bot, v1.0)",
-        )
-
-      let req_with_body = request.set_body(req, body)
-      let req_with_url = request.set_host(req_with_body, url)
-
-      // Execute request
-      execute_request(req_with_url)
+      execute_message_request(
+        state,
+        http.Post,
+        "/channels/" <> channel_id <> "/messages",
+        options,
+      )
       |> result.try(parse_response)
     }
   }
+}
+
+fn do_edit_message(
+  state: RestClientState,
+  channel_id: Snowflake,
+  message_id: Snowflake,
+  options: SendMessageOptions,
+) -> Result(SentMessage, DiscordRestError) {
+  case options.content, options.embeds, options.attachments {
+    None, [], [] ->
+      Error(BadRequest("Message must have content, embeds, or attachments"))
+    _, _, _ ->
+      execute_message_request(
+        state,
+        http.Patch,
+        "/channels/" <> channel_id <> "/messages/" <> message_id,
+        options,
+      )
+      |> result.try(parse_response)
+  }
+}
+
+fn do_trigger_typing(
+  state: RestClientState,
+  channel_id: Snowflake,
+) -> Result(Nil, DiscordRestError) {
+  execute_empty_request(
+    state,
+    http.Post,
+    "/channels/" <> channel_id <> "/typing",
+  )
+  |> result.try(parse_empty_response)
+}
+
+fn execute_message_request(
+  state: RestClientState,
+  method: http.Method,
+  path: String,
+  options: SendMessageOptions,
+) -> Result(Response(String), DiscordRestError) {
+  let url = get_base_url(state.config) <> path
+  let body = encode_message_options(options)
+
+  let req =
+    request.new()
+    |> request.set_method(method)
+    |> request.prepend_header("Authorization", "Bot " <> state.config.bot_token)
+    |> request.prepend_header("Content-Type", "application/json")
+    |> request.prepend_header(
+      "User-Agent",
+      "SupernovaBot (https://supernova.bot, v1.0)",
+    )
+
+  let req_with_body = request.set_body(req, body)
+  let req_with_url = request.set_host(req_with_body, url)
+
+  execute_request(req_with_url)
+}
+
+fn execute_empty_request(
+  state: RestClientState,
+  method: http.Method,
+  path: String,
+) -> Result(Response(String), DiscordRestError) {
+  let url = get_base_url(state.config) <> path
+
+  let req =
+    request.new()
+    |> request.set_method(method)
+    |> request.prepend_header("Authorization", "Bot " <> state.config.bot_token)
+    |> request.prepend_header(
+      "User-Agent",
+      "SupernovaBot (https://supernova.bot, v1.0)",
+    )
+    |> request.set_body("")
+    |> request.set_host(url)
+
+  execute_request(req)
 }
 
 fn execute_request(
@@ -700,6 +909,13 @@ fn parse_response(
       Error(InternalError(message))
     }
     status -> Error(UnknownError(status, resp.body))
+  }
+}
+
+fn parse_empty_response(resp: Response(String)) -> Result(Nil, DiscordRestError) {
+  case parse_response(resp) {
+    Ok(_) -> Ok(Nil)
+    Error(error) -> Error(error)
   }
 }
 
@@ -771,7 +987,7 @@ fn extract_retry_after(body: String) -> Int {
 // Internal - JSON Encoding
 // ============================================================================
 
-fn encode_send_message_options(opts: SendMessageOptions) -> String {
+pub fn encode_message_options(opts: SendMessageOptions) -> String {
   let fields =
     []
     |> add_optional_string_field("content", opts.content)
@@ -780,6 +996,7 @@ fn encode_send_message_options(opts: SendMessageOptions) -> String {
     |> add_attachments_field("attachments", opts.attachments)
     |> add_message_reference_field("message_reference", opts.message_reference)
     |> add_allowed_mentions_field("allowed_mentions", opts.allowed_mentions)
+    |> add_components_field("components", opts.components)
 
   "{" <> string.join(fields, ",") <> "}"
 }
@@ -886,12 +1103,82 @@ fn add_allowed_mentions_field(
   }
 }
 
+fn add_components_field(
+  fields: List(String),
+  name: String,
+  components: List(MessageComponentRow),
+) -> List(String) {
+  case components {
+    [] -> fields
+    rows -> {
+      let encoded =
+        "[" <> string.join(list.map(rows, encode_component_row), ",") <> "]"
+      [json_key_value(name, encoded), ..fields]
+    }
+  }
+}
+
 fn add_optional_snowflake_field(
   fields: List(String),
   name: String,
   value: Option(String),
 ) -> List(String) {
   add_optional_string_field(fields, name, value)
+}
+
+fn encode_component_row(row: MessageComponentRow) -> String {
+  let MessageComponentRow(components:) = row
+  let encoded =
+    "[" <> string.join(list.map(components, encode_component), ",") <> "]"
+
+  "{\"type\":1,\"components\":" <> encoded <> "}"
+}
+
+fn encode_component(component: MessageComponent) -> String {
+  case component {
+    MessageButton(style, label, custom_id) ->
+      "{\"type\":2,\"style\":"
+      <> int.to_string(encode_button_style(style))
+      <> ",\"label\":"
+      <> json_string(label)
+      <> ",\"custom_id\":"
+      <> json_string(custom_id)
+      <> "}"
+    MessageStringSelect(custom_id, placeholder, options) ->
+      "{\"type\":3,\"custom_id\":"
+      <> json_string(custom_id)
+      <> encode_select_placeholder(placeholder)
+      <> ",\"options\":"
+      <> "["
+      <> string.join(list.map(options, encode_select_option), ",")
+      <> "]}"
+  }
+}
+
+fn encode_button_style(style: MessageButtonStyle) -> Int {
+  case style {
+    PrimaryButtonStyle -> 1
+    SecondaryButtonStyle -> 2
+    SuccessButtonStyle -> 3
+    DangerButtonStyle -> 4
+  }
+}
+
+fn encode_select_placeholder(placeholder: Option(String)) -> String {
+  case placeholder {
+    Some(value) -> ",\"placeholder\":" <> json_string(value)
+    None -> ""
+  }
+}
+
+fn encode_select_option(option: MessageSelectOption) -> String {
+  let MessageSelectOption(label:, value:) = option
+
+  "{\"label\":"
+  <> json_string(label)
+  <> ",\"value\":"
+  <> json_string(value)
+  <> "}"
 }
 
 fn encode_embed(embed: MessageEmbed) -> String {
