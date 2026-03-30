@@ -6,7 +6,8 @@
 //// - YAML parsing from supernova.yaml files
 //// - Environment variable overrides for sensitive values
 //// - Schema validation with clear error messages
-//// - Support for providers (OpenAI, Anthropic, Local)
+//// - Support for routed providers (OpenAI, Anthropic, OpenRouter,
+////   OpenCode Zen, Zhipu, Minimax, Ollama)
 //// - Discord and Telegram bot configuration
 //// - Database configuration
 
@@ -29,8 +30,18 @@ pub type Provider {
   OpenAI
   /// Anthropic API (Claude models)
   Anthropic
-  /// Local/self-hosted provider
-  Local
+  /// OpenRouter gateway
+  OpenRouter
+  /// OpenCode Zen gateway
+  OpenCodeZen
+  /// Zhipu general chat endpoint
+  Zhipu
+  /// Zhipu coding endpoint
+  ZhipuCoding
+  /// MiniMax chat endpoint
+  Minimax
+  /// Local/self-hosted Ollama
+  Ollama
 }
 
 /// Provider configuration
@@ -76,7 +87,9 @@ pub type TelegramConfig {
 /// Matrix channel configuration
 pub type MatrixConfig {
   MatrixConfig(
-    /// Bot token or access token
+    /// Matrix homeserver URL (e.g. https://matrix.org)
+    homeserver_url: Option(String),
+    /// Bot access token
     token: Option(String),
     /// Enabled status
     enabled: Bool,
@@ -86,8 +99,10 @@ pub type MatrixConfig {
 /// Lark channel configuration
 pub type LarkConfig {
   LarkConfig(
-    /// App token / credential
+    /// Tenant access token / credential
     token: Option(String),
+    /// Optional Open API base URL override
+    base_url: Option(String),
     /// Enabled status
     enabled: Bool,
   )
@@ -96,8 +111,8 @@ pub type LarkConfig {
 /// Google Chat channel configuration
 pub type GoogleChatConfig {
   GoogleChatConfig(
-    /// Bot token / credential
-    token: Option(String),
+    /// Incoming webhook URL used to post messages
+    webhook_url: Option(String),
     /// Enabled status
     enabled: Bool,
   )
@@ -118,6 +133,8 @@ pub type MattermostConfig {
   MattermostConfig(
     /// Access token
     token: Option(String),
+    /// Mattermost instance base URL
+    base_url: Option(String),
     /// Enabled status
     enabled: Bool,
   )
@@ -126,8 +143,8 @@ pub type MattermostConfig {
 /// WeChat Work channel configuration
 pub type WechatWorkConfig {
   WechatWorkConfig(
-    /// Access token / webhook key
-    token: Option(String),
+    /// Robot webhook URL for posting messages
+    webhook_url: Option(String),
     /// Enabled status
     enabled: Bool,
   )
@@ -136,8 +153,10 @@ pub type WechatWorkConfig {
 /// WhatsApp channel configuration
 pub type WhatsAppConfig {
   WhatsAppConfig(
-    /// Bridge token (e.g. Whatsmeow bridge auth)
-    token: Option(String),
+    /// Base URL for the Whatsmeow bridge REST API
+    bridge_url: Option(String),
+    /// Optional bridge device ID for multi-device deployments
+    device_id: Option(String),
     /// Enabled status
     enabled: Bool,
   )
@@ -259,13 +278,13 @@ pub fn default_config() -> Config {
       enabled: False,
     ),
     telegram: TelegramConfig(token: None, enabled: False),
-    matrix: MatrixConfig(token: None, enabled: False),
-    lark: LarkConfig(token: None, enabled: False),
-    google_chat: GoogleChatConfig(token: None, enabled: False),
+    matrix: MatrixConfig(homeserver_url: None, token: None, enabled: False),
+    lark: LarkConfig(token: None, base_url: None, enabled: False),
+    google_chat: GoogleChatConfig(webhook_url: None, enabled: False),
     slack: SlackConfig(token: None, enabled: False),
-    mattermost: MattermostConfig(token: None, enabled: False),
-    wechat_work: WechatWorkConfig(token: None, enabled: False),
-    whatsapp: WhatsAppConfig(token: None, enabled: False),
+    mattermost: MattermostConfig(token: None, base_url: None, enabled: False),
+    wechat_work: WechatWorkConfig(webhook_url: None, enabled: False),
+    whatsapp: WhatsAppConfig(bridge_url: None, device_id: None, enabled: False),
     database: DatabaseConfig(
       url: None,
       host: "localhost",
@@ -313,9 +332,18 @@ fn parse_provider(s: String) -> Result(Provider, ConfigError) {
   case string.lowercase(s) {
     "openai" -> Ok(OpenAI)
     "anthropic" -> Ok(Anthropic)
-    "local" -> Ok(Local)
+    "openrouter" -> Ok(OpenRouter)
+    "opencode_zen" -> Ok(OpenCodeZen)
+    "zhipu" -> Ok(Zhipu)
+    "zhipu_coding" -> Ok(ZhipuCoding)
+    "minimax" -> Ok(Minimax)
+    "ollama" | "local" -> Ok(Ollama)
     _ ->
-      Error(InvalidField("provider", s, "must be openai, anthropic, or local"))
+      Error(InvalidField(
+        "provider",
+        s,
+        "must be openai, anthropic, openrouter, opencode_zen, zhipu, zhipu_coding, minimax, or ollama",
+      ))
   }
 }
 
@@ -404,10 +432,7 @@ fn decode_provider_config(
   node: yay.Node,
   name: String,
 ) -> Result(ProviderConfig, ConfigError) {
-  use provider_str <- result.try(
-    yay.extract_string(node, "type")
-    |> result.map_error(fn(e) { to_config_error(e, "providers." <> name) }),
-  )
+  use provider_str <- result.try(extract_provider_name(node, name))
 
   use provider <- result.try(parse_provider(provider_str))
 
@@ -425,33 +450,51 @@ fn decode_provider_config(
   ))
 }
 
+fn extract_provider_name(
+  node: yay.Node,
+  name: String,
+) -> Result(String, ConfigError) {
+  let context = "providers." <> name
+
+  case yay.extract_string(node, "provider") {
+    Ok(value) -> Ok(value)
+    Error(yay.KeyMissing(_, _)) ->
+      case yay.extract_string(node, "type") {
+        Ok(value) -> Ok(value)
+        Error(yay.KeyMissing(_, _)) -> Error(MissingField("provider", context))
+        Error(e) -> Error(to_config_error(e, context))
+      }
+    Error(e) -> Error(to_config_error(e, context))
+  }
+}
+
 /// Decode providers section from YAML
-fn decode_providers(root: yay.Node) -> Dict(String, ProviderConfig) {
+fn decode_providers(
+  root: yay.Node,
+) -> Result(Dict(String, ProviderConfig), ConfigError) {
   // Try to get the providers map node
   case yay.select_sugar(root, "providers") {
-    Ok(yay.NodeMap(pairs)) -> {
-      pairs
-      |> list.filter(fn(pair) {
-        let #(key_node, value_node) = pair
-        case node_to_string_key(key_node) {
-          Some(name) -> {
-            case decode_provider_config(value_node, name) {
-              Ok(_) -> True
-              Error(_) -> False
-            }
-          }
-          None -> False
+    Ok(yay.NodeMap(pairs)) -> decode_provider_pairs(pairs, [])
+    _ -> Ok(dict.new())
+  }
+}
+
+fn decode_provider_pairs(
+  pairs: List(#(yay.Node, yay.Node)),
+  acc: List(#(String, ProviderConfig)),
+) -> Result(Dict(String, ProviderConfig), ConfigError) {
+  case pairs {
+    [] -> Ok(acc |> list.reverse |> dict.from_list)
+    [pair, ..rest] -> {
+      let #(key_node, value_node) = pair
+      case node_to_string_key(key_node) {
+        Some(name) -> {
+          use config <- result.try(decode_provider_config(value_node, name))
+          decode_provider_pairs(rest, [#(name, config), ..acc])
         }
-      })
-      |> list.map(fn(pair) {
-        let #(key_node, value_node) = pair
-        let assert Some(name) = node_to_string_key(key_node)
-        let assert Ok(config) = decode_provider_config(value_node, name)
-        #(name, config)
-      })
-      |> dict.from_list
+        None -> decode_provider_pairs(rest, acc)
+      }
     }
-    _ -> dict.new()
   }
 }
 
@@ -489,10 +532,11 @@ fn decode_matrix(root: yay.Node) -> MatrixConfig {
   case yay.select_sugar(root, "matrix") {
     Ok(node) ->
       MatrixConfig(
+        homeserver_url: get_optional_string(node, "homeserver_url"),
         token: get_optional_string(node, "token"),
         enabled: get_bool_or(node, "enabled", False),
       )
-    Error(_) -> MatrixConfig(token: None, enabled: False)
+    Error(_) -> MatrixConfig(homeserver_url: None, token: None, enabled: False)
   }
 }
 
@@ -502,9 +546,10 @@ fn decode_lark(root: yay.Node) -> LarkConfig {
     Ok(node) ->
       LarkConfig(
         token: get_optional_string(node, "token"),
+        base_url: get_optional_string(node, "base_url"),
         enabled: get_bool_or(node, "enabled", False),
       )
-    Error(_) -> LarkConfig(token: None, enabled: False)
+    Error(_) -> LarkConfig(token: None, base_url: None, enabled: False)
   }
 }
 
@@ -513,10 +558,10 @@ fn decode_google_chat(root: yay.Node) -> GoogleChatConfig {
   case yay.select_sugar(root, "google_chat") {
     Ok(node) ->
       GoogleChatConfig(
-        token: get_optional_string(node, "token"),
+        webhook_url: get_optional_string(node, "webhook_url"),
         enabled: get_bool_or(node, "enabled", False),
       )
-    Error(_) -> GoogleChatConfig(token: None, enabled: False)
+    Error(_) -> GoogleChatConfig(webhook_url: None, enabled: False)
   }
 }
 
@@ -538,9 +583,10 @@ fn decode_mattermost(root: yay.Node) -> MattermostConfig {
     Ok(node) ->
       MattermostConfig(
         token: get_optional_string(node, "token"),
+        base_url: get_optional_string(node, "base_url"),
         enabled: get_bool_or(node, "enabled", False),
       )
-    Error(_) -> MattermostConfig(token: None, enabled: False)
+    Error(_) -> MattermostConfig(token: None, base_url: None, enabled: False)
   }
 }
 
@@ -549,10 +595,10 @@ fn decode_wechat_work(root: yay.Node) -> WechatWorkConfig {
   case yay.select_sugar(root, "wechat_work") {
     Ok(node) ->
       WechatWorkConfig(
-        token: get_optional_string(node, "token"),
+        webhook_url: get_optional_string(node, "webhook_url"),
         enabled: get_bool_or(node, "enabled", False),
       )
-    Error(_) -> WechatWorkConfig(token: None, enabled: False)
+    Error(_) -> WechatWorkConfig(webhook_url: None, enabled: False)
   }
 }
 
@@ -561,10 +607,12 @@ fn decode_whatsapp(root: yay.Node) -> WhatsAppConfig {
   case yay.select_sugar(root, "whatsapp") {
     Ok(node) ->
       WhatsAppConfig(
-        token: get_optional_string(node, "token"),
+        bridge_url: get_optional_string(node, "bridge_url"),
+        device_id: get_optional_string(node, "device_id"),
         enabled: get_bool_or(node, "enabled", False),
       )
-    Error(_) -> WhatsAppConfig(token: None, enabled: False)
+    Error(_) ->
+      WhatsAppConfig(bridge_url: None, device_id: None, enabled: False)
   }
 }
 
@@ -668,7 +716,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
   use log_level <- result.try(parse_log_level(log_level))
 
   // Parse providers
-  let providers = decode_providers(root)
+  use providers <- result.try(decode_providers(root))
 
   // Parse discord
   let discord = decode_discord(root)
@@ -791,6 +839,11 @@ pub fn apply_env_overrides(config: Config) -> Config {
   }
 
   // Additional channel overrides
+  let matrix_homeserver_url =
+    option.or(
+      get_env("SUPERNOVA_MATRIX_HOMESERVER_URL"),
+      config.matrix.homeserver_url,
+    )
   let matrix_token =
     option.or(get_env("SUPERNOVA_MATRIX_TOKEN"), config.matrix.token)
   let matrix_enabled = case get_env("SUPERNOVA_MATRIX_ENABLED") {
@@ -800,14 +853,19 @@ pub fn apply_env_overrides(config: Config) -> Config {
   }
 
   let lark_token = option.or(get_env("SUPERNOVA_LARK_TOKEN"), config.lark.token)
+  let lark_base_url =
+    option.or(get_env("SUPERNOVA_LARK_BASE_URL"), config.lark.base_url)
   let lark_enabled = case get_env("SUPERNOVA_LARK_ENABLED") {
     Some("true") -> True
     Some("false") -> False
     _ -> config.lark.enabled
   }
 
-  let google_chat_token =
-    option.or(get_env("SUPERNOVA_GOOGLE_CHAT_TOKEN"), config.google_chat.token)
+  let google_chat_webhook_url =
+    option.or(
+      get_env("SUPERNOVA_GOOGLE_CHAT_WEBHOOK_URL"),
+      config.google_chat.webhook_url,
+    )
   let google_chat_enabled = case get_env("SUPERNOVA_GOOGLE_CHAT_ENABLED") {
     Some("true") -> True
     Some("false") -> False
@@ -824,22 +882,38 @@ pub fn apply_env_overrides(config: Config) -> Config {
 
   let mattermost_token =
     option.or(get_env("SUPERNOVA_MATTERMOST_TOKEN"), config.mattermost.token)
+  let mattermost_base_url =
+    option.or(
+      get_env("SUPERNOVA_MATTERMOST_BASE_URL"),
+      config.mattermost.base_url,
+    )
   let mattermost_enabled = case get_env("SUPERNOVA_MATTERMOST_ENABLED") {
     Some("true") -> True
     Some("false") -> False
     _ -> config.mattermost.enabled
   }
 
-  let wechat_work_token =
-    option.or(get_env("SUPERNOVA_WECHAT_WORK_TOKEN"), config.wechat_work.token)
+  let wechat_work_webhook_url =
+    option.or(
+      get_env("SUPERNOVA_WECHAT_WORK_WEBHOOK_URL"),
+      config.wechat_work.webhook_url,
+    )
   let wechat_work_enabled = case get_env("SUPERNOVA_WECHAT_WORK_ENABLED") {
     Some("true") -> True
     Some("false") -> False
     _ -> config.wechat_work.enabled
   }
 
-  let whatsapp_token =
-    option.or(get_env("SUPERNOVA_WHATSAPP_TOKEN"), config.whatsapp.token)
+  let whatsapp_bridge_url =
+    option.or(
+      get_env("SUPERNOVA_WHATSAPP_BRIDGE_URL"),
+      config.whatsapp.bridge_url,
+    )
+  let whatsapp_device_id =
+    option.or(
+      get_env("SUPERNOVA_WHATSAPP_DEVICE_ID"),
+      config.whatsapp.device_id,
+    )
   let whatsapp_enabled = case get_env("SUPERNOVA_WHATSAPP_ENABLED") {
     Some("true") -> True
     Some("false") -> False
@@ -888,22 +962,35 @@ pub fn apply_env_overrides(config: Config) -> Config {
       enabled: discord_enabled,
     ),
     telegram: TelegramConfig(token: telegram_token, enabled: telegram_enabled),
-    matrix: MatrixConfig(token: matrix_token, enabled: matrix_enabled),
-    lark: LarkConfig(token: lark_token, enabled: lark_enabled),
+    matrix: MatrixConfig(
+      homeserver_url: matrix_homeserver_url,
+      token: matrix_token,
+      enabled: matrix_enabled,
+    ),
+    lark: LarkConfig(
+      token: lark_token,
+      base_url: lark_base_url,
+      enabled: lark_enabled,
+    ),
     google_chat: GoogleChatConfig(
-      token: google_chat_token,
+      webhook_url: google_chat_webhook_url,
       enabled: google_chat_enabled,
     ),
     slack: SlackConfig(token: slack_token, enabled: slack_enabled),
     mattermost: MattermostConfig(
       token: mattermost_token,
+      base_url: mattermost_base_url,
       enabled: mattermost_enabled,
     ),
     wechat_work: WechatWorkConfig(
-      token: wechat_work_token,
+      webhook_url: wechat_work_webhook_url,
       enabled: wechat_work_enabled,
     ),
-    whatsapp: WhatsAppConfig(token: whatsapp_token, enabled: whatsapp_enabled),
+    whatsapp: WhatsAppConfig(
+      bridge_url: whatsapp_bridge_url,
+      device_id: whatsapp_device_id,
+      enabled: whatsapp_enabled,
+    ),
     database: DatabaseConfig(
       url: db_url,
       host: db_host,
@@ -1043,11 +1130,11 @@ fn validate_lark(config: LarkConfig) -> Result(Nil, ConfigError) {
 fn validate_google_chat(config: GoogleChatConfig) -> Result(Nil, ConfigError) {
   case config.enabled {
     True ->
-      case config.token {
+      case config.webhook_url {
         Some(_) -> Ok(Nil)
         None ->
           Error(ValidationError(
-            "Google Chat is enabled but no token is configured",
+            "Google Chat is enabled but no webhook_url is configured",
           ))
       }
     False -> Ok(Nil)
@@ -1070,7 +1157,14 @@ fn validate_mattermost(config: MattermostConfig) -> Result(Nil, ConfigError) {
   case config.enabled {
     True ->
       case config.token {
-        Some(_) -> Ok(Nil)
+        Some(_) ->
+          case config.base_url {
+            Some(_) -> Ok(Nil)
+            None ->
+              Error(ValidationError(
+                "Mattermost is enabled but no base_url is configured",
+              ))
+          }
         None ->
           Error(ValidationError(
             "Mattermost is enabled but no token is configured",
@@ -1083,11 +1177,11 @@ fn validate_mattermost(config: MattermostConfig) -> Result(Nil, ConfigError) {
 fn validate_wechat_work(config: WechatWorkConfig) -> Result(Nil, ConfigError) {
   case config.enabled {
     True ->
-      case config.token {
+      case config.webhook_url {
         Some(_) -> Ok(Nil)
         None ->
           Error(ValidationError(
-            "WeChat Work is enabled but no token is configured",
+            "WeChat Work is enabled but no webhook_url is configured",
           ))
       }
     False -> Ok(Nil)
@@ -1097,11 +1191,11 @@ fn validate_wechat_work(config: WechatWorkConfig) -> Result(Nil, ConfigError) {
 fn validate_whatsapp(config: WhatsAppConfig) -> Result(Nil, ConfigError) {
   case config.enabled {
     True ->
-      case config.token {
+      case config.bridge_url {
         Some(_) -> Ok(Nil)
         None ->
           Error(ValidationError(
-            "WhatsApp is enabled but no token is configured",
+            "WhatsApp is enabled but no bridge_url is configured",
           ))
       }
     False -> Ok(Nil)
@@ -1153,7 +1247,43 @@ fn validate_provider_config(name: String, config: ProviderConfig) {
         }
       }
     }
-    Local -> Nil
+    OpenRouter -> {
+      case config.api_key {
+        Some(_) -> Nil
+        None -> {
+          let _ = "OpenRouter provider '" <> name <> "' requires an API key"
+          Nil
+        }
+      }
+    }
+    OpenCodeZen -> {
+      case config.api_key {
+        Some(_) -> Nil
+        None -> {
+          let _ = "OpenCode Zen provider '" <> name <> "' requires an API key"
+          Nil
+        }
+      }
+    }
+    Zhipu | ZhipuCoding -> {
+      case config.api_key {
+        Some(_) -> Nil
+        None -> {
+          let _ = "Zhipu provider '" <> name <> "' requires an API key"
+          Nil
+        }
+      }
+    }
+    Minimax -> {
+      case config.api_key {
+        Some(_) -> Nil
+        None -> {
+          let _ = "MiniMax provider '" <> name <> "' requires an API key"
+          Nil
+        }
+      }
+    }
+    Ollama -> Nil
   }
 }
 
@@ -1230,7 +1360,40 @@ pub fn provider_requires_api_key(provider: Provider) -> Bool {
   case provider {
     OpenAI -> True
     Anthropic -> True
-    Local -> False
+    OpenRouter -> True
+    OpenCodeZen -> True
+    Zhipu -> True
+    ZhipuCoding -> True
+    Minimax -> True
+    Ollama -> False
+  }
+}
+
+/// Convert config provider enum to runtime dispatcher name.
+pub fn provider_runtime_name(provider: Provider) -> String {
+  case provider {
+    OpenAI -> "openai"
+    Anthropic -> "anthropic"
+    OpenRouter -> "openrouter"
+    OpenCodeZen -> "opencode_zen"
+    Zhipu -> "zhipu"
+    ZhipuCoding -> "zhipu_coding"
+    Minimax -> "minimax"
+    Ollama -> "ollama"
+  }
+}
+
+/// Default model used when a config provider omits `model`.
+pub fn provider_default_model(provider: Provider) -> String {
+  case provider {
+    OpenAI -> "gpt-4o"
+    Anthropic -> "claude-sonnet-4-20250514"
+    OpenRouter -> "anthropic/claude-haiku-4-5"
+    OpenCodeZen -> "claude-sonnet-4-6"
+    Zhipu -> "glm-4-plus"
+    ZhipuCoding -> "codegeex-4"
+    Minimax -> "MiniMax-Text-01"
+    Ollama -> "llama3"
   }
 }
 
@@ -1264,7 +1427,7 @@ pub fn is_lark_enabled(config: Config) -> Bool {
 
 /// Check if Google Chat is configured and enabled
 pub fn is_google_chat_enabled(config: Config) -> Bool {
-  config.google_chat.enabled && config.google_chat.token != None
+  config.google_chat.enabled && config.google_chat.webhook_url != None
 }
 
 /// Check if Slack is configured and enabled
@@ -1274,15 +1437,17 @@ pub fn is_slack_enabled(config: Config) -> Bool {
 
 /// Check if Mattermost is configured and enabled
 pub fn is_mattermost_enabled(config: Config) -> Bool {
-  config.mattermost.enabled && config.mattermost.token != None
+  config.mattermost.enabled
+  && config.mattermost.token != None
+  && config.mattermost.base_url != None
 }
 
 /// Check if WeChat Work is configured and enabled
 pub fn is_wechat_work_enabled(config: Config) -> Bool {
-  config.wechat_work.enabled && config.wechat_work.token != None
+  config.wechat_work.enabled && config.wechat_work.webhook_url != None
 }
 
 /// Check if WhatsApp is configured and enabled
 pub fn is_whatsapp_enabled(config: Config) -> Bool {
-  config.whatsapp.enabled && config.whatsapp.token != None
+  config.whatsapp.enabled && config.whatsapp.bridge_url != None
 }
