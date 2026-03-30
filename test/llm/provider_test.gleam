@@ -166,3 +166,93 @@ pub fn client_anthropic_without_key_uses_real_provider_test() {
     Error(provider.ConfigError(reason: "No API key configured for Anthropic")),
   )
 }
+
+pub fn client_openrouter_without_key_uses_real_provider_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "openrouter",
+      api_key: None,
+      base_url: None,
+      default_model: "anthropic/claude-haiku-4-5",
+    )
+
+  let messages = [provider.user_message("Hello")]
+  let result = client.chat(messages, config, [])
+
+  result
+  |> should.equal(
+    Error(provider.ConfigError(reason: "No API key configured for openrouter")),
+  )
+}
+
+pub fn client_opencode_zen_without_key_uses_real_provider_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "opencode_zen",
+      api_key: None,
+      base_url: None,
+      default_model: "claude-sonnet-4-6",
+    )
+
+  let messages = [provider.user_message("Hello")]
+  let result = client.chat(messages, config, [])
+
+  result
+  |> should.equal(
+    Error(provider.ConfigError(reason: "No API key configured for opencode_zen")),
+  )
+}
+
+pub fn client_zhipu_without_key_uses_real_provider_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "zhipu",
+      api_key: None,
+      base_url: None,
+      default_model: "glm-4-plus",
+    )
+
+  let messages = [provider.user_message("Hello")]
+  let result = client.chat(messages, config, [])
+
+  result
+  |> should.equal(
+    Error(provider.ConfigError(reason: "No API key configured for zhipu")),
+  )
+}
+
+pub fn client_zhipu_coding_without_key_uses_real_provider_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "zhipu_coding",
+      api_key: None,
+      base_url: None,
+      default_model: "codegeex-4",
+    )
+
+  let messages = [provider.user_message("Hello")]
+  let result = client.chat(messages, config, [])
+
+  result
+  |> should.equal(
+    Error(provider.ConfigError(reason: "No API key configured for zhipu_coding")),
+  )
+}
+
+pub fn client_minimax_without_key_uses_real_provider_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "minimax",
+      api_key: None,
+      base_url: None,
+      default_model: "MiniMax-Text-01",
+    )
+
+  let messages = [provider.user_message("Hello")]
+  let result = client.chat(messages, config, [])
+
+  result
+  |> should.equal(
+    Error(provider.ConfigError(reason: "No API key configured for minimax")),
+  )
+}
