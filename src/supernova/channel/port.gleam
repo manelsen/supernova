@@ -23,10 +23,12 @@
 ////   Ok(port.ChannelAdapter(
 ////     name: "myapp",
 ////     send: fn(reply) { do_send(reply) },
+////     stop: fn() { Nil },
 ////   ))
 //// }
 //// ```
 
+import gleam/erlang/process.{type Subject}
 import gleam/option.{type Option, None, Some}
 
 // ============================================================================
@@ -141,6 +143,13 @@ pub type ChannelInteractiveReply {
   ChannelInteractiveReply(blocks: List(ChannelInteractionBlock))
 }
 
+/// Media attachments rendered natively when the adapter supports them.
+pub type ChannelMedia {
+  ImageMedia(url: String, alt_text: Option(String))
+  AudioMedia(url: String, mime_type: Option(String))
+  DocumentMedia(url: String, filename: String, mime_type: Option(String))
+}
+
 /// A reply produced by the core and delivered through a channel adapter.
 pub type ChannelReply {
   ChannelReply(
@@ -151,8 +160,16 @@ pub type ChannelReply {
     content: String,
     /// If set, the reply should thread / quote this message ID.
     reply_to_id: Option(String),
+    /// If set, send into this explicit thread / topic when the channel supports it.
+    thread_id: Option(String),
+    /// When true, the adapter should emit a typing indicator before delivery.
+    typing: Bool,
+    /// If set, the adapter should edit this message instead of sending a new one.
+    edit_message_id: Option(String),
     /// Optional interactive payload rendered as native buttons/selectors.
     interactive: Option(ChannelInteractiveReply),
+    /// Optional media attachments associated with the reply.
+    media: List(ChannelMedia),
   )
 }
 
@@ -178,26 +195,42 @@ pub type ChannelError {
 // Contract
 // ============================================================================
 
+/// Stream event emitted by the core while building a channel reply.
+pub type ChannelStreamEvent {
+  StreamUpdate(reply: ChannelReply)
+  StreamComplete(reply: ChannelReply)
+  StreamFailure(error: ChannelError)
+}
+
+/// Result returned by the core inbound handler.
+pub type ChannelHandlerResult {
+  ImmediateReply(reply: ChannelReply)
+  StreamReply(base_reply: ChannelReply)
+}
+
 /// The inbound callback that the core exposes to adapters.
 ///
 /// Each adapter receives one `ChannelHandler` at startup and calls it for each
-/// incoming message or interaction callback. The core processes the inbound
-/// event synchronously and returns a `ChannelReply` (or an error), which the
-/// adapter then delivers to the channel.
+/// incoming message or interaction callback. The core may either return an
+/// immediate reply or a stream of progressive reply updates, which the adapter
+/// runtime delivers to the channel.
 pub type ChannelHandler =
-  fn(ChannelInbound) -> Result(ChannelReply, ChannelError)
+  fn(ChannelInbound, Subject(ChannelStreamEvent)) ->
+    Result(ChannelHandlerResult, ChannelError)
 
 /// The adapter contract — what every channel adapter must produce.
 ///
 /// The core holds a registry of `ChannelAdapter` values, one per channel.
-/// It uses `send` to push replies without knowing anything about the
-/// underlying protocol.
+/// It uses `send` to push replies and `stop` to shut adapters down without
+/// knowing anything about the underlying protocol.
 pub type ChannelAdapter {
   ChannelAdapter(
     /// Unique adapter identifier ("telegram", "discord", "matrix", …).
     name: String,
     /// Deliver a reply through this channel.
     send: fn(ChannelReply) -> Result(Nil, ChannelError),
+    /// Shut the adapter down and release any associated resources.
+    stop: fn() -> Nil,
   )
 }
 
@@ -211,7 +244,11 @@ pub fn reply(to msg: ChannelMessage, content content: String) -> ChannelReply {
     channel_id: msg.channel_id,
     content: content,
     reply_to_id: None,
+    thread_id: None,
+    typing: False,
+    edit_message_id: None,
     interactive: None,
+    media: [],
   )
 }
 
@@ -224,7 +261,11 @@ pub fn reply_thread(
     channel_id: msg.channel_id,
     content: content,
     reply_to_id: Some(msg.id),
+    thread_id: None,
+    typing: False,
+    edit_message_id: None,
     interactive: None,
+    media: [],
   )
 }
 
@@ -238,7 +279,11 @@ pub fn reply_with_interactions(
     channel_id: msg.channel_id,
     content: content,
     reply_to_id: None,
+    thread_id: None,
+    typing: False,
+    edit_message_id: None,
     interactive: Some(interactive),
+    media: [],
   )
 }
 
@@ -252,8 +297,38 @@ pub fn reply_thread_with_interactions(
     channel_id: msg.channel_id,
     content: content,
     reply_to_id: Some(msg.id),
+    thread_id: None,
+    typing: False,
+    edit_message_id: None,
     interactive: Some(interactive),
+    media: [],
   )
+}
+
+/// Attach an explicit thread / topic target to a reply.
+pub fn with_thread(reply: ChannelReply, thread_id: String) -> ChannelReply {
+  ChannelReply(..reply, thread_id: Some(thread_id))
+}
+
+/// Request a typing indicator before the adapter sends the reply.
+pub fn with_typing(reply: ChannelReply, typing: Bool) -> ChannelReply {
+  ChannelReply(..reply, typing: typing)
+}
+
+/// Request that the adapter edits an existing message.
+pub fn with_edit_message(
+  reply: ChannelReply,
+  message_id: String,
+) -> ChannelReply {
+  ChannelReply(..reply, edit_message_id: Some(message_id))
+}
+
+/// Attach media payloads to a reply.
+pub fn with_media(
+  reply: ChannelReply,
+  media: List(ChannelMedia),
+) -> ChannelReply {
+  ChannelReply(..reply, media: media)
 }
 
 /// Build an inbound wrapper for plain message events.
@@ -271,6 +346,31 @@ pub fn interactive_reply(
   blocks: List(ChannelInteractionBlock),
 ) -> ChannelInteractiveReply {
   ChannelInteractiveReply(blocks: blocks)
+}
+
+/// Build an image attachment.
+pub fn image_media(
+  url url: String,
+  alt_text alt_text: Option(String),
+) -> ChannelMedia {
+  ImageMedia(url: url, alt_text: alt_text)
+}
+
+/// Build an audio attachment.
+pub fn audio_media(
+  url url: String,
+  mime_type mime_type: Option(String),
+) -> ChannelMedia {
+  AudioMedia(url: url, mime_type: mime_type)
+}
+
+/// Build a document attachment.
+pub fn document_media(
+  url url: String,
+  filename filename: String,
+  mime_type mime_type: Option(String),
+) -> ChannelMedia {
+  DocumentMedia(url: url, filename: filename, mime_type: mime_type)
 }
 
 /// Build a standardized interaction button.
@@ -321,30 +421,38 @@ pub fn select_block(
 
 /// Get the label from a ChannelSelectOption.
 pub fn select_option_label(opt: ChannelSelectOption) -> String {
-  let ChannelSelectOption(label:, value:) = opt
+  let ChannelSelectOption(label:, value: _) = opt
   label
 }
 
 /// Get the value from a ChannelSelectOption.
 pub fn select_option_value(opt: ChannelSelectOption) -> String {
-  let ChannelSelectOption(label:, value:) = opt
+  let ChannelSelectOption(label: _, value:) = opt
   value
 }
 
 /// Get the label from a ChannelButton.
 pub fn button_label(btn: ChannelButton) -> String {
-  let ChannelButton(label:, action_id:, style:) = btn
+  let ChannelButton(label:, action_id: _, style: _) = btn
   label
 }
 
 /// Get the action_id from a ChannelButton.
 pub fn button_action_id(btn: ChannelButton) -> String {
-  let ChannelButton(label:, action_id:, style:) = btn
+  let ChannelButton(label: _, action_id:, style: _) = btn
   action_id
 }
 
 /// Get the style from a ChannelButton.
 pub fn button_style(btn: ChannelButton) -> ChannelButtonStyle {
-  let ChannelButton(label:, action_id:, style:) = btn
+  let ChannelButton(label: _, action_id: _, style:) = btn
   style
+}
+
+/// Resolve the effective thread target for a reply.
+pub fn thread_target(reply: ChannelReply) -> Option(String) {
+  case reply.thread_id {
+    Some(thread_id) -> Some(thread_id)
+    None -> reply.reply_to_id
+  }
 }
