@@ -206,12 +206,7 @@ fn handle_message(
         }
         False -> {
           // Create new memory entry
-          let entry =
-            MemoryEntry(
-              role: role,
-              content: content,
-              timestamp: 0,
-            )
+          let entry = MemoryEntry(role: role, content: content, timestamp: 0)
 
           // Add to memory
           let new_memory = dict.insert(state.memory, state.memory_count, entry)

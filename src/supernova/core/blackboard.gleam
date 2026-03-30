@@ -171,6 +171,7 @@ fn is_expired(entry: Entry, current_time: Int) -> Bool {
     Some(ttl) -> current_time >= entry.created_at + ttl
   }
 }
+
 fn get_current_time() -> Int {
   0
 }
