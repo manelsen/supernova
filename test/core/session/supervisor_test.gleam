@@ -3,7 +3,9 @@
 //// Verifies session lifecycle management: start, stop, list, and error cases.
 
 import gleam/list
+import gleam/option.{Some}
 import gleeunit/should
+import supernova/core/session/server
 import supernova/core/session/supervisor
 
 pub fn start_and_list_sessions_test() {
@@ -78,6 +80,15 @@ pub fn session_lookup_by_id_test() {
   let result = supervisor.get_session(sup, "lookup_test")
   result
   |> should.be_ok
+}
+
+pub fn started_session_is_rich_session_test() {
+  let assert Ok(sup) = supervisor.start()
+  let assert Ok(session) = supervisor.start_session(sup, "rich_session")
+
+  let assert Ok(Nil) = server.set_model(session, "gpt-4")
+  server.get_model(session)
+  |> should.equal(Some("gpt-4"))
 }
 
 pub fn session_not_found_lookup_test() {
