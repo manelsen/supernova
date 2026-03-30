@@ -203,11 +203,7 @@ pub type ReactionType {
 
 /// Poll answer submitted by a user
 pub type PollAnswer {
-  PollAnswer(
-    poll_id: String,
-    user: Option(User),
-    option_ids: List(Int),
-  )
+  PollAnswer(poll_id: String, user: Option(User), option_ids: List(Int))
 }
 
 /// Reaction change on a message
@@ -308,8 +304,20 @@ pub type SendMessageOptions {
     parse_mode: ParseMode,
     disable_notification: Bool,
     reply_to_message_id: Option(Int),
+    message_thread_id: Option(Int),
     protect_content: Bool,
+    reply_markup: Option(ReplyMarkup),
   )
+}
+
+/// Reply markup supported by send/edit message requests.
+pub type ReplyMarkup {
+  InlineKeyboardMarkup(inline_keyboard: List(List(InlineKeyboardButton)))
+}
+
+/// Inline keyboard button.
+pub type InlineKeyboardButton {
+  InlineKeyboardButton(text: String, callback_data: String)
 }
 
 // ============================================================================
@@ -564,7 +572,11 @@ fn decode_update() -> decode.Decoder(Update) {
 /// Decode Message object
 fn decode_message() -> decode.Decoder(Message) {
   use message_id <- decode.field("message_id", decode.int)
-  use from <- decode.optional_field("from", None, decode.optional(decode_user()))
+  use from <- decode.optional_field(
+    "from",
+    None,
+    decode.optional(decode_user()),
+  )
   use sender_chat <- decode.optional_field(
     "sender_chat",
     None,
@@ -582,7 +594,11 @@ fn decode_message() -> decode.Decoder(Message) {
     None,
     decode.optional(decode.int),
   )
-  use text <- decode.optional_field("text", None, decode.optional(decode.string))
+  use text <- decode.optional_field(
+    "text",
+    None,
+    decode.optional(decode.string),
+  )
   use caption <- decode.optional_field(
     "caption",
     None,
@@ -671,7 +687,11 @@ fn decode_user() -> decode.Decoder(User) {
 fn decode_chat() -> decode.Decoder(Chat) {
   use id <- decode.field("id", decode.int)
   use chat_type_str <- decode.field("type", decode.string)
-  use title <- decode.optional_field("title", None, decode.optional(decode.string))
+  use title <- decode.optional_field(
+    "title",
+    None,
+    decode.optional(decode.string),
+  )
   use username <- decode.optional_field(
     "username",
     None,
@@ -781,7 +801,11 @@ fn decode_callback_query() -> decode.Decoder(CallbackQuery) {
     decode.optional(decode.string),
   )
   use chat_instance <- decode.field("chat_instance", decode.string)
-  use data <- decode.optional_field("data", None, decode.optional(decode.string))
+  use data <- decode.optional_field(
+    "data",
+    None,
+    decode.optional(decode.string),
+  )
   use game_short_name <- decode.optional_field(
     "game_short_name",
     None,
@@ -852,7 +876,11 @@ fn decode_location() -> decode.Decoder(Location) {
 /// Decode ReactionType object
 fn decode_reaction_type() -> decode.Decoder(ReactionType) {
   use reaction_type <- decode.field("type", decode.string)
-  use emoji <- decode.optional_field("emoji", None, decode.optional(decode.string))
+  use emoji <- decode.optional_field(
+    "emoji",
+    None,
+    decode.optional(decode.string),
+  )
   use custom_emoji_id <- decode.optional_field(
     "custom_emoji_id",
     None,
@@ -876,7 +904,11 @@ fn decode_poll_answer() -> decode.Decoder(PollAnswer) {
   )
   use option_ids <- decode.field("option_ids", decode.list(decode.int))
 
-  decode.success(PollAnswer(poll_id: poll_id, user: user, option_ids: option_ids))
+  decode.success(PollAnswer(
+    poll_id: poll_id,
+    user: user,
+    option_ids: option_ids,
+  ))
 }
 
 /// Decode MessageReaction object
@@ -1154,7 +1186,9 @@ pub fn new_send_options() -> SendMessageOptions {
     parse_mode: ParseModeNone,
     disable_notification: False,
     reply_to_message_id: None,
+    message_thread_id: None,
     protect_content: False,
+    reply_markup: None,
   )
 }
 
@@ -1182,12 +1216,41 @@ pub fn with_reply_to(
   SendMessageOptions(..options, reply_to_message_id: Some(message_id))
 }
 
+/// Set explicit Telegram forum topic / thread target.
+pub fn with_message_thread_id(
+  options: SendMessageOptions,
+  thread_id: Int,
+) -> SendMessageOptions {
+  SendMessageOptions(..options, message_thread_id: Some(thread_id))
+}
+
 /// Set protect content
 pub fn with_protect_content(
   options: SendMessageOptions,
   protect: Bool,
 ) -> SendMessageOptions {
   SendMessageOptions(..options, protect_content: protect)
+}
+
+/// Set inline reply markup for a message.
+pub fn with_reply_markup(
+  options: SendMessageOptions,
+  markup: ReplyMarkup,
+) -> SendMessageOptions {
+  SendMessageOptions(..options, reply_markup: Some(markup))
+}
+
+/// Build an inline keyboard button.
+pub fn inline_keyboard_button(
+  text: String,
+  callback_data: String,
+) -> InlineKeyboardButton {
+  InlineKeyboardButton(text: text, callback_data: callback_data)
+}
+
+/// Build an inline keyboard markup payload.
+pub fn inline_keyboard(rows: List(List(InlineKeyboardButton))) -> ReplyMarkup {
+  InlineKeyboardMarkup(inline_keyboard: rows)
 }
 
 // ============================================================================
@@ -1292,7 +1355,7 @@ pub fn send_message_with_options(
 }
 
 /// Build JSON body for sendMessage
-fn build_send_message_body(
+pub fn build_send_message_body(
   chat_id: ChatId,
   text: String,
   options: SendMessageOptions,
@@ -1314,9 +1377,19 @@ fn build_send_message_body(
     None -> ""
   }
 
+  let message_thread_json = case options.message_thread_id {
+    Some(id) -> ",\"message_thread_id\":" <> int.to_string(id)
+    None -> ""
+  }
+
   let protect_content_json = case options.protect_content {
     True -> ",\"protect_content\":true"
     False -> ""
+  }
+
+  let reply_markup_json = case options.reply_markup {
+    Some(markup) -> ",\"reply_markup\":" <> encode_reply_markup(markup)
+    None -> ""
   }
 
   let escaped_text = escape_json_string(text)
@@ -1329,7 +1402,9 @@ fn build_send_message_body(
   <> parse_mode_json
   <> disable_notification_json
   <> reply_to_json
+  <> message_thread_json
   <> protect_content_json
+  <> reply_markup_json
   <> "}"
 }
 
@@ -1341,6 +1416,38 @@ fn escape_json_string(text: String) -> String {
   |> string.replace("\n", "\\n")
   |> string.replace("\r", "\\r")
   |> string.replace("\t", "\\t")
+}
+
+fn encode_reply_markup(markup: ReplyMarkup) -> String {
+  case markup {
+    InlineKeyboardMarkup(inline_keyboard) -> {
+      let rows =
+        inline_keyboard
+        |> list.map(encode_inline_keyboard_row)
+        |> string.join(",")
+
+      "{\"inline_keyboard\":[" <> rows <> "]}"
+    }
+  }
+}
+
+fn encode_inline_keyboard_row(row: List(InlineKeyboardButton)) -> String {
+  let encoded =
+    row
+    |> list.map(encode_inline_keyboard_button)
+    |> string.join(",")
+
+  "[" <> encoded <> "]"
+}
+
+fn encode_inline_keyboard_button(button: InlineKeyboardButton) -> String {
+  let InlineKeyboardButton(text:, callback_data:) = button
+
+  "{\"text\":\""
+  <> escape_json_string(text)
+  <> "\",\"callback_data\":\""
+  <> escape_json_string(callback_data)
+  <> "\"}"
 }
 
 /// Parse sent message response
@@ -1430,6 +1537,14 @@ fn build_edit_message_body(
   }
 
   let escaped_text = escape_json_string(text)
+  let reply_markup_json = case options.reply_markup {
+    Some(markup) -> ",\"reply_markup\":" <> encode_reply_markup(markup)
+    None -> ""
+  }
+  let message_thread_json = case options.message_thread_id {
+    Some(id) -> ",\"message_thread_id\":" <> int.to_string(id)
+    None -> ""
+  }
 
   "{\"chat_id\":\""
   <> chat_id
@@ -1439,6 +1554,8 @@ fn build_edit_message_body(
   <> escaped_text
   <> "\""
   <> parse_mode_json
+  <> message_thread_json
+  <> reply_markup_json
   <> "}"
 }
 
