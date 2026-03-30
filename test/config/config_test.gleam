@@ -9,16 +9,17 @@ import supernova/config.{
   Anthropic, Config as ConfigRecord, DatabaseConfig as DatabaseConfigRecord,
   DiscordConfig as DiscordConfigRecord,
   GoogleChatConfig as GoogleChatConfigRecord, InvalidField,
-  LarkConfig as LarkConfigRecord, Local, MatrixConfig as MatrixConfigRecord,
-  MattermostConfig as MattermostConfigRecord, MissingField, OpenAI,
-  SlackConfig as SlackConfigRecord, TelegramConfig as TelegramConfigRecord,
-  TypeMismatch, ValidationError, WechatWorkConfig as WechatWorkConfigRecord,
-  WhatsAppConfig as WhatsAppConfigRecord, YamlParseError, apply_env_overrides,
-  default_config, default_provider_config, error_to_string, get_provider,
-  is_discord_enabled, is_google_chat_enabled, is_lark_enabled, is_matrix_enabled,
-  is_mattermost_enabled, is_slack_enabled, is_telegram_enabled,
-  is_wechat_work_enabled, is_whatsapp_enabled, load, load_unsafe, parse_yaml,
-  provider_requires_api_key, validate,
+  LarkConfig as LarkConfigRecord, MatrixConfig as MatrixConfigRecord,
+  MattermostConfig as MattermostConfigRecord, Minimax, MissingField, Ollama,
+  OpenAI, OpenCodeZen, OpenRouter, SlackConfig as SlackConfigRecord,
+  TelegramConfig as TelegramConfigRecord, TypeMismatch, ValidationError,
+  WechatWorkConfig as WechatWorkConfigRecord,
+  WhatsAppConfig as WhatsAppConfigRecord, YamlParseError, Zhipu, ZhipuCoding,
+  apply_env_overrides, default_config, default_provider_config, error_to_string,
+  get_provider, is_discord_enabled, is_google_chat_enabled, is_lark_enabled,
+  is_matrix_enabled, is_mattermost_enabled, is_slack_enabled,
+  is_telegram_enabled, is_wechat_work_enabled, is_whatsapp_enabled, load,
+  load_unsafe, parse_yaml, provider_requires_api_key, validate,
 }
 
 pub fn main() -> Nil {
@@ -66,10 +67,10 @@ pub fn default_provider_config_anthropic_test() {
   config.api_key |> should_equal(None)
 }
 
-pub fn default_provider_config_local_test() {
-  let config = default_provider_config(Local)
+pub fn default_provider_config_ollama_test() {
+  let config = default_provider_config(Ollama)
 
-  config.provider |> should_equal(Local)
+  config.provider |> should_equal(Ollama)
   config.api_key |> should_equal(None)
 }
 
@@ -145,21 +146,24 @@ matrix:
   enabled: true
 lark:
   token: lark-token
+  base_url: https://open.larksuite.com
   enabled: true
 google_chat:
-  token: google-token
+  webhook_url: https://chat.googleapis.com/v1/spaces/abc/messages?key=test&token=test
   enabled: true
 slack:
   token: slack-token
   enabled: true
 mattermost:
   token: mattermost-token
+  base_url: https://mattermost.example.com
   enabled: true
 wechat_work:
-  token: wechat-token
+  webhook_url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=wechat-key
   enabled: true
 whatsapp:
-  token: whatsapp-token
+  bridge_url: http://localhost:3000
+  device_id: device-whatsapp
   enabled: true
 "
 
@@ -168,16 +172,26 @@ whatsapp:
   config.matrix.token |> should_equal(Some("matrix-token"))
   config.matrix.enabled |> should_equal(True)
   config.lark.token |> should_equal(Some("lark-token"))
+  config.lark.base_url |> should_equal(Some("https://open.larksuite.com"))
   config.lark.enabled |> should_equal(True)
-  config.google_chat.token |> should_equal(Some("google-token"))
+  config.google_chat.webhook_url
+  |> should_equal(Some(
+    "https://chat.googleapis.com/v1/spaces/abc/messages?key=test&token=test",
+  ))
   config.google_chat.enabled |> should_equal(True)
   config.slack.token |> should_equal(Some("slack-token"))
   config.slack.enabled |> should_equal(True)
   config.mattermost.token |> should_equal(Some("mattermost-token"))
+  config.mattermost.base_url
+  |> should_equal(Some("https://mattermost.example.com"))
   config.mattermost.enabled |> should_equal(True)
-  config.wechat_work.token |> should_equal(Some("wechat-token"))
+  config.wechat_work.webhook_url
+  |> should_equal(Some(
+    "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=wechat-key",
+  ))
   config.wechat_work.enabled |> should_equal(True)
-  config.whatsapp.token |> should_equal(Some("whatsapp-token"))
+  config.whatsapp.bridge_url |> should_equal(Some("http://localhost:3000"))
+  config.whatsapp.device_id |> should_equal(Some("device-whatsapp"))
   config.whatsapp.enabled |> should_equal(True)
 }
 
@@ -210,15 +224,30 @@ pub fn parse_provider_config_test() {
     "
 providers:
   openai-main:
-    type: openai
+    provider: openai
     api_key: sk-test
     model: gpt-4
     timeout_ms: 60000
   claude:
     type: anthropic
     api_key: sk-anthropic
+  router:
+    provider: openrouter
+    model: anthropic/claude-haiku-4-5
+  zen:
+    type: opencode_zen
+    model: claude-sonnet-4-6
+  zhipu-general:
+    provider: zhipu
+    model: glm-4-plus
+  zhipu-code:
+    provider: zhipu_coding
+    model: codegeex-4
+  minimax-main:
+    type: minimax
+    model: MiniMax-Text-01
   local-llm:
-    type: local
+    provider: ollama
     base_url: http://localhost:8080
 "
 
@@ -236,10 +265,45 @@ providers:
   claude_config.provider |> should_equal(Anthropic)
   claude_config.api_key |> should_equal(Some("sk-anthropic"))
 
-  // Check local provider
+  // Check additional routed providers
+  let assert Some(router_config) = get_provider(config, "router")
+  router_config.provider |> should_equal(OpenRouter)
+  router_config.model |> should_equal(Some("anthropic/claude-haiku-4-5"))
+
+  let assert Some(zen_config) = get_provider(config, "zen")
+  zen_config.provider |> should_equal(OpenCodeZen)
+  zen_config.model |> should_equal(Some("claude-sonnet-4-6"))
+
+  let assert Some(zhipu_config) = get_provider(config, "zhipu-general")
+  zhipu_config.provider |> should_equal(Zhipu)
+  zhipu_config.model |> should_equal(Some("glm-4-plus"))
+
+  let assert Some(zhipu_coding_config) = get_provider(config, "zhipu-code")
+  zhipu_coding_config.provider |> should_equal(ZhipuCoding)
+  zhipu_coding_config.model |> should_equal(Some("codegeex-4"))
+
+  let assert Some(minimax_config) = get_provider(config, "minimax-main")
+  minimax_config.provider |> should_equal(Minimax)
+  minimax_config.model |> should_equal(Some("MiniMax-Text-01"))
+
+  // Check Ollama provider
   let assert Some(local_config) = get_provider(config, "local-llm")
-  local_config.provider |> should_equal(Local)
+  local_config.provider |> should_equal(Ollama)
   local_config.base_url |> should_equal(Some("http://localhost:8080"))
+}
+
+pub fn parse_provider_alias_local_to_ollama_test() {
+  let yaml =
+    "
+providers:
+  test:
+    provider: local
+"
+
+  let assert Ok(config) = parse_yaml(yaml)
+  let assert Some(provider_config) = get_provider(config, "test")
+
+  provider_config.provider |> should_equal(Ollama)
 }
 
 pub fn parse_yaml_with_multiple_documents_test() {
@@ -266,18 +330,9 @@ providers:
 
   let result = parse_yaml(yaml)
 
-  // Invalid provider types are silently ignored during parsing
-  // The config will just not include the invalid provider
   case result {
-    Ok(config) -> {
-      // The invalid provider should not be in the config
-      case get_provider(config, "test") {
-        None -> Nil
-        Some(_) -> panic as "Invalid provider should not be included"
-      }
-    }
-    Error(_) -> Nil
-    // Error is also acceptable
+    Error(InvalidField("provider", "invalid-provider", _)) -> Nil
+    _ -> panic as "Expected InvalidField error for invalid provider type"
   }
 }
 
@@ -356,7 +411,11 @@ pub fn validate_matrix_enabled_without_token_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      matrix: MatrixConfigRecord(token: None, enabled: True),
+      matrix: MatrixConfigRecord(
+        homeserver_url: None,
+        token: None,
+        enabled: True,
+      ),
     )
 
   case validate(config) {
@@ -370,18 +429,74 @@ pub fn validate_additional_channels_enabled_without_token_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      lark: LarkConfigRecord(token: None, enabled: True),
-      google_chat: GoogleChatConfigRecord(token: None, enabled: True),
+      lark: LarkConfigRecord(token: None, base_url: None, enabled: True),
+      google_chat: GoogleChatConfigRecord(webhook_url: None, enabled: True),
       slack: SlackConfigRecord(token: None, enabled: True),
-      mattermost: MattermostConfigRecord(token: None, enabled: True),
-      wechat_work: WechatWorkConfigRecord(token: None, enabled: True),
-      whatsapp: WhatsAppConfigRecord(token: None, enabled: True),
+      mattermost: MattermostConfigRecord(
+        token: None,
+        base_url: None,
+        enabled: True,
+      ),
+      wechat_work: WechatWorkConfigRecord(webhook_url: None, enabled: True),
+      whatsapp: WhatsAppConfigRecord(
+        bridge_url: None,
+        device_id: None,
+        enabled: True,
+      ),
     )
 
   // First failing channel in validation order should be Lark.
   case validate(config) {
     Error(ValidationError("Lark is enabled but no token is configured")) -> Nil
     _ -> panic as "Expected ValidationError for Lark without token"
+  }
+}
+
+pub fn validate_google_chat_enabled_without_webhook_url_test() {
+  let config =
+    ConfigRecord(
+      ..default_config(),
+      google_chat: GoogleChatConfigRecord(webhook_url: None, enabled: True),
+    )
+
+  case validate(config) {
+    Error(ValidationError(
+      "Google Chat is enabled but no webhook_url is configured",
+    )) -> Nil
+    _ -> panic as "Expected ValidationError for Google Chat without webhook_url"
+  }
+}
+
+pub fn validate_mattermost_enabled_without_base_url_test() {
+  let config =
+    ConfigRecord(
+      ..default_config(),
+      mattermost: MattermostConfigRecord(
+        token: Some("mattermost-token"),
+        base_url: None,
+        enabled: True,
+      ),
+    )
+
+  case validate(config) {
+    Error(ValidationError("Mattermost is enabled but no base_url is configured")) ->
+      Nil
+    _ -> panic as "Expected ValidationError for Mattermost without base_url"
+  }
+}
+
+pub fn validate_wechat_work_enabled_without_webhook_url_test() {
+  let config =
+    ConfigRecord(
+      ..default_config(),
+      wechat_work: WechatWorkConfigRecord(webhook_url: None, enabled: True),
+    )
+
+  case validate(config) {
+    Error(ValidationError(
+      "WeChat Work is enabled but no webhook_url is configured",
+    )) -> Nil
+    _ -> panic as "Expected ValidationError for WeChat Work without webhook_url"
   }
 }
 
@@ -435,13 +550,39 @@ pub fn validate_all_additional_channels_enabled_with_token_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      matrix: MatrixConfigRecord(token: Some("t"), enabled: True),
-      lark: LarkConfigRecord(token: Some("t"), enabled: True),
-      google_chat: GoogleChatConfigRecord(token: Some("t"), enabled: True),
+      matrix: MatrixConfigRecord(
+        homeserver_url: None,
+        token: Some("t"),
+        enabled: True,
+      ),
+      lark: LarkConfigRecord(
+        token: Some("t"),
+        base_url: Some("https://open.larksuite.com"),
+        enabled: True,
+      ),
+      google_chat: GoogleChatConfigRecord(
+        webhook_url: Some(
+          "https://chat.googleapis.com/v1/spaces/abc/messages?key=test&token=test",
+        ),
+        enabled: True,
+      ),
       slack: SlackConfigRecord(token: Some("t"), enabled: True),
-      mattermost: MattermostConfigRecord(token: Some("t"), enabled: True),
-      wechat_work: WechatWorkConfigRecord(token: Some("t"), enabled: True),
-      whatsapp: WhatsAppConfigRecord(token: Some("t"), enabled: True),
+      mattermost: MattermostConfigRecord(
+        token: Some("t"),
+        base_url: Some("https://mattermost.example.com"),
+        enabled: True,
+      ),
+      wechat_work: WechatWorkConfigRecord(
+        webhook_url: Some(
+          "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=wechat-key",
+        ),
+        enabled: True,
+      ),
+      whatsapp: WhatsAppConfigRecord(
+        bridge_url: Some("http://localhost:3000"),
+        device_id: Some("device-1"),
+        enabled: True,
+      ),
     )
 
   let assert Ok(Nil) = validate(config)
@@ -567,33 +708,55 @@ pub fn apply_env_overrides_telegram_token_test() {
   envoy.unset("SUPERNOVA_TELEGRAM_TOKEN")
 }
 
-pub fn apply_env_overrides_new_channel_tokens_test() {
+pub fn apply_env_overrides_new_channel_settings_test() {
   envoy.set("SUPERNOVA_MATRIX_TOKEN", "env-matrix-token")
   envoy.set("SUPERNOVA_LARK_TOKEN", "env-lark-token")
-  envoy.set("SUPERNOVA_GOOGLE_CHAT_TOKEN", "env-google-token")
+  envoy.set("SUPERNOVA_LARK_BASE_URL", "https://open.feishu.cn")
+  envoy.set(
+    "SUPERNOVA_GOOGLE_CHAT_WEBHOOK_URL",
+    "https://chat.googleapis.com/v1/spaces/env/messages?key=test&token=test",
+  )
   envoy.set("SUPERNOVA_SLACK_TOKEN", "env-slack-token")
   envoy.set("SUPERNOVA_MATTERMOST_TOKEN", "env-mattermost-token")
-  envoy.set("SUPERNOVA_WECHAT_WORK_TOKEN", "env-wechat-token")
-  envoy.set("SUPERNOVA_WHATSAPP_TOKEN", "env-whatsapp-token")
+  envoy.set("SUPERNOVA_MATTERMOST_BASE_URL", "https://mattermost.env")
+  envoy.set(
+    "SUPERNOVA_WECHAT_WORK_WEBHOOK_URL",
+    "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=env-wechat",
+  )
+  envoy.set("SUPERNOVA_WHATSAPP_BRIDGE_URL", "http://env-whatsapp:3000")
+  envoy.set("SUPERNOVA_WHATSAPP_DEVICE_ID", "env-device")
 
   let config = default_config()
   let overridden = apply_env_overrides(config)
 
   overridden.matrix.token |> should_equal(Some("env-matrix-token"))
   overridden.lark.token |> should_equal(Some("env-lark-token"))
-  overridden.google_chat.token |> should_equal(Some("env-google-token"))
+  overridden.lark.base_url |> should_equal(Some("https://open.feishu.cn"))
+  overridden.google_chat.webhook_url
+  |> should_equal(Some(
+    "https://chat.googleapis.com/v1/spaces/env/messages?key=test&token=test",
+  ))
   overridden.slack.token |> should_equal(Some("env-slack-token"))
   overridden.mattermost.token |> should_equal(Some("env-mattermost-token"))
-  overridden.wechat_work.token |> should_equal(Some("env-wechat-token"))
-  overridden.whatsapp.token |> should_equal(Some("env-whatsapp-token"))
+  overridden.mattermost.base_url |> should_equal(Some("https://mattermost.env"))
+  overridden.wechat_work.webhook_url
+  |> should_equal(Some(
+    "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=env-wechat",
+  ))
+  overridden.whatsapp.bridge_url
+  |> should_equal(Some("http://env-whatsapp:3000"))
+  overridden.whatsapp.device_id |> should_equal(Some("env-device"))
 
   envoy.unset("SUPERNOVA_MATRIX_TOKEN")
   envoy.unset("SUPERNOVA_LARK_TOKEN")
-  envoy.unset("SUPERNOVA_GOOGLE_CHAT_TOKEN")
+  envoy.unset("SUPERNOVA_LARK_BASE_URL")
+  envoy.unset("SUPERNOVA_GOOGLE_CHAT_WEBHOOK_URL")
   envoy.unset("SUPERNOVA_SLACK_TOKEN")
   envoy.unset("SUPERNOVA_MATTERMOST_TOKEN")
-  envoy.unset("SUPERNOVA_WECHAT_WORK_TOKEN")
-  envoy.unset("SUPERNOVA_WHATSAPP_TOKEN")
+  envoy.unset("SUPERNOVA_MATTERMOST_BASE_URL")
+  envoy.unset("SUPERNOVA_WECHAT_WORK_WEBHOOK_URL")
+  envoy.unset("SUPERNOVA_WHATSAPP_BRIDGE_URL")
+  envoy.unset("SUPERNOVA_WHATSAPP_DEVICE_ID")
 }
 
 pub fn apply_env_overrides_database_test() {
@@ -699,8 +862,28 @@ pub fn provider_requires_api_key_anthropic_test() {
   result |> should_equal(True)
 }
 
-pub fn provider_requires_api_key_local_test() {
-  let result = provider_requires_api_key(Local)
+pub fn provider_requires_api_key_openrouter_test() {
+  let result = provider_requires_api_key(OpenRouter)
+  result |> should_equal(True)
+}
+
+pub fn provider_requires_api_key_opencode_zen_test() {
+  let result = provider_requires_api_key(OpenCodeZen)
+  result |> should_equal(True)
+}
+
+pub fn provider_requires_api_key_zhipu_variants_test() {
+  provider_requires_api_key(Zhipu) |> should_equal(True)
+  provider_requires_api_key(ZhipuCoding) |> should_equal(True)
+}
+
+pub fn provider_requires_api_key_minimax_test() {
+  let result = provider_requires_api_key(Minimax)
+  result |> should_equal(True)
+}
+
+pub fn provider_requires_api_key_ollama_test() {
+  let result = provider_requires_api_key(Ollama)
   result |> should_equal(False)
 }
 
@@ -773,13 +956,39 @@ pub fn is_new_channels_enabled_true_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      matrix: MatrixConfigRecord(token: Some("t"), enabled: True),
-      lark: LarkConfigRecord(token: Some("t"), enabled: True),
-      google_chat: GoogleChatConfigRecord(token: Some("t"), enabled: True),
+      matrix: MatrixConfigRecord(
+        homeserver_url: None,
+        token: Some("t"),
+        enabled: True,
+      ),
+      lark: LarkConfigRecord(
+        token: Some("t"),
+        base_url: Some("https://open.larksuite.com"),
+        enabled: True,
+      ),
+      google_chat: GoogleChatConfigRecord(
+        webhook_url: Some(
+          "https://chat.googleapis.com/v1/spaces/abc/messages?key=test&token=test",
+        ),
+        enabled: True,
+      ),
       slack: SlackConfigRecord(token: Some("t"), enabled: True),
-      mattermost: MattermostConfigRecord(token: Some("t"), enabled: True),
-      wechat_work: WechatWorkConfigRecord(token: Some("t"), enabled: True),
-      whatsapp: WhatsAppConfigRecord(token: Some("t"), enabled: True),
+      mattermost: MattermostConfigRecord(
+        token: Some("t"),
+        base_url: Some("https://mattermost.example.com"),
+        enabled: True,
+      ),
+      wechat_work: WechatWorkConfigRecord(
+        webhook_url: Some(
+          "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=wechat-key",
+        ),
+        enabled: True,
+      ),
+      whatsapp: WhatsAppConfigRecord(
+        bridge_url: Some("http://localhost:3000"),
+        device_id: Some("device-1"),
+        enabled: True,
+      ),
     )
 
   is_matrix_enabled(config) |> should_equal(True)
@@ -795,13 +1004,25 @@ pub fn is_new_channels_enabled_false_without_token_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      matrix: MatrixConfigRecord(token: None, enabled: True),
-      lark: LarkConfigRecord(token: None, enabled: True),
-      google_chat: GoogleChatConfigRecord(token: None, enabled: True),
+      matrix: MatrixConfigRecord(
+        homeserver_url: None,
+        token: None,
+        enabled: True,
+      ),
+      lark: LarkConfigRecord(token: None, base_url: None, enabled: True),
+      google_chat: GoogleChatConfigRecord(webhook_url: None, enabled: True),
       slack: SlackConfigRecord(token: None, enabled: True),
-      mattermost: MattermostConfigRecord(token: None, enabled: True),
-      wechat_work: WechatWorkConfigRecord(token: None, enabled: True),
-      whatsapp: WhatsAppConfigRecord(token: None, enabled: True),
+      mattermost: MattermostConfigRecord(
+        token: None,
+        base_url: None,
+        enabled: True,
+      ),
+      wechat_work: WechatWorkConfigRecord(webhook_url: None, enabled: True),
+      whatsapp: WhatsAppConfigRecord(
+        bridge_url: None,
+        device_id: None,
+        enabled: True,
+      ),
     )
 
   is_matrix_enabled(config) |> should_equal(False)
