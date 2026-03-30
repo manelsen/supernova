@@ -1,6 +1,7 @@
-//// Smoke tests for newly scaffolded channel routers.
+//// Smoke tests for shared channel routers.
 
-import gleam/option.{None}
+import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import supernova/adapters/google_chat_router
 import supernova/adapters/lark_router
@@ -216,7 +217,7 @@ pub fn matrix_router_rejects_interactive_callbacks_test() {
   }
 }
 
-pub fn slack_router_model_command_falls_back_to_text_test() {
+pub fn slack_router_model_command_returns_interactive_test() {
   let assert Ok(router) = slack_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -232,13 +233,11 @@ pub fn slack_router_model_command_falls_back_to_text_test() {
 
   case slack_router.route(router, msg) {
     Ok(reply) -> {
-      reply.interactive |> should.equal(None)
-      reply.content
-      |> should.equal(
-        "Current selection: Mock / mock-model\n"
-        <> "Interactive picker is unavailable in slack. "
-        <> "Available models for Mock: mock-model, mock-alt-model",
-      )
+      case reply.interactive {
+        Some(_) -> Nil
+        None -> should.fail()
+      }
+      string.contains(reply.content, "Mock") |> should.equal(True)
     }
     Error(_) -> should.fail()
   }
