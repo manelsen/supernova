@@ -1,6 +1,7 @@
 import gleam/dynamic/decode
 import gleam/int
 import gleam/json
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
@@ -846,6 +847,7 @@ pub fn new_send_options_defaults_test() -> Nil {
   options.parse_mode |> should.equal(telegram.ParseModeNone)
   options.disable_notification |> should.equal(False)
   options.reply_to_message_id |> should.equal(None)
+  options.message_thread_id |> should.equal(None)
   options.protect_content |> should.equal(False)
 }
 
@@ -861,10 +863,83 @@ pub fn with_reply_to_test() -> Nil {
   options.reply_to_message_id |> should.equal(Some(123))
 }
 
+pub fn with_message_thread_id_test() -> Nil {
+  let options = telegram.new_send_options()
+  let options = telegram.with_message_thread_id(options, 77)
+  options.message_thread_id |> should.equal(Some(77))
+}
+
 pub fn with_protect_content_test() -> Nil {
   let options = telegram.new_send_options()
   let options = telegram.with_protect_content(options, True)
   options.protect_content |> should.equal(True)
+}
+
+pub fn with_reply_markup_test() -> Nil {
+  let markup =
+    telegram.inline_keyboard([
+      [telegram.inline_keyboard_button("OpenAI", "picker_provider:openai")],
+      [
+        telegram.inline_keyboard_button(
+          "GPT-5.1",
+          "picker_model_select:openai/gpt-5.1",
+        ),
+      ],
+    ])
+  let options =
+    telegram.new_send_options()
+    |> telegram.with_reply_markup(markup)
+
+  case options.reply_markup {
+    Some(telegram.InlineKeyboardMarkup(rows)) ->
+      list.length(rows) |> should.equal(2)
+    None -> should.fail()
+  }
+}
+
+pub fn build_send_message_body_with_reply_markup_test() -> Nil {
+  let options =
+    telegram.new_send_options()
+    |> telegram.with_reply_markup(
+      telegram.inline_keyboard([
+        [telegram.inline_keyboard_button("OpenAI", "picker_provider:openai")],
+        [
+          telegram.inline_keyboard_button(
+            "GPT-5.1",
+            "picker_model_select:openai/gpt-5.1",
+          ),
+          telegram.inline_keyboard_button(
+            "GPT-4o",
+            "picker_model_select:openai/gpt-4o",
+          ),
+        ],
+      ]),
+    )
+
+  let body =
+    telegram.build_send_message_body("123456", "Choose provider", options)
+
+  string.contains(body, "\"reply_markup\":{\"inline_keyboard\":")
+  |> should.equal(True)
+  string.contains(body, "\"text\":\"OpenAI\"") |> should.equal(True)
+  string.contains(body, "\"callback_data\":\"picker_provider:openai\"")
+  |> should.equal(True)
+  string.contains(
+    body,
+    "\"callback_data\":\"picker_model_select:openai/gpt-5.1\"",
+  )
+  |> should.equal(True)
+}
+
+pub fn build_send_message_body_with_message_thread_id_test() -> Nil {
+  let options =
+    telegram.new_send_options()
+    |> telegram.with_message_thread_id(77)
+
+  let body =
+    telegram.build_send_message_body("123456", "Thread message", options)
+
+  string.contains(body, "\"message_thread_id\":77") |> should.equal(True)
 }
 
 pub fn combined_options_test() -> Nil {
