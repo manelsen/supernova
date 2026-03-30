@@ -17,7 +17,7 @@ log_level: info            # debug | info | warn | error
 #
 providers:
   default:
-    provider: anthropic           # anthropic | openai | local
+    provider: anthropic           # anthropic | openai | openrouter | opencode_zen | zhipu | zhipu_coding | minimax | ollama
     model: claude-haiku-4-5       # any model supported by the provider
     # api_key: sk-ant-...         # or: SUPERNOVA_ANTHROPIC_API_KEY
     timeout_ms: 30000
