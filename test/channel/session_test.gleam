@@ -18,9 +18,10 @@ pub fn without_manager_empty_ids_test() {
 }
 
 pub fn with_manager_success_test() {
-  let resolver = session.with_manager(fn(channel_id, user_id) {
-    channel_id <> "_" <> user_id
-  })
+  let resolver =
+    session.with_manager(fn(channel_id, user_id) {
+      channel_id <> "_" <> user_id
+    })
 
   let session_id = resolver.resolve("ch1", "u1")
 
@@ -29,12 +30,20 @@ pub fn with_manager_success_test() {
 }
 
 pub fn with_manager_empty_result_test() {
-  let resolver = session.with_manager(fn(_channel_id, _user_id) {
-    ""
-  })
+  let resolver = session.with_manager(fn(_channel_id, _user_id) { "" })
 
   let session_id = resolver.resolve("ch1", "u1")
 
   session_id
   |> should.equal("session:ch1:u1")
+}
+
+pub fn telegram_session_id_test() {
+  session.telegram_session_id("chat_123")
+  |> should.equal("telegram:chat_123")
+}
+
+pub fn discord_session_id_test() {
+  session.discord_session_id("channel_123", "user_456")
+  |> should.equal("discord:channel_123:user_456")
 }

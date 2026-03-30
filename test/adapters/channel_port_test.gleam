@@ -45,7 +45,11 @@ pub fn reply_builder_defaults_to_no_interactions_test() {
   reply.channel_id |> should.equal("chat-1")
   reply.content |> should.equal("pong")
   reply.reply_to_id |> should.equal(None)
+  reply.thread_id |> should.equal(None)
+  reply.typing |> should.equal(False)
+  reply.edit_message_id |> should.equal(None)
   reply.interactive |> should.equal(None)
+  reply.media |> should.equal([])
 }
 
 pub fn reply_thread_builder_sets_reply_target_test() {
@@ -83,6 +87,44 @@ pub fn reply_thread_with_interactions_builder_test() {
 
   reply.reply_to_id |> should.equal(Some("msg-1"))
   reply.interactive |> should.equal(Some(interactive))
+}
+
+pub fn rich_reply_builder_supports_media_and_ux_metadata_test() {
+  let msg = sample_message()
+  let interactive = sample_interactive()
+  let media = [
+    port.image_media(
+      url: "https://example.com/image.png",
+      alt_text: Some("Preview"),
+    ),
+    port.audio_media(
+      url: "https://example.com/audio.mp3",
+      mime_type: Some("audio/mpeg"),
+    ),
+    port.document_media(
+      url: "https://example.com/spec.pdf",
+      filename: "spec.pdf",
+      mime_type: Some("application/pdf"),
+    ),
+  ]
+
+  let reply =
+    port.reply_with_interactions(
+      to: msg,
+      content: "Choose with context",
+      interactive: interactive,
+    )
+    |> port.with_thread("thread-1")
+    |> port.with_typing(True)
+    |> port.with_edit_message("message-99")
+    |> port.with_media(media)
+
+  reply.reply_to_id |> should.equal(None)
+  reply.thread_id |> should.equal(Some("thread-1"))
+  reply.typing |> should.equal(True)
+  reply.edit_message_id |> should.equal(Some("message-99"))
+  reply.interactive |> should.equal(Some(interactive))
+  reply.media |> should.equal(media)
 }
 
 pub fn inbound_wrappers_preserve_payload_test() {

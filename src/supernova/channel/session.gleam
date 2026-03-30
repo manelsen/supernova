@@ -7,12 +7,9 @@
 //// ## Usage
 ////
 //// ```gleam
-//// // With session manager (Telegram, Discord)
-//// let resolver = session.with_manager(
-////   fn(channel_id, user_id) {
-////     telegram_session.get_or_create(session_mgr, channel_id)
-////   }
-//// )
+//// // Canonical per-channel session IDs
+//// let telegram_id = session.telegram_session_id("chat_123")
+//// let discord_id = session.discord_session_id("channel_123", "user_456")
 ////
 //// // Without session manager (Matrix, Slack, etc.)
 //// let resolver = session.without_manager("matrix")
@@ -32,7 +29,7 @@ import gleam/string
 pub type SessionResolver {
   SessionResolver(
     /// Resolve or create session ID from channel and user identifiers
-    resolve: fn(String, String) -> String
+    resolve: fn(String, String) -> String,
   )
 }
 
@@ -40,18 +37,24 @@ pub type SessionResolver {
 ///
 /// The manager_fn is called to resolve sessions. If it fails, a fallback
 /// session ID is generated.
-pub fn with_manager(
-  manager_fn: fn(String, String) -> String
-) -> SessionResolver {
-  SessionResolver(
-    resolve: fn(channel_id, user_id) {
-      let session_id = manager_fn(channel_id, user_id)
-      case string.is_empty(session_id) {
-        True -> fallback_session_id(channel_id, user_id)
-        False -> session_id
-      }
+pub fn with_manager(manager_fn: fn(String, String) -> String) -> SessionResolver {
+  SessionResolver(resolve: fn(channel_id, user_id) {
+    let session_id = manager_fn(channel_id, user_id)
+    case string.is_empty(session_id) {
+      True -> fallback_session_id(channel_id, user_id)
+      False -> session_id
     }
-  )
+  })
+}
+
+/// Build the canonical session ID for a Telegram chat.
+pub fn telegram_session_id(channel_id: String) -> String {
+  "telegram:" <> channel_id
+}
+
+/// Build the canonical session ID for a Discord participant in a channel.
+pub fn discord_session_id(channel_id: String, user_id: String) -> String {
+  "discord:" <> channel_id <> ":" <> user_id
 }
 
 /// Create a SessionResolver without a session manager (generic channels).
@@ -60,11 +63,9 @@ pub fn with_manager(
 /// (Matrix, Slack, Lark, etc.). The session ID is a simple concatenation
 /// of the channel prefix and identifiers.
 pub fn without_manager(channel_prefix: String) -> SessionResolver {
-  SessionResolver(
-    resolve: fn(channel_id, user_id) {
-      channel_prefix <> ":" <> channel_id <> ":" <> user_id
-    }
-  )
+  SessionResolver(resolve: fn(channel_id, user_id) {
+    channel_prefix <> ":" <> channel_id <> ":" <> user_id
+  })
 }
 
 /// Generate a fallback session ID when session manager fails.
