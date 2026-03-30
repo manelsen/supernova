@@ -13,30 +13,36 @@ import supernova/channel/port
 
 pub fn parse_message_event_test() {
   let event = google_chat_adapter.parse_event(sample_message_event())
-  should.equal(event, Ok(port.ChannelMessage(
-    id: "messages/abc123",
-    channel: "google_chat",
-    channel_id: "spaces/xyz789",
-    user_id: "users/u123456",
-    username: "",
-    content: "Hello bot!",
-    is_bot: False,
-    reply_to_id: option.None,
-  )))
+  should.equal(
+    event,
+    Ok(port.ChannelMessage(
+      id: "messages/abc123",
+      channel: "google_chat",
+      channel_id: "spaces/xyz789",
+      user_id: "users/u123456",
+      username: "",
+      content: "Hello bot!",
+      is_bot: False,
+      reply_to_id: option.None,
+    )),
+  )
 }
 
 pub fn parse_thread_reply_test() {
   let event = google_chat_adapter.parse_event(sample_thread_reply_event())
-  should.equal(event, Ok(port.ChannelMessage(
-    id: "messages/reply456",
-    channel: "google_chat",
-    channel_id: "spaces/xyz789",
-    user_id: "users/u123456",
-    username: "",
-    content: "Reply in thread",
-    is_bot: False,
-    reply_to_id: option.Some("messages/parent123"),
-  )))
+  should.equal(
+    event,
+    Ok(port.ChannelMessage(
+      id: "messages/reply456",
+      channel: "google_chat",
+      channel_id: "spaces/xyz789",
+      user_id: "users/u123456",
+      username: "",
+      content: "Reply in thread",
+      is_bot: False,
+      reply_to_id: option.Some("messages/parent123"),
+    )),
+  )
 }
 
 pub fn parse_bot_message_ignored_test() {
@@ -56,9 +62,18 @@ pub fn parse_non_message_event_ignored_test() {
 }
 
 pub fn parse_invalid_json_error_test() {
-  // Invalid JSON that doesn't contain MESSAGE type
   let result = google_chat_adapter.parse_event("not json at all")
-  should.equal(result, Error(port.Ignored("non-message event")))
+  should.equal(result, Error(port.SendFailed("invalid JSON")))
+}
+
+pub fn start_returns_adapter_test() {
+  let assert Ok(adapter) =
+    google_chat_adapter.start(
+      "https://chat.googleapis.com/v1/spaces/xyz789/messages?key=test&token=test",
+      fn(_, _) { Error(port.Ignored("unused")) },
+    )
+
+  adapter.name |> should.equal("google_chat")
 }
 
 // ---------------------------------------------------------------------------
@@ -66,27 +81,42 @@ pub fn parse_invalid_json_error_test() {
 // ---------------------------------------------------------------------------
 
 pub fn build_reply_payload_test() {
-  let reply = port.ChannelReply(
-    channel_id: "spaces/xyz789",
-    content: "Hello back!",
-    reply_to_id: option.None,
-    interactive: option.None,
-  )
-  
+  let reply =
+    port.ChannelReply(
+      channel_id: "spaces/xyz789",
+      content: "Hello back!",
+      reply_to_id: option.None,
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.None,
+      media: [],
+    )
+
   let result = google_chat_adapter.build_reply_payload(reply)
-  should.be_ok(result)
+  should.equal(result, Ok("{\"text\":\"Hello back!\"}"))
 }
 
 pub fn build_thread_reply_payload_test() {
-  let reply = port.ChannelReply(
-    channel_id: "spaces/xyz789",
-    content: "Thread reply",
-    reply_to_id: option.Some("messages/parent123"),
-    interactive: option.None,
-  )
-  
+  let reply =
+    port.ChannelReply(
+      channel_id: "spaces/xyz789",
+      content: "Thread reply",
+      reply_to_id: option.Some("messages/parent123"),
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.None,
+      media: [],
+    )
+
   let result = google_chat_adapter.build_reply_payload(reply)
-  should.be_ok(result)
+  should.equal(
+    result,
+    Ok(
+      "{\"text\":\"Thread reply\",\"thread\":{\"replyToMessage\":\"messages/parent123\"}}",
+    ),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -94,33 +124,35 @@ pub fn build_thread_reply_payload_test() {
 // ---------------------------------------------------------------------------
 
 pub fn session_id_test() {
-  let msg = port.ChannelMessage(
-    id: "messages/abc123",
-    channel: "google_chat",
-    channel_id: "spaces/xyz789",
-    user_id: "users/u123456",
-    username: "Test",
-    content: "hi",
-    is_bot: False,
-    reply_to_id: option.None,
-  )
-  
+  let msg =
+    port.ChannelMessage(
+      id: "messages/abc123",
+      channel: "google_chat",
+      channel_id: "spaces/xyz789",
+      user_id: "users/u123456",
+      username: "Test",
+      content: "hi",
+      is_bot: False,
+      reply_to_id: option.None,
+    )
+
   let session_id = google_chat_adapter.resolve_session_id(msg)
   should.equal(session_id, "google_chat:spaces/xyz789:users/u123456")
 }
 
 pub fn session_id_from_dm_test() {
-  let msg = port.ChannelMessage(
-    id: "messages/dm456",
-    channel: "google_chat",
-    channel_id: "spaces/dm001",
-    user_id: "users/u789012",
-    username: "DMUser",
-    content: "dm",
-    is_bot: False,
-    reply_to_id: option.None,
-  )
-  
+  let msg =
+    port.ChannelMessage(
+      id: "messages/dm456",
+      channel: "google_chat",
+      channel_id: "spaces/dm001",
+      user_id: "users/u789012",
+      username: "DMUser",
+      content: "dm",
+      is_bot: False,
+      reply_to_id: option.None,
+    )
+
   let session_id = google_chat_adapter.resolve_session_id(msg)
   should.equal(session_id, "google_chat:spaces/dm001:users/u789012")
 }

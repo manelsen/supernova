@@ -1,226 +1,136 @@
-//// WhatsApp Adapter — implements the ChannelPort contract for WhatsApp.
+//// WhatsApp Adapter — bridge-first adapter for Whatsmeow-compatible REST APIs.
 ////
-//// WhatsApp uses a Docker bridge server (e.g., go-whatsapp-web-multidevice)
-//// This adapter connects to the bridge REST API for sending messages.
+//// The primary target is `go-whatsapp-web-multidevice`, which exposes:
+//// - inbound webhook payloads with `event`, `device_id`, and `payload`
+//// - outbound REST endpoints such as `/send/message`, `/send/image`,
+////   `/send/audio`, and `/send/file`
 ////
-//// ## WhatsApp Bridge Specifics
-////
-//// - **Bridge URL:** Local Docker bridge server URL
-//// - **Authentication:** Via X-Device-Id header and/or Basic Auth
-//// - **Session ID:** chat_id format: `{phone}@s.whatsapp.net`
-//// - **Message Types:** text, image, audio, video, document, sticker
-//// - **Threading:** Via context/message_id field for replies
-////
+//// The adapter keeps the legacy Cloud-style parser as a fallback so existing
+//// fixtures keep working while the runtime moves to the bridge transport.
 
+import gleam/bit_array
+import gleam/bytes_tree
 import gleam/dynamic/decode
 import gleam/hackney
 import gleam/http
 import gleam/http/request
-import gleam/http/response.{type Response}
+import gleam/http/response.{type Response, set_body}
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import gleam/int
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
 
+const multipart_boundary: String = "supernova-whatsapp-bridge"
 
-// ============================================================================
-// Configuration
-// ============================================================================
+const default_file_mime_type: String = "application/octet-stream"
 
-/// The bot's own phone number. Messages from this number are filtered out.
-const bot_phone_number: String = "15550000000"
+pub type BridgeContentType {
+  BridgeJson
+  BridgeMultipart
+}
 
-/// Default bridge URL when running in Docker
-const default_bridge_url = "http://localhost:3000"
+pub type BridgeDownload {
+  BridgeDownload(
+    field_name: String,
+    source_url: String,
+    filename: String,
+    mime_type: Option(String),
+  )
+}
 
-/// Start the WhatsApp adapter with the given bridge config.
-/// Returns a `ChannelAdapter` that the core uses to send replies.
+pub type BridgeRequestPlan {
+  BridgeRequestPlan(
+    path: String,
+    content_type: BridgeContentType,
+    fields: List(#(String, String)),
+    download: Option(BridgeDownload),
+  )
+}
+
 pub fn start(
   bridge_url: String,
+  device_id: Option(String),
   _handler: port.ChannelHandler,
 ) -> Result(port.ChannelAdapter, String) {
   let send_fn = fn(reply: port.ChannelReply) -> Result(Nil, port.ChannelError) {
-    do_send(bridge_url, reply)
+    do_send(bridge_url, device_id, reply)
   }
 
-  Ok(port.ChannelAdapter(
-    name: "whatsapp",
-    send: send_fn,
-  ))
+  Ok(port.ChannelAdapter(name: "whatsapp", send: send_fn, stop: fn() { Nil }))
 }
 
-/// Parse a raw WhatsApp Cloud API webhook event JSON into a normalized `ChannelMessage`.
-/// Returns `Error(port.Ignored(...))` for events that should be filtered.
-pub fn parse_event(event_json: String) -> Result(port.ChannelMessage, port.ChannelError) {
-  case json.parse(event_json, whatsapp_webhook_decoder()) {
-    Ok(event) -> normalize_event(event)
-    Error(_) -> Error(port.SendFailed("invalid JSON"))
+pub fn parse_event(
+  event_json: String,
+) -> Result(port.ChannelMessage, port.ChannelError) {
+  case json.parse(event_json, bridge_webhook_decoder()) {
+    Ok(event) -> normalize_bridge_event(event)
+    Error(_) ->
+      case json.parse(event_json, whatsapp_webhook_decoder()) {
+        Ok(event) -> normalize_cloud_event(event)
+        Error(_) -> Error(port.SendFailed("invalid JSON"))
+      }
   }
 }
 
-/// Build the WhatsApp Cloud API message payload for sending a reply.
+/// Build a deterministic send plan for the bridge transport.
+pub fn build_send_plan(
+  reply: port.ChannelReply,
+) -> Result(BridgeRequestPlan, port.ChannelError) {
+  let phone = normalise_chat_id(reply.channel_id)
+
+  case reply.media {
+    [first_media, ..] -> build_media_send_plan(phone, reply, first_media)
+    [] -> build_text_send_plan(phone, reply)
+  }
+}
+
+/// Serialize the logical bridge payload for debugging/tests.
 pub fn build_reply_payload(
   reply: port.ChannelReply,
 ) -> Result(String, port.ChannelError) {
-  let base_payload = json.object([
-    #("messaging_product", json.string("whatsapp")),
-    #("to", json.string(reply.channel_id)),
-  ])
-  
-  // Build the appropriate message object based on content
-  let message_obj = case reply.interactive {
-    Some(_) -> build_interactive_message(reply)
-    None -> build_text_message(reply)
+  case build_send_plan(reply) {
+    Ok(plan) -> Ok(encode_plan_preview(plan))
+    Error(error) -> Error(error)
   }
-  
-  // Combine base payload with message object
-  let payload = case reply.reply_to_id {
-    Some(parent_id) -> {
-      // Add context for reply threading
-      json.object([
-        #("messaging_product", json.string("whatsapp")),
-        #("to", json.string(reply.channel_id)),
-        #("type", json.string("text")),
-        #("text", message_obj),
-        #("context", json.object([
-          #("message_id", json.string(parent_id)),
-        ])),
-      ])
-    }
-    None -> {
-      let type_key = case reply.interactive {
-        Some(_) -> "interactive"
-        None -> "text"
-      }
-      json.object([
-        #("messaging_product", json.string("whatsapp")),
-        #("to", json.string(reply.channel_id)),
-        #("type", json.string(type_key)),
-        #("text", message_obj),
-      ])
-    }
-  }
-  
-  Ok(json.to_string(payload))
 }
 
-/// Resolve the session ID for a WhatsApp message.
-/// Format: `whatsapp:{phone_number_id}:{user_whatsapp_number}`
 pub fn resolve_session_id(msg: port.ChannelMessage) -> String {
   "whatsapp:" <> msg.channel_id <> ":" <> msg.user_id
 }
 
-/// Create a session resolver for WhatsApp.
 pub fn session_resolver() -> SessionResolver {
   without_manager("whatsapp")
 }
 
-// ============================================================================
-// Internal: Event Decoding
-// ============================================================================
-
-fn whatsapp_webhook_decoder() -> decode.Decoder(WhatsAppWebhook) {
-  use object <- decode.field("object", decode.string)
-  use entry <- decode.field("entry", decode.list(whatsapp_entry_decoder()))
-  decode.success(WhatsAppWebhook(object: object, entry: entry))
+type WhatsAppBridgeWebhook {
+  WhatsAppBridgeWebhook(
+    event: String,
+    device_id: Option(String),
+    payload: WhatsAppBridgePayload,
+  )
 }
 
-fn whatsapp_entry_decoder() -> decode.Decoder(WhatsAppEntry) {
-  use id <- decode.field("id", decode.string)
-  use changes <- decode.field("changes", decode.list(whatsapp_change_decoder()))
-  decode.success(WhatsAppEntry(id: id, changes: changes))
+type WhatsAppBridgePayload {
+  WhatsAppBridgePayload(
+    id: String,
+    chat_id: String,
+    from: String,
+    from_name: Option(String),
+    is_from_me: Bool,
+    body: Option(String),
+    replied_to_id: Option(String),
+    image: Option(BridgeMediaAttachment),
+    audio: Option(BridgeMediaAttachment),
+    document: Option(BridgeMediaAttachment),
+  )
 }
 
-fn whatsapp_change_decoder() -> decode.Decoder(WhatsAppChange) {
-  use value <- decode.field("value", whatsapp_value_decoder())
-  use field <- decode.field("field", decode.string)
-  decode.success(WhatsAppChange(value: value, field: field))
+type BridgeMediaAttachment {
+  BridgeMediaAttachment(caption: Option(String))
 }
-
-fn whatsapp_value_decoder() -> decode.Decoder(WhatsAppValue) {
-  use messaging_product <- decode.optional_field("messaging_product", None, decode.string |> decode.map(Some))
-  use metadata <- decode.optional_field("metadata", None, whatsapp_metadata_decoder() |> decode.map(Some))
-  use contacts <- decode.optional_field("contacts", None, decode.list(whatsapp_contact_decoder()) |> decode.map(Some))
-  use messages <- decode.optional_field("messages", None, decode.list(whatsapp_message_decoder()) |> decode.map(Some))
-  use statuses <- decode.optional_field("statuses", None, decode.list(whatsapp_status_decoder()) |> decode.map(Some))
-  decode.success(WhatsAppValue(
-    messaging_product: messaging_product,
-    metadata: metadata,
-    contacts: contacts,
-    messages: messages,
-    statuses: statuses,
-  ))
-}
-
-fn whatsapp_metadata_decoder() -> decode.Decoder(WhatsAppMetadata) {
-  use phone_number_id <- decode.field("phone_number_id", decode.string)
-  use display_phone_number <- decode.field("display_phone_number", decode.string)
-  decode.success(WhatsAppMetadata(
-    phone_number_id: phone_number_id,
-    display_phone_number: display_phone_number,
-  ))
-}
-
-fn whatsapp_contact_decoder() -> decode.Decoder(WhatsAppContact) {
-  use profile <- decode.field("profile", whatsapp_profile_decoder())
-  use wa_id <- decode.field("wa_id", decode.string)
-  decode.success(WhatsAppContact(profile: profile, wa_id: wa_id))
-}
-
-fn whatsapp_profile_decoder() -> decode.Decoder(WhatsAppProfile) {
-  use name <- decode.field("name", decode.string)
-  decode.success(WhatsAppProfile(name: name))
-}
-
-fn whatsapp_message_decoder() -> decode.Decoder(WhatsAppMessage) {
-  use from <- decode.field("from", decode.string)
-  use id <- decode.field("id", decode.string)
-  use timestamp <- decode.field("timestamp", decode.string)
-  use msg_type <- decode.field("type", decode.string)
-  use text <- decode.optional_field("text", None, whatsapp_text_decoder() |> decode.map(Some))
-  use caption <- decode.optional_field("caption", None, decode.string |> decode.map(Some))
-  use context <- decode.optional_field("context", None, whatsapp_context_decoder() |> decode.map(Some))
-  decode.success(WhatsAppMessage(
-    from: from,
-    id: id,
-    timestamp: timestamp,
-    msg_type: msg_type,
-    text: text,
-    caption: caption,
-    context: context,
-  ))
-}
-
-fn whatsapp_text_decoder() -> decode.Decoder(WhatsAppText) {
-  use body <- decode.field("body", decode.string)
-  decode.success(WhatsAppText(body: body))
-}
-
-fn whatsapp_context_decoder() -> decode.Decoder(WhatsAppContext) {
-  use from <- decode.field("from", decode.string)
-  use id <- decode.field("id", decode.string)
-  decode.success(WhatsAppContext(from: from, id: id))
-}
-
-fn whatsapp_status_decoder() -> decode.Decoder(WhatsAppStatus) {
-  use id <- decode.field("id", decode.string)
-  use from <- decode.field("from", decode.string)
-  use timestamp <- decode.field("timestamp", decode.string)
-  use status <- decode.field("status", decode.string)
-  decode.success(WhatsAppStatus(
-    id: id,
-    from: from,
-    timestamp: timestamp,
-    status: status,
-  ))
-}
-
-// ============================================================================
-// Internal: Type Definitions
-// ============================================================================
 
 type WhatsAppWebhook {
   WhatsAppWebhook(object: String, entry: List(WhatsAppEntry))
@@ -280,19 +190,291 @@ type WhatsAppStatus {
   WhatsAppStatus(id: String, from: String, timestamp: String, status: String)
 }
 
-// ============================================================================
-// Internal: Normalization Logic
-// ============================================================================
+fn bridge_webhook_decoder() -> decode.Decoder(WhatsAppBridgeWebhook) {
+  use event <- decode.field("event", decode.string)
+  use device_id <- decode.optional_field(
+    "device_id",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use payload <- decode.field("payload", bridge_payload_decoder())
+  decode.success(WhatsAppBridgeWebhook(
+    event: event,
+    device_id: device_id,
+    payload: payload,
+  ))
+}
 
-fn normalize_event(event: WhatsAppWebhook) -> Result(port.ChannelMessage, port.ChannelError) {
-  // Get the first entry and first change
+fn bridge_payload_decoder() -> decode.Decoder(WhatsAppBridgePayload) {
+  use id <- decode.field("id", decode.string)
+  use chat_id <- decode.field("chat_id", decode.string)
+  use from <- decode.field("from", decode.string)
+  use from_name <- decode.optional_field(
+    "from_name",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use is_from_me <- decode.optional_field("is_from_me", False, decode.bool)
+  use body <- decode.optional_field(
+    "body",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use replied_to_id <- decode.optional_field(
+    "replied_to_id",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use image <- decode.optional_field(
+    "image",
+    None,
+    bridge_media_attachment_decoder() |> decode.map(Some),
+  )
+  use audio <- decode.optional_field(
+    "audio",
+    None,
+    bridge_media_attachment_decoder() |> decode.map(Some),
+  )
+  use document <- decode.optional_field(
+    "document",
+    None,
+    bridge_media_attachment_decoder() |> decode.map(Some),
+  )
+  decode.success(WhatsAppBridgePayload(
+    id: id,
+    chat_id: chat_id,
+    from: from,
+    from_name: from_name,
+    is_from_me: is_from_me,
+    body: body,
+    replied_to_id: replied_to_id,
+    image: image,
+    audio: audio,
+    document: document,
+  ))
+}
+
+fn bridge_media_attachment_decoder() -> decode.Decoder(BridgeMediaAttachment) {
+  decode.one_of(
+    decode.string |> decode.map(fn(_) { BridgeMediaAttachment(caption: None) }),
+    or: [bridge_media_attachment_object_decoder()],
+  )
+}
+
+fn bridge_media_attachment_object_decoder() -> decode.Decoder(
+  BridgeMediaAttachment,
+) {
+  use caption <- decode.optional_field(
+    "caption",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use _path <- decode.optional_field(
+    "path",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use _url <- decode.optional_field(
+    "url",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use _filename <- decode.optional_field(
+    "filename",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  decode.success(BridgeMediaAttachment(caption: caption))
+}
+
+fn whatsapp_webhook_decoder() -> decode.Decoder(WhatsAppWebhook) {
+  use object <- decode.field("object", decode.string)
+  use entry <- decode.field("entry", decode.list(whatsapp_entry_decoder()))
+  decode.success(WhatsAppWebhook(object: object, entry: entry))
+}
+
+fn whatsapp_entry_decoder() -> decode.Decoder(WhatsAppEntry) {
+  use id <- decode.field("id", decode.string)
+  use changes <- decode.field("changes", decode.list(whatsapp_change_decoder()))
+  decode.success(WhatsAppEntry(id: id, changes: changes))
+}
+
+fn whatsapp_change_decoder() -> decode.Decoder(WhatsAppChange) {
+  use value <- decode.field("value", whatsapp_value_decoder())
+  use field <- decode.field("field", decode.string)
+  decode.success(WhatsAppChange(value: value, field: field))
+}
+
+fn whatsapp_value_decoder() -> decode.Decoder(WhatsAppValue) {
+  use messaging_product <- decode.optional_field(
+    "messaging_product",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use metadata <- decode.optional_field(
+    "metadata",
+    None,
+    whatsapp_metadata_decoder() |> decode.map(Some),
+  )
+  use contacts <- decode.optional_field(
+    "contacts",
+    None,
+    decode.list(whatsapp_contact_decoder()) |> decode.map(Some),
+  )
+  use messages <- decode.optional_field(
+    "messages",
+    None,
+    decode.list(whatsapp_message_decoder()) |> decode.map(Some),
+  )
+  use statuses <- decode.optional_field(
+    "statuses",
+    None,
+    decode.list(whatsapp_status_decoder()) |> decode.map(Some),
+  )
+  decode.success(WhatsAppValue(
+    messaging_product: messaging_product,
+    metadata: metadata,
+    contacts: contacts,
+    messages: messages,
+    statuses: statuses,
+  ))
+}
+
+fn whatsapp_metadata_decoder() -> decode.Decoder(WhatsAppMetadata) {
+  use phone_number_id <- decode.field("phone_number_id", decode.string)
+  use display_phone_number <- decode.field(
+    "display_phone_number",
+    decode.string,
+  )
+  decode.success(WhatsAppMetadata(
+    phone_number_id: phone_number_id,
+    display_phone_number: display_phone_number,
+  ))
+}
+
+fn whatsapp_contact_decoder() -> decode.Decoder(WhatsAppContact) {
+  use profile <- decode.field("profile", whatsapp_profile_decoder())
+  use wa_id <- decode.field("wa_id", decode.string)
+  decode.success(WhatsAppContact(profile: profile, wa_id: wa_id))
+}
+
+fn whatsapp_profile_decoder() -> decode.Decoder(WhatsAppProfile) {
+  use name <- decode.field("name", decode.string)
+  decode.success(WhatsAppProfile(name: name))
+}
+
+fn whatsapp_message_decoder() -> decode.Decoder(WhatsAppMessage) {
+  use from <- decode.field("from", decode.string)
+  use id <- decode.field("id", decode.string)
+  use timestamp <- decode.field("timestamp", decode.string)
+  use msg_type <- decode.field("type", decode.string)
+  use text <- decode.optional_field(
+    "text",
+    None,
+    whatsapp_text_decoder() |> decode.map(Some),
+  )
+  use caption <- decode.optional_field(
+    "caption",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use context <- decode.optional_field(
+    "context",
+    None,
+    whatsapp_context_decoder() |> decode.map(Some),
+  )
+  decode.success(WhatsAppMessage(
+    from: from,
+    id: id,
+    timestamp: timestamp,
+    msg_type: msg_type,
+    text: text,
+    caption: caption,
+    context: context,
+  ))
+}
+
+fn whatsapp_text_decoder() -> decode.Decoder(WhatsAppText) {
+  use body <- decode.field("body", decode.string)
+  decode.success(WhatsAppText(body: body))
+}
+
+fn whatsapp_context_decoder() -> decode.Decoder(WhatsAppContext) {
+  use from <- decode.field("from", decode.string)
+  use id <- decode.field("id", decode.string)
+  decode.success(WhatsAppContext(from: from, id: id))
+}
+
+fn whatsapp_status_decoder() -> decode.Decoder(WhatsAppStatus) {
+  use id <- decode.field("id", decode.string)
+  use from <- decode.field("from", decode.string)
+  use timestamp <- decode.field("timestamp", decode.string)
+  use status <- decode.field("status", decode.string)
+  decode.success(WhatsAppStatus(
+    id: id,
+    from: from,
+    timestamp: timestamp,
+    status: status,
+  ))
+}
+
+fn normalize_bridge_event(
+  event: WhatsAppBridgeWebhook,
+) -> Result(port.ChannelMessage, port.ChannelError) {
+  case event.event {
+    "message" -> normalize_bridge_message(event.payload)
+    other -> Error(port.Ignored("unsupported event: " <> other))
+  }
+}
+
+fn normalize_bridge_message(
+  payload: WhatsAppBridgePayload,
+) -> Result(port.ChannelMessage, port.ChannelError) {
+  case payload.is_from_me {
+    True -> Error(port.Ignored("bot sender filtered"))
+    False -> {
+      let content = bridge_payload_content(payload)
+      case string.is_empty(content) {
+        True -> Error(port.Ignored("empty content"))
+        False ->
+          Ok(port.ChannelMessage(
+            id: payload.id,
+            channel: "whatsapp",
+            channel_id: payload.chat_id,
+            user_id: payload.from,
+            username: option_unwrap(payload.from_name, ""),
+            content: content,
+            is_bot: False,
+            reply_to_id: payload.replied_to_id,
+          ))
+      }
+    }
+  }
+}
+
+fn bridge_payload_content(payload: WhatsAppBridgePayload) -> String {
+  let body = option_unwrap(payload.body, "")
+  case string.is_empty(body) {
+    False -> body
+    True -> {
+      let media_caption =
+        first_some([
+          attachment_caption(payload.image),
+          attachment_caption(payload.document),
+          attachment_caption(payload.audio),
+        ])
+      option_unwrap(media_caption, "")
+    }
+  }
+}
+
+fn normalize_cloud_event(
+  event: WhatsAppWebhook,
+) -> Result(port.ChannelMessage, port.ChannelError) {
   case event.entry {
     [first_entry, ..] -> {
       case first_entry.changes {
-        [first_change, ..] -> {
-          let value = first_change.value
-          normalize_value(value)
-        }
+        [first_change, ..] -> normalize_cloud_value(first_change.value)
         _ -> Error(port.Ignored("no changes in entry"))
       }
     }
@@ -300,176 +482,206 @@ fn normalize_event(event: WhatsAppWebhook) -> Result(port.ChannelMessage, port.C
   }
 }
 
-fn normalize_value(value: WhatsAppValue) -> Result(port.ChannelMessage, port.ChannelError) {
-  // Filter: must have metadata (phone_number_id)
+fn normalize_cloud_value(
+  value: WhatsAppValue,
+) -> Result(port.ChannelMessage, port.ChannelError) {
   case value.metadata {
-    Some(metadata) -> normalize_value_with_metadata(value, metadata)
+    Some(metadata) -> normalize_cloud_value_with_metadata(value, metadata)
     None -> Error(port.Ignored("missing metadata"))
   }
 }
 
-fn normalize_value_with_metadata(
+fn normalize_cloud_value_with_metadata(
   value: WhatsAppValue,
   metadata: WhatsAppMetadata,
 ) -> Result(port.ChannelMessage, port.ChannelError) {
-  // Check if we have messages
+  let username = case value.contacts {
+    Some([first_contact, ..]) -> first_contact.profile.name
+    _ -> ""
+  }
+
   case value.messages {
-    Some([first_message, ..]) -> normalize_message(first_message, metadata)
+    Some([first_message, ..]) ->
+      normalize_cloud_message(first_message, metadata, username)
     Some([]) -> Error(port.Ignored("no messages in value"))
     None -> {
-      // Check for statuses (these should be ignored)
       case value.statuses {
-        Some([first_status, ..]) -> Error(port.Ignored("unsupported message type: " <> first_status.status))
+        Some([first_status, ..]) ->
+          Error(port.Ignored(
+            "unsupported message type: " <> first_status.status,
+          ))
         _ -> Error(port.Ignored("no messages in value"))
       }
     }
   }
 }
 
-fn normalize_message(
+fn normalize_cloud_message(
   msg: WhatsAppMessage,
   metadata: WhatsAppMetadata,
+  username: String,
 ) -> Result(port.ChannelMessage, port.ChannelError) {
-  // Filter: ignore messages from the bot itself
-  case msg.from == bot_phone_number {
+  case
+    msg.from == metadata.display_phone_number
+    || msg.from == metadata.phone_number_id
+  {
     True -> Error(port.Ignored("bot sender filtered"))
-    False -> normalize_user_message(msg, metadata)
+    False -> {
+      let content = normalize_cloud_message_content(msg)
+      case string.is_empty(content) {
+        True -> Error(port.Ignored("empty content"))
+        False -> {
+          let reply_to = case msg.context {
+            Some(ctx) -> Some(ctx.id)
+            None -> None
+          }
+
+          let user_id = normalise_chat_id(msg.from)
+          Ok(port.ChannelMessage(
+            id: msg.id,
+            channel: "whatsapp",
+            channel_id: user_id,
+            user_id: user_id,
+            username: username,
+            content: content,
+            is_bot: False,
+            reply_to_id: reply_to,
+          ))
+        }
+      }
+    }
   }
 }
 
-fn normalize_user_message(
-  msg: WhatsAppMessage,
-  metadata: WhatsAppMetadata,
-) -> Result(port.ChannelMessage, port.ChannelError) {
-  // Extract text content based on message type
-  let content = case msg.msg_type {
-    "text" -> {
+fn normalize_cloud_message_content(msg: WhatsAppMessage) -> String {
+  case msg.msg_type {
+    "text" ->
       case msg.text {
-        Some(t) -> t.body
+        Some(text) -> text.body
         None -> ""
       }
-    }
-    // Media messages may have captions
-    "image" | "video" | "document" | "sticker" -> {
-      case msg.caption {
-        Some(caption) -> caption
-        None -> ""
-      }
-    }
-    // Audio, location, contacts, etc. have no text content
+    "image" | "video" | "document" | "sticker" -> option_unwrap(msg.caption, "")
     _ -> ""
   }
-  
-  // Filter: ignore empty content
-  case string.is_empty(content) {
-    True -> Error(port.Ignored("empty content"))
-    False -> {
-      // Extract reply_to_id from context if present
-      let reply_to = case msg.context {
-        Some(ctx) -> Some(ctx.id)
-        None -> None
-      }
-      
-      Ok(port.ChannelMessage(
-        id: msg.id,
-        channel: "whatsapp",
-        channel_id: metadata.phone_number_id,
-        user_id: msg.from,
-        username: "",  // Would need to fetch from contacts
-        content: content,
-        is_bot: False,
-        reply_to_id: reply_to,
+}
+
+fn build_text_send_plan(
+  phone: String,
+  reply: port.ChannelReply,
+) -> Result(BridgeRequestPlan, port.ChannelError) {
+  case string.is_empty(reply.content) {
+    True -> Error(port.SendFailed("empty whatsapp message"))
+    False ->
+      Ok(BridgeRequestPlan(
+        path: "/send/message",
+        content_type: BridgeJson,
+        fields: maybe_reply_field(
+          [
+            #("phone", phone),
+            #("message", reply.content),
+          ],
+          reply.reply_to_id,
+        ),
+        download: None,
       ))
-    }
   }
 }
 
-// ============================================================================
-// Internal: Message Building
-// ============================================================================
+fn build_media_send_plan(
+  phone: String,
+  reply: port.ChannelReply,
+  media: port.ChannelMedia,
+) -> Result(BridgeRequestPlan, port.ChannelError) {
+  case media {
+    port.ImageMedia(url, _) ->
+      Ok(BridgeRequestPlan(
+        path: "/send/image",
+        content_type: BridgeMultipart,
+        fields: image_fields(phone, reply.content, url),
+        download: None,
+      ))
 
-fn build_text_message(reply: port.ChannelReply) -> json.Json {
-  json.object([
-    #("body", json.string(reply.content)),
-  ])
-}
+    port.AudioMedia(url, _) ->
+      Ok(BridgeRequestPlan(
+        path: "/send/audio",
+        content_type: BridgeMultipart,
+        fields: [
+          #("phone", phone),
+          #("audio_url", url),
+        ],
+        download: None,
+      ))
 
-fn build_interactive_message(reply: port.ChannelReply) -> json.Json {
-  case reply.interactive {
-    Some(interactive) -> {
-      let blocks = build_interactive_blocks(interactive.blocks)
-      json.object([
-        #("body", json.string(reply.content)),
-        #("action", json.object([
-          #("buttons", json.array(blocks, fn(b) { b })),
-        ])),
-      ])
-    }
-    None -> build_text_message(reply)
+    port.DocumentMedia(url, filename, mime_type) ->
+      Ok(BridgeRequestPlan(
+        path: "/send/file",
+        content_type: BridgeMultipart,
+        fields: maybe_caption_field([#("phone", phone)], reply.content),
+        download: Some(BridgeDownload(
+          field_name: "file",
+          source_url: url,
+          filename: filename,
+          mime_type: mime_type,
+        )),
+      ))
   }
 }
 
-fn build_interactive_blocks(blocks: List(port.ChannelInteractionBlock)) -> List(json.Json) {
-  list.filter_map(blocks, fn(block) {
-    case block {
-      port.InteractionButtons(buttons) -> Ok(build_buttons(buttons))
-      _ -> Error(Nil)  // Only buttons supported for now
-    }
-  })
+fn maybe_reply_field(
+  fields: List(#(String, String)),
+  reply_to_id: Option(String),
+) -> List(#(String, String)) {
+  case reply_to_id {
+    Some(message_id) -> append_field(fields, #("reply_message_id", message_id))
+    None -> fields
+  }
 }
 
-fn build_buttons(buttons: List(port.ChannelButton)) -> json.Json {
-  json.array(buttons, fn(btn: port.ChannelButton) {
-    let label = btn.label
-    let action_id = btn.action_id
-    let button_type = case btn.style {
-      port.ButtonPrimary -> "reply"
-      _ -> "reply"
-    }
-    json.object([
-      #("type", json.string(button_type)),
-      #("reply", json.object([
-        #("id", json.string(action_id)),
-        #("title", json.string(label)),
-      ])),
-    ])
-  })
+fn maybe_caption_field(
+  fields: List(#(String, String)),
+  caption: String,
+) -> List(#(String, String)) {
+  case string.is_empty(caption) {
+    True -> fields
+    False -> append_field(fields, #("caption", caption))
+  }
 }
 
-/// Internal: Sending via Docker bridge
-/// ============================================================================
+fn image_fields(
+  phone: String,
+  caption: String,
+  image_url: String,
+) -> List(#(String, String)) {
+  case string.is_empty(caption) {
+    True -> [#("phone", phone), #("image_url", image_url)]
+    False -> [
+      #("phone", phone),
+      #("caption", caption),
+      #("image_url", image_url),
+    ]
+  }
+}
 
 fn do_send(
   bridge_url: String,
+  device_id: Option(String),
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
-  // Build the message payload for WhatsApp
-  case build_reply_payload(reply) {
-    Error(e) -> Error(e)
-    Ok(wa_payload) -> {
-      // Convert to bridge API format (go-whatsapp-web-multidevice)
-      let bridge_payload = build_bridge_payload(reply, wa_payload)
-      let body = json.to_string(bridge_payload)
-
-      // Build URL for sending text message
-      let url = bridge_url <> "/send/text"
-
-      // Create HTTP POST request
+  case build_send_plan(reply) {
+    Error(error) -> Error(error)
+    Ok(plan) -> {
+      let url = join_bridge_url(bridge_url, plan.path)
       case request.to(url) {
         Error(_) -> Error(port.SendFailed("invalid bridge URL"))
         Ok(req) -> {
           let req =
             req
             |> request.set_method(http.Post)
-            |> request.set_header("Content-Type", "application/json")
-            |> request.set_body(body)
+            |> maybe_set_device_header(device_id)
 
-          case hackney.send(req) {
-            Ok(response) -> handle_bridge_response(response)
-            Error(hackney.InvalidUtf8Response) ->
-              Error(port.SendFailed("Invalid UTF-8 response from bridge"))
-            Error(hackney.Other(reason)) ->
-              Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+          case plan.content_type {
+            BridgeJson -> send_json_request(req, plan)
+            BridgeMultipart -> send_multipart_request(req, plan)
           }
         }
       }
@@ -477,42 +689,303 @@ fn do_send(
   }
 }
 
-/// Build the bridge API payload from a ChannelReply.
-/// Converts to go-whatsapp-web-multidevice format.
-fn build_bridge_payload(reply: port.ChannelReply, _wa_payload: String) -> json.Json {
-  // go-whatsapp-web-multidevice expects: { "chat_id": "...", "text": "..." }
-  // The chat_id should be in format: {phone}@s.whatsapp.net
-  let chat_id = case string.contains(reply.channel_id, "@s.whatsapp.net") {
-    True -> reply.channel_id
-    False -> reply.channel_id <> "@s.whatsapp.net"
-  }
+fn send_json_request(
+  req: request.Request(String),
+  plan: BridgeRequestPlan,
+) -> Result(Nil, port.ChannelError) {
+  let body = json.to_string(json_fields(plan.fields))
 
-  json.object([
-    #("chat_id", json.string(chat_id)),
-    #("text", json.string(reply.content)),
+  let req =
+    req
+    |> request.set_header("Content-Type", "application/json")
+    |> request.set_body(body)
+
+  case hackney.send(req) {
+    Ok(response) -> handle_bridge_response(response)
+    Error(hackney.InvalidUtf8Response) ->
+      Error(port.SendFailed("Invalid UTF-8 response from bridge"))
+    Error(hackney.Other(reason)) ->
+      Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+  }
+}
+
+fn send_multipart_request(
+  req: request.Request(String),
+  plan: BridgeRequestPlan,
+) -> Result(Nil, port.ChannelError) {
+  case multipart_body(plan, multipart_boundary) {
+    Error(error) -> Error(error)
+    Ok(body) -> {
+      let req =
+        req
+        |> request.set_header(
+          "Content-Type",
+          "multipart/form-data; boundary=" <> multipart_boundary,
+        )
+        |> request.set_body(body)
+
+      case hackney.send_bits(req) {
+        Ok(response) -> handle_bridge_bits_response(response)
+        Error(hackney.InvalidUtf8Response) ->
+          Error(port.SendFailed("Invalid UTF-8 response from bridge"))
+        Error(hackney.Other(reason)) ->
+          Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+      }
+    }
+  }
+}
+
+fn multipart_body(
+  plan: BridgeRequestPlan,
+  boundary: String,
+) -> Result(bytes_tree.BytesTree, port.ChannelError) {
+  let field_parts =
+    plan.fields
+    |> list.map(fn(pair) {
+      let #(name, value) = pair
+      multipart_field(boundary, name, value)
+    })
+
+  case plan.download {
+    Some(download) ->
+      case download_remote_file(download.source_url) {
+        Error(error) -> Error(error)
+        Ok(file_bytes) -> {
+          let parts =
+            field_parts
+            |> append_tree_part(multipart_download_part(
+              boundary,
+              download,
+              file_bytes,
+            ))
+            |> append_tree_part(bytes_tree.from_string(
+              "--" <> boundary <> "--\r\n",
+            ))
+
+          Ok(bytes_tree.concat(parts))
+        }
+      }
+    None -> {
+      let parts =
+        field_parts
+        |> append_tree_part(bytes_tree.from_string("--" <> boundary <> "--\r\n"))
+
+      Ok(bytes_tree.concat(parts))
+    }
+  }
+}
+
+fn multipart_field(
+  boundary: String,
+  name: String,
+  value: String,
+) -> bytes_tree.BytesTree {
+  bytes_tree.from_string(
+    "--"
+    <> boundary
+    <> "\r\nContent-Disposition: form-data; name=\""
+    <> name
+    <> "\"\r\n\r\n"
+    <> value
+    <> "\r\n",
+  )
+}
+
+fn multipart_download_part(
+  boundary: String,
+  download: BridgeDownload,
+  file_bytes: BitArray,
+) -> bytes_tree.BytesTree {
+  let mime_type = option_unwrap(download.mime_type, default_file_mime_type)
+  bytes_tree.concat([
+    bytes_tree.from_string(
+      "--"
+      <> boundary
+      <> "\r\nContent-Disposition: form-data; name=\""
+      <> download.field_name
+      <> "\"; filename=\""
+      <> download.filename
+      <> "\"\r\nContent-Type: "
+      <> mime_type
+      <> "\r\n\r\n",
+    ),
+    bytes_tree.from_bit_array(file_bytes),
+    bytes_tree.from_string("\r\n"),
   ])
 }
 
-/// Handle HTTP response from WhatsApp bridge.
-fn handle_bridge_response(response: Response(String)) -> Result(Nil, port.ChannelError) {
+fn download_remote_file(
+  source_url: String,
+) -> Result(BitArray, port.ChannelError) {
+  case request.to(source_url) {
+    Error(_) -> Error(port.SendFailed("invalid media URL"))
+    Ok(req) ->
+      case req |> request.map(bytes_tree.from_string) |> hackney.send_bits {
+        Ok(response) ->
+          case response.status >= 200 && response.status < 300 {
+            True -> Ok(response.body)
+            False ->
+              Error(port.SendFailed(
+                "media download failed: " <> int.to_string(response.status),
+              ))
+          }
+        Error(hackney.InvalidUtf8Response) ->
+          Error(port.SendFailed("media download returned invalid UTF-8"))
+        Error(hackney.Other(reason)) ->
+          Error(port.SendFailed(
+            "media download error: " <> string.inspect(reason),
+          ))
+      }
+  }
+}
+
+fn maybe_set_device_header(
+  req: request.Request(String),
+  device_id: Option(String),
+) -> request.Request(String) {
+  case device_id {
+    Some(value) -> request.set_header(req, "X-Device-Id", value)
+    None -> req
+  }
+}
+
+fn join_bridge_url(base_url: String, path: String) -> String {
+  case string.ends_with(base_url, "/") {
+    True -> string.drop_end(base_url, 1) <> path
+    False -> base_url <> path
+  }
+}
+
+fn json_fields(fields: List(#(String, String))) -> json.Json {
+  json.object(
+    list.map(fields, fn(pair) {
+      let #(key, value) = pair
+      #(key, json.string(value))
+    }),
+  )
+}
+
+fn encode_plan_preview(plan: BridgeRequestPlan) -> String {
+  let download_json = case plan.download {
+    Some(download) ->
+      json.object([
+        #("field_name", json.string(download.field_name)),
+        #("source_url", json.string(download.source_url)),
+        #("filename", json.string(download.filename)),
+        #(
+          "mime_type",
+          json.string(option_unwrap(download.mime_type, default_file_mime_type)),
+        ),
+      ])
+    None -> json.null()
+  }
+
+  json.to_string(
+    json.object([
+      #("path", json.string(plan.path)),
+      #(
+        "content_type",
+        json.string(case plan.content_type {
+          BridgeJson -> "json"
+          BridgeMultipart -> "multipart"
+        }),
+      ),
+      #("fields", json_fields(plan.fields)),
+      #("download", download_json),
+    ]),
+  )
+}
+
+fn handle_bridge_bits_response(
+  response: Response(BitArray),
+) -> Result(Nil, port.ChannelError) {
+  let body = case bit_array.to_string(response.body) {
+    Ok(value) -> value
+    Error(_) -> ""
+  }
+  handle_bridge_response(set_body(response, body))
+}
+
+fn handle_bridge_response(
+  response: Response(String),
+) -> Result(Nil, port.ChannelError) {
   case response.status {
     200 | 201 -> Ok(Nil)
     400 -> Error(port.SendFailed("Bad request - invalid payload or chat_id"))
-    401 | 403 -> Error(port.SendFailed("Unauthorized - check bridge credentials"))
+    401 | 403 ->
+      Error(port.SendFailed("Unauthorized - check bridge credentials"))
     404 -> Error(port.SendFailed("Chat not found or session not ready"))
     429 -> {
       let retry_after = parse_bridge_retry_after(response.body)
       Error(port.RateLimited(retry_after_seconds: retry_after))
     }
-    503 -> Error(port.SendFailed("Bridge unavailable - WhatsApp session disconnected"))
+    503 ->
+      Error(port.SendFailed(
+        "Bridge unavailable - WhatsApp session disconnected",
+      ))
     status -> Error(port.SendFailed("Bridge error: " <> int.to_string(status)))
   }
 }
 
-/// Parse retry_after from rate limit response.
 fn parse_bridge_retry_after(body: String) -> Int {
-  case json.parse(body, decode.field("retry_after", decode.int, fn(v) { decode.success(v) })) {
+  case
+    json.parse(
+      body,
+      decode.field("retry_after", decode.int, fn(value) {
+        decode.success(value)
+      }),
+    )
+  {
     Ok(value) -> value
     Error(_) -> 30
+  }
+}
+
+fn first_some(options: List(Option(Option(String)))) -> Option(String) {
+  case options {
+    [] -> None
+    [first, ..rest] -> {
+      case first {
+        Some(Some(value)) -> Some(value)
+        _ -> first_some(rest)
+      }
+    }
+  }
+}
+
+fn attachment_caption(
+  attachment: Option(BridgeMediaAttachment),
+) -> Option(Option(String)) {
+  case attachment {
+    Some(media) -> Some(media.caption)
+    None -> None
+  }
+}
+
+fn append_field(
+  fields: List(#(String, String)),
+  field: #(String, String),
+) -> List(#(String, String)) {
+  list.reverse([field, ..list.reverse(fields)])
+}
+
+fn append_tree_part(
+  parts: List(bytes_tree.BytesTree),
+  part: bytes_tree.BytesTree,
+) -> List(bytes_tree.BytesTree) {
+  list.reverse([part, ..list.reverse(parts)])
+}
+
+fn option_unwrap(value: Option(a), default: a) -> a {
+  case value {
+    Some(inner) -> inner
+    None -> default
+  }
+}
+
+fn normalise_chat_id(value: String) -> String {
+  case string.contains(value, "@") {
+    True -> value
+    False -> value <> "@s.whatsapp.net"
   }
 }

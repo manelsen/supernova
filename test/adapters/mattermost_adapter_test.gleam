@@ -13,44 +13,53 @@ import supernova/channel/port
 
 pub fn parse_text_message_test() {
   let event = mattermost_adapter.parse_event(sample_text_event())
-  should.equal(event, Ok(port.ChannelMessage(
-    id: "abc123",
-    channel: "mattermost",
-    channel_id: "channel-001",
-    user_id: "user-001",
-    username: "",
-    content: "Hello from Mattermost",
-    is_bot: False,
-    reply_to_id: option.None,
-  )))
+  should.equal(
+    event,
+    Ok(port.ChannelMessage(
+      id: "abc123",
+      channel: "mattermost",
+      channel_id: "channel-001",
+      user_id: "user-001",
+      username: "",
+      content: "Hello from Mattermost",
+      is_bot: False,
+      reply_to_id: option.None,
+    )),
+  )
 }
 
 pub fn parse_reply_message_test() {
   let event = mattermost_adapter.parse_event(sample_reply_event())
-  should.equal(event, Ok(port.ChannelMessage(
-    id: "reply-456",
-    channel: "mattermost",
-    channel_id: "channel-001",
-    user_id: "user-002",
-    username: "",
-    content: "This is a reply",
-    is_bot: False,
-    reply_to_id: option.Some("root-789"),
-  )))
+  should.equal(
+    event,
+    Ok(port.ChannelMessage(
+      id: "reply-456",
+      channel: "mattermost",
+      channel_id: "channel-001",
+      user_id: "user-002",
+      username: "",
+      content: "This is a reply",
+      is_bot: False,
+      reply_to_id: option.Some("root-789"),
+    )),
+  )
 }
 
 pub fn parse_reply_with_parent_id_test() {
   let event = mattermost_adapter.parse_event(sample_reply_with_parent_event())
-  should.equal(event, Ok(port.ChannelMessage(
-    id: "reply-999",
-    channel: "mattermost",
-    channel_id: "channel-002",
-    user_id: "user-003",
-    username: "",
-    content: "Reply using parent_id",
-    is_bot: False,
-    reply_to_id: option.Some("parent-111"),
-  )))
+  should.equal(
+    event,
+    Ok(port.ChannelMessage(
+      id: "reply-999",
+      channel: "mattermost",
+      channel_id: "channel-002",
+      user_id: "user-003",
+      username: "",
+      content: "Reply using parent_id",
+      is_bot: False,
+      reply_to_id: option.Some("parent-111"),
+    )),
+  )
 }
 
 pub fn parse_bot_message_ignored_test() {
@@ -68,32 +77,61 @@ pub fn parse_invalid_json_error_test() {
   should.equal(result, Error(port.SendFailed("invalid JSON")))
 }
 
+pub fn start_returns_adapter_test() {
+  let assert Ok(adapter) =
+    mattermost_adapter.start(
+      "mattermost-token",
+      "https://mattermost.example.com",
+      fn(_, _) { Error(port.Ignored("unused")) },
+    )
+
+  adapter.name |> should.equal("mattermost")
+}
+
 // ---------------------------------------------------------------------------
 // Message Building Tests
 // ---------------------------------------------------------------------------
 
 pub fn build_reply_payload_test() {
-  let reply = port.ChannelReply(
-    channel_id: "channel-001",
-    content: "Hello back!",
-    reply_to_id: option.None,
-    interactive: option.None,
-  )
-  
+  let reply =
+    port.ChannelReply(
+      channel_id: "channel-001",
+      content: "Hello back!",
+      reply_to_id: option.None,
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.None,
+      media: [],
+    )
+
   let result = mattermost_adapter.build_reply_payload(reply)
-  should.be_ok(result)
+  should.equal(
+    result,
+    Ok("{\"channel_id\":\"channel-001\",\"message\":\"Hello back!\"}"),
+  )
 }
 
 pub fn build_thread_reply_payload_test() {
-  let reply = port.ChannelReply(
-    channel_id: "channel-001",
-    content: "Thread reply",
-    reply_to_id: option.Some("root-789"),
-    interactive: option.None,
-  )
-  
+  let reply =
+    port.ChannelReply(
+      channel_id: "channel-001",
+      content: "Thread reply",
+      reply_to_id: option.Some("root-789"),
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.None,
+      media: [],
+    )
+
   let result = mattermost_adapter.build_reply_payload(reply)
-  should.be_ok(result)
+  should.equal(
+    result,
+    Ok(
+      "{\"channel_id\":\"channel-001\",\"message\":\"Thread reply\",\"root_id\":\"root-789\"}",
+    ),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -101,17 +139,18 @@ pub fn build_thread_reply_payload_test() {
 // ---------------------------------------------------------------------------
 
 pub fn session_id_test() {
-  let msg = port.ChannelMessage(
-    id: "msg-123",
-    channel: "mattermost",
-    channel_id: "channel-001",
-    user_id: "user-001",
-    username: "TestUser",
-    content: "hi",
-    is_bot: False,
-    reply_to_id: option.None,
-  )
-  
+  let msg =
+    port.ChannelMessage(
+      id: "msg-123",
+      channel: "mattermost",
+      channel_id: "channel-001",
+      user_id: "user-001",
+      username: "TestUser",
+      content: "hi",
+      is_bot: False,
+      reply_to_id: option.None,
+    )
+
   let session_id = mattermost_adapter.resolve_session_id(msg)
   should.equal(session_id, "mattermost:channel-001:user-001")
 }
