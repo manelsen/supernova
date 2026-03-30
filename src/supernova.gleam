@@ -193,7 +193,7 @@ fn build_channel_handler(
   cfg: config.Config,
   session_supervisor: supervisor.SessionSupervisor,
 ) -> Result(port.ChannelHandler, String) {
-  let llm_config = default_channel_llm_config(cfg)
+  use llm_config <- result.try(default_channel_llm_config(cfg))
 
   use discord_channel_router <- result.try(
     discord_router.start_with_session_supervisor(session_supervisor, llm_config)
@@ -248,7 +248,9 @@ fn inbound_channel_name(inbound: port.ChannelInbound) -> String {
   }
 }
 
-fn default_channel_llm_config(cfg: config.Config) -> provider.ProviderConfig {
+fn default_channel_llm_config(
+  cfg: config.Config,
+) -> Result(provider.ProviderConfig, String) {
   let provider_names =
     cfg.providers
     |> dict.keys
@@ -257,10 +259,10 @@ fn default_channel_llm_config(cfg: config.Config) -> provider.ProviderConfig {
   case provider_names {
     [name, ..] ->
       case config.get_provider(cfg, name) {
-        Some(provider_config) -> provider_config_to_runtime(provider_config)
-        None -> mock_channel_llm_config()
+        Some(provider_config) -> Ok(provider_config_to_runtime(provider_config))
+        None -> Error("no configuration found for provider: " <> name)
       }
-    [] -> mock_channel_llm_config()
+    [] -> Error("no LLM providers configured in supernova.yaml")
   }
 }
 
@@ -275,15 +277,6 @@ fn provider_config_to_runtime(
       Some(model) -> model
       None -> config.provider_default_model(provider_config.provider)
     },
-  )
-}
-
-fn mock_channel_llm_config() -> provider.ProviderConfig {
-  provider.ProviderConfig(
-    name: "mock",
-    api_key: None,
-    base_url: None,
-    default_model: "mock-model",
   )
 }
 
