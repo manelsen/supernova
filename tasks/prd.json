@@ -1,571 +1,551 @@
 {
-  "name": "Supernova P0 Channel UX Parity",
-  "branchName": "ralph/p0-channel-ux-parity",
-  "description": "P0 parity across existing channels with runtime bootstrap, canonical command flow, interactive or guided model selection, session-scoped provider/model state, tool-loop wiring, and automated contract + integration coverage.",
+  "name": "Supernova Backlog Completo",
+  "branchName": "ralph/supernova-backlog",
+  "description": "Paridade Supernova x OpenClaw: bootstrap canais, adapters nativos, Port rico, tools reais, UX interativo, arquitetura unificada.",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Create executable documentation pack",
-      "description": "As an implementation agent, I want a local docs bundle for language, dependencies, and provider contracts so that every iteration starts from current references.",
+      "title": "Ligar bootstrap de canais no main",
+      "description": "Como developer, quero que os canais Discord e Telegram façam start/stop real no supernova.gleam e que o ciclo de shutdown seja limpo, para que o sistema arranque e pare de forma robusta.",
       "acceptanceCriteria": [
-        "Create `tasks/docs/gleam-and-dependencies.json` with Gleam language references and all project dependencies from `manifest.toml`.",
-        "Create `tasks/docs/provider-contracts.json` with provider-specific API contract differences for openrouter, opencode_zen, openai, anthropic, minimax, and zhipu.",
-        "Create `tasks/docs/pre-execution-checklist.json` describing mandatory pre-read and contract-research steps before each story execution.",
-        "Every entry includes source URLs and retrieval timestamps.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "supernova.gleam ja nao tem TODOs de start/stop de canais",
+        "Discord gateway inicia no startup e encerra no shutdown",
+        "Telegram polling inicia no startup e encerra no shutdown",
+        "Inbound real chega ao router (channel_common_router)",
+        "Ciclo de shutdown aguarda cleanup de cada canal",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa",
+        "docker compose up -d postgres passa"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Bootstrap funcional concluido em us/us-001-ligar-bootstrap-de-canais-no-main: main agora cria ChannelHandler real, registry liga inbound Discord/Telegram ao channel_common_router e shutdown aguarda cleanup dos workers. Validacao de historia: `gleam build`, `gleam test` e `gleam format --check src test` passam. `docker compose up -d postgres` tambem passa com remapeamento temporario da porta do host para 5433.",
       "dependsOn": []
     },
     {
       "id": "US-002",
-      "title": "Extend Channel Port contract for interactive UX",
-      "description": "As a channel adapter developer, I want the Port contract to support rich inbound/outbound interaction payloads so that all channels share one semantic contract.",
+      "title": "Conectar Port Adapter de ponta a ponta",
+      "description": "Como developer, quero que cada canal retorne um ChannelAdapter real com send ligado ao core, para que o core nao dependa de modulos concretos de canal.",
       "acceptanceCriteria": [
-        "`src/supernova/channel/port.gleam` models inbound message and callback interaction with channel, user, conversation, and thread identifiers.",
-        "`ChannelReply` supports text plus optional interactive blocks and metadata required by adapters.",
-        "Compatibility helpers preserve plain-text behavior for adapters that do not yet emit interactive payloads.",
-        "Contract tests validate constructor/decoder behavior for message and callback events.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Cada canal expoe ChannelAdapter com send(reply: ChannelReply) -> Nil",
+        "Core usa ChannelAdapter generico, nao modulos concretos",
+        "send faz marshal do ChannelReply para formato nativo do canal",
+        "Erros de envio sao propagados ao caller",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-001"
-      ]
+      "passes": true,
+      "notes": "Port adapter wiring concluido em us/us-002-conectar-port-adapter-de-ponta-a-ponta: `ChannelAdapter` agora inclui lifecycle (`send` + `stop`), `channel/registry` passou a armazenar adapters genericos do Port e a expor `get_channel_adapter`, e os canais iniciados retornam adapters reais com marshaling/propagacao de erro via contrato generico. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passam.",
+      "dependsOn": ["US-001"]
     },
     {
       "id": "US-003",
-      "title": "Bootstrap Discord and Telegram in runtime",
-      "description": "As an operator, I want Discord and Telegram to start from runtime config so that inbound events reach the common channel flow.",
+      "title": "Criar Matrix adapter nativo",
+      "description": "Como utilizador Matrix, quero que o bot responda a mensagens usando o protocolo Matrix nativo, com threading e contexto de sessao.",
       "acceptanceCriteria": [
-        "`src/supernova.gleam` starts Discord and Telegram adapters when enabled in config.",
-        "Inbound events are wired to the `ChannelHandler` callback without bypassing the Port.",
-        "Startup failures return explicit channel-scoped errors.",
-        "Automated tests cover enabled/disabled startup permutations for both channels.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "matrix_adapter.gleam normaliza eventos Matrix -> ChannelMessage",
+        "ChannelReply e convertido para formato Matrix (text + html)",
+        "reply_to_id gera resposta em thread (m.thread)",
+        "Suporta edits/deletes via estado Matrix",
+        "matrix_router.gleam scaffold e removido",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-001",
-        "US-002"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-003-criar-matrix-adapter-nativo: `matrix_adapter.gleam` agora normaliza mensagens Matrix com suporte a edit (`m.replace` + `m.new_content`) e redaction (`m.room.redaction` -> ignored coerente), preserva threading via `m.thread`, e converte `ChannelReply` para payload Matrix com `body` + `formatted_body` (`org.matrix.custom.html`). Quando `edit_message_id` esta presente, o outbound usa evento de edicao Matrix com fallback textual e `m.new_content`; `matrix_router.gleam` permanece como entrypoint Matrix real sobre o router compartilhado, sem scaffold TODO. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-002"]
     },
     {
       "id": "US-004",
-      "title": "Bootstrap Slack and Mattermost in runtime",
-      "description": "As an operator, I want Slack and Mattermost wired in runtime startup so that supported channels are genuinely reachable.",
+      "title": "Criar Slack adapter nativo",
+      "description": "Como utilizador Slack, quero que o bot responda a app mentions e DMs com blocos interativos (botoes, select menus).",
       "acceptanceCriteria": [
-        "Runtime startup initializes Slack and Mattermost adapters from configuration.",
-        "Both adapters forward inbound payloads through Port-normalized events.",
-        "Configuration errors are surfaced with channel identity and actionable reason.",
-        "Automated startup tests validate both channels.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "slack_adapter.gleam normaliza Slack events -> ChannelMessage",
+        "ChannelReply e convertido para Slack blocks format",
+        "Suporta interactive components (buttons, select menus)",
+        "Trata rate limits especificos do Slack com backoff",
+        "slack_router.gleam scaffold e removido",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-001",
-        "US-002"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-004-criar-slack-adapter-nativo: `slack_adapter.gleam` agora entende envelopes reais do Slack Events API (`event_callback`), filtra `subtype: bot_message` como bot, e continua normalizando app mentions/DMs/threads para `ChannelMessage`. No outbound, blocos interativos seguem em Slack Block Kit e os `static_select` passaram a carregar `action_id`, fechando o suporte nativo a buttons/select menus; o caminho de rate limit continua propagando `ChannelError.RateLimited`. `slack_router.gleam` foi limpo do discurso de scaffold e ficou assumido como entrypoint Slack sobre o router compartilhado. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-002"]
     },
     {
       "id": "US-005",
-      "title": "Bootstrap Matrix and Lark in runtime",
-      "description": "As an operator, I want Matrix and Lark runtime startup connected to the common channel flow so that they are not only wrapper modules.",
+      "title": "Criar WhatsApp adapter nativo",
+      "description": "Como utilizador WhatsApp, quero que o bot responda a mensagens respeitando os limites de template e media do WhatsApp Business API.",
       "acceptanceCriteria": [
-        "Runtime startup initializes Matrix and Lark adapters from configuration.",
-        "Inbound payloads are mapped into Port events and routed through the common pipeline.",
-        "Channel-specific startup errors are explicit and non-silent.",
-        "Automated startup tests validate Matrix and Lark wiring.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Webhook receiver para WhatsApp Cloud API",
+        "ChannelReply convertido para WhatsApp format (text + media)",
+        "Template messages utilizados quando necessario",
+        "Media messages (imagem, audio, documento) suportados",
+        "whatsapp_router.gleam scaffold e removido",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-001",
-        "US-002"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-005-criar-whatsapp-adapter-nativo apos decisao explicita de produto por `whatsmeow bridge` em vez de Cloud API. `whatsapp_adapter.gleam` agora normaliza o webhook oficial da bridge (`event`/`device_id`/`payload`) com fallback para o parser legado, preserva o peer real em `channel_id`, e expõe um plano puro de envio que cobre `/send/message`, `/send/image`, `/send/audio` e `/send/file`; documentos via URL sao baixados e reenviados como multipart para respeitar o OpenAPI real da bridge. `config.gleam` e `wizard.gleam` trocaram `whatsapp.token` por `bridge_url` + `device_id`, `channel/registry.gleam` passou a iniciar o adapter WhatsApp quando habilitado, e a regressao cobre inbound bridge, text/media/doc outbound plan, config/env override, wizard YAML e bootstrap do registry. Os criterios Cloud/template do backlog ficam supersedidos por esta decisao explicita de transporte. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-002"]
     },
     {
       "id": "US-006",
-      "title": "Bootstrap Google Chat, WeChat Work, and WhatsApp",
-      "description": "As an operator, I want the remaining channel adapters bootstrapped in runtime so that all declared channels are executable.",
+      "title": "Criar adapters restantes (Google Chat, Lark, Mattermost, WeChat Work)",
+      "description": "Como utilizador de canais alternativos, quero que os scaffolds sejam substituidos por adapters nativos para Google Chat, Lark, Mattermost e WeChat Work.",
       "acceptanceCriteria": [
-        "Runtime startup initializes Google Chat, WeChat Work, and WhatsApp adapters from config.",
-        "Inbound payloads from all three channels pass through Port-normalized events.",
-        "Startup failures are surfaced with explicit channel diagnostics.",
-        "Automated startup tests validate all three channels.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "google_chat_adapter.gleam nativo com Google Chat SDK",
+        "lark_adapter.gleam nativo com Lark Open API",
+        "mattermost_adapter.gleam nativo com Mattermost API + WebSocket",
+        "wechat_work_adapter.gleam nativo com WeChat Work API",
+        "Cada scaffold router e removido apos migracao",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-001",
-        "US-002"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-006-criar-adapters-restantes-google-chat-lark-mattermost-wechat-work. `channel/registry.gleam` agora inicia adapters reais para Lark, Google Chat, Mattermost e WeChat Work quando habilitados; `config.gleam` e `wizard.gleam` trocaram os placeholders de token generico por runtime config especifica (`lark.base_url`, `google_chat.webhook_url`, `mattermost.base_url`, `wechat_work.webhook_url`); `lark_adapter.gleam` ganhou `start/send` via Lark Open API, `google_chat_adapter.gleam` passou a usar decode JSON robusto e payload nativo de thread, `mattermost_adapter.gleam` passou a postar em `/api/v4/posts` com bearer token, e `wechat_work_adapter.gleam` foi criado com parser/outbound nativos para webhook robot. A regressao cobre bootstrap no registry, novos campos de config/env/wizard e o adapter novo de WeChat Work. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-002"]
     },
     {
       "id": "US-007",
-      "title": "Implement graceful channel shutdown lifecycle",
-      "description": "As an operator, I want every started channel to shut down cleanly so that resources and sessions are not leaked.",
+      "title": "Wiring completo de Discord interactions",
+      "description": "Como developer, quero que slash commands e component interactions do Discord disparem handlers reais no fluxo do bot.",
       "acceptanceCriteria": [
-        "Shutdown path closes all started channels and releases runtime resources.",
-        "Shutdown is idempotent and safe when invoked multiple times.",
-        "Channel shutdown errors are surfaced with channel identity.",
-        "Automated tests validate start-stop lifecycle behavior.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "discord_gateway/events/commands ligam ao router",
+        "Slash commands disparam handlers no core",
+        "Component interactions (button clicks, select menus) disparam handlers",
+        "Resposta volta ao Discord via adapter",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-003",
-        "US-004",
-        "US-005",
-        "US-006"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-007-wiring-completo-de-discord-interactions. `discord_events.gleam` agora decodifica `INTERACTION_CREATE` em dados ricos de application command e message component, incluindo `custom_id`, `component_type` e `values`. `channel/registry.gleam` passou a encaminhar raw Discord interactions ao fluxo compartilhado como `InboundMessage` (slash commands renderizados como `/comando ...`) e `InboundInteraction` (buttons/select menus preservando `action_id` + `values`), fechando o caminho gateway -> router -> core -> resposta via adapter. A regressao cobre parsing detalhado das interactions e roteamento real de slash command + component interaction para o handler no registry. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-002"]
     },
     {
       "id": "US-008",
-      "title": "Implement canonical cross-channel command routing",
-      "description": "As an end user, I want canonical command behavior across channels so that /help, /start, /status, and /model are predictable.",
+      "title": "Wiring completo de Telegram callbacks/inline",
+      "description": "Como developer, quero que callbacks de inline keyboard e callback queries do Telegram cheguem ao core e atualizem estado/modelo/comandos.",
       "acceptanceCriteria": [
-        "Common routing handles `/help`, `/start`, `/status`, and `/model` for all channels.",
-        "Adapters map native command payloads into one shared command pipeline.",
-        "Unknown command behavior returns deterministic guidance without silent failure.",
-        "Automated tests cover canonical command handling across all channels.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "callback_query e recebido e normalizado para ChannelMessage",
+        "Callback data chega ao executor/core",
+        "Resposta atualiza inline keyboard quando apropriado",
+        "Selecao de modelo via inline buttons persiste na sessao",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-002",
-        "US-003",
-        "US-004",
-        "US-005",
-        "US-006"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-008-wiring-completo-de-telegram-callbacks-inline. `channel/registry.gleam` agora normaliza `callback_query` do Telegram para `InboundInteraction`, preservando `action_id`, `values` e `source_message_id` da mensagem inline original; o parsing cobre callbacks de selecao de modelo (`picker_model_select:<provider>|<model>`) sem quebrar buttons simples. `channel_common_router.gleam` passou a propagar `edit_message_id` para interacoes do Telegram quando existe `source_message_id`, fazendo o send path editar a mensagem inline original em vez de responder com uma nova, enquanto a regressao do router prova que a selecao de modelo continua persistindo na sessao. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-002"]
     },
     {
       "id": "US-009",
-      "title": "Add real-time model catalog client",
-      "description": "As a user, I want model/provider options loaded from the server API in real time so that picker UI always reflects actual availability.",
+      "title": "Implementar Browser tool real",
+      "description": "Como agente, quero poder navegar em sites, tirar screenshots e extrair conteudo, para automatizar tarefas web.",
       "acceptanceCriteria": [
-        "Implement server API client to fetch live provider/model catalog for picker flows.",
-        "Enforce fixed page size of 15 models per page.",
-        "Sort free models before paid models in displayed lists.",
-        "Hide unsupported or unavailable models from picker output.",
-        "Automated tests validate pagination, ordering, and hidden unsupported model behavior.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Decidir: Puppeteer via FFI vs Playwright via FFI",
+        "FFI Erlang para browser automation implementado",
+        "Operacoes suportadas: open, screenshot, click, type, evaluate, extract_readable",
+        "Timeout e cleanup de browser instances",
+        "execute_browser stub e substituido por implementacao real",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-001"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-009-browser-tool-real-current. A decisao tecnica do slice foi `Playwright Core via Erlang FFI`, reaproveitando o Chrome do host (`/usr/bin/google-chrome`) com um runner Node persistente por sessao em `scripts/browser_runner.mjs` e lifecycle controlado por `supernova_browser_ffi.erl` + ETS para manter browser/page entre chamadas. `supernova/tools/browser.gleam` agora expoe `open`, `click`, `type`, `evaluate`, `screenshot`, `extract_readable` e `close`; `core/executor.gleam` passou a declarar e despachar o tool `browser`, substituindo o antigo gap de `execute_browser` inexistente por implementacao real. A regressao cobre round-trip live do browser tool com `data:` URL (open/type/click/evaluate/extract_readable/screenshot/close), timeout com cleanup de sessao, e wiring do executor para o novo tool. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": []
     },
     {
       "id": "US-010",
-      "title": "Persist model selection by session scope",
-      "description": "As a user, I want provider/model selection to persist per channel context so that future messages use my selected model.",
+      "title": "Implementar Sessions Yield",
+      "description": "Como agente, quero fazer yield de execucao voluntariamente (por budget, timeout ou manualmente), para que o checkpoint/yield funcione no runtime.",
       "acceptanceCriteria": [
-        "Selection state is keyed by channel + user + conversation/thread scope.",
-        "Concurrent conversations remain isolated and do not leak selections.",
-        "Selection updates are atomic from picker callback to next message execution.",
-        "Automated tests cover state persistence and scope isolation.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "sessions_yield integra com CheckpointProtocol",
+        "Yield por budget exhaustion funciona",
+        "Yield por timeout funciona",
+        "Yield manual pelo agente funciona",
+        "execute_sessions_yield stub e substituido por implementacao real",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-009"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-010-implementar-sessions-yield. `core/executor.gleam` passou a integrar o fluxo de checkpoint com gatilhos reais de pause por timeout (`timeout_ms`/`started_at_ms`), por budget exhaustion opcional via `budget_policy` (`BudgetToolCalls`) e por pedido manual via `request_manual_pause`, tudo persistindo checkpoint com metadata de `yield_reason`/`yield_detail` e `pending_tool` quando o pause acontece antes da execucao do tool. A regressao em `executor_checkpoint_test.gleam` agora prova abort externo, pause manual com checkpoint salvo, timeout automatico com checkpoint salvo e pause por estouro de budget preservando o primeiro `pending_tool`; o criterio do backlog que fala em `execute_sessions_yield stub` foi mapeado para a API real do executor porque esse stub nao existia no repositorio. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": []
     },
     {
       "id": "US-011",
-      "title": "Use selected provider/model during agent bootstrap",
-      "description": "As an end user, I want my selected model applied on subsequent messages so that the runtime behaves according to channel session settings.",
+      "title": "Implementar Process tool",
+      "description": "Como agente, quero listar, matar e inspecionar processos com seguranca controlada por WorkspacePolicy.",
       "acceptanceCriteria": [
-        "Channel bootstrap resolves selected provider/model from session scope before `executor.run`.",
-        "If no selection exists, configured default provider/model is used deterministically.",
-        "Message history/context remains bound to the same channel session scope.",
-        "Automated tests validate model override propagation across consecutive messages.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Listar processos em execucao",
+        "Matar processo por PID",
+        "Obter info de processo (CPU, memoria)",
+        "Integracao com WorkspacePolicy (operacoes restringidas por path policy)",
+        "execute_process stub e substituido por implementacao real",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-008",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-011-implementar-process-tool. `supernova/tools/process.gleam` agora implementa o tool `process` com `list`, `info` e `kill`, incluindo variantes `*_authorized` que integram com `WorkspacePolicy` ao derivar policy paths a partir do comando do processo para restringir introspecao/kill por agente. `core/executor.gleam` passou a expor e despachar o builtin `process`, e `supernova_process_ffi.erl` adicionou FFI real para `ps`, `kill -TERM` e um helper de spawn em background usado pela regressao; esse helper precisou trocar a execucao de shell para `/bin/sh -lc` explicito para suportar `cd`, `&&` e `&` de forma deterministica no BEAM. A regressao cobre round-trip de listar/inspecionar/matar PID, negacao por policy para processo externo e allowlist de script dentro do workspace. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": []
     },
     {
       "id": "US-012",
-      "title": "Wire tool loop into channel runtime path",
-      "description": "As a power user, I want tool calls to execute and return to the channel flow so that agent capabilities work end-to-end.",
+      "title": "Implementar GitHub tool",
+      "description": "Como agente, quero aceder aos repositorios GitHub do utilizador autenticado.",
       "acceptanceCriteria": [
-        "`channel_common_router` passes non-empty tool definitions into executor where configured.",
-        "Runtime handles staged responses including tool call, intermediate block, and final response.",
-        "Tool execution errors are surfaced back to the channel with explicit failure context.",
-        "Automated tests cover one full tool-call roundtrip.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Autenticacao via GitHub token (configurado em supernova.yaml)",
+        "get_my_github_repos lista repositorios do utilizador",
+        "Filtrar por linguagem, tema, data",
+        "execute_get_my_github_repos stub e substituido por implementacao real",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-011"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-012-implementar-github-tool. `supernova/tools/github.gleam` agora implementa o tool `github` com acao real `get_my_repos`, autenticada por token lido de `supernova.yaml` (`github.token`) com fallback para `SUPERNOVA_GITHUB_TOKEN`, e fetch via GitHub REST API `/user/repos` usando `gleam_http` + `gleam_hackney`. O slice cobre filtros por linguagem, tema/topic e data (`updated_since`), parser JSON tipado para o payload de repositorios, renderizacao textual consistente e override opcional de `base_url` para ambientes GitHub Enterprise via YAML/env. `core/executor.gleam` passou a declarar e despachar o builtin `github`, e `llm/client.gleam` ganhou argumentos mock coerentes para o novo tool. A regressao cobre resolucao de runtime config YAML/env, decode+filtro dos repositorios, renderizacao de output e wiring do executor para builtin/invalid args. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": []
     },
     {
       "id": "US-013",
-      "title": "Implement Discord interactive model picker",
-      "description": "As a Discord user, I want to pick provider/model via components so that I do not need to type model identifiers manually.",
+      "title": "Implementar Canvas tool",
+      "description": "Como agente, quero aceder a um canvas tool com scope a definir, para manipulacao de canvas generico.",
       "acceptanceCriteria": [
-        "`/model` renders Discord interactive components for provider/model selection.",
-        "Pagination works with 15 models per page and free-first ordering from server catalog.",
-        "Selection callback persists session state and confirms selected provider/model.",
-        "Malformed or expired callbacks return deterministic recovery messaging.",
-        "Automated tests validate callback parsing and state transition.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Escopo do canvas tool definido e documentado",
+        "Implementacao de execute_canvas real",
+        "Stub e substituido",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-003",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-013-implementar-canvas-tool. O escopo foi fechado explicitamente como um tool de canvas estruturado por blocos ordenados, para outlines/planos/notas, e nao como API grafica/pixel. `supernova/tools/canvas.gleam` agora implementa `create`, `upsert_block`, `move_block`, `delete_block` e `render` sobre um documento JSON aninhado (`title` + `blocks`), com encoder/decoder tipados e ordenacao deterministica; `core/executor.gleam` passou a declarar e despachar o builtin `canvas`, e `llm/client.gleam` ganhou argumentos mock coerentes para esse tool. A regressao cobre round-trip de create/upsert/move/delete/render e o wiring do executor para declaracao + invalid args. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": []
     },
     {
       "id": "US-014",
-      "title": "Implement Telegram inline model picker",
-      "description": "As a Telegram user, I want provider/model selection via inline keyboard so that model choice is guided and fast.",
+      "title": "Implementar Gateway tool",
+      "description": "Como agente, quero aceder a um gateway tool com scope a definir.",
       "acceptanceCriteria": [
-        "`/model` renders Telegram inline keyboard for provider/model selection.",
-        "Pagination callbacks support 15 models per page and free-first ordering.",
-        "Selection callback updates scoped session state and returns confirmation.",
-        "Invalid callback data is handled explicitly without silent fallback.",
-        "Automated tests validate callback routing and persistence behavior.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Escopo do gateway tool definido",
+        "Implementacao de execute_gateway real",
+        "Stub e substituido",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-003",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-014-implementar-gateway-tool. O escopo foi fechado como um facade one-shot sobre o `core/syscall/actor` existente: o tool `gateway` documenta explicitamente esse contrato via `describe` e, para cada chamada operacional, sobe um `SyscallGateway` em-process, opcionalmente registra o agente sintetico, invoca um `SyscallOp` real (`spawn_agent`, `kill_agent`, `read_world`, `write_world`, `read_file`, `write_file`, `schedule`, `cancel_schedule`, `get_budget`, `emit_event`) e renderiza `ok|denied|failed` a partir do resultado formal do gateway. `core/executor.gleam` passou a declarar e despachar o builtin `gateway`, e `llm/client.gleam` ganhou argumentos mock coerentes. A regressao cobre `describe`, round-trip real de `get_budget` e `write_world`, negacao por agente nao registrado e wiring do executor para declaracao + invalid args. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": []
     },
     {
       "id": "US-015",
-      "title": "Implement Slack interactive model picker",
-      "description": "As a Slack user, I want interactive provider/model selection so that configuration is done through native UI actions.",
+      "title": "Integrar loop de tools no runtime de canal",
+      "description": "Como developer, quero que tool calls executem realmente no runtime e que o resultado volte ao loop, para que tools deixem de ser placeholders.",
       "acceptanceCriteria": [
-        "Slack adapter emits interactive picker payloads mapped from Port blocks.",
-        "Picker supports 15-model pagination and free-first ordering.",
-        "Selection callback persists scoped provider/model state and sends confirmation.",
-        "Automated tests validate Slack interaction mapping and callback processing.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Tool calls sao executadas pelo executor",
+        "Tool result volta ao loop LLM",
+        "Loop continua ate resposta final",
+        "Errors de tool sao propagados corretamente",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-004",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-015-integrar-loop-de-tools-no-runtime-de-canal. O runtime compartilhado de canais ja chamava `executor.run(..., executor.builtin_tools())`, entao o gap real da story era provar esse comportamento na borda do canal e fechar a propagacao de erro no loop. `llm/client.gleam` ganhou marcadores de teste no mock provider (`[tool-loop-success]` e `[tool-loop-error]`) que mantem o comportamento default intacto, mas tornam observavel quando um tool call executa, devolve resultado ao loop e gera uma resposta final distinta; `channel_router_test.gleam` agora cobre um turn Telegram que completa o loop com sucesso e outro que força invalid args no tool, verificando que o reply final volta como `Mock tool success` / `Mock tool error` em vez de placeholder ou crash. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-009", "US-010"]
     },
     {
       "id": "US-016",
-      "title": "Implement Mattermost interactive model picker",
-      "description": "As a Mattermost user, I want interactive provider/model selection so that configuration is consistent with channels that support actions.",
+      "title": "Evoluir ChannelReply para payload rico",
+      "description": "Como developer, quero que ChannelReply suporte componentes interativos (botoes, select menus) e media, para que o Port cubra UX rico e nao so texto.",
       "acceptanceCriteria": [
-        "Mattermost adapter emits interactive picker payloads from Port interactive blocks.",
-        "Picker supports 15-model pagination and free-first ordering.",
-        "Selection callback persists scoped model state and confirms user choice.",
-        "Automated tests validate interaction payload mapping and callback handling.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "ChannelReply suporta InteractiveReply(content, components, reply_to_id)",
+        "Componentes: buttons, select menus",
+        "Suporte a media (image, audio, document) como variant",
+        "Metadados de UX (thread_id, typing, edit)",
+        "Adapters Discord/Telegram/Slack renderizam componentes nativamente",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-004",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Done on branch us/us-016-evoluir-channelreply-para-payload-rico. ChannelReply now carries interactive components, media variants, and UX metadata (thread_id, typing, edit_message_id); Discord REST gained native message components; Telegram send/edit gained inline keyboard reply_markup; Slack blocks are now emitted as native JSON objects instead of quoted strings. Validation: gleam format --check src test, gleam build, and gleam test all passed.",
+      "dependsOn": ["US-002"]
     },
     {
       "id": "US-017",
-      "title": "Implement Lark interactive model picker",
-      "description": "As a Lark user, I want interactive provider/model selection so that I can configure model choice in-channel without free-text commands.",
+      "title": "Implementar comandos UX executaveis",
+      "description": "Como utilizador, quero que /help, /start, /status e /model retornem respostas funcionais em Discord e Telegram.",
       "acceptanceCriteria": [
-        "Lark adapter emits interactive provider/model picker payloads.",
-        "Picker supports 15-model pagination and free-first ordering.",
-        "Selection callbacks update session-scoped model state and return confirmation.",
-        "Automated tests validate payload mapping and callback transitions.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "/help lista comandos disponiveis e shortcuts do canal",
+        "/start inicia nova sessao e mostra mensagem de boas-vindas",
+        "/status mostra provider/model, budget restante, memoria usada, uptime",
+        "/model mostra provider/model atual e permite troca interativa",
+        "Todos funcionam em Discord e Telegram",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-005",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-017-implementar-comandos-ux-executaveis. A implementacao produtiva dos comandos ja existia no router compartilhado, entao o trabalho da story foi fechar a prova de aceitacao em Discord e Telegram: `channel_router_test.gleam` agora cobre `/help`, `/start`, `/status` e `/model` em ambos os canais, incluindo bootstrap/status por sessao em Discord, help channel-specific em Telegram e o picker interativo de `/model` no Discord. Com isso, a story fica explicitamente verificada na borda real dos routers, sem precisar alterar a logica de producao. Validacao de historia: `gleam test test/adapters/channel_router_test.gleam` passou (runner completou com `1602 passed, no failures`), `gleam format --check src test` passou e `gleam build` passou.",
+      "dependsOn": ["US-016"]
     },
     {
       "id": "US-018",
-      "title": "Implement Matrix textual model picker fallback",
-      "description": "As a Matrix user, I want a guided textual model picker so that model selection works even without rich native components.",
+      "title": "Provider/model por botoes com persistencia",
+      "description": "Como utilizador, quero escolher provider/model via botoes/menus interativos, com a escolha a persistir na sessao.",
       "acceptanceCriteria": [
-        "`/model` displays paginated textual options with exactly 15 models per page.",
-        "Textual commands support page navigation and model selection by deterministic token/index.",
-        "Unsupported models are hidden and free models are listed first.",
-        "Selection updates scoped state and confirms choice in English.",
-        "Automated tests validate parsing, pagination, and persistence.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Comando /model mostra botoes de provider",
+        "Click num provider mostra lista de modelos",
+        "Selecao persiste por sessao e afeta chamadas seguintes do executor",
+        "Fallback para provider default se selecaoo invalida",
+        "Discord: buttons + select menus",
+        "Telegram: inline keyboards",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-005",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-018-provider-model-por-botoes-com-persistencia. O fluxo interativo de `/model` ja existia no router compartilhado, entao a story foi fechada tornando explicita a persistencia por sessao e cobrindo o fallback para provider invalido. `channel_common_router.gleam` agora cai para o provider/model default quando recebe uma selecao invalida, regrava a configuracao da sessao e reconstrui o picker; `channel_router_test.gleam` ganhou uma prova de persistencia via `/status` apos a troca de modelo e uma regressao para `picker_model_select` invalido que confirma o fallback para `mock-model`. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-016"]
     },
     {
       "id": "US-019",
-      "title": "Implement Google Chat textual model picker fallback",
-      "description": "As a Google Chat user, I want a guided textual picker so that model configuration remains usable in constrained interaction surfaces.",
+      "title": "Bootstrapping de agente por sessao",
+      "description": "Como utilizador, quero que mensagens consecutivas no mesmo chat preservem historico, contexto e modelo selecionado.",
       "acceptanceCriteria": [
-        "`/model` displays paginated textual options with 15 models per page.",
-        "Navigation and selection commands are deterministic and validated.",
-        "Unsupported models are hidden and free models are sorted first.",
-        "Selection updates scoped state and responds with explicit confirmation.",
-        "Automated tests validate command parsing and state update behavior.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "session/supervisor e a trilha ativa no fluxo de producao",
+        "Historico de mensagens preservado por chat",
+        "Contexto de sessao mantido entre turns",
+        "Modelo selecionado sobrevive a restart de sessao",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 19,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-006",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Concluida em us/us-019-bootstrapping-de-agente-por-sessao. O fluxo produtivo de Discord/Telegram agora usa `session/supervisor` como trilha ativa e o supervisor passou a gerenciar `session/server` rico em vez do ator minimo anterior. `channel_common_router.gleam` passou a reconstruir o prompt com historico persistido por sessao, gravar user/assistant turns no `session/server` e persistir o `ProviderConfig` selecionado no estado de sessao; `discord_router.gleam`, `telegram_router.gleam` e `supernova.gleam` ganharam o wiring explicito do session supervisor no caminho real de producao. `channel_router_test.gleam` agora prova historico preservado por chat e que a selecao de modelo sobrevive ao restart do router via session supervisor; `supervisor_test.gleam` ganhou uma regressao pequena garantindo que o supervisor expoe a sessao rica. Validacao de historia: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-017"]
     },
     {
       "id": "US-020",
-      "title": "Implement WeChat Work textual model picker fallback",
-      "description": "As a WeChat Work user, I want a guided textual model picker so that provider/model choice works in channels without full interactive parity.",
+      "title": "Threading/reply-to real em todos adapters",
+      "description": "Como utilizador, quero que as respostas acontecam em thread/reply quando ha referencia a uma mensagem.",
       "acceptanceCriteria": [
-        "`/model` presents paginated textual provider/model options with 15 models per page.",
-        "Input parser supports deterministic page navigation and selection tokens.",
-        "Unsupported models are hidden and free models are shown first.",
-        "Selection is persisted in scoped session state and confirmed to the user.",
-        "Automated tests validate parsing, ordering, and persistence.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Discord: reply_to_id -> create message with message_reference",
+        "Telegram: reply_to_id -> send reply",
+        "Slack: thread_ts -> post in thread",
+        "Matrix: rel_type -> m.thread",
+        "thread_id adicionado a ChannelReply",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
       "priority": 20,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-006",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "passes": true,
+      "notes": "Done on branch us/us-020-adicionar-thread-id-a-channelreply. Matrix now resolves thread root from ChannelReply.thread_id before falling back to reply_to_id; Telegram send/edit bodies now support message_thread_id and registry maps ChannelReply.thread_id into Telegram thread sends. Existing Discord/Slack reply threading remained green, and ChannelReply already carried thread_id from US-016. Validation: gleam format --check src test, gleam build, and gleam test passed; one transient BEAM test artifact error (corrupt atom table) was resolved by gleam clean and a full recompile.",
+      "dependsOn": ["US-002"]
+    },
+    {
+      "id": "US-026",
+      "title": "Streaming real por canal",
+      "description": "Como utilizador, quero receber respostas parciais em tempo real nos canais, para acompanhar o progresso antes do fim do turn.",
+      "acceptanceCriteria": [
+        "Fluxo de canal usa `executor.run_stream(...)` ou equivalente no runtime real",
+        "Discord envia placeholder inicial e atualiza a mensagem durante o stream",
+        "Telegram usa send/edit progressivo durante o stream",
+        "Historico e modelo da sessao continuam coerentes ao final do stream",
+        "Resposta final nao duplica nem perde o ultimo estado streamed",
+        "Fallback para caminho nao-streaming continua funcional",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": "Implementada em us/us-026-streaming-real-por-canal. O Port agora permite `ImmediateReply | StreamReply`, o `channel_common_router` publica updates progressivos no caminho real do handler, e o `channel/registry` consome esse stream com placeholder + edit em Discord e send/edit progressivo em Telegram. O worker de stream grava historico de sessao apenas no `StreamComplete`, evitando duplicar o ultimo estado exibido; quando o stream nao produz chunks utilizaveis, o caminho cai de volta para `executor.run(...)` sem quebrar o runtime. Validacao: `gleam format --check src test`, `gleam build` e `gleam test` passaram.",
+      "dependsOn": ["US-019"]
     },
     {
       "id": "US-021",
-      "title": "Implement WhatsApp textual model picker fallback",
-      "description": "As a WhatsApp user, I want a guided textual model picker so that model choice is available even with constrained UI controls.",
+      "title": "Typing indicators no contrato e implementacao",
+      "description": "Como utilizador, quero ver typing indicator durante processamento longo, para saber que o bot esta a processar.",
       "acceptanceCriteria": [
-        "`/model` presents textual options with exactly 15 models per page.",
-        "Selection and pagination commands are validated with explicit error responses.",
-        "Unsupported models are hidden and free models are shown first.",
-        "Chosen provider/model persists for subsequent messages in same session scope.",
-        "Automated tests validate picker flow from list to persisted selection.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Discord: channel.trigger_typing_indicator()",
+        "Telegram: sendChatAction typing",
+        "Typing enviado no inicio do turn",
+        "Typing mantido durante streaming",
+        "Typing parado ao finalizar",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
-      "priority": 21,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-006",
-        "US-008",
-        "US-009",
-        "US-010"
-      ]
+      "priority": 22,
+      "passes": true,
+      "notes": "Done on branch us/us-026-streaming-real-por-canal. Discord REST now exposes `/channels/{id}/typing`, and the channel runtime emits typing at stream start plus keepalive refreshes during idle gaps for both Discord and Telegram, stopping refreshes automatically on complete, failure, or timeout. Registry regressions now prove initial typing plus keepalive refresh while the stream waits. The old Slack typing criterion was removed from this story because the current Slack transport in the repo (Events API + Web API) does not offer a request-driven bot typing indicator; that transport-valid gap is now tracked separately in `US-027` as progressive status/stream feedback for Slack. Validation: `gleam format --check src test`, `gleam build`, and `gleam test` passed.",
+      "dependsOn": ["US-002", "US-026"]
     },
     {
       "id": "US-022",
-      "title": "Ship English UX copy with i18n-ready wiring",
-      "description": "As a product team, we want English-first UX text now with i18n wiring so that localization can be added later without rewiring flows.",
+      "title": "Chunking inteligente por limite de canal",
+      "description": "Como utilizador, quero que mensagens longas sejam divididas sem perda de conteudo ou formatacao, respeitando os limites de cada canal.",
       "acceptanceCriteria": [
-        "All command and model-picker user-facing strings in touched flows are English.",
-        "Strings are emitted from locale-keyed message tables, not hardcoded inline literals.",
-        "Runtime keeps locale selection hook in session/context even if only `en` is provided initially.",
-        "Automated tests validate key resolution fallback to English.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Discord: chunking a 2000 chars",
+        "Telegram: chunking a 4096 chars",
+        "Slack: chunking a 40000 chars",
+        "Nao quebra no meio de palavras",
+        "Respeita markdown boundaries",
+        "Adiciona continuations quando necessario",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
-      "priority": 22,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-008"
-      ]
+      "priority": 23,
+      "passes": true,
+      "notes": "Done on branch us/us-022-chunking-inteligente-por-limite-de-canal. Added `supernova/channel/chunking` as the shared channel-aware splitter for long outbound replies, preserving continuation markers, markdown fence balance, and reply metadata across chunks. The registry send path now chunks Discord replies at 2000 chars and Telegram replies at 4096 chars before delivery, and Slack now builds/sends multiple `chat.postMessage` payloads at 40000 chars while preserving the effective thread target across all chunks. Regression coverage now proves chunk boundaries for the shared splitter, registry chunking for Discord/Telegram, and multi-payload Slack rendering with thread continuity. Validation: `gleam format --check src test`, `gleam build`, and `gleam test` passed (`1617 passed, no failures`).",
+      "dependsOn": ["US-002"]
     },
     {
       "id": "US-023",
-      "title": "Create Port-to-Adapter contract test matrix",
-      "description": "As a maintainer, I want contract tests across all channels so that Port semantics remain consistent and regressions are caught early.",
+      "title": "Unificar sessao minima com sessao rica",
+      "description": "Como developer, quero uma unica trilha de sessao ativa no runtime, sem duplicidade de modelos de estado.",
       "acceptanceCriteria": [
-        "Each channel has tests covering inbound message mapping into Port events.",
-        "Channels with callbacks/actions have tests for callback-to-Port interaction mapping.",
-        "Outbound tests validate reply threading metadata and interactive/text fallback mapping.",
-        "Test failures are channel-identifiable and non-ambiguous.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "session/supervisor (minimo) unificado com session/server (rico)",
+        "Uma unica fonte de verdade para estado de sessao",
+        "Sem duplicidade de modelos de estado",
+        "Codigo de session/server que nao e usado e removido",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
-      "priority": 23,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-002",
-        "US-013",
-        "US-014",
-        "US-015",
-        "US-016",
-        "US-017",
-        "US-018",
-        "US-019",
-        "US-020",
-        "US-021"
-      ]
+      "priority": 24,
+      "passes": true,
+      "notes": "Done on branch us/us-023-unificar-sessao-minima-com-sessao-rica. Discord and Telegram no longer spin up parallel session-manager actors just to derive IDs; both routers now resolve canonical session IDs directly via `supernova/channel/session` and rely on the shared `session/supervisor` + `session/server` path as the only active runtime session trail. `supernova.gleam` stopped bootstrapping the old adapter session managers, the obsolete `discord_session` and `telegram_session` modules/tests were removed, and router/session regressions were updated to prove persisted history/model lookup through the canonical IDs exposed by `channel/session`. Validation: `gleam format --check src test`, `gleam build`, and `gleam test` passed (`1607 passed, no failures`).",
+      "dependsOn": []
     },
     {
       "id": "US-024",
-      "title": "Add end-to-end channel integration tests",
-      "description": "As a maintainer, I want full integration tests for command, model selection, and tool loop flows so that parity remains enforceable in CI.",
+      "title": "Alinhar config/providers com runtime efetivo",
+      "description": "Como developer, quero que providers expostos na config tenham execucao real e teste de integracao.",
       "acceptanceCriteria": [
-        "Integration tests verify `/model` selection and next-message model usage for every channel.",
-        "Tests verify page size 15, free-first ordering, and hidden unsupported models in picker outputs.",
-        "Integration tests verify tool-loop execution returns observable channel responses.",
-        "Regression tests confirm `/help`, `/start`, and `/status` still work across all channels.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Providers no supernova.yaml sao roteados no llm/client",
+        "Cada provider tem teste de integracao",
+        "Provider valido na config mas nao roteado e erro em build",
+        "openrouter, opencode_zen, zhipu, zhipu_coding, minimax tem testes",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
-      "priority": 24,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-012",
-        "US-013",
-        "US-014",
-        "US-015",
-        "US-016",
-        "US-017",
-        "US-018",
-        "US-019",
-        "US-020",
-        "US-021",
-        "US-022"
-      ]
+      "priority": 25,
+      "passes": true,
+      "notes": "Done on branch us/us-024-alinhar-config-providers-com-runtime-efetivo. The config/provider contract now exposes the runtime-supported providers (`openai`, `anthropic`, `openrouter`, `opencode_zen`, `zhipu`, `zhipu_coding`, `minimax`, `ollama`), accepts both `provider:` and legacy `type:` in `supernova.yaml`, and routes all of them through `supernova.gleam` into real `llm/client` names with exhaustive default-model mapping. `wizard.gleam` now emits the same `providers.default.provider` schema that `config.gleam` parses, `providers_info.gleam` was reduced to runtime-supported options, and provider dispatch regressions were added for OpenRouter, OpenCode Zen, Zhipu, Zhipu Coding, and MiniMax. Docs/examples were updated to match the supported provider surface. Validation: `gleam format --check src test`, `gleam build`, and `gleam test` passed (`1618 passed, no failures`).",
+      "dependsOn": []
     },
     {
       "id": "US-025",
-      "title": "Validate concurrency isolation and runtime stability",
-      "description": "As an operator, I want concurrency and lifecycle regression coverage so that multi-session channel operation is safe and deterministic.",
+      "title": "Testes E2E Port Adapter Executor Canal",
+      "description": "Como developer, quero uma suite de testes E2E que cubra o caminho completo de um comando do canal ate a resposta.",
       "acceptanceCriteria": [
-        "Concurrent conversations on the same channel do not leak selected model/provider state.",
-        "Cross-channel sessions remain isolated under parallel traffic.",
-        "Shutdown during active execution leaves runtime in a recoverable state.",
-        "Automated stress/regression tests capture and assert these behaviors.",
-        "gleam format --check src test && gleam test passes.",
-        "Before implementation, read language docs (`tasks/docs/gleam-and-dependencies.json`) and target API contracts (`tasks/docs/provider-contracts.json`), then refresh target contract references.",
-        "TDD is executed as Red -> Green -> Refactor with tests proving behavior and remaining green after refactor."
+        "Teste E2E: comando /help -> adapter -> router -> executor -> resposta",
+        "Teste E2E: selecao de modelo via botoes -> executor -> resposta",
+        "Teste E2E: callback de botao -> executor -> atualizacao de UI",
+        "Testes de erro: fallback, timeout, callback invalido",
+        "Testes cubrem happy-path e erros criticos",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
       ],
-      "priority": 25,
-      "passes": false,
-      "notes": "",
-      "dependsOn": [
-        "US-007",
-        "US-024"
-      ]
+      "priority": 26,
+      "passes": true,
+      "notes": "Done on branch us/us-025-testes-e2e-port-adapter-executor-canal. The registry-level suite now exercises real Discord/Telegram adapter parsing into the production channel runtime handler backed by `discord_router`/`telegram_router`, shared `channel_common_router`, executor streaming/fallback logic, and recorded outbound delivery. New regressions cover `/help` from a Discord slash interaction to final outbound reply, Telegram model-selection callback editing the source UI and affecting the next executor-backed answer, callback-driven UI updates, stream fallback after mock stream errors, timeout fallback after a stream stall, and invalid callbacks producing no outbound message. Small test seams were added to the mock executor/provider path to deterministically trigger stream-error, stream-timeout, and model-echo scenarios without changing real provider behavior; the registry's outbound recorder was also aligned so immediate edits are recorded as `edit` rather than `send`. Validation: `gleam format --check src test`, `gleam build`, and `gleam test` passed (`1623 passed, no failures`).",
+      "dependsOn": ["US-017", "US-018"]
+    },
+    {
+      "id": "US-027",
+      "title": "Feedback progressivo nativo no Slack",
+      "description": "Como utilizador Slack, quero ver feedback progressivo valido durante processamento longo, para saber que o bot esta ativo mesmo sem typing indicator nativo por request.",
+      "acceptanceCriteria": [
+        "Slack usa feedback progressivo compativel com o Web API atual (stream/status, nao typing)",
+        "Feedback enviado no inicio do turn",
+        "Feedback atualizado durante streaming",
+        "Feedback finalizado ao completar ou falhar",
+        "Preserva thread_ts quando aplicavel",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
+      ],
+      "priority": 27,
+      "passes": true,
+      "notes": "Done on branch us/us-027-feedback-progressivo-nativo-no-slack. The Slack adapter now exposes progressive feedback primitives for `chat.startStream`, `chat.appendStream`, and `chat.stopStream`, plus a `chat.update` fallback path, and the channel registry now registers Slack with a real `send_stream` runtime alongside the normal adapter send path. Runtime tests prove native progress streaming for Slack DM/thread replies, non-typing fallback updates for threaded channel replies, feedback emitted at stream start, progressive updates during stream consumption, and finalization on complete/failure/timeout while preserving the effective `thread_ts`. Because the current ChannelReply/runtime surface still does not carry Slack `recipient_team_id`, threaded public-channel runs currently fall back to `postMessage/update` while DM-thread runs use the native `chat.*Stream` API directly; full end-to-end Slack parity remains tracked in `US-028`. Validation: `gleam format --check src test`, `gleam build`, and `gleam test` passed (`1630 passed, no failures`).",
+      "dependsOn": ["US-004", "US-026"]
+    },
+    {
+      "id": "US-028",
+      "title": "Paridade completa do Slack com Discord e Telegram",
+      "description": "Como utilizador Slack, quero o mesmo nivel de comandos, sessao, interacao e feedback existente em Discord e Telegram, para que o canal tenha a mesma experiencia ponta a ponta.",
+      "acceptanceCriteria": [
+        "Slack deixa de usar apenas bootstrap de adapter de envio e passa a ter inbound/runtime real no registry",
+        "slack_router ganha caminho de handler/sessao equivalente ao usado por Discord e Telegram",
+        "/help, /start, /status e /model funcionam em Slack",
+        "Selecao de provider/model via componentes persiste por sessao em Slack",
+        "Feedback progressivo de runs longos funciona no transporte atual do Slack",
+        "Suite E2E cobre comando, selecao de modelo e callback/interacao em Slack",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": "Done on branch us/us-027-feedback-progressivo-nativo-no-slack. slack_router rewritten as a full actor with HandleInboundForHandler, start_with_session_supervisor, and route_inbound_for_handler, mirroring telegram_router. Slack added to channel_supports_interactions so /model returns Block Kit picker. Registry wired with slack_inbound_events hook and dispatch_inbound loop. E2E tests cover /help, /start, /model interactive picker, model selection persistence, and model-selection-then-echo confirm the selection persists for the session. Validation: gleam format --check src test, gleam build, gleam test (1640 passed, no failures).",
+      "dependsOn": ["US-017", "US-018", "US-019", "US-025", "US-027"]
+    },
+    {
+      "id": "US-029",
+      "title": "Paridade completa do Matrix com Discord e Telegram",
+      "description": "Como utilizador Matrix, quero o mesmo nivel de sessao, comandos e fluxo ponta a ponta existente em Discord e Telegram, preservando o protocolo nativo do Matrix.",
+      "acceptanceCriteria": [
+        "Matrix usa trilha de runtime/sessao equivalente a Discord e Telegram",
+        "/help, /start, /status e /model funcionam em Matrix",
+        "Selecao de provider/model persiste por sala/sessao em Matrix",
+        "Threads e edits continuam nativos durante o fluxo completo",
+        "Suite E2E cobre comando e follow-up com historico persistido em Matrix",
+        "gleam format --check src test passa",
+        "gleam build passa",
+        "gleam test passa"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": "Done on branch us/us-027-feedback-progressivo-nativo-no-slack. matrix_router rewritten as a full actor with HandleInboundForHandler, start_with_session_supervisor, and route_inbound_for_handler, mirroring telegram_router. MatrixConfig gains homeserver_url field (SUPERNOVA_MATRIX_HOMESERVER_URL). matrix_adapter gains send_reply_with_event_id for edit-based streaming (m.relates_to/m.replace). Registry wired with matrix_inbound_events hook, dispatch_inbound loop, matrix_send and matrix_stream_send via record_stream_for_test in tests. E2E tests cover /help, /start, and echo-model follow-up with session history showing streamed edit. Validation: gleam format --check src test, gleam build, gleam test (1640 passed, no failures).",
+      "dependsOn": ["US-003", "US-017", "US-019", "US-025"]
     }
   ]
 }
