@@ -507,6 +507,22 @@ pub fn parse_event_interaction_create_test() {
       inter.token |> should.equal("token123")
       inter.guild_id |> should.equal(Some("333"))
       inter.channel_id |> should.equal(Some("444"))
+      case inter.data {
+        Some(events.ApplicationCommandData(
+          id,
+          name,
+          command_type,
+          options,
+          _,
+          _,
+        )) -> {
+          id |> should.equal("555")
+          name |> should.equal("ping")
+          command_type |> should.equal(events.ChatInput)
+          options |> should.equal([])
+        }
+        _ -> panic as "Expected ApplicationCommandData"
+      }
     }
     _ -> panic as "Expected EventInteractionCreate"
   }
@@ -521,6 +537,14 @@ pub fn parse_event_interaction_create_message_component_test() {
   case event {
     events.EventInteractionCreate(inter) -> {
       inter.interaction_type |> should.equal(events.MessageComponent)
+      case inter.data {
+        Some(events.MessageComponentData(custom_id, component_type, values, _)) -> {
+          custom_id |> should.equal("button1")
+          component_type |> should.equal(events.ButtonType)
+          values |> should.equal(None)
+        }
+        _ -> panic as "Expected MessageComponentData"
+      }
     }
     _ -> panic as "Expected EventInteractionCreate"
   }

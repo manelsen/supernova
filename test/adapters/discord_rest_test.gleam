@@ -3,6 +3,7 @@
 import gleam/dict
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit
 import gleeunit/should
 import supernova/adapters/discord_rest as rest
@@ -138,6 +139,51 @@ pub fn with_allowed_mentions_test() {
     }
     None -> should.fail()
   }
+}
+
+pub fn with_components_test() {
+  let provider_button = rest.primary_button("picker_provider:openai", "OpenAI")
+  let model_select =
+    rest.string_select("picker_model_select", [
+      rest.select_option("gpt-5.1", "openai/gpt-5.1"),
+    ])
+    |> rest.select_with_placeholder("Select model")
+  let opts =
+    rest.new_message_options()
+    |> rest.with_components([
+      rest.action_row([provider_button]),
+      rest.action_row([model_select]),
+    ])
+
+  list.length(opts.components) |> should.equal(2)
+}
+
+pub fn encode_message_options_with_components_test() {
+  let opts =
+    rest.new_message_options()
+    |> rest.with_content("Choose provider")
+    |> rest.with_components([
+      rest.action_row([
+        rest.primary_button("picker_provider:openai", "OpenAI"),
+      ]),
+      rest.action_row([
+        rest.string_select("picker_model_select", [
+          rest.select_option("gpt-5.1", "openai/gpt-5.1"),
+          rest.select_option("gpt-4o", "openai/gpt-4o"),
+        ])
+        |> rest.select_with_placeholder("Select model"),
+      ]),
+    ])
+
+  let encoded = rest.encode_message_options(opts)
+
+  string.contains(encoded, "\"components\"") |> should.equal(True)
+  string.contains(encoded, "\"custom_id\":\"picker_provider:openai\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"custom_id\":\"picker_model_select\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"type\":2") |> should.equal(True)
+  string.contains(encoded, "\"type\":3") |> should.equal(True)
 }
 
 // ============================================================================
