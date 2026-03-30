@@ -1,7 +1,5 @@
 //// Google Chat Adapter — implements the ChannelPort contract for Google Chat.
-///
 //// Google Chat uses incoming webhooks for receiving messages and the API for sending.
-///
 ////
 //// ## Google Chat Specifics
 ////
@@ -10,6 +8,7 @@
 //// - **Threading:** Via thread.replyTo field
 ////
 
+import gleam/dynamic/decode
 import gleam/hackney
 import gleam/http
 import gleam/http/request
@@ -34,58 +33,41 @@ pub fn start(
   let send_fn = fn(reply: port.ChannelReply) -> Result(Nil, port.ChannelError) {
     do_send(webhook_url, reply)
   }
-  Ok(port.ChannelAdapter(name: "google_chat", send: send_fn))
+  Ok(
+    port.ChannelAdapter(name: "google_chat", send: send_fn, stop: fn() { Nil }),
+  )
 }
 
 /// Parse a raw Google Chat event JSON into a normalized `ChannelMessage`.
-pub fn parse_event(event_json: String) -> Result(port.ChannelMessage, port.ChannelError) {
-  case string.contains(event_json, "\"type\":\"MESSAGE\"") {
-    True -> parse_message_event(event_json)
-    False -> Error(port.Ignored("non-message event"))
-  }
-}
-
-fn parse_message_event(json: String) -> Result(port.ChannelMessage, port.ChannelError) {
-  let space_name = get_field_2(json, "\"space\"", "\"name\":\"")
-  let msg_name = get_field_2(json, "\"message\"", "\"name\":\"")
-  let msg_text = get_opt_field_2(json, "\"message\"", "\"text\":\"")
-  let sender_name = get_field_3(json, "\"message\"", "\"sender\"", "\"name\":\"")
-  let sender_type = get_opt_field_3(json, "\"message\"", "\"sender\"", "\"type\":\"")
-  let thread_name = get_opt_field_4(json, "\"message\"", "\"thread\"", "\"replyToMessage\"", "\"name\":\"")
-  
-  case space_name, msg_name, sender_name {
-    Some(space), Some(msg), Some(sender) -> {
-      case sender_type {
-        Some("BOT") -> Error(port.Ignored("bot sender filtered"))
-        _ -> {
-          case msg_text {
-            Some(text) -> {
-              case string.length(text) {
-                0 -> Error(port.Ignored("empty content"))
-                _ -> Ok(port.ChannelMessage(
-                  id: msg,
-                  channel: "google_chat",
-                  channel_id: space,
-                  user_id: sender,
-                  username: "",
-                  content: text,
-                  is_bot: False,
-                  reply_to_id: thread_name,
-                ))
-              }
-            }
-            None -> Error(port.Ignored("empty content"))
-          }
-        }
-      }
-    }
-    _, _, _ -> Error(port.SendFailed("missing required fields"))
+pub fn parse_event(
+  event_json: String,
+) -> Result(port.ChannelMessage, port.ChannelError) {
+  case json.parse(event_json, google_chat_event_decoder()) {
+    Ok(event) -> normalize_event(event)
+    Error(_) -> Error(port.SendFailed("invalid JSON"))
   }
 }
 
 /// Build the Google Chat message payload for sending a reply.
-pub fn build_reply_payload(reply: port.ChannelReply) -> Result(String, port.ChannelError) {
-  Ok("{\"text\": \"" <> escape_json(reply.content) <> "\"}")
+pub fn build_reply_payload(
+  reply: port.ChannelReply,
+) -> Result(String, port.ChannelError) {
+  let payload = case port.thread_target(reply) {
+    Some(parent_message) ->
+      json.object([
+        #("text", json.string(reply.content)),
+        #(
+          "thread",
+          json.object([#("replyToMessage", json.string(parent_message))]),
+        ),
+      ])
+    None ->
+      json.object([
+        #("text", json.string(reply.content)),
+      ])
+  }
+
+  Ok(json.to_string(payload))
 }
 
 /// Resolve the session ID for a Google Chat message.
@@ -98,99 +80,147 @@ pub fn session_resolver() -> SessionResolver {
   without_manager("google_chat")
 }
 
-// ============================================================================
-// Internal: JSON Field Extraction
-// ============================================================================
+type GoogleChatEvent {
+  GoogleChatEvent(
+    event_type: String,
+    space_name: String,
+    message_name: String,
+    text: Option(String),
+    sender_name: String,
+    sender_display_name: Option(String),
+    sender_type: Option(String),
+    reply_to_message: Option(String),
+  )
+}
 
-// 2-level extraction: parent -> field
-fn get_field_2(json: String, parent: String, field: String) -> Option(String) {
-  case string.split_once(json, parent) {
-    Ok(#(_, rest)) -> {
-      case string.split_once(rest, field) {
-        Ok(#(_, value_rest)) -> {
-          case string.split_once(value_rest, "\"") {
-            Ok(#(value, _)) -> Some(value)
-            Error(_) -> None
-          }
-        }
-        Error(_) -> None
-      }
-    }
-    Error(_) -> None
+fn google_chat_event_decoder() -> decode.Decoder(GoogleChatEvent) {
+  use event_type <- decode.field("type", decode.string)
+  use space_name <- decode.field("space", google_chat_space_decoder())
+  use message <- decode.field("message", google_chat_message_decoder())
+  decode.success(GoogleChatEvent(
+    event_type: event_type,
+    space_name: space_name,
+    message_name: message.name,
+    text: message.text,
+    sender_name: message.sender_name,
+    sender_display_name: message.sender_display_name,
+    sender_type: message.sender_type,
+    reply_to_message: message.reply_to_message,
+  ))
+}
+
+type GoogleChatMessagePayload {
+  GoogleChatMessagePayload(
+    name: String,
+    text: Option(String),
+    sender_name: String,
+    sender_display_name: Option(String),
+    sender_type: Option(String),
+    reply_to_message: Option(String),
+  )
+}
+
+fn google_chat_space_decoder() -> decode.Decoder(String) {
+  decode.field("name", decode.string, fn(name) { decode.success(name) })
+}
+
+fn google_chat_message_decoder() -> decode.Decoder(GoogleChatMessagePayload) {
+  use name <- decode.field("name", decode.string)
+  use text <- decode.optional_field(
+    "text",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use sender <- decode.field("sender", google_chat_sender_decoder())
+  use thread <- decode.optional_field(
+    "thread",
+    None,
+    google_chat_thread_decoder() |> decode.map(Some),
+  )
+  decode.success(GoogleChatMessagePayload(
+    name: name,
+    text: text,
+    sender_name: sender.0,
+    sender_display_name: sender.1,
+    sender_type: sender.2,
+    reply_to_message: thread,
+  ))
+}
+
+fn google_chat_sender_decoder() -> decode.Decoder(
+  #(String, Option(String), Option(String)),
+) {
+  use name <- decode.field("name", decode.string)
+  use display_name <- decode.optional_field(
+    "displayName",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  use sender_type <- decode.optional_field(
+    "type",
+    None,
+    decode.string |> decode.map(Some),
+  )
+  decode.success(#(name, display_name, sender_type))
+}
+
+fn google_chat_thread_decoder() -> decode.Decoder(String) {
+  decode.field(
+    "replyToMessage",
+    decode.one_of(decode.string, or: [
+      decode.field("name", decode.string, fn(name) { decode.success(name) }),
+    ]),
+    fn(reply_to_message) { decode.success(reply_to_message) },
+  )
+}
+
+fn normalize_event(
+  event: GoogleChatEvent,
+) -> Result(port.ChannelMessage, port.ChannelError) {
+  case event.event_type {
+    "MESSAGE" -> normalize_message_event(event)
+    _ -> Error(port.Ignored("non-message event"))
   }
 }
 
-// 2-level optional extraction
-fn get_opt_field_2(json: String, p1: String, field: String) -> Option(String) {
-  get_field_2(json, p1, field)
-}
-
-// 3-level extraction: parent1 -> parent2 -> field
-fn get_field_3(json: String, p1: String, p2: String, field: String) -> Option(String) {
-  case string.split_once(json, p1) {
-    Ok(#(_, after_p1)) -> {
-      case string.split_once(after_p1, p2) {
-        Ok(#(_, after_p2)) -> {
-          case string.split_once(after_p2, field) {
-            Ok(#(_, value_rest)) -> {
-              case string.split_once(value_rest, "\"") {
-                Ok(#(value, _)) -> Some(value)
-                Error(_) -> None
-              }
-            }
-            Error(_) -> None
+fn normalize_message_event(
+  event: GoogleChatEvent,
+) -> Result(port.ChannelMessage, port.ChannelError) {
+  case event.sender_type {
+    Some("BOT") -> Error(port.Ignored("bot sender filtered"))
+    _ ->
+      case event.text {
+        Some(text) ->
+          case string.length(text) {
+            0 -> Error(port.Ignored("empty content"))
+            _ ->
+              Ok(port.ChannelMessage(
+                id: event.message_name,
+                channel: "google_chat",
+                channel_id: event.space_name,
+                user_id: event.sender_name,
+                username: case event.sender_display_name {
+                  Some(display_name) -> display_name
+                  None -> ""
+                },
+                content: text,
+                is_bot: False,
+                reply_to_id: event.reply_to_message,
+              ))
           }
-        }
-        Error(_) -> None
+        None -> Error(port.Ignored("empty content"))
       }
-    }
-    Error(_) -> None
   }
-}
-
-// 3-level optional extraction
-fn get_opt_field_3(json: String, p1: String, p2: String, field: String) -> Option(String) {
-  get_field_3(json, p1, p2, field)
-}
-
-// 4-level extraction: parent1 -> parent2 -> parent3 -> field
-fn get_field_4(json: String, p1: String, p2: String, p3: String, field: String) -> Option(String) {
-  case string.split_once(json, p1) {
-    Ok(#(_, after_p1)) -> {
-      case string.split_once(after_p1, p2) {
-        Ok(#(_, after_p2)) -> {
-          case string.split_once(after_p2, p3) {
-            Ok(#(_, after_p3)) -> {
-              case string.split_once(after_p3, field) {
-                Ok(#(_, value_rest)) -> {
-                  case string.split_once(value_rest, "\"") {
-                    Ok(#(value, _)) -> Some(value)
-                    Error(_) -> None
-                  }
-                }
-                Error(_) -> None
-              }
-            }
-            Error(_) -> None
-          }
-        }
-        Error(_) -> None
-      }
-    }
-    Error(_) -> None
-  }
-}
-
-// 4-level optional extraction
-fn get_opt_field_4(json: String, p1: String, p2: String, p3: String, field: String) -> Option(String) {
-  get_field_4(json, p1, p2, p3, field)
 }
 
 // ============================================================================
 // Internal: Sending
 // ============================================================================
 
-fn do_send(webhook_url: String, reply: port.ChannelReply) -> Result(Nil, port.ChannelError) {
+fn do_send(
+  webhook_url: String,
+  reply: port.ChannelReply,
+) -> Result(Nil, port.ChannelError) {
   // Build the message payload
   case build_reply_payload(reply) {
     Error(e) -> Error(e)
@@ -198,29 +228,34 @@ fn do_send(webhook_url: String, reply: port.ChannelReply) -> Result(Nil, port.Ch
   }
 }
 
-fn send_to_google_chat(webhook_url: String, payload: String) -> Result(Nil, port.ChannelError) {
-  // Build HTTP POST request
-  let req =
-    request.new()
-    |> request.set_method(http.Post)
-    |> request.set_header("Content-Type", "application/json")
+fn send_to_google_chat(
+  webhook_url: String,
+  payload: String,
+) -> Result(Nil, port.ChannelError) {
+  case request.to(webhook_url) {
+    Error(_) -> Error(port.SendFailed("invalid webhook URL"))
+    Ok(req) -> {
+      let req =
+        req
+        |> request.set_method(http.Post)
+        |> request.set_header("Content-Type", "application/json")
+        |> request.set_body(payload)
 
-  // Set the URL and body
-  let req_with_url = request.set_host(req, webhook_url)
-  let req_with_body = request.set_body(req_with_url, payload)
-
-  // Send the request
-  case hackney.send(req_with_body) {
-    Ok(response) -> handle_google_chat_response(response)
-    Error(hackney.InvalidUtf8Response) ->
-      Error(port.SendFailed("Invalid UTF-8 response from Google Chat"))
-    Error(hackney.Other(reason)) ->
-      Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+      case hackney.send(req) {
+        Ok(response) -> handle_google_chat_response(response)
+        Error(hackney.InvalidUtf8Response) ->
+          Error(port.SendFailed("Invalid UTF-8 response from Google Chat"))
+        Error(hackney.Other(reason)) ->
+          Error(port.SendFailed("HTTP error: " <> string.inspect(reason)))
+      }
+    }
   }
 }
 
 /// Handle HTTP response from Google Chat webhook.
-fn handle_google_chat_response(response: Response(String)) -> Result(Nil, port.ChannelError) {
+fn handle_google_chat_response(
+  response: Response(String),
+) -> Result(Nil, port.ChannelError) {
   case response.status {
     200 -> Ok(Nil)
     400 -> Error(port.SendFailed("Bad request - invalid payload"))
@@ -230,19 +265,7 @@ fn handle_google_chat_response(response: Response(String)) -> Result(Nil, port.C
       // Google Chat doesn't typically return retry_after
       Error(port.RateLimited(retry_after_seconds: 30))
     }
-    status -> Error(port.SendFailed("Google Chat error: " <> int.to_string(status)))
+    status ->
+      Error(port.SendFailed("Google Chat error: " <> int.to_string(status)))
   }
-}
-
-// ============================================================================
-// Internal: Helpers
-// ============================================================================
-
-fn escape_json(s: String) -> String {
-  s
-  |> string.replace("\\", "\\\\")
-  |> string.replace("\"", "\\\"")
-  |> string.replace("\n", "\\n")
-  |> string.replace("\r", "\\r")
-  |> string.replace("\t", "\\t")
 }

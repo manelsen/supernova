@@ -13,30 +13,36 @@ import supernova/channel/port
 
 pub fn parse_text_message_test() {
   let event = lark_adapter.parse_event(sample_text_event())
-  should.equal(event, Ok(port.ChannelMessage(
-    id: "msg_abc123",
-    channel: "lark",
-    channel_id: "oc_abc123",
-    user_id: "ou_abc123",
-    username: "",
-    content: "Hello, bot!",
-    is_bot: False,
-    reply_to_id: option.None,
-  )))
+  should.equal(
+    event,
+    Ok(port.ChannelMessage(
+      id: "msg_abc123",
+      channel: "lark",
+      channel_id: "oc_abc123",
+      user_id: "ou_abc123",
+      username: "",
+      content: "Hello, bot!",
+      is_bot: False,
+      reply_to_id: option.None,
+    )),
+  )
 }
 
 pub fn parse_reply_message_test() {
   let event = lark_adapter.parse_event(sample_reply_event())
-  should.equal(event, Ok(port.ChannelMessage(
-    id: "msg_reply456",
-    channel: "lark",
-    channel_id: "oc_abc123",
-    user_id: "ou_abc123",
-    username: "",
-    content: "This is a reply",
-    is_bot: False,
-    reply_to_id: option.Some("msg_parent789"),
-  )))
+  should.equal(
+    event,
+    Ok(port.ChannelMessage(
+      id: "msg_reply456",
+      channel: "lark",
+      channel_id: "oc_abc123",
+      user_id: "ou_abc123",
+      username: "",
+      content: "This is a reply",
+      is_bot: False,
+      reply_to_id: option.Some("msg_parent789"),
+    )),
+  )
 }
 
 pub fn parse_bot_message_ignored_test() {
@@ -51,19 +57,28 @@ pub fn parse_empty_content_ignored_test() {
 
 pub fn parse_invalid_json_error_test() {
   // JSON that parses but doesn't match expected event structure
-  let result = lark_adapter.parse_event(
-    "{\"not\": \"a valid lark event\"}"
-  )
+  let result = lark_adapter.parse_event("{\"not\": \"a valid lark event\"}")
   // Missing header/event structure returns ignored
   should.equal(result, Error(port.SendFailed("invalid JSON")))
 }
+
 pub fn parse_non_message_event_ignored_test() {
   // Non-MESSAGE event - the event parses but lacks required body fields
-  let result = lark_adapter.parse_event(
-    "{\"header\": {\"event_type\": \"im.message.read_v1\"}, \"event\": {}}"
-  )
+  let result =
+    lark_adapter.parse_event(
+      "{\"header\": {\"event_type\": \"im.message.read_v1\"}, \"event\": {}}",
+    )
   // Missing event body returns parsing error
   should.equal(result, Error(port.SendFailed("invalid JSON")))
+}
+
+pub fn start_returns_adapter_test() {
+  let assert Ok(adapter) =
+    lark_adapter.start("tenant-token", option.None, fn(_, _) {
+      Error(port.Ignored("unused"))
+    })
+
+  adapter.name |> should.equal("lark")
 }
 
 // --------------------------------------------------------------------------
@@ -71,28 +86,40 @@ pub fn parse_non_message_event_ignored_test() {
 // --------------------------------------------------------------------------
 
 pub fn build_reply_payload_test() {
-  let reply = port.ChannelReply(
-    channel_id: "oc_abc123",
-    content: "Hello back!",
-    reply_to_id: option.None,
-    interactive: option.None,
-  )
-  
+  let reply =
+    port.ChannelReply(
+      channel_id: "oc_abc123",
+      content: "Hello back!",
+      reply_to_id: option.None,
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.None,
+      media: [],
+    )
+
   let result = lark_adapter.build_reply_payload(reply)
-  let expected = "{\"msg_type\":\"text\",\"content\":{\"text\":\"Hello back!\"}}"
+  let expected =
+    "{\"msg_type\":\"text\",\"content\":{\"text\":\"Hello back!\"}}"
   should.equal(result, Ok(expected))
 }
 
 pub fn build_threaded_reply_payload_test() {
-  let reply = port.ChannelReply(
-    channel_id: "oc_abc123",
-    content: "Threading!",
-    reply_to_id: option.Some("msg_parent789"),
-    interactive: option.None,
-  )
-  
+  let reply =
+    port.ChannelReply(
+      channel_id: "oc_abc123",
+      content: "Threading!",
+      reply_to_id: option.Some("msg_parent789"),
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.None,
+      media: [],
+    )
+
   let result = lark_adapter.build_reply_payload(reply)
-  let expected = "{\"msg_type\":\"text\",\"content\":{\"text\":\"Threading!\"},\"reply_to_message_id\":\"msg_parent789\"}"
+  let expected =
+    "{\"msg_type\":\"text\",\"content\":{\"text\":\"Threading!\"},\"reply_to_message_id\":\"msg_parent789\"}"
   should.equal(result, Ok(expected))
 }
 
@@ -101,33 +128,35 @@ pub fn build_threaded_reply_payload_test() {
 // --------------------------------------------------------------------------
 
 pub fn session_id_test() {
-  let msg = port.ChannelMessage(
-    id: "msg_123",
-    channel: "lark",
-    channel_id: "oc_abc123",
-    user_id: "ou_abc123",
-    username: "Test",
-    content: "hi",
-    is_bot: False,
-    reply_to_id: option.None,
-  )
-  
+  let msg =
+    port.ChannelMessage(
+      id: "msg_123",
+      channel: "lark",
+      channel_id: "oc_abc123",
+      user_id: "ou_abc123",
+      username: "Test",
+      content: "hi",
+      is_bot: False,
+      reply_to_id: option.None,
+    )
+
   let session_id = lark_adapter.resolve_session_id(msg)
   should.equal(session_id, "lark:oc_abc123:ou_abc123")
 }
 
 pub fn session_id_dm_channel_test() {
-  let msg = port.ChannelMessage(
-    id: "msg_dm456",
-    channel: "lark",
-    channel_id: "p2p_xyz789",
-    user_id: "ou_dmuser",
-    username: "DM User",
-    content: "dm",
-    is_bot: False,
-    reply_to_id: option.None,
-  )
-  
+  let msg =
+    port.ChannelMessage(
+      id: "msg_dm456",
+      channel: "lark",
+      channel_id: "p2p_xyz789",
+      user_id: "ou_dmuser",
+      username: "DM User",
+      content: "dm",
+      is_bot: False,
+      reply_to_id: option.None,
+    )
+
   let session_id = lark_adapter.resolve_session_id(msg)
   should.equal(session_id, "lark:p2p_xyz789:ou_dmuser")
 }
