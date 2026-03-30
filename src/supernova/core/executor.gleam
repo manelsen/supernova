@@ -17,16 +17,23 @@ import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{type Option, None, Some}
 import gleam/string
+import supernova/core/budget_policy/actor as budget_actor
+import supernova/core/budget_policy/types as budget_types
 import supernova/core/checkpoint/actor as checkpoint_actor
 import supernova/core/checkpoint/types as checkpoint_types
 import supernova/core/turn_outcome
 import supernova/llm/client
 import supernova/llm/provider
 import supernova/llm/stream
+import supernova/tools/browser
+import supernova/tools/canvas
 import supernova/tools/file_system
+import supernova/tools/gateway
 import supernova/tools/git_inspect
+import supernova/tools/github
+import supernova/tools/process as process_tool
 import supernova/tools/safe_shell
 import supernova/tools/web
 
@@ -79,8 +86,20 @@ pub type YieldConfig {
     checkpoint_store: checkpoint_actor.CheckpointHandle,
     /// How often to check for yield (in iterations)
     yield_interval: Int,
+    /// Optional wall-clock timeout for this execution
+    timeout_ms: Option(Int),
+    /// Start timestamp for timeout tracking
+    started_at_ms: Int,
+    /// Optional budget policy used to cooperatively pause on exhaustion
+    budget_policy: Option(budget_actor.BudgetPolicy),
+    /// Agent/session identity used against the budget policy
+    budget_agent_id: Option(String),
   )
 }
+
+/// Get current timestamp in milliseconds (Erlang FFI).
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn ffi_current_timestamp() -> Int
 
 // ============================================================================
 // Public API
@@ -100,7 +119,17 @@ pub fn run(
 
 /// Built-in tool definitions wired by the executor.
 pub fn builtin_tools() -> List(provider.ToolDefinition) {
-  [safe_shell.tool(), web.tool(), git_inspect.tool(), file_system.tool()]
+  [
+    safe_shell.tool(),
+    browser.tool(),
+    canvas.tool(),
+    gateway.tool(),
+    process_tool.tool(),
+    github.tool(),
+    web.tool(),
+    git_inspect.tool(),
+    file_system.tool(),
+  ]
 }
 
 /// Run the executor loop with cooperative yield support.
@@ -115,6 +144,15 @@ pub fn run_with_checkpoint(
   yield_config: YieldConfig,
 ) -> Result(provider.ChatResponse, ExecutorError) {
   run_loop_with_checkpoint(messages, config, tools, 0, yield_config)
+}
+
+/// Request a cooperative manual pause for the current session.
+pub fn request_manual_pause(yield_config: YieldConfig, reason: String) -> Nil {
+  checkpoint_actor.force_yield(
+    yield_config.checkpoint_store,
+    yield_config.session_id,
+    checkpoint_types.Pause("manual:" <> reason),
+  )
 }
 
 // ============================================================================
@@ -209,6 +247,11 @@ fn dispatch_builtin_tool(
 ) -> Result(String, String) {
   case name {
     "safe_shell" -> execute_safe_shell(args_json)
+    "browser" -> execute_browser(args_json)
+    "canvas" -> execute_canvas(args_json)
+    "gateway" -> execute_gateway(args_json)
+    "process" -> execute_process(args_json)
+    "github" -> execute_github(args_json)
     "web_fetch" -> execute_web_fetch(args_json)
     "git_inspect" -> execute_git_inspect(args_json)
     "file_system" -> execute_file_system(args_json)
@@ -264,6 +307,26 @@ fn execute_safe_shell(args_json: String) -> Result(String, String) {
     Error(_) -> Error("Invalid arguments for safe_shell")
     Ok(SafeShellArgs(command)) -> safe_shell.execute(command)
   }
+}
+
+fn execute_browser(args_json: String) -> Result(String, String) {
+  browser.execute(args_json)
+}
+
+fn execute_canvas(args_json: String) -> Result(String, String) {
+  canvas.execute(args_json)
+}
+
+fn execute_gateway(args_json: String) -> Result(String, String) {
+  gateway.execute(args_json)
+}
+
+fn execute_process(args_json: String) -> Result(String, String) {
+  process_tool.execute(args_json)
+}
+
+fn execute_github(args_json: String) -> Result(String, String) {
+  github.execute(args_json)
 }
 
 fn execute_web_fetch(args_json: String) -> Result(String, String) {
@@ -330,48 +393,8 @@ fn run_loop_with_checkpoint(
   case depth > max_recursion_depth {
     True -> Error(MaxDepthExceeded(depth: depth))
     False -> {
-      // Check yield every N iterations (not at depth 0)
-      let should_check_yield =
-        depth > 0 && depth % yield_config.yield_interval == 0
-      case should_check_yield {
-        True -> {
-          let decision =
-            checkpoint_actor.should_yield(
-              yield_config.checkpoint_store,
-              yield_config.session_id,
-            )
-          case decision {
-            checkpoint_types.Continue ->
-              run_loop_inner_with_checkpoint(
-                messages,
-                config,
-                tools,
-                depth,
-                yield_config,
-              )
-            checkpoint_types.Pause(_reason) -> {
-              // Save checkpoint before pausing
-              let metadata =
-                dict.from_list([
-                  #("paused_at_depth", int.to_string(depth)),
-                ])
-              case
-                checkpoint_actor.save(
-                  yield_config.checkpoint_store,
-                  yield_config.session_id,
-                  messages,
-                  None,
-                  metadata,
-                )
-              {
-                Ok(checkpoint_id) -> Error(YieldPaused(checkpoint_id:))
-                Error(_) -> Error(YieldPaused(checkpoint_id: "unknown"))
-              }
-            }
-            checkpoint_types.Abort(reason) -> Error(YieldAborted(reason:))
-          }
-        }
-        False ->
+      case maybe_pause_before_turn(messages, depth, yield_config) {
+        Ok(Nil) ->
           run_loop_inner_with_checkpoint(
             messages,
             config,
@@ -379,6 +402,7 @@ fn run_loop_with_checkpoint(
             depth,
             yield_config,
           )
+        Error(error) -> Error(error)
       }
     }
   }
@@ -398,19 +422,32 @@ fn run_loop_inner_with_checkpoint(
       case outcome {
         turn_outcome.TextResponse -> Ok(response)
         turn_outcome.ToolCall(calls) -> {
-          let tool_results = execute_tool_calls(calls, tools)
           let updated_history =
             list.append(messages, [
               provider.assistant_message_with_tools(response.content, calls),
             ])
-          let history_with_results = list.append(updated_history, tool_results)
-          run_loop_with_checkpoint(
-            history_with_results,
-            config,
-            tools,
-            depth + 1,
-            yield_config,
-          )
+          case
+            maybe_consume_tool_budget(
+              updated_history,
+              calls,
+              depth,
+              yield_config,
+            )
+          {
+            Ok(Nil) -> {
+              let tool_results = execute_tool_calls(calls, tools)
+              let history_with_results =
+                list.append(updated_history, tool_results)
+              run_loop_with_checkpoint(
+                history_with_results,
+                config,
+                tools,
+                depth + 1,
+                yield_config,
+              )
+            }
+            Error(error) -> Error(error)
+          }
         }
         turn_outcome.Empty -> Ok(response)
         turn_outcome.Error(msg) ->
@@ -418,6 +455,170 @@ fn run_loop_inner_with_checkpoint(
       }
     }
     Error(err) -> Error(LLMError(reason: err))
+  }
+}
+
+fn maybe_pause_before_turn(
+  messages: List(provider.ChatMessage),
+  depth: Int,
+  yield_config: YieldConfig,
+) -> Result(Nil, ExecutorError) {
+  case maybe_pause_for_timeout(messages, depth, yield_config) {
+    Error(error) -> Error(error)
+    Ok(Nil) -> {
+      let interval = normalize_yield_interval(yield_config.yield_interval)
+      case depth % interval == 0 {
+        False -> Ok(Nil)
+        True -> {
+          let decision =
+            checkpoint_actor.should_yield(
+              yield_config.checkpoint_store,
+              yield_config.session_id,
+            )
+          case decision {
+            checkpoint_types.Continue -> Ok(Nil)
+            checkpoint_types.Pause(reason) -> {
+              let #(kind, detail) = classify_pause_reason(reason)
+              Error(save_pause_checkpoint(
+                messages,
+                None,
+                depth,
+                yield_config,
+                kind,
+                detail,
+              ))
+            }
+            checkpoint_types.Abort(reason) ->
+              Error(YieldAborted(reason: reason))
+          }
+        }
+      }
+    }
+  }
+}
+
+fn maybe_pause_for_timeout(
+  messages: List(provider.ChatMessage),
+  depth: Int,
+  yield_config: YieldConfig,
+) -> Result(Nil, ExecutorError) {
+  case yield_config.timeout_ms {
+    None -> Ok(Nil)
+    Some(timeout_ms) -> {
+      let elapsed_ms = ffi_current_timestamp() - yield_config.started_at_ms
+      case elapsed_ms >= timeout_ms {
+        True ->
+          Error(save_pause_checkpoint(
+            messages,
+            None,
+            depth,
+            yield_config,
+            "timeout",
+            "timeout exceeded",
+          ))
+        False -> Ok(Nil)
+      }
+    }
+  }
+}
+
+fn maybe_consume_tool_budget(
+  messages: List(provider.ChatMessage),
+  calls: List(provider.ToolCall),
+  depth: Int,
+  yield_config: YieldConfig,
+) -> Result(Nil, ExecutorError) {
+  case calls {
+    [] -> Ok(Nil)
+    _ ->
+      case yield_config.budget_policy, yield_config.budget_agent_id {
+        Some(policy), Some(agent_id) -> {
+          let amount = list.length(calls)
+          case
+            budget_actor.check(
+              policy,
+              agent_id,
+              budget_types.BudgetToolCalls,
+              amount,
+            )
+          {
+            Ok(Nil) -> {
+              budget_actor.record_consumption(
+                policy,
+                agent_id,
+                budget_types.BudgetToolCalls,
+                amount,
+              )
+              Ok(Nil)
+            }
+            Error(exceeded) ->
+              Error(save_pause_checkpoint(
+                messages,
+                first_tool_call(calls),
+                depth,
+                yield_config,
+                "budget_exhausted",
+                exceeded.message,
+              ))
+          }
+        }
+        _, _ -> Ok(Nil)
+      }
+  }
+}
+
+fn save_pause_checkpoint(
+  messages: List(provider.ChatMessage),
+  pending_tool: Option(provider.ToolCall),
+  depth: Int,
+  yield_config: YieldConfig,
+  reason_kind: String,
+  reason_detail: String,
+) -> ExecutorError {
+  let metadata =
+    dict.from_list([
+      #("paused_at_depth", int.to_string(depth)),
+      #("yield_reason", reason_kind),
+      #("yield_detail", reason_detail),
+    ])
+
+  case
+    checkpoint_actor.save(
+      yield_config.checkpoint_store,
+      yield_config.session_id,
+      messages,
+      pending_tool,
+      metadata,
+    )
+  {
+    Ok(checkpoint_id) -> YieldPaused(checkpoint_id: checkpoint_id)
+    Error(_) -> YieldPaused(checkpoint_id: "unknown")
+  }
+}
+
+fn classify_pause_reason(reason: String) -> #(String, String) {
+  case string.starts_with(reason, "manual:") {
+    True -> #("manual", string.drop_start(reason, 7))
+    False ->
+      case string.starts_with(reason, "timeout:") {
+        True -> #("timeout", string.drop_start(reason, 8))
+        False ->
+          case string.starts_with(reason, "budget_exhausted:") {
+            True -> #("budget_exhausted", string.drop_start(reason, 17))
+            False -> #("external", reason)
+          }
+      }
+  }
+}
+
+fn normalize_yield_interval(interval: Int) -> Int {
+  int.max(1, interval)
+}
+
+fn first_tool_call(calls: List(provider.ToolCall)) -> Option(provider.ToolCall) {
+  case calls {
+    [first, ..] -> Some(first)
+    [] -> None
   }
 }
 
@@ -442,21 +643,78 @@ pub fn run_stream(
 ///
 /// For testing: emits chunks synchronously from a mock response.
 pub fn run_stream_mock(
-  _messages: List(provider.ChatMessage),
-  _config: provider.ProviderConfig,
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
   _tools: List(provider.ToolDefinition),
 ) -> Subject(stream.StreamChunk) {
   let subject = process.new_subject()
 
-  // Simulate streaming by sending text chunks
-  let mock_chunks = [
+  case latest_user_content(messages) {
+    Some(content) ->
+      case string.contains(content, "[stream-timeout]") {
+        True -> Nil
+        False ->
+          case string.contains(content, "[stream-error]") {
+            True ->
+              process.send(
+                subject,
+                stream.StreamError(reason: "simulated mock stream error"),
+              )
+            False ->
+              mock_stream_chunks(messages, config)
+              |> list.each(fn(chunk) { process.send(subject, chunk) })
+          }
+      }
+    None ->
+      mock_stream_chunks(messages, config)
+      |> list.each(fn(chunk) { process.send(subject, chunk) })
+  }
+
+  subject
+}
+
+fn mock_stream_chunks(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+) -> List(stream.StreamChunk) {
+  case latest_user_content(messages) {
+    Some(content) ->
+      case string.contains(content, "[echo-model]") {
+        True -> [
+          stream.TextChunk(
+            content: "Mock response via " <> config.default_model,
+          ),
+          stream.Done,
+        ]
+        False -> default_mock_stream_chunks()
+      }
+    None -> default_mock_stream_chunks()
+  }
+}
+
+fn default_mock_stream_chunks() -> List(stream.StreamChunk) {
+  [
     stream.TextChunk(content: "Mock "),
     stream.TextChunk(content: "streaming "),
     stream.TextChunk(content: "response"),
     stream.Done,
   ]
+}
 
-  list.each(mock_chunks, fn(chunk) { process.send(subject, chunk) })
+fn latest_user_content(messages: List(provider.ChatMessage)) -> Option(String) {
+  latest_user_content_acc(messages, None)
+}
 
-  subject
+fn latest_user_content_acc(
+  messages: List(provider.ChatMessage),
+  latest: Option(String),
+) -> Option(String) {
+  case messages {
+    [] -> latest
+    [message, ..rest] ->
+      case message.role == "user" {
+        True -> latest_user_content_acc(rest, Some(message.content))
+        False -> latest_user_content_acc(rest, latest)
+      }
+  }
 }
