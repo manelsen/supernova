@@ -1,0 +1,1662 @@
+import gleam/erlang/process
+import gleam/list
+import gleam/option.{None, Some}
+import gleam/string
+import gleeunit/should
+import supernova/adapters/discord_gateway
+import supernova/adapters/discord_router
+import supernova/adapters/matrix_router
+import supernova/adapters/slack_router
+import supernova/adapters/telegram
+import supernova/adapters/telegram_router
+import supernova/channel/port
+import supernova/channel/registry
+import supernova/config
+import supernova/core/session/supervisor
+import supernova/llm/provider
+
+fn enabled_discord_and_telegram_config() -> config.Config {
+  let base = config.default_config()
+
+  config.Config(
+    ..base,
+    discord: config.DiscordConfig(
+      token: Some("discord-token"),
+      app_id: None,
+      guild_id: None,
+      enabled: True,
+    ),
+    telegram: config.TelegramConfig(
+      token: Some("telegram-token"),
+      enabled: True,
+    ),
+  )
+}
+
+fn mock_provider_config() -> provider.ProviderConfig {
+  provider.ProviderConfig(
+    name: "mock",
+    api_key: None,
+    base_url: None,
+    default_model: "mock-model",
+  )
+}
+
+fn runtime_handler_with_supervisor() -> #(
+  port.ChannelHandler,
+  supervisor.SessionSupervisor,
+) {
+  let assert Ok(session_sup) = supervisor.start()
+  let llm_config = mock_provider_config()
+  let assert Ok(discord_channel_router) =
+    discord_router.start_with_session_supervisor(session_sup, llm_config)
+  let assert Ok(telegram_channel_router) =
+    telegram_router.start_with_session_supervisor(session_sup, llm_config)
+  let assert Ok(slack_channel_router) =
+    slack_router.start_with_session_supervisor(session_sup, llm_config)
+  let assert Ok(matrix_channel_router) =
+    matrix_router.start_with_session_supervisor(session_sup, llm_config)
+
+  #(
+    fn(inbound, stream_events) {
+      case inbound_channel_name(inbound) {
+        "discord" ->
+          discord_router.route_inbound_for_handler(
+            discord_channel_router,
+            inbound,
+            stream_events,
+          )
+        "telegram" ->
+          telegram_router.route_inbound_for_handler(
+            telegram_channel_router,
+            inbound,
+            stream_events,
+          )
+        "slack" ->
+          slack_router.route_inbound_for_handler(
+            slack_channel_router,
+            inbound,
+            stream_events,
+          )
+        "matrix" ->
+          matrix_router.route_inbound_for_handler(
+            matrix_channel_router,
+            inbound,
+            stream_events,
+          )
+        channel -> Error(port.Ignored("channel not configured: " <> channel))
+      }
+    },
+    session_sup,
+  )
+}
+
+fn inbound_channel_name(inbound: port.ChannelInbound) -> String {
+  case inbound {
+    port.InboundMessage(message) -> message.channel
+    port.InboundInteraction(interaction) -> interaction.channel
+  }
+}
+
+fn start_runtime_registry_with_recorder(
+  discord_events: List(discord_gateway.DiscordEvent),
+  telegram_updates: List(telegram.Update),
+  recorder: process.Subject(registry.OutboundRecord),
+) -> #(registry.ChannelRegistry, supervisor.SessionSupervisor) {
+  start_runtime_registry_with_recorder_and_keepalive(
+    discord_events,
+    telegram_updates,
+    recorder,
+    4000,
+  )
+}
+
+fn start_slack_runtime_registry_with_recorder(
+  slack_events: List(port.ChannelInbound),
+  recorder: process.Subject(registry.OutboundRecord),
+) -> #(registry.ChannelRegistry, supervisor.SessionSupervisor) {
+  let #(handler, session_sup) = runtime_handler_with_supervisor()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_slack_and_matrix_config(),
+      handler,
+      test_hooks_with_slack_inbound(slack_events, recorder),
+    )
+  #(channel_registry, session_sup)
+}
+
+fn start_matrix_runtime_registry_with_recorder(
+  matrix_events: List(port.ChannelInbound),
+  recorder: process.Subject(registry.OutboundRecord),
+) -> #(registry.ChannelRegistry, supervisor.SessionSupervisor) {
+  let #(handler, session_sup) = runtime_handler_with_supervisor()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_slack_and_matrix_config(),
+      handler,
+      test_hooks_with_matrix_inbound(matrix_events, recorder),
+    )
+  #(channel_registry, session_sup)
+}
+
+fn start_runtime_registry_with_recorder_and_keepalive(
+  discord_events: List(discord_gateway.DiscordEvent),
+  telegram_updates: List(telegram.Update),
+  recorder: process.Subject(registry.OutboundRecord),
+  typing_keepalive_ms: Int,
+) -> #(registry.ChannelRegistry, supervisor.SessionSupervisor) {
+  let #(handler, session_sup) = runtime_handler_with_supervisor()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      handler,
+      test_hooks_with_recorder_and_keepalive(
+        discord_events,
+        telegram_updates,
+        recorder,
+        typing_keepalive_ms,
+      ),
+    )
+
+  #(channel_registry, session_sup)
+}
+
+fn enabled_whatsapp_config() -> config.Config {
+  let base = config.default_config()
+
+  config.Config(
+    ..base,
+    whatsapp: config.WhatsAppConfig(
+      bridge_url: Some("http://localhost:3000"),
+      device_id: Some("device-1"),
+      enabled: True,
+    ),
+  )
+}
+
+fn enabled_slack_config() -> config.Config {
+  let base = config.default_config()
+
+  config.Config(
+    ..base,
+    slack: config.SlackConfig(token: Some("slack-token"), enabled: True),
+  )
+}
+
+fn enabled_matrix_config() -> config.Config {
+  let base = config.default_config()
+
+  config.Config(
+    ..base,
+    matrix: config.MatrixConfig(
+      homeserver_url: Some("https://matrix.example.org"),
+      token: Some("matrix-token"),
+      enabled: True,
+    ),
+  )
+}
+
+fn enabled_slack_and_matrix_config() -> config.Config {
+  let base = config.default_config()
+
+  config.Config(
+    ..base,
+    slack: config.SlackConfig(token: Some("slack-token"), enabled: True),
+    matrix: config.MatrixConfig(
+      homeserver_url: Some("https://matrix.example.org"),
+      token: Some("matrix-token"),
+      enabled: True,
+    ),
+  )
+}
+
+fn enabled_remaining_native_channels_config() -> config.Config {
+  let base = config.default_config()
+
+  config.Config(
+    ..base,
+    lark: config.LarkConfig(
+      token: Some("lark-token"),
+      base_url: Some("https://open.larksuite.com"),
+      enabled: True,
+    ),
+    google_chat: config.GoogleChatConfig(
+      webhook_url: Some(
+        "https://chat.googleapis.com/v1/spaces/xyz789/messages?key=test&token=test",
+      ),
+      enabled: True,
+    ),
+    mattermost: config.MattermostConfig(
+      token: Some("mattermost-token"),
+      base_url: Some("https://mattermost.example.com"),
+      enabled: True,
+    ),
+    wechat_work: config.WechatWorkConfig(
+      webhook_url: Some(
+        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=wechat-key",
+      ),
+      enabled: True,
+    ),
+  )
+}
+
+fn ignoring_handler(
+  received: process.Subject(port.ChannelInbound),
+) -> port.ChannelHandler {
+  fn(inbound, _) {
+    process.send(received, inbound)
+    Error(port.Ignored("test handled"))
+  }
+}
+
+fn test_hooks(
+  discord_events: List(discord_gateway.DiscordEvent),
+  telegram_updates: List(telegram.Update),
+) -> registry.StartHooks {
+  registry.StartHooks(
+    discord_events: discord_events,
+    telegram_updates: telegram_updates,
+    slack_inbound_events: [],
+    matrix_inbound_events: [],
+    disable_telegram_polling: True,
+    typing_keepalive_ms: 4000,
+    outbound_records: None,
+  )
+}
+
+fn test_hooks_with_slack_inbound(
+  slack_events: List(port.ChannelInbound),
+  recorder: process.Subject(registry.OutboundRecord),
+) -> registry.StartHooks {
+  registry.StartHooks(
+    discord_events: [],
+    telegram_updates: [],
+    slack_inbound_events: slack_events,
+    matrix_inbound_events: [],
+    disable_telegram_polling: True,
+    typing_keepalive_ms: 4000,
+    outbound_records: Some(recorder),
+  )
+}
+
+fn test_hooks_with_matrix_inbound(
+  matrix_events: List(port.ChannelInbound),
+  recorder: process.Subject(registry.OutboundRecord),
+) -> registry.StartHooks {
+  registry.StartHooks(
+    discord_events: [],
+    telegram_updates: [],
+    slack_inbound_events: [],
+    matrix_inbound_events: matrix_events,
+    disable_telegram_polling: True,
+    typing_keepalive_ms: 4000,
+    outbound_records: Some(recorder),
+  )
+}
+
+fn test_hooks_with_recorder(
+  discord_events: List(discord_gateway.DiscordEvent),
+  telegram_updates: List(telegram.Update),
+  recorder: process.Subject(registry.OutboundRecord),
+) -> registry.StartHooks {
+  test_hooks_with_recorder_and_keepalive(
+    discord_events,
+    telegram_updates,
+    recorder,
+    4000,
+  )
+}
+
+fn test_hooks_with_recorder_and_keepalive(
+  discord_events: List(discord_gateway.DiscordEvent),
+  telegram_updates: List(telegram.Update),
+  recorder: process.Subject(registry.OutboundRecord),
+  typing_keepalive_ms: Int,
+) -> registry.StartHooks {
+  registry.StartHooks(
+    discord_events: discord_events,
+    telegram_updates: telegram_updates,
+    slack_inbound_events: [],
+    matrix_inbound_events: [],
+    disable_telegram_polling: True,
+    typing_keepalive_ms: typing_keepalive_ms,
+    outbound_records: Some(recorder),
+  )
+}
+
+fn streaming_handler() -> port.ChannelHandler {
+  fn(inbound, events) {
+    case inbound {
+      port.InboundMessage(msg) -> {
+        let base_reply =
+          port.reply(to: msg, content: "") |> port.with_typing(True)
+
+        process.send(
+          events,
+          port.StreamUpdate(port.reply(to: msg, content: "Mock ")),
+        )
+        process.send(
+          events,
+          port.StreamUpdate(port.reply(
+            to: msg,
+            content: "Mock streaming response",
+          )),
+        )
+        process.send(
+          events,
+          port.StreamComplete(port.reply(
+            to: msg,
+            content: "Mock streaming response",
+          )),
+        )
+
+        Ok(port.StreamReply(base_reply: base_reply))
+      }
+      port.InboundInteraction(_) -> Error(port.Ignored("interactions not used"))
+    }
+  }
+}
+
+fn delayed_streaming_handler(
+  first_update_delay_ms: Int,
+  completion_delay_ms: Int,
+) -> port.ChannelHandler {
+  fn(inbound, events) {
+    case inbound {
+      port.InboundMessage(msg) -> {
+        let base_reply =
+          port.reply(to: msg, content: "") |> port.with_typing(True)
+
+        let _ =
+          process.spawn_unlinked(fn() {
+            process.sleep(first_update_delay_ms)
+            process.send(
+              events,
+              port.StreamUpdate(port.reply(to: msg, content: "Mock ")),
+            )
+            process.sleep(completion_delay_ms)
+            process.send(
+              events,
+              port.StreamComplete(port.reply(
+                to: msg,
+                content: "Mock streaming response",
+              )),
+            )
+          })
+
+        Ok(port.StreamReply(base_reply: base_reply))
+      }
+      port.InboundInteraction(_) -> Error(port.Ignored("interactions not used"))
+    }
+  }
+}
+
+fn discord_reply(content: String) -> port.ChannelReply {
+  port.ChannelReply(
+    channel_id: "900000000000000009",
+    content: content,
+    reply_to_id: Some("900000000000000087"),
+    thread_id: None,
+    typing: False,
+    edit_message_id: None,
+    interactive: None,
+    media: [],
+  )
+}
+
+fn telegram_reply(content: String) -> port.ChannelReply {
+  port.ChannelReply(
+    channel_id: "12345678",
+    content: content,
+    reply_to_id: Some("171"),
+    thread_id: None,
+    typing: False,
+    edit_message_id: None,
+    interactive: None,
+    media: [],
+  )
+}
+
+pub fn start_channels_registers_discord_and_telegram_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  registry.is_channel_available(channel_registry, "discord")
+  |> should.equal(True)
+
+  registry.is_channel_available(channel_registry, "telegram")
+  |> should.equal(True)
+
+  let channels = registry.list_channels(channel_registry)
+  list.length(channels) |> should.equal(2)
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_exposes_port_adapters_for_enabled_channels_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  let assert Some(discord_adapter) =
+    registry.get_channel_adapter(channel_registry, "discord")
+  discord_adapter.name |> should.equal("discord")
+
+  let assert Some(telegram_adapter) =
+    registry.get_channel_adapter(channel_registry, "telegram")
+  telegram_adapter.name |> should.equal("telegram")
+
+  registry.get_channel_adapter(channel_registry, "matrix")
+  |> should.equal(None)
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_registers_whatsapp_bridge_adapter_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_whatsapp_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  registry.is_channel_available(channel_registry, "whatsapp")
+  |> should.equal(True)
+
+  let assert Some(whatsapp_adapter) =
+    registry.get_channel_adapter(channel_registry, "whatsapp")
+  whatsapp_adapter.name |> should.equal("whatsapp")
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_registers_slack_adapter_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_slack_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  registry.is_channel_available(channel_registry, "slack")
+  |> should.equal(True)
+
+  let assert Some(slack_adapter) =
+    registry.get_channel_adapter(channel_registry, "slack")
+  slack_adapter.name |> should.equal("slack")
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_registers_remaining_native_adapters_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_remaining_native_channels_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  registry.is_channel_available(channel_registry, "lark")
+  |> should.equal(True)
+  registry.is_channel_available(channel_registry, "google_chat")
+  |> should.equal(True)
+  registry.is_channel_available(channel_registry, "mattermost")
+  |> should.equal(True)
+  registry.is_channel_available(channel_registry, "wechat_work")
+  |> should.equal(True)
+
+  let channels = registry.list_channels(channel_registry)
+  list.length(channels) |> should.equal(4)
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_gateway_message_to_handler_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_message_create_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+
+  case inbound {
+    port.InboundMessage(msg) -> {
+      msg.channel |> should.equal("discord")
+      msg.id |> should.equal("900000000000000087")
+      msg.channel_id |> should.equal("900000000000000009")
+      msg.user_id |> should.equal("900000000000000002")
+      msg.username |> should.equal("username_1")
+      msg.content |> should.equal("content_2")
+      msg.is_bot |> should.equal(False)
+      msg.reply_to_id |> should.equal(None)
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_slash_command_to_handler_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_command_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+
+  case inbound {
+    port.InboundMessage(msg) -> {
+      msg.channel |> should.equal("discord")
+      msg.id |> should.equal("interaction-help-1")
+      msg.channel_id |> should.equal("900000000000000004")
+      msg.user_id |> should.equal("900000000000000026")
+      msg.username |> should.equal("username_5")
+      msg.content |> should.equal("/help")
+      msg.is_bot |> should.equal(False)
+      msg.reply_to_id |> should.equal(None)
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_component_interaction_to_handler_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_component_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+
+  case inbound {
+    port.InboundInteraction(interaction) -> {
+      interaction.channel |> should.equal("discord")
+      interaction.channel_id |> should.equal("900000000000000004")
+      interaction.user_id |> should.equal("900000000000000026")
+      interaction.username |> should.equal("username_5")
+      interaction.is_bot |> should.equal(False)
+      interaction.event.id |> should.equal("interaction-component-1")
+      interaction.event.action_id |> should.equal("picker_model_select")
+      interaction.event.values |> should.equal(["openai|gpt-4o"])
+      interaction.event.source_message_id |> should.equal(None)
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_telegram_update_to_handler_test() {
+  let received = process.new_subject()
+  let assert Ok(update) = telegram.parse_update(telegram_fixture_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+
+  case inbound {
+    port.InboundMessage(msg) -> {
+      msg.channel |> should.equal("telegram")
+      msg.id |> should.equal("171")
+      msg.channel_id |> should.equal("12345678")
+      msg.user_id |> should.equal("12345678")
+      msg.username |> should.equal("anonymized_bot")
+      msg.content |> should.equal("Anonymized message content")
+      msg.is_bot |> should.equal(False)
+      msg.reply_to_id |> should.equal(None)
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_telegram_callback_query_to_handler_test() {
+  let received = process.new_subject()
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_callback_query_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+
+  case inbound {
+    port.InboundInteraction(interaction) -> {
+      interaction.channel |> should.equal("telegram")
+      interaction.channel_id |> should.equal("12345678")
+      interaction.user_id |> should.equal("12345678")
+      interaction.username |> should.equal("anonymized_bot")
+      interaction.is_bot |> should.equal(False)
+      interaction.event.id |> should.equal("cb-telegram-1")
+      interaction.event.action_id |> should.equal("picker_model_select")
+      interaction.event.values |> should.equal(["mock|mock-alt-model"])
+      interaction.event.source_message_id |> should.equal(Some("171"))
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_streams_discord_reply_with_placeholder_and_edits_test() {
+  let recorder = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      streaming_handler(),
+      test_hooks_with_recorder(
+        [discord_fixture_message_create_event()],
+        [],
+        recorder,
+      ),
+    )
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+  let assert Ok(fourth) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("discord-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "edit",
+    content: "Mock ",
+    message_id: Some("discord-stream-1"),
+  ))
+  fourth
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "edit",
+    content: "Mock streaming response",
+    message_id: Some("discord-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_refreshes_discord_typing_while_stream_waits_test() {
+  let recorder = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      delayed_streaming_handler(15, 1),
+      test_hooks_with_recorder_and_keepalive(
+        [discord_fixture_message_create_event()],
+        [],
+        recorder,
+        10,
+      ),
+    )
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+  let assert Ok(fourth) = process.receive(recorder, within: 1000)
+  let assert Ok(fifth) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("discord-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  fourth
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "edit",
+    content: "Mock ",
+    message_id: Some("discord-stream-1"),
+  ))
+  fifth
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "edit",
+    content: "Mock streaming response",
+    message_id: Some("discord-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_streams_telegram_reply_with_send_and_edits_test() {
+  let recorder = process.new_subject()
+  let assert Ok(update) = telegram.parse_update(telegram_fixture_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      streaming_handler(),
+      test_hooks_with_recorder([], [update], recorder),
+    )
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+  let assert Ok(fourth) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("telegram-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "edit",
+    content: "Mock ",
+    message_id: Some("telegram-stream-1"),
+  ))
+  fourth
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "edit",
+    content: "Mock streaming response",
+    message_id: Some("telegram-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_refreshes_telegram_typing_while_stream_waits_test() {
+  let recorder = process.new_subject()
+  let assert Ok(update) = telegram.parse_update(telegram_fixture_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      delayed_streaming_handler(15, 1),
+      test_hooks_with_recorder_and_keepalive([], [update], recorder, 10),
+    )
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+  let assert Ok(fourth) = process.receive(recorder, within: 1000)
+  let assert Ok(fifth) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("telegram-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  fourth
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "edit",
+    content: "Mock ",
+    message_id: Some("telegram-stream-1"),
+  ))
+  fifth
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "edit",
+    content: "Mock streaming response",
+    message_id: Some("telegram-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_streams_slack_dm_reply_with_native_progress_test() {
+  let recorder = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_slack_config(),
+      ignoring_handler(process.new_subject()),
+      test_hooks_with_recorder([], [], recorder),
+    )
+
+  let events = process.new_subject()
+  let base_reply =
+    port.ChannelReply(
+      channel_id: "D012345678",
+      content: "",
+      reply_to_id: Some("1721609600.123456"),
+      thread_id: None,
+      typing: False,
+      edit_message_id: None,
+      interactive: None,
+      media: [],
+    )
+
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(
+        events,
+        port.StreamUpdate(port.ChannelReply(..base_reply, content: "Mock ")),
+      )
+      process.send(
+        events,
+        port.StreamComplete(
+          port.ChannelReply(..base_reply, content: "Mock streaming response"),
+        ),
+      )
+    })
+
+  let assert Ok(_) =
+    registry.send_stream(channel_registry, "slack", base_reply, events)
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "progress_start",
+    content: "Thinking...",
+    message_id: Some("slack-stream-1"),
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "progress_append",
+    content: "Mock ",
+    message_id: Some("slack-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "progress_stop",
+    content: "Mock streaming response",
+    message_id: Some("slack-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_streams_slack_channel_reply_with_fallback_updates_test() {
+  let recorder = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_slack_config(),
+      ignoring_handler(process.new_subject()),
+      test_hooks_with_recorder([], [], recorder),
+    )
+
+  let events = process.new_subject()
+  let base_reply =
+    port.ChannelReply(
+      channel_id: "C0123456789",
+      content: "",
+      reply_to_id: Some("1721609600.123456"),
+      thread_id: None,
+      typing: False,
+      edit_message_id: None,
+      interactive: None,
+      media: [],
+    )
+
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(
+        events,
+        port.StreamUpdate(port.ChannelReply(..base_reply, content: "Mock ")),
+      )
+      process.send(
+        events,
+        port.StreamComplete(
+          port.ChannelReply(..base_reply, content: "Mock streaming response"),
+        ),
+      )
+    })
+
+  let assert Ok(_) =
+    registry.send_stream(channel_registry, "slack", base_reply, events)
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("slack-stream-1"),
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "edit",
+    content: "Mock ",
+    message_id: Some("slack-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "edit",
+    content: "Mock streaming response",
+    message_id: Some("slack-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn adapter_send_chunks_discord_long_reply_test() {
+  let recorder = process.new_subject()
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks_with_recorder([], [], recorder),
+    )
+
+  let assert Some(adapter) =
+    registry.get_channel_adapter(channel_registry, "discord")
+  let long_content = string.repeat("discord word ", 220)
+
+  let assert Ok(_) = adapter.send(discord_reply(long_content))
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+
+  first.action |> should.equal("send")
+  should.equal(string.length(first.content) <= 2000, True)
+  second.action |> should.equal("send")
+  should.equal(string.length(second.content) <= 2000, True)
+  string.starts_with(second.content, "(continued)\n") |> should.equal(True)
+
+  process.receive(recorder, within: 100)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn adapter_send_chunks_telegram_long_reply_test() {
+  let recorder = process.new_subject()
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks_with_recorder([], [], recorder),
+    )
+
+  let assert Some(adapter) =
+    registry.get_channel_adapter(channel_registry, "telegram")
+  let long_content = string.repeat("telegram word ", 350)
+
+  let assert Ok(_) = adapter.send(telegram_reply(long_content))
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+
+  first.action |> should.equal("send")
+  should.equal(string.length(first.content) <= 4096, True)
+  second.action |> should.equal("send")
+  should.equal(string.length(second.content) <= 4096, True)
+  string.starts_with(second.content, "(continued)\n") |> should.equal(True)
+
+  process.receive(recorder, within: 100)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn e2e_discord_help_command_routes_from_adapter_to_reply_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_runtime_registry_with_recorder(
+      [discord_fixture_interaction_command_event()],
+      [],
+      recorder,
+    )
+
+  let assert Ok(record) = process.receive(recorder, within: 1000)
+
+  record
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "send",
+    content: "Supernova AI Agent Framework\n\n"
+      <> "Commands:\n"
+      <> "/help - Show this help\n"
+      <> "/start - Start a new session\n"
+      <> "/status - Show session status\n"
+      <> "/model - Change LLM model\n"
+      <> "/project - Start project wizard\n",
+    message_id: Some("discord-send-1"),
+  ))
+
+  process.receive(recorder, within: 100)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_telegram_model_selection_updates_ui_and_next_reply_test() {
+  let recorder = process.new_subject()
+  let assert Ok(callback_update) =
+    telegram.parse_update(telegram_fixture_callback_query_update())
+  let assert Ok(follow_up_update) =
+    telegram.parse_update(telegram_fixture_update_with_text(
+      "[echo-model] use selected model",
+    ))
+  let #(channel_registry, session_sup) =
+    start_runtime_registry_with_recorder(
+      [],
+      [callback_update, follow_up_update],
+      recorder,
+    )
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+  let assert Ok(fourth) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "edit",
+    content: "Model set to mock-alt-model for this session.",
+    message_id: Some("171"),
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("telegram-stream-1"),
+  ))
+  fourth
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "edit",
+    content: "Mock response via mock-alt-model",
+    message_id: Some("telegram-stream-1"),
+  ))
+
+  process.receive(recorder, within: 100)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_discord_stream_error_falls_back_to_non_streaming_reply_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_runtime_registry_with_recorder(
+      [
+        discord_fixture_message_create_event_with_content(
+          "[stream-error] please recover",
+        ),
+      ],
+      [],
+      recorder,
+    )
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("discord-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "discord",
+    action: "edit",
+    content: "Mock fallback after stream error",
+    message_id: Some("discord-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_telegram_stream_timeout_falls_back_to_non_streaming_reply_test() {
+  let recorder = process.new_subject()
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_update_with_text(
+      "[stream-timeout] please recover",
+    ))
+  let #(channel_registry, session_sup) =
+    start_runtime_registry_with_recorder([], [update], recorder)
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 3000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "typing",
+    content: "",
+    message_id: None,
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("telegram-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "telegram",
+    action: "edit",
+    content: "Mock fallback after stream timeout",
+    message_id: Some("telegram-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_discord_invalid_callback_produces_no_outbound_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_runtime_registry_with_recorder(
+      [
+        discord_fixture_interaction_component_event_with_action(
+          "picker_unknown_action",
+          [],
+        ),
+      ],
+      [],
+      recorder,
+    )
+
+  process.receive(recorder, within: 200)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+fn discord_fixture_message_create_event() -> discord_gateway.DiscordEvent {
+  discord_fixture_message_create_event_with_content("content_2")
+}
+
+fn discord_fixture_message_create_event_with_content(
+  content: String,
+) -> discord_gateway.DiscordEvent {
+  discord_gateway.MessageCreate(
+    "{\"id\":\"900000000000000087\",\"channel_id\":\"900000000000000009\",\"guild_id\":\"900000000000000008\",\"content\":\""
+    <> content
+    <> "\",\"timestamp\":\"2026-03-30T00:00:00.000000+00:00\",\"author\":{\"id\":\"900000000000000002\",\"username\":\"username_1\",\"discriminator\":\"0\",\"bot\":false}}",
+  )
+}
+
+fn discord_fixture_interaction_command_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-help-1\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"token-help\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}} ,\"data\":{\"id\":\"cmd-help-1\",\"name\":\"help\",\"type\":1}}",
+  )
+}
+
+fn discord_fixture_interaction_component_event() -> discord_gateway.DiscordEvent {
+  discord_fixture_interaction_component_event_with_action(
+    "picker_model_select",
+    ["openai|gpt-4o"],
+  )
+}
+
+fn discord_fixture_interaction_component_event_with_action(
+  action_id: String,
+  values: List(String),
+) -> discord_gateway.DiscordEvent {
+  let values_json = case values {
+    [] -> "[]"
+    _ -> "[\"" <> string.join(values, "\",\"") <> "\"]"
+  }
+
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-component-1\",\"application_id\":\"app-1\",\"type\":3,\"token\":\"token-component\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}},\"data\":{\"custom_id\":\""
+      <> action_id
+      <> "\",\"component_type\":3,\"values\":"
+      <> values_json
+      <> "}}",
+  )
+}
+
+fn telegram_fixture_update() -> String {
+  telegram_fixture_update_with_text("Anonymized message content")
+}
+
+fn telegram_fixture_update_with_text(text: String) -> String {
+  "{\"update_id\":737343144,\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":171,\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"text\":\""
+  <> text
+  <> "\",\"date\":1774569232}}"
+}
+
+fn telegram_fixture_callback_query_update() -> String {
+  "{\"update_id\":737343145,\"message\":null,\"edited_message\":null,\"channel_post\":null,\"edited_channel_post\":null,\"inline_query\":null,\"chosen_inline_result\":null,\"callback_query\":{\"id\":\"cb-telegram-1\",\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":171,\"from\":{\"is_bot\":true,\"id\":999999,\"first_name\":\"SupernovaBot\",\"username\":\"supernova_bot\"},\"text\":\"Current selection: Mock / mock-model\",\"date\":1774569232},\"inline_message_id\":null,\"chat_instance\":\"instance-1\",\"data\":\"picker_model_select:mock|mock-alt-model\",\"game_short_name\":null}}"
+}
+
+// ============================================================================
+// Slack fixtures
+// ============================================================================
+
+fn slack_fixture_message(content: String) -> port.ChannelInbound {
+  port.inbound_message(port.ChannelMessage(
+    id: "msg-slack-1",
+    channel: "slack",
+    channel_id: "D012345678",
+    user_id: "U012345678",
+    username: "slack_user",
+    content: content,
+    is_bot: False,
+    reply_to_id: None,
+  ))
+}
+
+fn slack_fixture_interaction(
+  action_id: String,
+  values: List(String),
+) -> port.ChannelInbound {
+  port.inbound_interaction(port.ChannelInteractionMessage(
+    channel: "slack",
+    channel_id: "D012345678",
+    user_id: "U012345678",
+    username: "slack_user",
+    is_bot: False,
+    event: port.ChannelInteractionEvent(
+      id: "slack-interaction-1",
+      action_id: action_id,
+      values: values,
+      source_message_id: Some("msg-slack-1"),
+    ),
+  ))
+}
+
+// ============================================================================
+// Matrix fixtures
+// ============================================================================
+
+fn matrix_fixture_message(content: String) -> port.ChannelInbound {
+  port.inbound_message(port.ChannelMessage(
+    id: "$matrix-event-1:matrix.example.org",
+    channel: "matrix",
+    channel_id: "!room1:matrix.example.org",
+    user_id: "@user:matrix.example.org",
+    username: "matrix_user",
+    content: content,
+    is_bot: False,
+    reply_to_id: None,
+  ))
+}
+
+// ============================================================================
+// US-028: Slack E2E tests
+// ============================================================================
+
+pub fn start_channels_registers_matrix_adapter_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_matrix_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  registry.is_channel_available(channel_registry, "matrix")
+  |> should.equal(True)
+
+  let assert Some(matrix_adapter) =
+    registry.get_channel_adapter(channel_registry, "matrix")
+  matrix_adapter.name |> should.equal("matrix")
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn slack_inbound_event_dispatched_to_handler_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_slack_config(),
+      ignoring_handler(received),
+      registry.StartHooks(
+        discord_events: [],
+        telegram_updates: [],
+        slack_inbound_events: [slack_fixture_message("hello slack")],
+        matrix_inbound_events: [],
+        disable_telegram_polling: True,
+        typing_keepalive_ms: 4000,
+        outbound_records: None,
+      ),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+
+  case inbound {
+    port.InboundMessage(msg) -> {
+      msg.channel |> should.equal("slack")
+      msg.channel_id |> should.equal("D012345678")
+      msg.user_id |> should.equal("U012345678")
+      msg.content |> should.equal("hello slack")
+      msg.is_bot |> should.equal(False)
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn e2e_slack_help_command_routes_from_inbound_to_reply_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_slack_runtime_registry_with_recorder(
+      [slack_fixture_message("/help")],
+      recorder,
+    )
+
+  let assert Ok(record) = process.receive(recorder, within: 1000)
+
+  record
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "send",
+    content: "Supernova AI Agent Framework\n\n"
+      <> "Commands:\n"
+      <> "/help - Show this help\n"
+      <> "/start - Start a new session\n"
+      <> "/status - Show session status\n"
+      <> "/model - Change LLM model\n",
+    message_id: Some("slack-send-1"),
+  ))
+
+  process.receive(recorder, within: 100)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_slack_start_command_returns_session_bootstrapped_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_slack_runtime_registry_with_recorder(
+      [slack_fixture_message("/start")],
+      recorder,
+    )
+
+  let assert Ok(record) = process.receive(recorder, within: 1000)
+
+  record.channel |> should.equal("slack")
+  record.action |> should.equal("send")
+  string.contains(record.content, "Session bootstrapped") |> should.equal(True)
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_slack_model_command_returns_interactive_picker_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_slack_runtime_registry_with_recorder(
+      [slack_fixture_message("/model")],
+      recorder,
+    )
+
+  let assert Ok(record) = process.receive(recorder, within: 1000)
+
+  record.channel |> should.equal("slack")
+  record.action |> should.equal("send")
+  string.contains(record.content, "mock") |> should.equal(True)
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_slack_model_selection_persists_for_session_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_slack_runtime_registry_with_recorder(
+      [
+        slack_fixture_interaction("picker_model_select", ["mock|mock-alt-model"]),
+        slack_fixture_message("[echo-model] use selected model"),
+      ],
+      recorder,
+    )
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  let assert Ok(third) = process.receive(recorder, within: 1000)
+
+  first.channel |> should.equal("slack")
+  first.action |> should.equal("send")
+  string.contains(first.content, "mock-alt-model") |> should.equal(True)
+
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("slack-stream-1"),
+  ))
+  third
+  |> should.equal(registry.OutboundRecord(
+    channel: "slack",
+    action: "edit",
+    content: "Mock response via mock-alt-model",
+    message_id: Some("slack-stream-1"),
+  ))
+
+  process.receive(recorder, within: 100)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+// ============================================================================
+// US-029: Matrix E2E tests
+// ============================================================================
+
+pub fn matrix_inbound_event_dispatched_to_handler_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_matrix_config(),
+      ignoring_handler(received),
+      registry.StartHooks(
+        discord_events: [],
+        telegram_updates: [],
+        slack_inbound_events: [],
+        matrix_inbound_events: [matrix_fixture_message("hello matrix")],
+        disable_telegram_polling: True,
+        typing_keepalive_ms: 4000,
+        outbound_records: None,
+      ),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+
+  case inbound {
+    port.InboundMessage(msg) -> {
+      msg.channel |> should.equal("matrix")
+      msg.channel_id |> should.equal("!room1:matrix.example.org")
+      msg.user_id |> should.equal("@user:matrix.example.org")
+      msg.content |> should.equal("hello matrix")
+      msg.is_bot |> should.equal(False)
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn e2e_matrix_help_command_routes_from_inbound_to_reply_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_matrix_runtime_registry_with_recorder(
+      [matrix_fixture_message("/help")],
+      recorder,
+    )
+
+  let assert Ok(record) = process.receive(recorder, within: 1000)
+
+  record
+  |> should.equal(registry.OutboundRecord(
+    channel: "matrix",
+    action: "send",
+    content: "Supernova AI Agent Framework\n\n"
+      <> "Commands:\n"
+      <> "/help - Show this help\n"
+      <> "/start - Start a new session\n"
+      <> "/status - Show session status\n"
+      <> "/model - Change LLM model\n",
+    message_id: Some("matrix-send-1"),
+  ))
+
+  process.receive(recorder, within: 100)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_matrix_start_command_returns_session_bootstrapped_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_matrix_runtime_registry_with_recorder(
+      [matrix_fixture_message("/start")],
+      recorder,
+    )
+
+  let assert Ok(record) = process.receive(recorder, within: 1000)
+
+  record.channel |> should.equal("matrix")
+  record.action |> should.equal("send")
+  string.contains(record.content, "Session bootstrapped") |> should.equal(True)
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}
+
+pub fn e2e_matrix_follow_up_uses_session_history_test() {
+  let recorder = process.new_subject()
+  let #(channel_registry, session_sup) =
+    start_matrix_runtime_registry_with_recorder(
+      [matrix_fixture_message("[echo-model] use model info")],
+      recorder,
+    )
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+
+  first
+  |> should.equal(registry.OutboundRecord(
+    channel: "matrix",
+    action: "send",
+    content: "Thinking...",
+    message_id: Some("matrix-stream-1"),
+  ))
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "matrix",
+    action: "edit",
+    content: "Mock response via mock-model",
+    message_id: Some("matrix-stream-1"),
+  ))
+
+  process.receive(recorder, within: 100)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+  supervisor.stop(session_sup)
+}

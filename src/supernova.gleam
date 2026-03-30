@@ -13,12 +13,18 @@ import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/result
+import gleam/string
+import supernova/adapters/discord_router
 import supernova/adapters/mcp/config_loader
 import supernova/adapters/mcp_manager
+import supernova/adapters/telegram_router
+import supernova/channel/port
+import supernova/channel/registry
 import supernova/config
 import supernova/core/session/supervisor
-import supernova/channel/registry
+import supernova/llm/provider
 
 /// Starts Supernova, boots core services, and waits for shutdown.
 pub fn main() -> Nil {
@@ -145,14 +151,19 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
       }
     }
   }
+
+  use channel_handler <- result.try(build_channel_handler(cfg, session_sup))
+
   // Start channel adapters based on config
   io.println("")
   io.println("Starting channel adapters...")
-  let channel_reg = case registry.start_channels(cfg) {
+  let channel_reg = case
+    registry.start_channels_with_handler(cfg, channel_handler)
+  {
     Ok(reg) -> reg
     Error(reason) -> {
       io.println("Warning: Failed to start some channels: " <> reason)
-      registry.ChannelRegistry(channels: dict.new())
+      registry.ChannelRegistry(channels: dict.new(), streams: dict.new())
     }
   }
 
@@ -176,6 +187,104 @@ fn register_mcp_servers(
           Error("failed to register " <> server.name <> ": " <> reason)
       }
   }
+}
+
+fn build_channel_handler(
+  cfg: config.Config,
+  session_supervisor: supervisor.SessionSupervisor,
+) -> Result(port.ChannelHandler, String) {
+  let llm_config = default_channel_llm_config(cfg)
+
+  use discord_channel_router <- result.try(
+    discord_router.start_with_session_supervisor(session_supervisor, llm_config)
+    |> result.map_error(fn(_) { "Failed to start Discord channel router" }),
+  )
+
+  use telegram_channel_router <- result.try(
+    telegram_router.start_with_session_supervisor(
+      session_supervisor,
+      llm_config,
+    )
+    |> result.map_error(fn(_) { "Failed to start Telegram channel router" }),
+  )
+
+  Ok(fn(inbound, stream_events) {
+    route_channel_inbound_for_handler(
+      inbound,
+      discord_channel_router,
+      telegram_channel_router,
+      stream_events,
+    )
+  })
+}
+
+fn route_channel_inbound_for_handler(
+  inbound: port.ChannelInbound,
+  discord_channel_router: discord_router.DiscordRouter,
+  telegram_channel_router: telegram_router.TelegramRouter,
+  stream_events: process.Subject(port.ChannelStreamEvent),
+) -> Result(port.ChannelHandlerResult, port.ChannelError) {
+  case inbound_channel_name(inbound) {
+    "discord" ->
+      discord_router.route_inbound_for_handler(
+        discord_channel_router,
+        inbound,
+        stream_events,
+      )
+    "telegram" ->
+      telegram_router.route_inbound_for_handler(
+        telegram_channel_router,
+        inbound,
+        stream_events,
+      )
+    channel -> Error(port.Ignored("channel not configured: " <> channel))
+  }
+}
+
+fn inbound_channel_name(inbound: port.ChannelInbound) -> String {
+  case inbound {
+    port.InboundMessage(message) -> message.channel
+    port.InboundInteraction(interaction) -> interaction.channel
+  }
+}
+
+fn default_channel_llm_config(cfg: config.Config) -> provider.ProviderConfig {
+  let provider_names =
+    cfg.providers
+    |> dict.keys
+    |> list.sort(string.compare)
+
+  case provider_names {
+    [name, ..] ->
+      case config.get_provider(cfg, name) {
+        Some(provider_config) -> provider_config_to_runtime(provider_config)
+        None -> mock_channel_llm_config()
+      }
+    [] -> mock_channel_llm_config()
+  }
+}
+
+fn provider_config_to_runtime(
+  provider_config: config.ProviderConfig,
+) -> provider.ProviderConfig {
+  provider.ProviderConfig(
+    name: config.provider_runtime_name(provider_config.provider),
+    api_key: provider_config.api_key,
+    base_url: provider_config.base_url,
+    default_model: case provider_config.model {
+      Some(model) -> model
+      None -> config.provider_default_model(provider_config.provider)
+    },
+  )
+}
+
+fn mock_channel_llm_config() -> provider.ProviderConfig {
+  provider.ProviderConfig(
+    name: "mock",
+    api_key: None,
+    base_url: None,
+    default_model: "mock-model",
+  )
 }
 
 /// Graceful shutdown of all services

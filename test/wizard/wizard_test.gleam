@@ -27,11 +27,14 @@ pub fn empty_state_defaults_test() {
   state.telegram_token |> should_equal(None)
   state.matrix_token |> should_equal(None)
   state.lark_token |> should_equal(None)
-  state.google_chat_token |> should_equal(None)
+  state.lark_base_url |> should_equal(None)
+  state.google_chat_webhook_url |> should_equal(None)
   state.slack_token |> should_equal(None)
   state.mattermost_token |> should_equal(None)
-  state.wechat_work_token |> should_equal(None)
-  state.whatsapp_token |> should_equal(None)
+  state.mattermost_base_url |> should_equal(None)
+  state.wechat_work_webhook_url |> should_equal(None)
+  state.whatsapp_bridge_url |> should_equal(None)
+  state.whatsapp_device_id |> should_equal(None)
   state.output_path |> should_equal("supernova.yaml")
 }
 
@@ -248,6 +251,90 @@ pub fn generate_yaml_includes_new_channel_sections_test() {
   {
     True -> Nil
     False -> panic as "YAML should include all new channel sections"
+  }
+}
+
+pub fn generate_yaml_includes_whatsapp_bridge_fields_test() {
+  let state =
+    WizardState(
+      ..empty_state(),
+      whatsapp_bridge_url: Some("http://localhost:3000"),
+      whatsapp_device_id: Some("device-1"),
+    )
+
+  let yaml = generate_yaml(state)
+
+  case
+    string.contains(yaml, "bridge_url: \"http://localhost:3000\"")
+    && string.contains(yaml, "device_id: \"device-1\"")
+  {
+    True -> Nil
+    False -> panic as "WhatsApp section should include bridge_url and device_id"
+  }
+}
+
+pub fn generate_yaml_includes_native_channel_runtime_fields_test() {
+  let state =
+    WizardState(
+      ..empty_state(),
+      lark_token: Some("lark-token"),
+      lark_base_url: Some("https://open.larksuite.com"),
+      google_chat_webhook_url: Some(
+        "https://chat.googleapis.com/v1/spaces/abc/messages?key=test&token=test",
+      ),
+      mattermost_token: Some("mattermost-token"),
+      mattermost_base_url: Some("https://mattermost.example.com"),
+      wechat_work_webhook_url: Some(
+        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=wechat-key",
+      ),
+    )
+
+  let yaml = generate_yaml(state)
+
+  case
+    string.contains(yaml, "lark:")
+    && string.contains(yaml, "base_url: \"https://open.larksuite.com\"")
+    && string.contains(
+      yaml,
+      "webhook_url: \"https://chat.googleapis.com/v1/spaces/abc/messages?key=test&token=test\"",
+    )
+    && string.contains(yaml, "mattermost:")
+    && string.contains(yaml, "base_url: \"https://mattermost.example.com\"")
+    && string.contains(
+      yaml,
+      "webhook_url: \"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=wechat-key\"",
+    )
+  {
+    True -> Nil
+    False ->
+      panic as "YAML should include runtime fields for native channel adapters"
+  }
+}
+
+pub fn generate_yaml_uses_providers_map_schema_test() {
+  let state =
+    WizardState(
+      ..empty_state(),
+      provider_key: Some("openrouter"),
+      provider_api_key: Some("sk-router"),
+      model: Some("anthropic/claude-haiku-4-5"),
+      memory_backend: Some("sqlite"),
+    )
+
+  let yaml = generate_yaml(state)
+
+  case
+    string.contains(yaml, "providers:")
+    && string.contains(yaml, "default:")
+    && string.contains(yaml, "provider: \"openrouter\"")
+    && string.contains(yaml, "api_key: \"sk-router\"")
+    && string.contains(yaml, "model: \"anthropic/claude-haiku-4-5\"")
+    && string.contains(yaml, "memory_backend: \"sqlite\"")
+    && !string.contains(yaml, "\nprovider:\n")
+  {
+    True -> Nil
+    False ->
+      panic as "YAML should use the providers.default schema used by config parsing"
   }
 }
 
