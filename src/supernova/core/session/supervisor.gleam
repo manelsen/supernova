@@ -24,26 +24,18 @@ import gleam/erlang/process.{type Subject}
 import gleam/list
 import gleam/order
 import gleam/otp/actor
-import gleam/result
 import gleam/string
+import supernova/core/session/server
 
 // ============================================================================
 // Types
 // ============================================================================
 
-/// Messages that a session actor handles.
-pub type SessionMessage {
-  /// Get the session ID
-  GetSessionId(reply_to: Subject(String))
-  /// Stop the session
-  StopSession
-}
-
 /// Messages for the supervisor actor.
 pub type SupervisorMessage {
   /// Start a new session with the given ID
   StartSession(
-    reply_to: Subject(Result(Subject(SessionMessage), SupervisorError)),
+    reply_to: Subject(Result(server.Session, SupervisorError)),
     session_id: String,
   )
   /// Stop a session by ID
@@ -55,7 +47,7 @@ pub type SupervisorMessage {
   ListSessions(reply_to: Subject(List(String)))
   /// Get a session subject by ID
   GetSession(
-    reply_to: Subject(Result(Subject(SessionMessage), SupervisorError)),
+    reply_to: Subject(Result(server.Session, SupervisorError)),
     session_id: String,
   )
   /// Stop the supervisor
@@ -78,37 +70,14 @@ pub type SessionSupervisor =
 
 /// Internal supervisor state.
 type SupervisorState {
-  SupervisorState(sessions: Dict(String, Subject(SessionMessage)))
+  SupervisorState(sessions: Dict(String, server.Session))
 }
 
-// ============================================================================
-// Session Actor (minimal — will be replaced by full Session Server in 1.2)
-// ============================================================================
-
-/// Handle messages for a minimal session actor.
-fn handle_session_message(
-  state: String,
-  message: SessionMessage,
-) -> actor.Next(String, SessionMessage) {
-  case message {
-    GetSessionId(reply_to) -> {
-      actor.send(reply_to, state)
-      actor.continue(state)
-    }
-    StopSession -> {
-      actor.stop()
-    }
-  }
-}
-
-/// Start a minimal session actor with the given ID.
+/// Start a rich session actor with the given ID.
 fn start_session_actor(
   session_id: String,
-) -> Result(Subject(SessionMessage), actor.StartError) {
-  actor.new(session_id)
-  |> actor.on_message(handle_session_message)
-  |> actor.start
-  |> result.map(fn(started) { started.data })
+) -> Result(server.Session, actor.StartError) {
+  server.new(session_id)
 }
 
 // ============================================================================
@@ -154,7 +123,7 @@ fn handle_supervisor_message(
     StopSessionById(reply_to, session_id) -> {
       case dict.get(state.sessions, session_id) {
         Ok(subject) -> {
-          actor.send(subject, StopSession)
+          let _ = server.stop(subject)
           let new_sessions = dict.delete(state.sessions, session_id)
           let new_state = SupervisorState(sessions: new_sessions)
           actor.send(reply_to, Ok(Nil))
@@ -193,7 +162,10 @@ fn handle_supervisor_message(
       // Stop all sessions
       state.sessions
       |> dict.values
-      |> list.each(fn(subject) { actor.send(subject, StopSession) })
+      |> list.each(fn(subject) {
+        let _ = server.stop(subject)
+        Nil
+      })
 
       actor.send(reply_to, Nil)
       actor.stop()
@@ -234,7 +206,7 @@ pub fn start() -> Result(SessionSupervisor, actor.StartError) {
 pub fn start_session(
   supervisor: SessionSupervisor,
   session_id: String,
-) -> Result(Subject(SessionMessage), SupervisorError) {
+) -> Result(server.Session, SupervisorError) {
   actor.call(supervisor, waiting: 5000, sending: StartSession(_, session_id))
 }
 
@@ -263,7 +235,7 @@ pub fn list_sessions(supervisor: SessionSupervisor) -> List(String) {
 pub fn get_session(
   supervisor: SessionSupervisor,
   session_id: String,
-) -> Result(Subject(SessionMessage), SupervisorError) {
+) -> Result(server.Session, SupervisorError) {
   actor.call(supervisor, waiting: 5000, sending: GetSession(_, session_id))
 }
 

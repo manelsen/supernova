@@ -13,9 +13,11 @@
 //// ```
 
 import gleam/erlang/process.{type Subject}
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import supernova/llm/provider
 
 // ============================================================================
 // Types
@@ -46,10 +48,24 @@ pub type SessionMessage {
   GetHistory(reply_to: Subject(List(ChatMessage)))
   /// Get the model override (if any)
   GetModel(reply_to: Subject(Option(String)))
+  /// Get the full persisted LLM config override (if any)
+  GetLLMConfig(reply_to: Subject(Option(provider.ProviderConfig)))
   /// Set the model override
   SetModel(reply_to: Subject(Result(Nil, Nil)), model: String)
+  /// Set the full persisted LLM config override
+  SetLLMConfig(
+    reply_to: Subject(Result(Nil, Nil)),
+    llm_config: provider.ProviderConfig,
+  )
   /// Clear the model override
   ClearModel(reply_to: Subject(Result(Nil, Nil)))
+  /// Clear the full persisted LLM config override
+  ClearLLMConfig(reply_to: Subject(Result(Nil, Nil)))
+  /// Append one or more messages to the conversation history
+  AppendMessages(
+    reply_to: Subject(Result(Nil, Nil)),
+    messages: List(ChatMessage),
+  )
   /// Stop the session
   Stop(reply_to: Subject(Result(Nil, Nil)))
 }
@@ -65,6 +81,7 @@ type SessionState {
     status: SessionStatus,
     history: List(ChatMessage),
     model_override: Option(String),
+    llm_config_override: Option(provider.ProviderConfig),
   )
 }
 
@@ -98,14 +115,55 @@ fn handle_session_message(
       actor.continue(state)
     }
 
+    GetLLMConfig(reply_to) -> {
+      actor.send(reply_to, state.llm_config_override)
+      actor.continue(state)
+    }
+
     SetModel(reply_to, model) -> {
-      let new_state = SessionState(..state, model_override: Some(model))
+      let next_llm_config = case state.llm_config_override {
+        Some(config) ->
+          Some(provider.ProviderConfig(..config, default_model: model))
+        None -> None
+      }
+      let new_state =
+        SessionState(
+          ..state,
+          model_override: Some(model),
+          llm_config_override: next_llm_config,
+        )
+      actor.send(reply_to, Ok(Nil))
+      actor.continue(new_state)
+    }
+
+    SetLLMConfig(reply_to, llm_config) -> {
+      let new_state =
+        SessionState(
+          ..state,
+          model_override: Some(llm_config.default_model),
+          llm_config_override: Some(llm_config),
+        )
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
     }
 
     ClearModel(reply_to) -> {
-      let new_state = SessionState(..state, model_override: None)
+      let new_state =
+        SessionState(..state, model_override: None, llm_config_override: None)
+      actor.send(reply_to, Ok(Nil))
+      actor.continue(new_state)
+    }
+
+    ClearLLMConfig(reply_to) -> {
+      let new_state =
+        SessionState(..state, model_override: None, llm_config_override: None)
+      actor.send(reply_to, Ok(Nil))
+      actor.continue(new_state)
+    }
+
+    AppendMessages(reply_to, messages) -> {
+      let new_state =
+        SessionState(..state, history: list.append(state.history, messages))
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
     }
@@ -131,6 +189,7 @@ pub fn new(session_id: String) -> Result(Session, actor.StartError) {
       status: Idle,
       history: [],
       model_override: None,
+      llm_config_override: None,
     )
 
   actor.new(initial_state)
@@ -159,14 +218,40 @@ pub fn get_model(session: Session) -> Option(String) {
   actor.call(session, waiting: 5000, sending: GetModel)
 }
 
+/// Get the persisted LLM config override (if any).
+pub fn get_llm_config(session: Session) -> Option(provider.ProviderConfig) {
+  actor.call(session, waiting: 5000, sending: GetLLMConfig)
+}
+
 /// Set the model override.
 pub fn set_model(session: Session, model: String) -> Result(Nil, Nil) {
   actor.call(session, waiting: 5000, sending: SetModel(_, model))
 }
 
+/// Set the persisted LLM config override.
+pub fn set_llm_config(
+  session: Session,
+  llm_config: provider.ProviderConfig,
+) -> Result(Nil, Nil) {
+  actor.call(session, waiting: 5000, sending: SetLLMConfig(_, llm_config))
+}
+
 /// Clear the model override.
 pub fn clear_model(session: Session) -> Result(Nil, Nil) {
   actor.call(session, waiting: 5000, sending: ClearModel)
+}
+
+/// Clear the persisted LLM config override.
+pub fn clear_llm_config(session: Session) -> Result(Nil, Nil) {
+  actor.call(session, waiting: 5000, sending: ClearLLMConfig)
+}
+
+/// Append one or more messages to the session history.
+pub fn append_messages(
+  session: Session,
+  messages: List(ChatMessage),
+) -> Result(Nil, Nil) {
+  actor.call(session, waiting: 5000, sending: AppendMessages(_, messages))
 }
 
 /// Stop the session.
