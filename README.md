@@ -128,6 +128,10 @@ discord:
   enabled: false
 ```
 
+Supported provider keys in `supernova.yaml` currently are:
+`openai`, `anthropic`, `openrouter`, `opencode_zen`, `zhipu`,
+`zhipu_coding`, `minimax`, and `ollama`.
+
 See [examples/quickstart/supernova.yaml](examples/quickstart/supernova.yaml) for a complete annotated example.
 
 You can also declare MCP servers under `mcp_servers` in `supernova.yaml`. On startup, Supernova now parses and registers these servers automatically via the MCP manager.
@@ -153,4 +157,4 @@ Supernova already provides a complete operating-system-style kernel layer for ag
 Current channel support:
 
 - Functional routers: Telegram, Discord
-- Scaffolded routers (shared contract): Matrix, Lark, Google Chat, Slack, Mattermost, WeChat Work, WhatsApp
+- Port-native adapters with shared routing: Matrix, Lark, Google Chat, Slack, Mattermost, WeChat Work, WhatsApp
