@@ -1,12 +1,14 @@
 //// Tests for Telegram/Discord routers using the shared channel port contract.
 
+import gleam/erlang/process
 import gleam/option.{None, Some}
 import gleeunit/should
 import supernova/adapters/discord_router
-import supernova/adapters/discord_session
 import supernova/adapters/telegram_router
-import supernova/adapters/telegram_session
 import supernova/channel/port
+import supernova/channel/session
+import supernova/core/session/server
+import supernova/core/session/supervisor
 import supernova/llm/provider
 
 fn mock_provider_config() -> provider.ProviderConfig {
@@ -63,9 +65,7 @@ fn interaction(
 }
 
 pub fn telegram_router_routes_message_test() {
-  let assert Ok(session_mgr) = telegram_session.start()
-  let assert Ok(router) =
-    telegram_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message(
       "tg-msg-1",
@@ -89,10 +89,52 @@ pub fn telegram_router_routes_message_test() {
   }
 }
 
+pub fn telegram_router_runs_tool_loop_until_final_response_test() {
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+  let msg =
+    message(
+      "tg-tools-1",
+      "telegram",
+      "chat-tools",
+      "user-1",
+      "alice",
+      "[tool-loop-success] run builtin tools",
+      False,
+    )
+
+  case telegram_router.route(router, msg) {
+    Ok(reply) -> {
+      reply.channel_id |> should.equal("chat-tools")
+      reply.content |> should.equal("Mock tool success")
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn telegram_router_returns_final_tool_error_response_test() {
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+  let msg =
+    message(
+      "tg-tools-2",
+      "telegram",
+      "chat-tools",
+      "user-1",
+      "alice",
+      "[tool-loop-error] run builtin tools",
+      False,
+    )
+
+  case telegram_router.route(router, msg) {
+    Ok(reply) -> {
+      reply.channel_id |> should.equal("chat-tools")
+      reply.content |> should.equal("Mock tool error")
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn telegram_router_ignores_bot_test() {
-  let assert Ok(session_mgr) = telegram_session.start()
-  let assert Ok(router) =
-    telegram_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message("tg-msg-2", "telegram", "chat-2", "bot-1", "my-bot", "beep", True)
 
@@ -105,9 +147,7 @@ pub fn telegram_router_ignores_bot_test() {
 }
 
 pub fn discord_router_routes_message_test() {
-  let assert Ok(session_mgr) = discord_session.start()
-  let assert Ok(router) =
-    discord_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = discord_router.start(mock_provider_config())
   let msg =
     message(
       "dc-msg-1",
@@ -132,9 +172,7 @@ pub fn discord_router_routes_message_test() {
 }
 
 pub fn discord_router_channel_mismatch_test() {
-  let assert Ok(session_mgr) = discord_session.start()
-  let assert Ok(router) =
-    discord_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = discord_router.start(mock_provider_config())
   let msg =
     message(
       "dc-msg-2",
@@ -156,9 +194,7 @@ pub fn discord_router_channel_mismatch_test() {
 }
 
 pub fn telegram_router_model_command_returns_interactive_picker_test() {
-  let assert Ok(session_mgr) = telegram_session.start()
-  let assert Ok(router) =
-    telegram_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message(
       "tg-model-1",
@@ -255,9 +291,7 @@ pub fn telegram_router_model_command_returns_interactive_picker_test() {
 }
 
 pub fn telegram_router_model_selection_updates_session_picker_test() {
-  let assert Ok(session_mgr) = telegram_session.start()
-  let assert Ok(router) =
-    telegram_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
 
   let model_selection =
     interaction(
@@ -316,12 +350,110 @@ pub fn telegram_router_model_selection_updates_session_picker_test() {
       }
     Error(_) -> should.fail()
   }
+
+  let status_msg =
+    message(
+      "tg-model-3",
+      "telegram",
+      "chat-ux",
+      "user-42",
+      "alice",
+      "/status",
+      False,
+    )
+
+  case telegram_router.route(router, status_msg) {
+    Ok(reply) ->
+      reply.content
+      |> should.equal(
+        "Session status: not started\n"
+        <> "Agent: agent:user-42\n"
+        <> "Provider: Mock\n"
+        <> "Model: mock-alt-model",
+      )
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn telegram_router_invalid_provider_selection_falls_back_to_default_test() {
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+
+  let selection =
+    interaction(
+      "telegram",
+      "chat-fallback",
+      "user-42",
+      "alice",
+      "picker_model_select",
+      ["ghost|strange-model"],
+    )
+
+  case
+    telegram_router.route_inbound(router, port.inbound_interaction(selection))
+  {
+    Ok(reply) ->
+      reply.content
+      |> should.equal("Model set to mock-model for this session.")
+    Error(_) -> should.fail()
+  }
+
+  let status_msg =
+    message(
+      "tg-fallback-1",
+      "telegram",
+      "chat-fallback",
+      "user-42",
+      "alice",
+      "/status",
+      False,
+    )
+
+  case telegram_router.route(router, status_msg) {
+    Ok(reply) ->
+      reply.content
+      |> should.equal(
+        "Session status: not started\n"
+        <> "Agent: agent:user-42\n"
+        <> "Provider: Mock\n"
+        <> "Model: mock-model",
+      )
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn telegram_router_interaction_reply_edits_source_message_test() {
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+
+  let selection =
+    port.ChannelInteractionMessage(
+      channel: "telegram",
+      channel_id: "chat-edit",
+      user_id: "user-42",
+      username: "alice",
+      is_bot: False,
+      event: port.ChannelInteractionEvent(
+        id: "interaction-edit-1",
+        action_id: "picker_model_select",
+        values: ["mock|mock-alt-model"],
+        source_message_id: Some("55"),
+      ),
+    )
+
+  case
+    telegram_router.route_inbound(router, port.inbound_interaction(selection))
+  {
+    Ok(reply) -> {
+      reply.content
+      |> should.equal("Model set to mock-alt-model for this session.")
+      reply.reply_to_id |> should.equal(Some("55"))
+      reply.edit_message_id |> should.equal(Some("55"))
+    }
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn discord_router_provider_interaction_returns_openai_picker_test() {
-  let assert Ok(session_mgr) = discord_session.start()
-  let assert Ok(router) =
-    discord_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = discord_router.start(mock_provider_config())
 
   let provider_selection =
     interaction(
@@ -374,9 +506,7 @@ pub fn discord_router_provider_interaction_returns_openai_picker_test() {
 }
 
 pub fn discord_router_unknown_interaction_returns_error_test() {
-  let assert Ok(session_mgr) = discord_session.start()
-  let assert Ok(router) =
-    discord_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = discord_router.start(mock_provider_config())
 
   let unknown =
     interaction(
@@ -397,9 +527,7 @@ pub fn discord_router_unknown_interaction_returns_error_test() {
 }
 
 pub fn telegram_router_start_bootstraps_session_test() {
-  let assert Ok(session_mgr) = telegram_session.start()
-  let assert Ok(router) =
-    telegram_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
   let start_msg =
     message(
       "tg-start-1",
@@ -422,9 +550,7 @@ pub fn telegram_router_start_bootstraps_session_test() {
 }
 
 pub fn telegram_router_status_reports_bootstrap_state_test() {
-  let assert Ok(session_mgr) = telegram_session.start()
-  let assert Ok(router) =
-    telegram_router.start(session_mgr, mock_provider_config())
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
   let status_msg =
     message(
       "tg-status-1",
@@ -484,10 +610,341 @@ pub fn telegram_router_status_reports_bootstrap_state_test() {
   }
 }
 
-pub fn discord_router_help_uses_channel_specific_text_test() {
-  let assert Ok(session_mgr) = discord_session.start()
+pub fn telegram_router_help_uses_channel_specific_text_test() {
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+  let help_msg =
+    message(
+      "tg-help-1",
+      "telegram",
+      "chat-help",
+      "user-help",
+      "alice",
+      "/help",
+      False,
+    )
+
+  case telegram_router.route(router, help_msg) {
+    Ok(reply) ->
+      reply.content
+      |> should.equal(
+        "Supernova AI Agent Framework\n\n"
+        <> "Commands:\n"
+        <> "/start - Start a new session\n"
+        <> "/help - Show this help\n"
+        <> "/status - Show session status\n"
+        <> "/model - Change LLM model\n",
+      )
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn discord_router_start_bootstraps_session_test() {
+  let assert Ok(router) = discord_router.start(mock_provider_config())
+  let start_msg =
+    message(
+      "dc-start-1",
+      "discord",
+      "channel-bootstrap",
+      "user-bootstrap",
+      "bob",
+      "/start",
+      False,
+    )
+
+  case discord_router.route(router, start_msg) {
+    Ok(reply) ->
+      reply.content
+      |> should.equal(
+        "Session bootstrapped.\nAgent: agent:user-bootstrap\nModel: mock-model",
+      )
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn discord_router_status_reports_bootstrap_state_test() {
+  let assert Ok(router) = discord_router.start(mock_provider_config())
+  let status_msg =
+    message(
+      "dc-status-1",
+      "discord",
+      "channel-status",
+      "user-status",
+      "bob",
+      "/status",
+      False,
+    )
+
+  case discord_router.route(router, status_msg) {
+    Ok(reply) ->
+      reply.content
+      |> should.equal(
+        "Session status: not started\n"
+        <> "Agent: agent:user-status\n"
+        <> "Provider: Mock\n"
+        <> "Model: mock-model",
+      )
+    Error(_) -> should.fail()
+  }
+
+  let start_msg =
+    message(
+      "dc-status-2",
+      "discord",
+      "channel-status",
+      "user-status",
+      "bob",
+      "/start",
+      False,
+    )
+  let assert Ok(_) = discord_router.route(router, start_msg)
+
+  let status_after_start =
+    message(
+      "dc-status-3",
+      "discord",
+      "channel-status",
+      "user-status",
+      "bob",
+      "/status",
+      False,
+    )
+
+  case discord_router.route(router, status_after_start) {
+    Ok(reply) ->
+      reply.content
+      |> should.equal(
+        "Session status: ready\n"
+        <> "Agent: agent:user-status\n"
+        <> "Provider: Mock\n"
+        <> "Model: mock-model",
+      )
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn discord_router_model_command_returns_interactive_picker_test() {
+  let assert Ok(router) = discord_router.start(mock_provider_config())
+  let msg =
+    message(
+      "dc-model-1",
+      "discord",
+      "channel-model",
+      "user-model",
+      "bob",
+      "/model",
+      False,
+    )
+
+  case discord_router.route(router, msg) {
+    Ok(reply) -> {
+      reply.channel_id |> should.equal("channel-model")
+      reply.content
+      |> should.equal(
+        "Current selection: Mock / mock-model\n"
+        <> "Choose provider and model for this session.",
+      )
+      case reply.interactive {
+        Some(interactive) ->
+          case interactive.blocks {
+            [
+              port.InteractionText(text: "Provider: Mock"),
+              port.InteractionButtons(_),
+              port.InteractionSelect(
+                action_id: "picker_model_select",
+                placeholder: Some("Select model"),
+                options: options,
+              ),
+            ] ->
+              options
+              |> should.equal([
+                port.ChannelSelectOption(
+                  label: "[active] mock-model",
+                  value: "mock|mock-model",
+                ),
+                port.ChannelSelectOption(
+                  label: "mock-alt-model",
+                  value: "mock|mock-alt-model",
+                ),
+              ])
+            _ -> should.fail()
+          }
+        None -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn telegram_router_records_history_in_supervised_session_test() {
+  let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
-    discord_router.start(session_mgr, mock_provider_config())
+    telegram_router.start_with_session_supervisor(
+      session_sup,
+      mock_provider_config(),
+    )
+
+  let first_msg =
+    message(
+      "tg-history-1",
+      "telegram",
+      "chat-history",
+      "user-history",
+      "alice",
+      "first turn",
+      False,
+    )
+  let second_msg =
+    message(
+      "tg-history-2",
+      "telegram",
+      "chat-history",
+      "user-history",
+      "alice",
+      "second turn",
+      False,
+    )
+
+  let assert Ok(_) = telegram_router.route(router, first_msg)
+  let assert Ok(_) = telegram_router.route(router, second_msg)
+  let session_id = session.telegram_session_id("chat-history")
+
+  supervisor.list_sessions(session_sup)
+  |> should.equal([session_id])
+
+  let assert Ok(session) = supervisor.get_session(session_sup, session_id)
+  server.get_history(session)
+  |> should.equal([
+    server.ChatMessage(role: "user", content: "first turn"),
+    server.ChatMessage(role: "assistant", content: "Mock response"),
+    server.ChatMessage(role: "user", content: "second turn"),
+    server.ChatMessage(role: "assistant", content: "Mock response"),
+  ])
+}
+
+pub fn telegram_router_handler_streams_and_records_history_test() {
+  let assert Ok(session_sup) = supervisor.start()
+  let assert Ok(router) =
+    telegram_router.start_with_session_supervisor(
+      session_sup,
+      mock_provider_config(),
+    )
+  let msg =
+    message(
+      "tg-stream-1",
+      "telegram",
+      "chat-stream",
+      "user-stream",
+      "alice",
+      "stream this reply",
+      False,
+    )
+  let events = process.new_subject()
+
+  case
+    telegram_router.route_inbound_for_handler(
+      router,
+      port.inbound_message(msg),
+      events,
+    )
+  {
+    Ok(port.StreamReply(base_reply)) -> {
+      base_reply.channel_id |> should.equal("chat-stream")
+      base_reply.typing |> should.equal(True)
+
+      let assert Ok(first) = process.receive(events, within: 1000)
+      let assert Ok(second) = process.receive(events, within: 1000)
+      let assert Ok(third) = process.receive(events, within: 1000)
+      let assert Ok(fourth) = process.receive(events, within: 1000)
+
+      first
+      |> should.equal(port.StreamUpdate(port.reply(to: msg, content: "Mock ")))
+      second
+      |> should.equal(
+        port.StreamUpdate(port.reply(to: msg, content: "Mock streaming ")),
+      )
+      third
+      |> should.equal(
+        port.StreamUpdate(port.reply(
+          to: msg,
+          content: "Mock streaming response",
+        )),
+      )
+      fourth
+      |> should.equal(
+        port.StreamComplete(port.reply(
+          to: msg,
+          content: "Mock streaming response",
+        )),
+      )
+    }
+    _ -> should.fail()
+  }
+
+  let session_id = session.telegram_session_id("chat-stream")
+  let assert Ok(session) = supervisor.get_session(session_sup, session_id)
+  server.get_history(session)
+  |> should.equal([
+    server.ChatMessage(role: "user", content: "stream this reply"),
+    server.ChatMessage(role: "assistant", content: "Mock streaming response"),
+  ])
+}
+
+pub fn discord_router_selected_model_survives_router_restart_test() {
+  let assert Ok(session_sup) = supervisor.start()
+  let assert Ok(router) =
+    discord_router.start_with_session_supervisor(
+      session_sup,
+      mock_provider_config(),
+    )
+  let selection =
+    interaction(
+      "discord",
+      "channel-persist",
+      "user-persist",
+      "bob",
+      "picker_model_select",
+      ["mock|mock-alt-model"],
+    )
+
+  let assert Ok(_) =
+    discord_router.route_inbound(router, port.inbound_interaction(selection))
+
+  let assert Ok(restarted_router) =
+    discord_router.start_with_session_supervisor(
+      session_sup,
+      mock_provider_config(),
+    )
+  let status_msg =
+    message(
+      "dc-persist-1",
+      "discord",
+      "channel-persist",
+      "user-persist",
+      "bob",
+      "/status",
+      False,
+    )
+
+  case discord_router.route(restarted_router, status_msg) {
+    Ok(reply) ->
+      reply.content
+      |> should.equal(
+        "Session status: not started\n"
+        <> "Agent: agent:user-persist\n"
+        <> "Provider: Mock\n"
+        <> "Model: mock-alt-model",
+      )
+    Error(_) -> should.fail()
+  }
+
+  let session_id = session.discord_session_id("channel-persist", "user-persist")
+  let assert Ok(session) = supervisor.get_session(session_sup, session_id)
+  server.get_model(session)
+  |> should.equal(Some("mock-alt-model"))
+}
+
+pub fn discord_router_help_uses_channel_specific_text_test() {
+  let assert Ok(router) = discord_router.start(mock_provider_config())
   let help_msg =
     message(
       "dc-help-1",

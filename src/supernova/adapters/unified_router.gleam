@@ -28,10 +28,7 @@ pub type RouteResult =
 
 /// Messages for the router actor.
 pub type RouterMessage {
-  HandleInbound(
-    reply_to: Subject(RouteResult),
-    inbound: port.ChannelInbound
-  )
+  HandleInbound(reply_to: Subject(RouteResult), inbound: port.ChannelInbound)
 }
 
 /// Router state.
@@ -136,10 +133,7 @@ pub fn start(
 }
 
 /// Route an incoming message through the unified router.
-pub fn route(
-  router: UnifiedRouter,
-  msg: port.ChannelMessage,
-) -> RouteResult {
+pub fn route(router: UnifiedRouter, msg: port.ChannelMessage) -> RouteResult {
   route_inbound(router, port.inbound_message(msg))
 }
 
