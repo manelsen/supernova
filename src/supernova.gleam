@@ -14,11 +14,15 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import supernova/adapters/discord_router
+import supernova/adapters/matrix_router
 import supernova/adapters/mcp/config_loader
 import supernova/adapters/mcp_manager
+import supernova/adapters/slack_router
 import supernova/adapters/telegram_router
 import supernova/channel/port
 import supernova/channel/registry
@@ -63,10 +67,10 @@ pub fn main() -> Nil {
           io.println("")
           io.println("Press Ctrl+C to shutdown")
 
-          // Wait forever (until Ctrl+C)
-          process.sleep_forever()
+          // Block until SIGTERM / shutdown signal
+          wait_for_shutdown()
 
-          // Graceful shutdown (unreachable in normal flow, but here for completeness)
+          // Graceful shutdown
           shutdown_services(services)
         }
         Error(reason) -> {
@@ -169,11 +173,8 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
   )
   io.println("✓ MCP Manager started")
 
-  // Start Health Check HTTP Server
+  // Start infrastructure actors under a supervision tree
   let health_port = 8080
-  let assert Ok(metrics) = metrics_actor.start()
-  metrics_global.set_metrics(metrics)
-  io.println("✓ Metrics actor started")
 
   let tracer_config =
     tracing_types.TracerConfig(
@@ -181,31 +182,32 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
       otlp_endpoint: "",
       sampling_rate: 1.0,
     )
-  let assert Ok(tracer) = tracing_actor.start(tracer_config)
-  tracing_global.set_tracer(tracer)
-  io.println("✓ Tracing actor started")
-
   let cb_config =
     cb_actor.CircuitBreakerConfig(
       failure_threshold: 5,
       recovery_timeout_ms: 30_000,
       half_open_max_calls: 3,
     )
-  let assert Ok(cb) = cb_actor.start(cb_config)
-  cb_global.set_circuit_breaker(cb)
-  io.println("✓ Circuit breaker actor started")
-
   let cd_config =
     cd_types.FailoverCooldownConfig(
       initial_cooldown_ms: 30_000,
       max_cooldown_ms: 300_000,
     )
-  let assert Ok(cooldown) = cd_actor.start(cd_config)
-  cd_global.set_cooldown(cooldown)
-  io.println("✓ Failover cooldown actor started")
 
-  let health_srv = health_server.start(health_port, metrics)
-  io.println("✓ Health server started on port " <> int.to_string(health_port))
+  use _infra_sup <- result.try(
+    start_infrastructure_supervisor(tracer_config, cb_config, cd_config)
+    |> result.map_error(fn(_) { "Failed to start infrastructure supervisor" }),
+  )
+  io.println(
+    "✓ Infrastructure supervisor started (metrics, tracing, circuit breaker, cooldown)",
+  )
+
+  // Retrieve metrics from global (set by supervisor child start)
+  use metrics <- result.try(case metrics_global.get_metrics() {
+    Some(m) -> Ok(m)
+    None -> Error("Metrics actor not available after supervisor start")
+  })
+
   let mcp_servers = config_loader.parse_servers_from_file("supernova.yaml")
   case list.length(mcp_servers) {
     0 -> io.println("✓ No MCP servers configured")
@@ -234,6 +236,11 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
     }
   }
 
+  // Start health server with real channel state callback
+  let get_ready_channels = fn() { dict.keys(channel_reg.channels) }
+  let health_srv = health_server.start(health_port, metrics, get_ready_channels)
+  io.println("✓ Health server started on port " <> int.to_string(health_port))
+
   Ok(Services(
     session_supervisor: session_sup,
     mcp_manager: mcp_mgr,
@@ -241,6 +248,67 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
     health_server: health_srv,
     metrics: metrics,
   ))
+}
+
+/// Start infrastructure actors under an OTP supervisor (one_for_one).
+/// Each child re-registers its global reference on (re)start.
+fn start_infrastructure_supervisor(
+  tracer_config: tracing_types.TracerConfig,
+  cb_config: cb_actor.CircuitBreakerConfig,
+  cd_config: cd_types.FailoverCooldownConfig,
+) -> Result(static_supervisor.Supervisor, String) {
+  let builder =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.restart_tolerance(intensity: 5, period: 60)
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case metrics_actor.start_linked() {
+          Ok(started) -> {
+            metrics_global.set_metrics(started.data)
+            Ok(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case tracing_actor.start_linked(tracer_config) {
+          Ok(started) -> {
+            tracing_global.set_tracer(started.data)
+            Ok(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case cb_actor.start_linked(cb_config) {
+          Ok(started) -> {
+            cb_global.set_circuit_breaker(started.data)
+            Ok(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case cd_actor.start_linked(cd_config) {
+          Ok(started) -> {
+            cd_global.set_cooldown(started.data)
+            Ok(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+
+  case static_supervisor.start(builder) {
+    Ok(started) -> Ok(started.data)
+    Error(e) -> Error(string.inspect(e))
+  }
 }
 
 fn register_mcp_servers(
@@ -277,11 +345,23 @@ fn build_channel_handler(
     |> result.map_error(fn(_) { "Failed to start Telegram channel router" }),
   )
 
+  use slack_channel_router <- result.try(
+    slack_router.start_with_session_supervisor(session_supervisor, llm_config)
+    |> result.map_error(fn(_) { "Failed to start Slack channel router" }),
+  )
+
+  use matrix_channel_router <- result.try(
+    matrix_router.start_with_session_supervisor(session_supervisor, llm_config)
+    |> result.map_error(fn(_) { "Failed to start Matrix channel router" }),
+  )
+
   Ok(fn(inbound, stream_events) {
     route_channel_inbound_for_handler(
       inbound,
       discord_channel_router,
       telegram_channel_router,
+      slack_channel_router,
+      matrix_channel_router,
       stream_events,
     )
   })
@@ -291,9 +371,12 @@ fn route_channel_inbound_for_handler(
   inbound: port.ChannelInbound,
   discord_channel_router: discord_router.DiscordRouter,
   telegram_channel_router: telegram_router.TelegramRouter,
+  slack_channel_router: slack_router.SlackRouter,
+  matrix_channel_router: matrix_router.MatrixRouter,
   stream_events: process.Subject(port.ChannelStreamEvent),
 ) -> Result(port.ChannelHandlerResult, port.ChannelError) {
-  case inbound_channel_name(inbound) {
+  let channel = inbound_channel_name(inbound)
+  case channel {
     "discord" ->
       discord_router.route_inbound_for_handler(
         discord_channel_router,
@@ -306,7 +389,22 @@ fn route_channel_inbound_for_handler(
         inbound,
         stream_events,
       )
-    channel -> Error(port.Ignored("channel not configured: " <> channel))
+    "slack" ->
+      slack_router.route_inbound_for_handler(
+        slack_channel_router,
+        inbound,
+        stream_events,
+      )
+    "matrix" ->
+      matrix_router.route_inbound_for_handler(
+        matrix_channel_router,
+        inbound,
+        stream_events,
+      )
+    _ -> {
+      io.println("⚠ Received message for unconfigured channel: " <> channel)
+      Error(port.Ignored("channel not configured: " <> channel))
+    }
   }
 }
 
@@ -351,6 +449,11 @@ fn provider_config_to_runtime(
     },
   )
 }
+
+/// Block until SIGTERM or shutdown signal is received.
+/// Uses Erlang's trap_exit to catch exit signals.
+@external(erlang, "supernova_signal_ffi", "wait_for_shutdown")
+fn wait_for_shutdown() -> Nil
 
 /// Graceful shutdown of all services
 fn shutdown_services(services: Services) -> Nil {

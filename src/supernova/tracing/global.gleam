@@ -1,7 +1,7 @@
 //// Global tracing registry.
 ////
-//// Provides a process-dictionary backed global reference to the tracer actor.
-//// Allows tracing from anywhere without passing the handle explicitly.
+//// Provides a persistent_term backed global reference to the tracer actor.
+//// Accessible from any process without passing the handle explicitly.
 
 import gleam/erlang/process.{type Subject}
 import gleam/option
@@ -12,36 +12,34 @@ import supernova/tracing/types as tracing_types
 pub type Tracer =
   Subject(tracing_types.TelemetryCommand)
 
-@external(erlang, "erlang", "put")
-fn erlang_put(key: String, value: any) -> any
+@external(erlang, "supernova_global_ffi", "global_put")
+fn global_put(key: String, value: any) -> Nil
 
-@external(erlang, "erlang", "get")
-fn erlang_get(key: String) -> any
+@external(erlang, "supernova_global_ffi", "global_get")
+fn global_get(key: String) -> any
+
+@external(erlang, "supernova_global_ffi", "global_has")
+fn global_has(key: String) -> Bool
 
 @external(erlang, "erlang", "is_process_alive")
 fn is_process_alive(pid: any) -> Bool
 
 const tracer_key = "supernova_global_tracer"
 
-const tracer_marker = "supernova_tracer_active"
-
 pub fn set_tracer(tracer: Tracer) -> Nil {
-  erlang_put(tracer_key, tracer)
-  erlang_put(tracer_marker, True)
-  Nil
+  global_put(tracer_key, tracer)
 }
 
 pub fn get_tracer() -> option.Option(Tracer) {
-  let marker = erlang_get(tracer_marker)
-  case marker {
+  case global_has(tracer_key) {
     True -> {
-      let tracer = erlang_get(tracer_key)
+      let tracer = global_get(tracer_key)
       case is_process_alive(tracer) {
         True -> option.Some(tracer)
         False -> option.None
       }
     }
-    _ -> option.None
+    False -> option.None
   }
 }
 

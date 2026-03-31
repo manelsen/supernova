@@ -79,6 +79,8 @@ pub type PgVectorError {
   QueryFailed(pog.QueryError)
   /// The embedding dimensions don't match the configured dimensions
   VectorDimensionMismatch(expected: Int, got: Int)
+  /// A metadata key contains unsafe characters
+  InvalidMetadataKey(key: String)
   /// The vector formatting failed
   InvalidEmbedding(reason: String)
   /// Schema migration failed
@@ -191,7 +193,8 @@ pub fn connect(config: PgVectorConfig) -> Result(Connection, String) {
 
 /// SQL to create the schema (for documentation/migration tools).
 pub fn schema_sql(config: PgVectorConfig) -> String {
-  let table = config.table_name
+  let table = sanitize_identifier(config.table_name)
+  let index_name = sanitize_identifier(config.table_name <> "_embedding_idx")
   let dims = int.to_string(config.dimensions)
   "-- Enable pgvector extension\n"
   <> "CREATE EXTENSION IF NOT EXISTS vector;\n\n"
@@ -208,8 +211,8 @@ pub fn schema_sql(config: PgVectorConfig) -> String {
   <> ");\n\n"
   <> "-- IVFFlat index for approximate nearest neighbor search\n"
   <> "CREATE INDEX IF NOT EXISTS "
-  <> table
-  <> "_embedding_idx\n"
+  <> index_name
+  <> "\n"
   <> "  ON "
   <> table
   <> " USING ivfflat (embedding vector_cosine_ops)\n"
@@ -224,7 +227,7 @@ pub fn ensure_schema(
   conn: Connection,
   config: PgVectorConfig,
 ) -> Result(Nil, PgVectorError) {
-  let table = config.table_name
+  let table = sanitize_identifier(config.table_name)
   let dims = int.to_string(config.dimensions)
 
   let extension_sql = "CREATE EXTENSION IF NOT EXISTS vector"
@@ -241,8 +244,8 @@ pub fn ensure_schema(
 
   let index_sql =
     "CREATE INDEX IF NOT EXISTS "
-    <> table
-    <> "_embedding_idx ON "
+    <> sanitize_identifier(config.table_name <> "_embedding_idx")
+    <> " ON "
     <> table
     <> " USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
 
@@ -308,9 +311,10 @@ pub fn insert(
   ))
   let vector_str = format_vector(validated)
   let metadata_json = metadata_to_json(record.metadata)
+  let table = sanitize_identifier(config.table_name)
   let sql =
     "INSERT INTO "
-    <> config.table_name
+    <> table
     <> " (content, embedding, metadata) VALUES ($1, $2::vector, $3::jsonb) RETURNING id::text"
 
   let id_decoder = {
@@ -349,10 +353,11 @@ pub fn similarity_search(
   ))
   let vector_str = format_vector(validated)
   let n = option.unwrap(limit, config.default_limit)
+  let table = sanitize_identifier(config.table_name)
   let sql =
     "SELECT id::text, content, embedding::text, metadata::text, "
     <> "1 - (embedding <=> $1::vector) as score FROM "
-    <> config.table_name
+    <> table
     <> " ORDER BY embedding <=> $1::vector LIMIT $2"
 
   let row_decoder = {
@@ -384,7 +389,8 @@ pub fn delete(
   config: PgVectorConfig,
   id: String,
 ) -> Result(Bool, PgVectorError) {
-  let sql = "DELETE FROM " <> config.table_name <> " WHERE id = $1::uuid"
+  let table = sanitize_identifier(config.table_name)
+  let sql = "DELETE FROM " <> table <> " WHERE id = $1::uuid"
   pog.query(sql)
   |> pog.parameter(pog.text(id))
   |> pog.execute(conn)
@@ -393,22 +399,27 @@ pub fn delete(
 }
 
 /// Delete all embeddings matching a metadata key-value pair.
+/// The key is validated to contain only safe identifier characters
+/// (alphanumeric, underscore, hyphen) to prevent SQL injection.
 pub fn delete_by_metadata(
   conn: Connection,
   config: PgVectorConfig,
   key: String,
   value: String,
 ) -> Result(Int, PgVectorError) {
-  let sql =
-    "DELETE FROM "
-    <> config.table_name
-    <> " WHERE metadata->>'$1' = $2"
-    |> string.replace("$1", key)
-  pog.query(sql)
-  |> pog.parameter(pog.text(value))
-  |> pog.execute(conn)
-  |> result.map_error(QueryFailed)
-  |> result.map(fn(returned) { returned.count })
+  case validate_identifier(key) {
+    False -> Error(InvalidMetadataKey(key))
+    True -> {
+      let table = sanitize_identifier(config.table_name)
+      let sql =
+        "DELETE FROM " <> table <> " WHERE metadata->>'" <> key <> "' = $1"
+      pog.query(sql)
+      |> pog.parameter(pog.text(value))
+      |> pog.execute(conn)
+      |> result.map_error(QueryFailed)
+      |> result.map(fn(returned) { returned.count })
+    }
+  }
 }
 
 // ============================================================================
@@ -432,6 +443,96 @@ pub fn retrieve_context(
     Some(max_results),
   ))
   list.map(results, fn(r) { r.record.content })
+}
+
+// ============================================================================
+// SQL Safety Helpers
+// ============================================================================
+
+/// Validate that a string contains only safe identifier characters
+/// (alphanumeric, underscore, hyphen). Prevents SQL injection in
+/// contexts where parameterized queries can't be used (identifiers).
+fn validate_identifier(s: String) -> Bool {
+  s != ""
+  && string.to_graphemes(s)
+  |> list.all(fn(c) { is_safe_identifier_char(c) })
+}
+
+fn is_safe_identifier_char(c: String) -> Bool {
+  case c {
+    "a"
+    | "b"
+    | "c"
+    | "d"
+    | "e"
+    | "f"
+    | "g"
+    | "h"
+    | "i"
+    | "j"
+    | "k"
+    | "l"
+    | "m"
+    | "n"
+    | "o"
+    | "p"
+    | "q"
+    | "r"
+    | "s"
+    | "t"
+    | "u"
+    | "v"
+    | "w"
+    | "x"
+    | "y"
+    | "z"
+    | "A"
+    | "B"
+    | "C"
+    | "D"
+    | "E"
+    | "F"
+    | "G"
+    | "H"
+    | "I"
+    | "J"
+    | "K"
+    | "L"
+    | "M"
+    | "N"
+    | "O"
+    | "P"
+    | "Q"
+    | "R"
+    | "S"
+    | "T"
+    | "U"
+    | "V"
+    | "W"
+    | "X"
+    | "Y"
+    | "Z"
+    | "0"
+    | "1"
+    | "2"
+    | "3"
+    | "4"
+    | "5"
+    | "6"
+    | "7"
+    | "8"
+    | "9"
+    | "_"
+    | "-" -> True
+    _ -> False
+  }
+}
+
+/// Sanitize a SQL identifier by quoting it with double quotes and escaping
+/// any embedded double quotes. This is the PostgreSQL-standard way to safely
+/// use dynamic identifiers.
+fn sanitize_identifier(name: String) -> String {
+  "\"" <> string.replace(name, "\"", "\"\"") <> "\""
 }
 
 // ============================================================================

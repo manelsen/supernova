@@ -1,6 +1,6 @@
 //// Global circuit breaker registry.
 ////
-//// Provides a process-dictionary backed global reference to the circuit breaker actor.
+//// Provides a persistent_term backed global reference to the circuit breaker actor.
 
 import gleam/erlang/process.{type Subject}
 import gleam/option
@@ -10,36 +10,34 @@ import supernova/llm/circuit_breaker/actor as cb_actor
 pub type CircuitBreaker =
   Subject(cb_actor.CircuitBreakerCommand)
 
-@external(erlang, "erlang", "put")
-fn erlang_put(key: String, value: any) -> any
+@external(erlang, "supernova_global_ffi", "global_put")
+fn global_put(key: String, value: any) -> Nil
 
-@external(erlang, "erlang", "get")
-fn erlang_get(key: String) -> any
+@external(erlang, "supernova_global_ffi", "global_get")
+fn global_get(key: String) -> any
+
+@external(erlang, "supernova_global_ffi", "global_has")
+fn global_has(key: String) -> Bool
 
 @external(erlang, "erlang", "is_process_alive")
 fn is_process_alive(pid: any) -> Bool
 
 const cb_key = "supernova_global_circuit_breaker"
 
-const cb_marker = "supernova_cb_active"
-
 pub fn set_circuit_breaker(cb: CircuitBreaker) -> Nil {
-  erlang_put(cb_key, cb)
-  erlang_put(cb_marker, True)
-  Nil
+  global_put(cb_key, cb)
 }
 
 pub fn get_circuit_breaker() -> option.Option(CircuitBreaker) {
-  let marker = erlang_get(cb_marker)
-  case marker {
+  case global_has(cb_key) {
     True -> {
-      let cb = erlang_get(cb_key)
+      let cb = global_get(cb_key)
       case is_process_alive(cb) {
         True -> option.Some(cb)
         False -> option.None
       }
     }
-    _ -> option.None
+    False -> option.None
   }
 }
 

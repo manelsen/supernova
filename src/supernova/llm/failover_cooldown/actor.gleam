@@ -44,15 +44,20 @@ pub type State {
 pub fn start(
   config: cd_types.FailoverCooldownConfig,
 ) -> Result(process.Subject(CooldownCommand), actor.StartError) {
-  let initial_state = State(cooldown: cd_types.empty(), config: config)
-  case
-    actor.new(initial_state)
-    |> actor.on_message(handle_message)
-    |> actor.start
-  {
+  case start_linked(config) {
     Ok(started) -> Ok(started.data)
     Error(error) -> Error(error)
   }
+}
+
+/// Start and return the full Started record (for use with supervisors).
+pub fn start_linked(
+  config: cd_types.FailoverCooldownConfig,
+) -> Result(actor.Started(process.Subject(CooldownCommand)), actor.StartError) {
+  let initial_state = State(cooldown: cd_types.empty(), config: config)
+  actor.new(initial_state)
+  |> actor.on_message(handle_message)
+  |> actor.start
 }
 
 fn handle_message(

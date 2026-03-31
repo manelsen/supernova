@@ -78,7 +78,13 @@ fn validate_command(command: String) -> Result(String, String) {
         False -> {
           // Check command whitelist
           case is_allowed_command(trimmed) {
-            True -> Ok(trimmed)
+            True -> {
+              // Validate path arguments for file-reading commands
+              case validate_path_arguments(trimmed) {
+                Ok(_) -> Ok(trimmed)
+                Error(reason) -> Error(reason)
+              }
+            }
             False -> Error("Command not in whitelist: " <> trimmed)
           }
         }
@@ -135,6 +141,71 @@ fn list_contains(list: List(String), value: String) -> Bool {
   case list {
     [] -> False
     [first, ..rest] -> first == value || list_contains(rest, value)
+  }
+}
+
+// ============================================================================
+// Path Argument Validation
+// ============================================================================
+
+/// Commands whose arguments may reference file paths.
+fn file_reading_commands() -> List(String) {
+  ["cat", "head", "tail", "find"]
+}
+
+/// Validate that path arguments in file-reading commands don't
+/// reference absolute paths outside the workspace.
+fn validate_path_arguments(command: String) -> Result(Nil, String) {
+  let parts = string.split(command, " ")
+  case parts {
+    [base, ..args] -> {
+      case list_contains(file_reading_commands(), base) {
+        True -> check_args_for_absolute_paths(args)
+        False -> Ok(Nil)
+      }
+    }
+    [] -> Ok(Nil)
+  }
+}
+
+/// Reject any argument that looks like an absolute path to a sensitive location.
+fn check_args_for_absolute_paths(args: List(String)) -> Result(Nil, String) {
+  case args {
+    [] -> Ok(Nil)
+    [arg, ..rest] -> {
+      let trimmed = string.trim(arg)
+      case is_blocked_path(trimmed) {
+        True ->
+          Error("Blocked: absolute path argument not allowed: " <> trimmed)
+        False -> check_args_for_absolute_paths(rest)
+      }
+    }
+  }
+}
+
+/// Check if a path argument targets sensitive locations.
+fn is_blocked_path(arg: String) -> Bool {
+  // Skip flags (e.g., -la, --name)
+  case string.starts_with(arg, "-") {
+    True -> False
+    False -> {
+      // Block absolute paths to sensitive system directories
+      string.starts_with(arg, "/etc")
+      || string.starts_with(arg, "/proc")
+      || string.starts_with(arg, "/sys")
+      || string.starts_with(arg, "/dev")
+      || string.starts_with(arg, "/var")
+      || string.starts_with(arg, "/tmp")
+      || string.starts_with(arg, "/root")
+      || string.starts_with(arg, "/home")
+      || string.starts_with(arg, "/usr")
+      || string.starts_with(arg, "/bin")
+      || string.starts_with(arg, "/sbin")
+      || string.starts_with(arg, "/opt")
+      || string.starts_with(arg, "/mnt")
+      || string.starts_with(arg, "/run")
+      || arg == "/"
+    }
   }
 }
 

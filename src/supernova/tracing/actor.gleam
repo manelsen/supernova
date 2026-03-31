@@ -217,20 +217,25 @@ fn update_span(
 pub fn start(
   config: tracing_types.TracerConfig,
 ) -> Result(Tracer, actor.StartError) {
+  case start_linked(config) {
+    Ok(started) -> Ok(started.data)
+    Error(e) -> Error(e)
+  }
+}
+
+/// Start and return the full Started record (for use with supervisors).
+pub fn start_linked(
+  config: tracing_types.TracerConfig,
+) -> Result(actor.Started(Tracer), actor.StartError) {
   let initial =
     tracing_types.TracerState(
       config: config,
       active_spans: [],
       pending_exports: [],
     )
-  case
-    actor.new(initial)
-    |> actor.on_message(handle_message)
-    |> actor.start
-  {
-    Ok(started) -> Ok(started.data)
-    Error(e) -> Error(e)
-  }
+  actor.new(initial)
+  |> actor.on_message(handle_message)
+  |> actor.start
 }
 
 pub fn start_span(

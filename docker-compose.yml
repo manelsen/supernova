@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: supernova
       POSTGRES_USER: supernova
@@ -9,6 +9,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/01-init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U supernova"]
       interval: 5s
@@ -42,6 +43,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:

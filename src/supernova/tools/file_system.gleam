@@ -11,7 +11,7 @@
 //// let result = file_system.read_authorized(policy, "agent_1", "src/main.gleam")
 //// ```
 
-import gleam/string
+import supernova/core/workspace_guard
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types.{OpRead, OpWrite}
 import supernova/llm/provider
@@ -109,14 +109,10 @@ pub fn tool() -> provider.ToolDefinition {
 // ============================================================================
 
 /// Validate that a path is within the workspace.
+/// Delegates to workspace_guard for uniform path confinement
+/// (blocks both path traversal and absolute paths).
 fn validate_path(workspace: String, path: String) -> Result(String, String) {
-  case string.contains(path, "..") {
-    True -> Error("Path traversal blocked: " <> path)
-    False -> {
-      let full_path = workspace <> "/" <> path
-      Ok(full_path)
-    }
-  }
+  workspace_guard.validate_path(workspace, path)
 }
 
 // ============================================================================

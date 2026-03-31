@@ -1,6 +1,6 @@
 //// Global failover cooldown registry.
 ////
-//// Provides a process-dictionary backed global reference to the cooldown actor.
+//// Provides a persistent_term backed global reference to the cooldown actor.
 
 import gleam/erlang/process.{type Subject}
 import gleam/option
@@ -12,36 +12,34 @@ import supernova/llm/failover_cooldown/types as cd_types
 pub type CooldownActor =
   Subject(cd_actor.CooldownCommand)
 
-@external(erlang, "erlang", "put")
-fn erlang_put(key: String, value: any) -> any
+@external(erlang, "supernova_global_ffi", "global_put")
+fn global_put(key: String, value: any) -> Nil
 
-@external(erlang, "erlang", "get")
-fn erlang_get(key: String) -> any
+@external(erlang, "supernova_global_ffi", "global_get")
+fn global_get(key: String) -> any
+
+@external(erlang, "supernova_global_ffi", "global_has")
+fn global_has(key: String) -> Bool
 
 @external(erlang, "erlang", "is_process_alive")
 fn is_process_alive(pid: any) -> Bool
 
 const cd_key = "supernova_global_cooldown"
 
-const cd_marker = "supernova_cd_active"
-
 pub fn set_cooldown(cd: CooldownActor) -> Nil {
-  erlang_put(cd_key, cd)
-  erlang_put(cd_marker, True)
-  Nil
+  global_put(cd_key, cd)
 }
 
 pub fn get_cooldown() -> option.Option(CooldownActor) {
-  let marker = erlang_get(cd_marker)
-  case marker {
+  case global_has(cd_key) {
     True -> {
-      let cd = erlang_get(cd_key)
+      let cd = global_get(cd_key)
       case is_process_alive(cd) {
         True -> option.Some(cd)
         False -> option.None
       }
     }
-    _ -> option.None
+    False -> option.None
   }
 }
 

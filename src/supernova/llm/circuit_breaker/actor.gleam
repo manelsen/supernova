@@ -122,17 +122,22 @@ fn update_breaker(
 pub fn start(
   config: CircuitBreakerConfig,
 ) -> Result(CircuitBreakerActor, actor.StartError) {
-  let initial: BreakerMap = dict.new()
-  case
-    actor.new(initial)
-    |> actor.on_message(fn(state, message) {
-      handle_message(state, message, config)
-    })
-    |> actor.start
-  {
+  case start_linked(config) {
     Ok(started) -> Ok(started.data)
     Error(e) -> Error(e)
   }
+}
+
+/// Start and return the full Started record (for use with supervisors).
+pub fn start_linked(
+  config: CircuitBreakerConfig,
+) -> Result(actor.Started(CircuitBreakerActor), actor.StartError) {
+  let initial: BreakerMap = dict.new()
+  actor.new(initial)
+  |> actor.on_message(fn(state, message) {
+    handle_message(state, message, config)
+  })
+  |> actor.start
 }
 
 pub fn check_and_call(

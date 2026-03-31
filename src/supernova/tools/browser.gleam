@@ -7,7 +7,9 @@
 import gleam/dynamic/decode
 import gleam/json
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
+import supernova/core/url_guard
 import supernova/llm/provider
 
 type BrowserArgs {
@@ -51,9 +53,10 @@ pub fn tool() -> provider.ToolDefinition {
   )
 }
 
-/// Open a new browser session and navigate to the URL.
+/// Open a new browser session and navigate to the URL (with SSRF protection).
 pub fn open(url: String, timeout_ms: Int) -> Result(String, String) {
-  do_open_session(url, timeout_ms)
+  use validated_url <- result.try(url_guard.validate_url_allow_data(url))
+  do_open_session(validated_url, timeout_ms)
 }
 
 /// Click a selector within an existing session.

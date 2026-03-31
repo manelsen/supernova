@@ -5,12 +5,15 @@
 import gleam/hackney
 import gleam/http
 import gleam/http/request
+import gleam/result
 import gleam/string
+import supernova/core/url_guard
 import supernova/llm/provider
 
-/// Fetch content from a URL.
+/// Fetch content from a URL (with SSRF protection).
 pub fn fetch(url: String) -> Result(String, String) {
-  case request.to(url) {
+  use validated_url <- result.try(url_guard.validate_url(url))
+  case request.to(validated_url) {
     Ok(req) -> {
       let req = req |> request.set_method(http.Get)
       case hackney.send(req) {

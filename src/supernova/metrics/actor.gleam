@@ -226,16 +226,19 @@ fn update_histogram(
 }
 
 pub fn start() -> Result(Metrics, actor.StartError) {
-  let initial =
-    metrics_types.MetricsRegistry(counters: [], gauges: [], histograms: [])
-  case
-    actor.new(initial)
-    |> actor.on_message(handle_message)
-    |> actor.start
-  {
+  case start_linked() {
     Ok(started) -> Ok(started.data)
     Error(e) -> Error(e)
   }
+}
+
+/// Start and return the full Started record (for use with supervisors).
+pub fn start_linked() -> Result(actor.Started(Metrics), actor.StartError) {
+  let initial =
+    metrics_types.MetricsRegistry(counters: [], gauges: [], histograms: [])
+  actor.new(initial)
+  |> actor.on_message(handle_message)
+  |> actor.start
 }
 
 pub fn inc_counter(
