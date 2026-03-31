@@ -1,0 +1,125 @@
+# Supernova Configuration Example
+# Copy this file to supernova.yaml and fill in your values
+#
+#   cp supernova.yaml.example supernova.yaml
+#   vim supernova.yaml
+#
+# Environment variable overrides work too — see .env.example
+
+app_name: "supernova"
+environment: development
+log_level: info
+
+# LLM Providers
+# At least one required. Comment/uncomment as needed.
+# API keys can use env var placeholders: "${VAR_NAME}"
+providers:
+
+  # https://platform.openai.com
+  openai:
+    api_key: "${SUPERNOVA_PROVIDER_OPENAI_API_KEY}"
+    model: "gpt-5.4-2026-03-05"
+
+  # https://anthropic.com/claude
+  anthropic:
+    api_key: "${SUPERNOVA_PROVIDER_ANTHROPIC_API_KEY}"
+    model: "claude-sonnet-4-20260217"
+
+  # https://openrouter.ai (aggregator, supports many models)
+  openrouter:
+    api_key: "${SUPERNOVA_PROVIDER_OPENROUTER_API_KEY}"
+    model: "openrouter/free"
+
+  # https://opencode.ai (OpenAI-compatible, self-hosted option)
+  opencode_zen:
+    api_key: "${SUPERNOVA_PROVIDER_OPENCODE_ZEN_API_KEY}"
+    model: "claude-sonnet-4-6"
+
+  # https://bigmodel.cn (智谱AI) — API: open.bigmodel.cn/api/paas/v4
+  zhipu:
+    api_key: "${SUPERNOVA_PROVIDER_ZHIPU_API_KEY}"
+    model: "glm-5"
+
+  # https://bigmodel.cn (智谱AI coding plan)
+  zhipu_coding:
+    api_key: "${SUPERNOVA_PROVIDER_ZHIPU_CODING_API_KEY}"
+    model: "glm-5.1"
+
+  # https://z.ai (智谱AI new platform, international) — API: api.z.ai/api/paas/v4
+  zai:
+    api_key: "${SUPERNOVA_PROVIDER_ZAI_API_KEY}"
+    model: "glm-5"
+
+  # https://z.ai (智谱AI coding plan on z.ai)
+  zai_coding:
+    api_key: "${SUPERNOVA_PROVIDER_ZAI_CODING_API_KEY}"
+    model: "glm-5.1"
+
+  # https://platform.minimax.io (Chinese LLM, international)
+  minimax:
+    api_key: "${SUPERNOVA_PROVIDER_MINIMAX_API_KEY}"
+    model: "MiniMax-M2.7"
+
+  # https://ollama.com (local/self-hosted models)
+  ollama:
+    api_key: "${SUPERNOVA_PROVIDER_OLLAMA_API_KEY}"
+    model: "llama3"
+    base_url: "http://localhost:11434"
+
+# Channel Adapters
+# Required env vars noted per channel below.
+
+discord:
+  # Required: SUPERNOVA_DISCORD_TOKEN
+  token: "${SUPERNOVA_DISCORD_TOKEN}"
+  enabled: false
+
+telegram:
+  # Required: SUPERNOVA_TELEGRAM_TOKEN
+  token: "${SUPERNOVA_TELEGRAM_TOKEN}"
+  enabled: false
+
+matrix:
+  # Required: SUPERNOVA_MATRIX_HOMESERVER_URL, SUPERNOVA_MATRIX_TOKEN
+  enabled: false
+
+lark:
+  # Required: SUPERNOVA_LARK_TOKEN, SUPERNOVA_LARK_BASE_URL
+  enabled: false
+
+google_chat:
+  # Required: SUPERNOVA_GOOGLE_CHAT_WEBHOOK_URL
+  enabled: false
+
+slack:
+  # Required: SUPERNOVA_SLACK_BOT_TOKEN
+  enabled: false
+
+mattermost:
+  # Required: SUPERNOVA_MATTERMOST_BOT_TOKEN, SUPERNOVA_MATTERMOST_BASE_URL
+  enabled: false
+
+wechat_work:
+  # Required: SUPERNOVA_WECHAT_WORK_CORP_ID, SUPERNOVA_WECHAT_WORK_AGENT_ID, SUPERNOVA_WECHAT_WORK_CORP_SECRET
+  enabled: false
+
+whatsapp:
+  # Required: SUPERNOVA_WHATSAPP_WEBHOOK_VERIFY_TOKEN, SUPERNOVA_WHATSAPP_WEBHOOK_URL
+  enabled: false
+
+# Database
+database:
+  host: "${SUPERNOVA_DB_HOST:-postgres}"
+  port: ${SUPERNOVA_DB_PORT:-5432}
+  name: "${SUPERNOVA_DB_NAME:-supernova}"
+  user: "${SUPERNOVA_DB_USER:-supernova}"
+  password: "${SUPERNOVA_DB_PASSWORD:-supernova}"
+  pool_size: 10
+
+# Budgets (per-agent limits, -1 = unlimited)
+budgets:
+  default:
+    tokens_per_hour: 100000
+    tool_calls_per_minute: 60
+    max_recursion_depth: 5
+    max_sub_agents: 3
