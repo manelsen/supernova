@@ -434,4 +434,4 @@ The system is production-ready when:
 - [ ] `/health`, `/metrics`, `/health/ready` all return 200 in deployment
 - [ ] Trace spans visible in Grafana or Jaeger for a complete agent session
 - [ ] Circuit breaker triggers within 5 failures, recovers within 60s
-- [ ] Documentation updated: `DEPLOY.md`, `OBSERVABILITY.md`
+- [x] Documentation updated: `DEPLOY.md`, `OBSERVABILITY.md`
