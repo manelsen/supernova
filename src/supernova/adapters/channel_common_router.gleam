@@ -1316,5 +1316,6 @@ fn format_llm_error(error: provider.LLMError) -> String {
     provider.ConfigError(reason) -> "Config - " <> reason
     provider.ProviderNotFound(name) -> "Provider not found: " <> name
     provider.NotImplemented(reason) -> "Not implemented: " <> reason
+    provider.CircuitOpen(name) -> "Circuit open: " <> name
   }
 }

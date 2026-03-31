@@ -53,6 +53,8 @@ pub fn is_retryable(err: provider.LLMError) -> ShouldRetry {
     provider.ProviderNotFound(name) ->
       DoNotRetry("provider not found: " <> name)
     provider.NotImplemented(msg) -> DoNotRetry("not implemented: " <> msg)
+    provider.CircuitOpen(provider_name) ->
+      DoNotRetry("circuit open for provider: " <> provider_name)
   }
 }
 

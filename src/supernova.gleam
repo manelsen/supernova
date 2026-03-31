@@ -26,6 +26,7 @@ import supernova/config
 import supernova/core/session/supervisor
 import supernova/health/server as health_server
 import supernova/llm/provider
+import supernova/metrics/actor as metrics_actor
 
 /// Starts Supernova, boots core services, and waits for shutdown.
 pub fn main() -> Nil {
@@ -139,6 +140,7 @@ pub type Services {
     mcp_manager: mcp_manager.MCPManager,
     channel_registry: registry.ChannelRegistry,
     health_server: health_server.HealthServer,
+    metrics: metrics_actor.Metrics,
   )
 }
 
@@ -160,7 +162,9 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
 
   // Start Health Check HTTP Server
   let health_port = 8080
-  let health_srv = health_server.start(health_port)
+  let assert Ok(metrics) = metrics_actor.start()
+  io.println("✓ Metrics actor started")
+  let health_srv = health_server.start(health_port, metrics)
   io.println("✓ Health server started on port " <> int.to_string(health_port))
   let mcp_servers = config_loader.parse_servers_from_file("supernova.yaml")
   case list.length(mcp_servers) {
@@ -195,6 +199,7 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
     mcp_manager: mcp_mgr,
     channel_registry: channel_reg,
     health_server: health_srv,
+    metrics: metrics,
   ))
 }
 
@@ -325,6 +330,9 @@ fn shutdown_services(services: Services) -> Nil {
 
   // 4. Stop health server (no-op if not started)
   let _ = health_server.stop(services.health_server)
+
+  // 5. Stop metrics actor
+  metrics_actor.reset(services.metrics)
 
   io.println("✓ Shutdown complete")
 }

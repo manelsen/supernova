@@ -1,8 +1,8 @@
 //// Health check HTTP server.
-////
-//// Serves /health, /health/live, and /health/ready endpoints
+//// Serves /health, /health/live, /health/ready, and /metrics endpoints
 //// for Kubernetes liveness/readiness probes and Docker healthchecks.
 
+///
 import gleam/bytes_tree
 import gleam/http/request
 import gleam/http/response
@@ -11,9 +11,10 @@ import gleam/io
 import mist.{type Connection, type ResponseData}
 
 import supernova/health/types as health_types
+import supernova/metrics/actor as metrics_actor
 
 pub type HealthServer {
-  HealthServer(start_time_ms: Int, port: Int)
+  HealthServer(start_time_ms: Int, port: Int, metrics: metrics_actor.Metrics)
 }
 
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
@@ -26,11 +27,13 @@ fn uptime_seconds(start_time_ms: Int) -> Int {
 
 fn handle_request(
   req: request.Request(Connection),
+  metrics: metrics_actor.Metrics,
 ) -> response.Response(ResponseData) {
   case request.path_segments(req) {
     ["health"] -> handle_health(req)
     ["health", "live"] -> handle_live(req)
     ["health", "ready"] -> handle_ready(req)
+    ["metrics"] -> handle_metrics(req, metrics)
     _ -> handle_not_found()
   }
 }
@@ -76,17 +79,28 @@ fn handle_ready(
   |> response.set_header("content-type", "application/json")
 }
 
+fn handle_metrics(
+  req: request.Request(Connection),
+  metrics: metrics_actor.Metrics,
+) -> response.Response(ResponseData) {
+  let _ = req
+  let body = metrics_actor.get_metrics(metrics)
+  response.new(200)
+  |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
+  |> response.set_header("content-type", "text/plain; version=0.0.4")
+}
+
 fn handle_not_found() -> response.Response(ResponseData) {
   response.new(404)
   |> response.set_body(mist.Bytes(bytes_tree.from_string("Not Found")))
 }
 
-pub fn start(port: Int) -> HealthServer {
+pub fn start(port: Int, metrics: metrics_actor.Metrics) -> HealthServer {
   let start_time_ms = current_timestamp()
 
   let assert Ok(_) =
     fn(req: request.Request(Connection)) -> response.Response(ResponseData) {
-      handle_request(req)
+      handle_request(req, metrics)
     }
     |> mist.new
     |> mist.bind("0.0.0.0")
@@ -95,7 +109,7 @@ pub fn start(port: Int) -> HealthServer {
 
   io.println("Health server listening on port " <> int.to_string(port))
 
-  HealthServer(start_time_ms: start_time_ms, port: port)
+  HealthServer(start_time_ms: start_time_ms, port: port, metrics: metrics)
 }
 
 pub fn stop(server: HealthServer) -> Nil {

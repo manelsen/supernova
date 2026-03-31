@@ -113,6 +113,8 @@ pub type LLMError {
   ProviderNotFound(name: String)
   /// Feature not yet implemented in this adapter
   NotImplemented(reason: String)
+  /// Circuit breaker is open for this provider
+  CircuitOpen(provider: String)
 }
 
 // ============================================================================

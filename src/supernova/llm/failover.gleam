@@ -102,6 +102,7 @@ fn try_providers(
             provider.ConfigError(msg) -> msg
             provider.ProviderNotFound(name) -> "Provider not found: " <> name
             provider.NotImplemented(msg) -> msg
+            provider.CircuitOpen(name) -> "Circuit open: " <> name
           }
           try_providers(messages, rest, tools, [error_msg, ..errors])
         }
@@ -173,6 +174,7 @@ fn try_providers_with_cooldown(
                 provider.ProviderNotFound(name) ->
                   "Provider not found: " <> name
                 provider.NotImplemented(msg) -> msg
+                provider.CircuitOpen(name) -> "Circuit open: " <> name
               }
               try_providers_with_cooldown(
                 messages,

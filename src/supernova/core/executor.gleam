@@ -26,6 +26,7 @@ import supernova/core/checkpoint/types as checkpoint_types
 import supernova/core/turn_outcome
 import supernova/llm/client
 import supernova/llm/provider
+import supernova/llm/retry/types as retry
 import supernova/llm/stream
 import supernova/tools/browser
 import supernova/tools/canvas
@@ -42,6 +43,13 @@ import supernova/tools/web
 // ============================================================================
 
 const max_recursion_depth = 25
+
+const default_retry_config = retry.RetryConfig(
+  initial_delay_ms: 1000,
+  max_delay_ms: 30_000,
+  max_attempts: 3,
+  jitter_factor: 0.2,
+)
 
 // ============================================================================
 // Types
@@ -171,7 +179,11 @@ fn run_loop(
     True -> Error(MaxDepthExceeded(depth: depth))
     False -> {
       // Call LLM
-      case client.chat(messages, config, tools) {
+      case
+        retry.with_retry(default_retry_config, fn() {
+          client.chat(messages, config, tools)
+        })
+      {
         Ok(response) -> {
           // Classify the outcome
           let outcome = turn_outcome.classify(response)
@@ -416,7 +428,11 @@ fn run_loop_inner_with_checkpoint(
   depth: Int,
   yield_config: YieldConfig,
 ) -> Result(provider.ChatResponse, ExecutorError) {
-  case client.chat(messages, config, tools) {
+  case
+    retry.with_retry(default_retry_config, fn() {
+      client.chat(messages, config, tools)
+    })
+  {
     Ok(response) -> {
       let outcome = turn_outcome.classify(response)
       case outcome {
