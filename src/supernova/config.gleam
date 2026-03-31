@@ -42,6 +42,10 @@ pub type Provider {
   Minimax
   /// Local/self-hosted Ollama
   Ollama
+  /// Z.AI platform (智谱AI new platform, z.ai)
+  Zai
+  /// Z.AI coding plan
+  ZaiCoding
 }
 
 /// Provider configuration
@@ -338,11 +342,13 @@ fn parse_provider(s: String) -> Result(Provider, ConfigError) {
     "zhipu_coding" -> Ok(ZhipuCoding)
     "minimax" -> Ok(Minimax)
     "ollama" | "local" -> Ok(Ollama)
+    "zai" -> Ok(Zai)
+    "zai_coding" -> Ok(ZaiCoding)
     _ ->
       Error(InvalidField(
         "provider",
         s,
-        "must be openai, anthropic, openrouter, opencode_zen, zhipu, zhipu_coding, minimax, or ollama",
+        "must be openai, anthropic, openrouter, opencode_zen, zhipu, zhipu_coding, minimax, ollama, zai, or zai_coding",
       ))
   }
 }
@@ -1284,6 +1290,15 @@ fn validate_provider_config(name: String, config: ProviderConfig) {
       }
     }
     Ollama -> Nil
+    Zai | ZaiCoding -> {
+      case config.api_key {
+        Some(_) -> Nil
+        None -> {
+          let _ = "Zai provider '" <> name <> "' requires an API key"
+          Nil
+        }
+      }
+    }
   }
 }
 
@@ -1366,6 +1381,8 @@ pub fn provider_requires_api_key(provider: Provider) -> Bool {
     ZhipuCoding -> True
     Minimax -> True
     Ollama -> False
+    Zai -> True
+    ZaiCoding -> True
   }
 }
 
@@ -1380,20 +1397,24 @@ pub fn provider_runtime_name(provider: Provider) -> String {
     ZhipuCoding -> "zhipu_coding"
     Minimax -> "minimax"
     Ollama -> "ollama"
+    Zai -> "zai"
+    ZaiCoding -> "zai_coding"
   }
 }
 
 /// Default model used when a config provider omits `model`.
 pub fn provider_default_model(provider: Provider) -> String {
   case provider {
-    OpenAI -> "gpt-4o"
-    Anthropic -> "claude-sonnet-4-20250514"
-    OpenRouter -> "anthropic/claude-haiku-4-5"
+    OpenAI -> "gpt-5.4-2026-03-05"
+    Anthropic -> "claude-sonnet-4-20260217"
+    OpenRouter -> "openrouter/free"
     OpenCodeZen -> "claude-sonnet-4-6"
-    Zhipu -> "glm-4-plus"
-    ZhipuCoding -> "codegeex-4"
-    Minimax -> "MiniMax-Text-01"
+    Zhipu -> "glm-5"
+    ZhipuCoding -> "glm-5.1"
+    Minimax -> "MiniMax-M2.7"
     Ollama -> "llama3"
+    Zai -> "glm-5"
+    ZaiCoding -> "glm-5.1"
   }
 }
 

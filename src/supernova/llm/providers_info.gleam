@@ -78,6 +78,20 @@ pub fn known_providers() -> List(ProviderInfo) {
       env_var: "ZHIPU_API_KEY",
     ),
     ProviderInfo(
+      key: "zai",
+      label: "Z.AI",
+      description: "Zhipu AI new platform (智谱AI z.ai)",
+      default_model: "glm-4.7",
+      env_var: "ZAI_API_KEY",
+    ),
+    ProviderInfo(
+      key: "zai_coding",
+      label: "Z.AI Coding",
+      description: "Zhipu AI coding plan on z.ai",
+      default_model: "codegeex-4.6",
+      env_var: "ZAI_API_KEY",
+    ),
+    ProviderInfo(
       key: "ollama",
       label: "Ollama",
       description: "Local/self-hosted models",

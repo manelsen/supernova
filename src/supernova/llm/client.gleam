@@ -18,6 +18,7 @@ import supernova/llm/providers/anthropic
 import supernova/llm/providers/minimax
 import supernova/llm/providers/ollama
 import supernova/llm/providers/openai
+import supernova/llm/providers/openai_compatible
 import supernova/llm/providers/opencode_zen
 import supernova/llm/providers/openrouter
 import supernova/llm/providers/zhipu
@@ -51,6 +52,22 @@ pub fn chat(
     "zhipu_coding" -> zhipu.chat_coding(messages, config, tools)
     "minimax" -> minimax.chat(messages, config, tools)
     "ollama" -> ollama.chat(messages, config, tools)
+    "zai" ->
+      openai_compatible.chat(
+        messages,
+        config,
+        tools,
+        base_url: "https://api.z.ai/api/paas/v4/chat/completions",
+        extra_headers: [],
+      )
+    "zai_coding" ->
+      openai_compatible.chat(
+        messages,
+        config,
+        tools,
+        base_url: "https://api.z.ai/api/paas/v4/chat/completions",
+        extra_headers: [],
+      )
     _ -> Error(provider.ProviderNotFound(name: config.name))
   }
 }
