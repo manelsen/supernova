@@ -25,8 +25,17 @@ import supernova/channel/registry
 import supernova/config
 import supernova/core/session/supervisor
 import supernova/health/server as health_server
+import supernova/llm/circuit_breaker/actor as cb_actor
+import supernova/llm/circuit_breaker/global as cb_global
+import supernova/llm/failover_cooldown/actor as cd_actor
+import supernova/llm/failover_cooldown/global as cd_global
+import supernova/llm/failover_cooldown/types as cd_types
 import supernova/llm/provider
 import supernova/metrics/actor as metrics_actor
+import supernova/metrics/global as metrics_global
+import supernova/tracing/actor as tracing_actor
+import supernova/tracing/global as tracing_global
+import supernova/tracing/types as tracing_types
 
 /// Starts Supernova, boots core services, and waits for shutdown.
 pub fn main() -> Nil {
@@ -163,7 +172,38 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
   // Start Health Check HTTP Server
   let health_port = 8080
   let assert Ok(metrics) = metrics_actor.start()
+  metrics_global.set_metrics(metrics)
   io.println("✓ Metrics actor started")
+
+  let tracer_config =
+    tracing_types.TracerConfig(
+      service_name: "supernova",
+      otlp_endpoint: "",
+      sampling_rate: 1.0,
+    )
+  let assert Ok(tracer) = tracing_actor.start(tracer_config)
+  tracing_global.set_tracer(tracer)
+  io.println("✓ Tracing actor started")
+
+  let cb_config =
+    cb_actor.CircuitBreakerConfig(
+      failure_threshold: 5,
+      recovery_timeout_ms: 30_000,
+      half_open_max_calls: 3,
+    )
+  let assert Ok(cb) = cb_actor.start(cb_config)
+  cb_global.set_circuit_breaker(cb)
+  io.println("✓ Circuit breaker actor started")
+
+  let cd_config =
+    cd_types.FailoverCooldownConfig(
+      initial_cooldown_ms: 30_000,
+      max_cooldown_ms: 300_000,
+    )
+  let assert Ok(cooldown) = cd_actor.start(cd_config)
+  cd_global.set_cooldown(cooldown)
+  io.println("✓ Failover cooldown actor started")
+
   let health_srv = health_server.start(health_port, metrics)
   io.println("✓ Health server started on port " <> int.to_string(health_port))
   let mcp_servers = config_loader.parse_servers_from_file("supernova.yaml")

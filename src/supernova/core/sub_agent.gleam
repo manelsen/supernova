@@ -19,6 +19,8 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
+import supernova/metrics/actor as metrics_actor
+import supernova/metrics/global as metrics_global
 
 // ============================================================================
 // Types
@@ -245,6 +247,7 @@ fn execute_goal(
       tokens_used: 42,
     )
 
+  record_agent_stopped("completed")
   #(new_state, [])
 }
 
@@ -286,6 +289,7 @@ fn handle_message(
               status: SubAgentFailed(reason: error_msg),
               error: Some(error_msg),
             )
+          record_agent_stopped("failed")
           actor.continue(new_state)
         }
         False -> {
@@ -336,6 +340,7 @@ fn handle_message(
       let new_state =
         SubAgentState(..state, status: SubAgentCancelled, children: [])
 
+      record_agent_stopped("cancelled")
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
     }
@@ -429,6 +434,7 @@ pub fn spawn(
     Ok(started) -> {
       // Trigger goal execution
       actor.send(started.data, ExecuteGoal)
+      record_agent_spawned()
       Ok(started.data)
     }
     Error(error) -> Error(error)
@@ -475,4 +481,26 @@ pub fn get_status(agent: SubAgent) -> SubAgentStatus {
 /// Stop a sub-agent gracefully.
 pub fn stop(agent: SubAgent) -> Nil {
   actor.call(agent, waiting: 5000, sending: Stop)
+}
+
+fn record_agent_spawned() {
+  case metrics_global.get_metrics() {
+    option.Some(metrics) -> {
+      metrics_actor.inc_counter(metrics, "agents_spawned_total", [])
+      metrics_actor.inc_counter(metrics, "agents_active", [])
+    }
+    option.None -> Nil
+  }
+}
+
+fn record_agent_stopped(status: String) {
+  case metrics_global.get_metrics() {
+    option.Some(metrics) -> {
+      metrics_actor.inc_counter(metrics, "agents_stopped_total", [
+        #("status", status),
+      ])
+      metrics_actor.inc_counter(metrics, "agents_active", [])
+    }
+    option.None -> Nil
+  }
 }

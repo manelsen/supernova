@@ -24,10 +24,14 @@ import supernova/core/budget_policy/types as budget_types
 import supernova/core/checkpoint/actor as checkpoint_actor
 import supernova/core/checkpoint/types as checkpoint_types
 import supernova/core/turn_outcome
+import supernova/llm/circuit_breaker/actor as cb_actor
+import supernova/llm/circuit_breaker/global as cb_global
 import supernova/llm/client
 import supernova/llm/provider
 import supernova/llm/retry/types as retry
 import supernova/llm/stream
+import supernova/metrics/actor as metrics_actor
+import supernova/metrics/global as metrics_global
 import supernova/tools/browser
 import supernova/tools/canvas
 import supernova/tools/file_system
@@ -37,6 +41,11 @@ import supernova/tools/github
 import supernova/tools/process as process_tool
 import supernova/tools/safe_shell
 import supernova/tools/web
+import supernova/tracing/global as tracing_global
+import supernova/tracing/types as tracing_types
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn current_timestamp() -> Int
 
 // ============================================================================
 // Constants
@@ -50,6 +59,39 @@ const default_retry_config = retry.RetryConfig(
   max_attempts: 3,
   jitter_factor: 0.2,
 )
+
+fn record_llm_latency(provider_name: String, model: String, latency_ms: Int) {
+  case metrics_global.get_metrics() {
+    option.Some(metrics) -> {
+      let labels = [#("provider", provider_name), #("model", model)]
+      metrics_actor.observe_histogram(
+        metrics,
+        "llm_request_duration_ms",
+        int.to_float(latency_ms),
+        labels,
+      )
+      metrics_actor.inc_counter(metrics, "llm_requests_total", [
+        #("provider", provider_name),
+        #("model", model),
+        #("status", "success"),
+      ])
+    }
+    option.None -> Nil
+  }
+}
+
+fn record_llm_error(provider_name: String, model: String, error_type: String) {
+  case metrics_global.get_metrics() {
+    option.Some(metrics) ->
+      metrics_actor.inc_counter(metrics, "llm_requests_total", [
+        #("provider", provider_name),
+        #("model", model),
+        #("status", "error"),
+        #("error_type", error_type),
+      ])
+    option.None -> Nil
+  }
+}
 
 // ============================================================================
 // Types
@@ -178,13 +220,18 @@ fn run_loop(
   case depth > max_recursion_depth {
     True -> Error(MaxDepthExceeded(depth: depth))
     False -> {
-      // Call LLM
+      // Call LLM with metrics
+      let start = current_timestamp()
       case
         retry.with_retry(default_retry_config, fn() {
-          client.chat(messages, config, tools)
+          with_llm_span(config.name, config.default_model, depth, fn() {
+            client.chat(messages, config, tools)
+          })
         })
       {
         Ok(response) -> {
+          let elapsed = current_timestamp() - start
+          record_llm_latency(config.name, config.default_model, elapsed)
           // Classify the outcome
           let outcome = turn_outcome.classify(response)
 
@@ -210,9 +257,105 @@ fn run_loop(
               )
           }
         }
-        Error(err) -> Error(LLMError(reason: err))
+        Error(err) -> {
+          record_llm_error(
+            config.name,
+            config.default_model,
+            error_type_name(err),
+          )
+          Error(LLMError(reason: err))
+        }
       }
     }
+  }
+}
+
+fn error_type_name(err: provider.LLMError) -> String {
+  case err {
+    provider.APIError(_, _) -> "api_error"
+    provider.NetworkError(_) -> "network_error"
+    provider.ConfigError(_) -> "config_error"
+    provider.ProviderNotFound(_) -> "provider_not_found"
+    provider.NotImplemented(_) -> "not_implemented"
+    provider.CircuitOpen(_) -> "circuit_open"
+  }
+}
+
+fn with_llm_span(
+  provider: String,
+  model: String,
+  depth: Int,
+  f: fn() -> Result(provider.ChatResponse, provider.LLMError),
+) -> Result(provider.ChatResponse, provider.LLMError) {
+  case cb_global.check_and_call(provider) {
+    cb_actor.Blocked(_) -> {
+      Error(provider.CircuitOpen(provider: provider))
+    }
+    cb_actor.Allowed -> {
+      case
+        tracing_global.start_span(
+          "llm.chat",
+          tracing_types.SpanKindClient,
+          option.None,
+        )
+      {
+        option.Some(span) -> {
+          tracing_global.set_span_attributes(span, [
+            #("provider", provider),
+            #("model", model),
+            #("depth", int.to_string(depth)),
+          ])
+          let result = f()
+          case result {
+            Ok(_) -> {
+              cb_global.record_success(provider)
+              tracing_global.end_span(span, tracing_types.SpanStatusOk)
+            }
+            Error(err) -> {
+              cb_global.record_failure(provider)
+              tracing_global.end_span(
+                span,
+                tracing_types.SpanStatusError(error_type_name(err)),
+              )
+            }
+          }
+          result
+        }
+        option.None -> {
+          let result = f()
+          case result {
+            Ok(_) -> cb_global.record_success(provider)
+            Error(_) -> cb_global.record_failure(provider)
+          }
+          result
+        }
+      }
+    }
+  }
+}
+
+fn with_tool_span(tool_name: String, f: fn() -> String) -> String {
+  case
+    tracing_global.start_span(
+      "tool.execute",
+      tracing_types.SpanKindInternal,
+      option.None,
+    )
+  {
+    option.Some(span) -> {
+      tracing_global.set_span_attributes(span, [#("tool", tool_name)])
+      let result = f()
+      case string.starts_with(result, "ERROR:") {
+        True ->
+          tracing_global.end_span(
+            span,
+            tracing_types.SpanStatusError("tool_error"),
+          )
+        False -> tracing_global.end_span(span, tracing_types.SpanStatusOk)
+      }
+      result
+    }
+    option.None -> f()
   }
 }
 
@@ -240,12 +383,55 @@ fn execute_single_tool_call(
   tools: List(provider.ToolDefinition),
 ) -> String {
   case is_declared_tool(call.name, tools) {
-    False -> "ERROR: Tool '" <> call.name <> "' is not declared for this turn"
-    True ->
-      case dispatch_builtin_tool(call.name, call.arguments) {
-        Ok(result) -> result
-        Error(reason) -> "ERROR: " <> reason
-      }
+    False -> {
+      record_tool_error(call.name)
+      "ERROR: Tool '" <> call.name <> "' is not declared for this turn"
+    }
+    True -> {
+      let start = current_timestamp()
+      with_tool_span(call.name, fn() {
+        case dispatch_builtin_tool(call.name, call.arguments) {
+          Ok(result) -> {
+            let elapsed = current_timestamp() - start
+            record_tool_latency(call.name, elapsed)
+            result
+          }
+          Error(reason) -> {
+            record_tool_error(call.name)
+            "ERROR: " <> reason
+          }
+        }
+      })
+    }
+  }
+}
+
+fn record_tool_latency(tool_name: String, latency_ms: Int) {
+  case metrics_global.get_metrics() {
+    option.Some(metrics) -> {
+      metrics_actor.observe_histogram(
+        metrics,
+        "tool_execution_duration_ms",
+        int.to_float(latency_ms),
+        [#("tool", tool_name)],
+      )
+      metrics_actor.inc_counter(metrics, "tool_executions_total", [
+        #("tool", tool_name),
+        #("status", "success"),
+      ])
+    }
+    option.None -> Nil
+  }
+}
+
+fn record_tool_error(tool_name: String) {
+  case metrics_global.get_metrics() {
+    option.Some(metrics) ->
+      metrics_actor.inc_counter(metrics, "tool_executions_total", [
+        #("tool", tool_name),
+        #("status", "error"),
+      ])
+    option.None -> Nil
   }
 }
 
@@ -428,12 +614,17 @@ fn run_loop_inner_with_checkpoint(
   depth: Int,
   yield_config: YieldConfig,
 ) -> Result(provider.ChatResponse, ExecutorError) {
+  let start = current_timestamp()
   case
     retry.with_retry(default_retry_config, fn() {
-      client.chat(messages, config, tools)
+      with_llm_span(config.name, config.default_model, depth, fn() {
+        client.chat(messages, config, tools)
+      })
     })
   {
     Ok(response) -> {
+      let elapsed = current_timestamp() - start
+      record_llm_latency(config.name, config.default_model, elapsed)
       let outcome = turn_outcome.classify(response)
       case outcome {
         turn_outcome.TextResponse -> Ok(response)
@@ -470,7 +661,10 @@ fn run_loop_inner_with_checkpoint(
           Error(LLMError(reason: provider.APIError(status: 0, message: msg)))
       }
     }
-    Error(err) -> Error(LLMError(reason: err))
+    Error(err) -> {
+      record_llm_error(config.name, config.default_model, error_type_name(err))
+      Error(LLMError(reason: err))
+    }
   }
 }
 
