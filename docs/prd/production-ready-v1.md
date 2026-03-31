@@ -329,6 +329,52 @@ The retry module exists but is not wired into LLM calls.
 
 ---
 
+### REQ-16: Parallel SubAgent Planning
+
+**Priority:** High
+
+The Executor runs sequentially by default. SubAgents exist but must be explicitly invoked via tool — the agent cannot decide on its own when to parallelize.
+
+To enable autonomous parallelization, three pieces are required:
+
+**1. Planning step in Executor**
+
+Before executing, the Executor makes a planning decision:
+- If the LLM response contains multiple independent tasks → dispatch SubAgents in parallel
+- If it is a single task → run in the normal loop
+
+Implementation: after LLM responds, run a lightweight "task decomposition" prompt that detects parallelizable work.
+
+**2. Non-blocking Session.Server orchestrator**
+
+The Session.Server needs an orchestrator mode — instead of blocking waiting for Executor result, it:
+- Dispatches SubAgents
+- Sends an immediate "working in parallel on X tasks..." response to the user
+- Remains available for new messages while waiting
+
+Implementation: Session.Server becomes event-driven, using `process.send_after` for partial responses.
+
+**3. Progress notification to user**
+
+The user receives incremental updates:
+- Initial: "I'm working on 3 parallel tasks..."
+- Per task completion: "Task 1 done. 2 remaining."
+- Final: aggregated response
+
+Implementation: channel adapters receive `PortPartialResponse` events and relay them to the user.
+
+**Acceptance criteria:**
+- Executor detects independent tasks in LLM response via planning prompt
+- Session.Server dispatches SubAgents in parallel without blocking
+- User receives immediate acknowledgment with task list
+- User receives progress updates as each SubAgent completes
+- Final response aggregates all SubAgent results
+- Sequential fallback when parallelization is not warranted
+
+**Owner:** Backend
+
+---
+
 ## 5. Non-Goals (Out of Scope for v1.0)
 
 These are not targeted for the first production release:
@@ -361,6 +407,7 @@ These are not targeted for the first production release:
 | REQ-13 (Circuit Breaker Integration) | REQ-5 |
 | REQ-14 (Failover Cooldown Integration) | REQ-6 |
 | REQ-15 (Retry Integration) | REQ-7 |
+| REQ-16 (Parallel SubAgent Planning) | SubAgent system, REQ-13, REQ-14, REQ-15 |
 
 ---
 
@@ -381,7 +428,7 @@ These are not targeted for the first production release:
 
 The system is production-ready when:
 
-- [ ] All 15 requirements accepted
+- [ ] All 16 requirements accepted
 - [ ] Load test passes: 100 concurrent users, p99 < 2s, error rate < 1%
 - [ ] Zero `mock` or `placeholder` strings in non-test code paths
 - [ ] `/health`, `/metrics`, `/health/ready` all return 200 in deployment
