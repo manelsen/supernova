@@ -428,7 +428,7 @@ These are not targeted for the first production release:
 
 The system is production-ready when:
 
-- [ ] All 16 requirements accepted
+- [ ] All 16 requirements implemented and accepted
 - [ ] Load test passes: 100 concurrent users, p99 < 2s, error rate < 1%
 - [ ] Zero `mock` or `placeholder` strings in non-test code paths
 - [ ] `/health`, `/metrics`, `/health/ready` all return 200 in deployment
