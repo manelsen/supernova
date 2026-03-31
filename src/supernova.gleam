@@ -24,6 +24,7 @@ import supernova/channel/port
 import supernova/channel/registry
 import supernova/config
 import supernova/core/session/supervisor
+import supernova/health/server as health_server
 import supernova/llm/provider
 
 /// Starts Supernova, boots core services, and waits for shutdown.
@@ -60,6 +61,25 @@ pub fn main() -> Nil {
         }
         Error(reason) -> {
           io.println("❌ Failed to start services: " <> reason)
+          case string.contains(reason, "no LLM providers") {
+            True -> {
+              io.println("")
+              io.println("Add this to your supernova.yaml providers section:")
+              io.println("")
+              io.println("  providers:")
+              io.println("    openai:")
+              io.println("      api_key: \"${SUPERNOVA_OPENAI_API_KEY}\"")
+              io.println("      model: \"gpt-4o-mini\"")
+              io.println("")
+              io.println(
+                "Then set the env var: SUPERNOVA_OPENAI_API_KEY=sk-...",
+              )
+              io.println(
+                "Or run the wizard for guided setup: gleam run -m supernova/wizard_main",
+              )
+            }
+            False -> Nil
+          }
         }
       }
     }
@@ -80,7 +100,6 @@ fn load_config() -> Result(config.Config, config.ConfigError) {
       Ok(cfg)
     }
     Error(_) -> {
-      // Fall back to default config with env overrides
       io.println(
         "⚠ supernova.yaml not found, using defaults with env overrides",
       )
@@ -119,6 +138,7 @@ pub type Services {
     session_supervisor: supervisor.SessionSupervisor,
     mcp_manager: mcp_manager.MCPManager,
     channel_registry: registry.ChannelRegistry,
+    health_server: health_server.HealthServer,
   )
 }
 
@@ -138,7 +158,10 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
   )
   io.println("✓ MCP Manager started")
 
-  // Register MCP servers from supernova.yaml, if present
+  // Start Health Check HTTP Server
+  let health_port = 8080
+  let health_srv = health_server.start(health_port)
+  io.println("✓ Health server started on port " <> int.to_string(health_port))
   let mcp_servers = config_loader.parse_servers_from_file("supernova.yaml")
   case list.length(mcp_servers) {
     0 -> io.println("✓ No MCP servers configured")
@@ -171,6 +194,7 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
     session_supervisor: session_sup,
     mcp_manager: mcp_mgr,
     channel_registry: channel_reg,
+    health_server: health_srv,
   ))
 }
 
@@ -262,7 +286,10 @@ fn default_channel_llm_config(
         Some(provider_config) -> Ok(provider_config_to_runtime(provider_config))
         None -> Error("no configuration found for provider: " <> name)
       }
-    [] -> Error("no LLM providers configured in supernova.yaml")
+    [] ->
+      Error(
+        "no LLM providers configured — add a provider to supernova.yaml or run the wizard (gleam run -m supernova/wizard_main)",
+      )
   }
 }
 
@@ -295,6 +322,9 @@ fn shutdown_services(services: Services) -> Nil {
   // 3. Stop MCP servers (clean up tool connections)
   mcp_manager.stop(services.mcp_manager)
   io.println("✓ MCP servers stopped")
+
+  // 4. Stop health server (no-op if not started)
+  let _ = health_server.stop(services.health_server)
 
   io.println("✓ Shutdown complete")
 }

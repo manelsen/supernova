@@ -36,8 +36,12 @@ services:
       SUPERNOVA_DB_NAME: supernova
       SUPERNOVA_DB_USER: supernova
       SUPERNOVA_DB_PASSWORD: supernova
-    volumes:
-      - ./supernova.yaml:/app/supernova.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
 volumes:
