@@ -3,3 +3,7 @@
 /build
 erl_crash.dump
 node_modules/
+
+# Runtime secrets
+.env
+summary.json
