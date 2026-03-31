@@ -228,29 +228,30 @@ Switch providers per-session. A user can type `/model claude-3-5-sonnet` and the
 
 ---
 
-## Running it
+## Quickstart (Linux with systemd)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+```
+This single command:
+
+1. Detects your Linux distro and architecture
+2. Installs PostgreSQL locally (if needed)
+3. Installs the Supernova service via systemd
+4. Runs the interactive configuration wizard
+5. Prompts for confirmation before starting the service
+
+After confirmation, your service is running. See [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for full details.
 
 ### Prerequisites
 
-- Gleam >= 1.0.0
-- Erlang/OTP >= 25.0
-- PostgreSQL >= 12
+The quickstart installer handles everything. Requirements:
 
-Or just use Docker: `docker compose up` handles everything.
+- Linux with systemd
+- Internet access to download releases
+- A PostgreSQL-compatible database (auto-installed if absent)
 
-### Setup wizard
-
-```sh
-gleam run -m supernova/wizard_main
-```
-
-Answer the questions: which channels to enable, which LLM provider, API keys. Generates a `supernova.yaml`.
-
-### Start
-
-```sh
-gleam run
-```
+For CI/automated environments, see the non-interactive installation mode in [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md).
 
 ### Development
 
@@ -260,6 +261,11 @@ gleam build           # compile
 gleam test            # run tests
 gleam format          # format code
 ```
+
+### Docker (development only)
+
+Docker is available for local development and advanced setups. See [docs/operations/DOCKER.md](docs/operations/DOCKER.md).
+Do not use Docker for production deployments — use the systemd quickstart above.
 
 ---
 
@@ -422,10 +428,10 @@ Gleam gives you Erlang's actor model with a modern, friendly syntax. You get:
 
 ## Next steps
 
-- Read [GETTING_STARTED.md](GETTING_STARTED.md) for a full walkthrough
-- Read [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) for what's new
-- Explore `examples/quickstart/supernova.yaml` for a complete annotated config
-- Run `gleam run -m supernova/wizard_main` to set up your first instance
+MX:- Read [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for the full onboarding guide
+YR:- Read [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) for what's new
+PP:- Explore `examples/quickstart/supernova.yaml` for a complete annotated config
+HT:- For local development, see [docs/operations/DOCKER.md](docs/operations/DOCKER.md)
 
 ---
 

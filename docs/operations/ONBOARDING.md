@@ -1,76 +1,55 @@
 # Onboarding (Supernova)
 
-This document describes the practical first-run onboarding flow for Supernova.
+This document describes the practical first-run onboarding flow for Supernova on Linux with systemd.
 
-## Step 1 — Prepare runtime
+## Quickstart
 
-Install Gleam/Erlang and start PostgreSQL:
-
-```bash
-docker compose up -d postgres
-gleam deps download
-```
-
-## Step 2 — Choose onboarding mode
-
-### Option A: Wizard (recommended)
+Run the quickstart installer:
 
 ```bash
-gleam run -m supernova/wizard_main
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
 ```
 
-This generates `supernova.yaml` with your selected channels and provider settings.
+The installer handles everything:
+1. Detects distro and architecture
+2. Installs PostgreSQL locally (if needed)
+3. Creates the `supernova` system user and group
+4. Installs the systemd service unit
+5. Runs the configuration wizard
+6. Shows a summary and **prompts for confirmation**
+7. Starts the service
 
-### Option B: Manual config
+After the service starts, verify:
 
 ```bash
-cp examples/quickstart/supernova.yaml supernova.yaml
+systemctl status supernova
+journalctl -u supernova -f
 ```
 
-Edit:
+## Non-interactive mode (CI / automation)
 
-- `providers.default.provider`
-- `providers.default.model`
-- channel tokens (`telegram.token`, `discord.token`, etc.)
-- budget values under `budgets`
-
-Prefer env vars for secrets (`SUPERNOVA_*`).
-
-## Step 3 — Optional MCP onboarding
-
-You can declare MCP servers directly in `supernova.yaml`:
-
-```yaml
-mcp_servers:
-  filesystem:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem"]
-    env:
-      NODE_ENV: production
-```
-
-At startup, Supernova parses `mcp_servers` and registers each server in the MCP manager automatically.
-
-## Step 4 — Run Supernova
+For automated environments:
 
 ```bash
-gleam run
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh -s -- --non-interactive \
+  --provider anthropic \
+  --model claude-3-5-sonnet-20241022 \
+  --api-key YOUR_API_KEY
 ```
 
-Expected bootstrap logs include:
+Or set environment variables before running the installer.
 
-- configuration loaded
-- session supervisor started
-- MCP manager started
-- MCP servers registered (if configured)
-
-## Step 5 — Verify channel interaction
-
-Send a message in your configured channel (Telegram/Discord). You should see a response and session activity logs.
+See [ONBOARDING_OVERVIEW.md](ONBOARDING_OVERVIEW.md) for the full non-interactive reference.
 
 ## Troubleshooting
 
-- `supernova.yaml not found`: defaults are used; add config/env vars.
-- `Failed to start services`: verify PostgreSQL reachability and credentials.
-- No channel response: validate bot tokens and channel enable flags.
+- `systemctl status supernova` shows failed: Check `journalctl -u supernova` for errors
+- Wizard aborted: Re-run the installer; it is idempotent and resumes from where you left off
+- Database connection failed: Verify PostgreSQL is running (`systemctl status postgresql`)
+- No channel response: Validate bot tokens and channel enable flags in `/etc/supernova/supernova.yaml`
 
+## Docker (development only)
+
+For local development with Docker, see [DOCKER.md](DOCKER.md).
+
+**Do not use Docker for production deployments.**

@@ -1,48 +1,76 @@
-# `supernova onboard` (equivalent CLI onboarding flow)
+# `supernova` CLI onboarding
 
-Supernova does not yet expose a single `supernova onboard` command.  
-The equivalent CLI onboarding flow is:
+## Quickstart
+
+The recommended way to install Supernova on Linux with systemd:
 
 ```bash
-cp examples/quickstart/supernova.yaml supernova.yaml
-gleam run -m supernova/wizard_main   # optional guided setup
-gleam run
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
 ```
 
-## Examples
+This installer:
+1. Detects distro and architecture
+2. Installs PostgreSQL locally (if needed)
+3. Creates the `supernova` system user and group
+4. Installs the systemd service unit
+5. Runs the configuration wizard
+6. Prompts for confirmation before starting the service
 
-Manual quickstart:
+After confirmation, the service is running.
+
+## Non-interactive installation (CI / automation)
+
+For automated environments, pass arguments to the installer:
 
 ```bash
-cp examples/quickstart/supernova.yaml supernova.yaml
-gleam run
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh -s -- \
+  --non-interactive \
+  --provider anthropic \
+  --model claude-3-5-sonnet-20241022 \
+  --channels discord,telegram \
+  --api-key YOUR_API_KEY
 ```
 
-Guided wizard:
+Or via environment variables:
 
 ```bash
+export SUPERNOVA_NON_INTERACTIVE=1
+export SUPERNOVA_PROVIDER=anthropic
+export SUPERNOVA_MODEL=claude-3-5-sonnet-20241022
+export SUPERNOVA_API_KEY=your_api_key
+export SUPERNOVA_CHANNELS=discord,telegram
+
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+```
+
+## Managing the service
+
+```bash
+systemctl start supernova
+systemctl stop supernova
+systemctl restart supernova
+systemctl status supernova
+journalctl -u supernova -f
+```
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `/etc/supernova/supernova.yaml` | Structural configuration |
+| `/etc/supernova/secrets.env` | API keys and credentials |
+| `/var/lib/supernova/` | Data directory |
+
+## Development
+
+For local development without systemd:
+
+```bash
+gleam deps download
 gleam run -m supernova/wizard_main
 gleam run
 ```
 
-With MCP servers:
+## Docker (development only)
 
-```yaml
-mcp_servers:
-  filesystem:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem"]
-```
-
-Then:
-
-```bash
-gleam run
-```
-
-## Notes
-
-- `supernova.yaml` is optional; defaults are applied if absent.
-- Secrets should be supplied via environment variables.
-- `mcp_servers` entries are auto-registered at startup.
-
+For local development with Docker, see [DOCKER.md](DOCKER.md).

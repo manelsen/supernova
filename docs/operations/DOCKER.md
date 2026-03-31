@@ -1,75 +1,115 @@
-# Supernova with Docker
+# Supernova with Docker (Development / Advanced)
 
-## Install / First Run
+> **Note:** Docker is not recommended for production deployments.
+> For production, use the Linux with systemd quickstart instead:
+`curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh`
+>
+> See [ONBOARDING_OVERVIEW.md](ONBOARDING_OVERVIEW.md) for the production installation guide.
 
-1. Ensure Docker and Docker Compose are installed.
-2. Copy quickstart config:
+This document covers Docker usage for local development and advanced setups.
+
+## When to use Docker
+
+- Local development on macOS or Windows
+- Quick evaluation without modifying your system
+- Complex multi-service setups
+- Building and testing custom images
+
+## Prerequisites
+
+- Docker and Docker Compose installed
+- Internet access to pull images
+
+## Quick start (development)
 
 ```sh
+# Clone the repository
+git clone https://github.com/manelsen/supernova
+cd supernova
+
+# Copy and edit config
 cp examples/quickstart/supernova.yaml supernova.yaml
-```
 
-3. Set secrets via environment (`.env` or shell):
+# Set environment variables
+export SUPERNOVA_ANTHROPIC_API_KEY=...
+export SUPERNOVA_TELEGRAM_TOKEN=...
+export SUPERNOVA_DISCORD_TOKEN=...
 
-```sh
-SUPERNOVA_ANTHROPIC_API_KEY=...
-SUPERNOVA_TELEGRAM_TOKEN=...
-```
-
-4. Start stack:
-
-```sh
+# Start the stack
 docker compose up -d
 ```
 
 ## Configuration
 
-- Main runtime config: `supernova.yaml`
-- Compose service/env wiring: `docker-compose.yml`
-- Prefer environment variables for secrets.
+| File | Purpose |
+|------|---------|
+| `supernova.yaml` | Main runtime config (mounted into container) |
+| `docker-compose.yml` | Service orchestration and environment |
+| `.env` | Secrets (never commit this file) |
 
-Useful commands:
+## Managing services
 
 ```sh
+# View logs
 docker compose logs -f supernova
+
+# Check status
 docker compose ps
-```
 
-## Scaling
+# Restart the service
+docker compose restart supernova
 
-Scale stateless service replicas when your runtime path supports it:
-
-```sh
-docker compose up -d --scale supernova=3
-```
-
-Notes:
-
-- Keep shared dependencies (DB, queue, external APIs) dimensioned for higher concurrency.
-- Validate session-routing semantics when horizontally scaling channel workers.
-
-## Interaction
-
-- Send messages via configured channel bots (Telegram/Discord/etc.).
-- Monitor logs for inbound mapping, runtime execution, and outbound delivery.
-
-## Stop / Uninstall
-
-Stop services:
-
-```sh
+# Stop everything
 docker compose down
-```
 
-Stop and remove volumes (destructive for local DB data):
-
-```sh
+# Stop and remove volumes (destructive)
 docker compose down -v
 ```
 
-Remove local images if needed:
+## Database initialization
+
+The `postgres` service auto-initializes the database on first run using `migrations/init.sql`.
+To reinitialize, stop the services and remove the volume:
 
 ```sh
-docker image prune -f
+docker compose down -v
+docker compose up -d
 ```
 
+## Building a custom image
+
+```sh
+docker build -t supernova:custom .
+```
+
+Then update `docker-compose.yml` to use your custom image:
+
+```yaml
+services:
+  supernova:
+    image: supernova:custom
+```
+
+## Accessing the database
+
+```sh
+# Connect to postgres
+docker compose exec postgres psql -U supernova -d supernova
+```
+
+## Production deployment
+
+For production, use the systemd quickstart:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+```
+
+This provides:
+- Systemd service management with restart policies
+- Graceful shutdown handling
+- Local PostgreSQL installation
+- Proper separation of config and secrets
+- Idempotent, auditable installation
+
+See [ONBOARDING_OVERVIEW.md](ONBOARDING_OVERVIEW.md) for details.
