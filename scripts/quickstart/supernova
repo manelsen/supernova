@@ -28,7 +28,9 @@ SN_LOGS="$SN_USER_DIR/logs"
 SN_IMAGE="ghcr.io/manelsen/supernova:main"
 SN_CONTAINER_NAME="supernova"
 
-# Detect container runtime (podman or docker)
+# Common paths for container runtimes (crun, runc)
+export PATH="$PATH:/home/linuxbrew/.linuxbrew/bin:/usr/sbin"
+
 detect_runtime() {
     if command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
         echo "podman"
