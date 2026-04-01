@@ -32,16 +32,24 @@ SN_CONTAINER_NAME="supernova"
 export PATH="$PATH:/home/linuxbrew/.linuxbrew/bin:/usr/sbin"
 
 detect_runtime() {
-    if command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
-        echo "podman"
-    elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
         echo "docker"
+    elif command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
+        echo "podman"
     else
         echo ""
     fi
 }
 
 SN_RUNTIME="${SN_RUNTIME:-$(detect_runtime)}"
+
+# Runtime flags (--runtime is podman-only)
+if [[ "$SN_RUNTIME" == "podman" ]]; then
+    SN_RUNTIME_FLAGS="--runtime /usr/sbin/runc"
+else
+    SN_RUNTIME_FLAGS=""
+fi
+
 
 # Colors
 RED='\033[0;31m'
@@ -105,8 +113,8 @@ cmd_configure() {
     $SN_RUNTIME stop "$SN_CONTAINER_NAME" &>/dev/null || true
 
     # Run wizard in container
-    $SN_RUNTIME run --rm -it \
-        --runtime /usr/sbin/runc \
+$SN_RUNTIME run --rm -it \
+        $SN_RUNTIME_FLAGS \
         --name "${SN_CONTAINER_NAME}_wizard" \
         -v "$SN_CONFIG_DIR:/config" \
         -v "$SN_DATA:/data" \
@@ -151,9 +159,9 @@ cmd_start() {
         done < "$SN_SECRETS"
     fi
 
-    $SN_RUNTIME run -d \
-        --runtime /usr/sbin/runc \
-        --name "$SN_CONTAINER_NAME" \
+PN|    $SN_RUNTIME run -d \
+KB|        $SN_RUNTIME_FLAGS \
+TR|        --name "$SN_CONTAINER_NAME" \
         --restart unless-stopped \
         -v "$SN_CONFIG_DIR:/config" \
         -v "$SN_DATA:/data" \
