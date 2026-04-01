@@ -118,7 +118,8 @@ cmd_configure() {
         --name "${SN_CONTAINER_NAME}_wizard" \
         -v "$HOME/.config/supernova:/config" \
         "$SN_IMAGE" \
-        sh -c 'cd /app && gleam run -m supernova/wizard_main'
+sh -c 'cd /app && gleam run -m supernova/wizard_main'
+}
 
 # Start service
 cmd_start() {
