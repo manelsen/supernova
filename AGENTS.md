@@ -95,14 +95,22 @@ gleam check
 ### Docker Development
 
 ```sh
-# Start PostgreSQL only
-docker compose up -d postgres
+# CLI (recommended for local development)
+bin/supernova help            # show available commands
+bin/supernova configure       # interactive setup wizard
+bin/supernova start           # build + start container
+bin/supernova logs            # tail container logs
+bin/supernova stop            # stop services
+bin/supernova restart         # restart
+bin/supernova test           # run tests
 
-# Full stack (Postgres + app)
-docker compose up
-
-# Build Docker image
-docker build -t supernova .
+# Or use Makefile directly
+make up-build   # build + start (first time or after code changes)
+make up         # start without rebuilding
+make logs       # tail container logs
+make down       # stop services
+make clean      # stop + remove volumes
+make configure  # run setup wizard
 ```
 
 ## Code Conventions
