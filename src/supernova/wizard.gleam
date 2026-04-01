@@ -134,7 +134,7 @@ pub fn empty_state() -> WizardState {
     provider_api_key: None,
     model: None,
     memory_backend: None,
-    output_path: "supernova.yaml",
+    output_path: "/config/supernova.yaml",
   )
 }
 
