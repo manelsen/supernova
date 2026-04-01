@@ -5,7 +5,7 @@
 The recommended way to install Supernova on Linux with systemd:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
 ```
 
 This installer:
@@ -23,7 +23,7 @@ After confirmation, the service is running.
 For automated environments, pass arguments to the installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh -s -- \
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash -s -- \
   --non-interactive \
   --provider anthropic \
   --model claude-3-5-sonnet-20241022 \
@@ -40,7 +40,7 @@ export SUPERNOVA_MODEL=claude-3-5-sonnet-20241022
 export SUPERNOVA_API_KEY=your_api_key
 export SUPERNOVA_CHANNELS=discord,telegram
 
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
 ```
 
 ## Managing the service

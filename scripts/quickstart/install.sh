@@ -1,12 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Supernova Quickstart Installer
 # ==============================
 # Installs Supernova on Linux with systemd.
 #
 # Usage:
-#   Interactive:   curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
-#   Non-interactive: curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh -s -- [options]
+#   Interactive:   curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
+#   Non-interactive: curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash -s -- [options]
 #
 # Options:
 #   --non-interactive     Run without prompting (for CI/automation)
@@ -25,7 +25,7 @@
 #   --version VERSION     Specific release version to install
 #   --help                Show this help
 
-set -euo pipefail
+set -e
 
 # Configuration
 readonly SUPERNOVA_VERSION="0.2.0"
@@ -905,7 +905,7 @@ main() {
             log_info "Clone the repository and run this installer from the source directory:"
 echo "    git clone https://github.com/manelsen/supernova"
 echo "    cd supernova"
-echo "    curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh"
+echo "    curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash"
             exit 1
         fi
     fi

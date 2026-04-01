@@ -2,7 +2,7 @@
 
 > **Note:** Docker is not recommended for production deployments.
 > For production, use the Linux with systemd quickstart instead:
-`curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh`
+`curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash`
 >
 > See [ONBOARDING_OVERVIEW.md](ONBOARDING_OVERVIEW.md) for the production installation guide.
 
@@ -102,7 +102,7 @@ docker compose exec postgres psql -U supernova -d supernova
 For production, use the systemd quickstart:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
 ```
 
 This provides:

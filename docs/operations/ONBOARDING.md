@@ -7,7 +7,7 @@ This document describes the practical first-run onboarding flow for Supernova on
 Run the quickstart installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
 ```
 
 The installer handles everything:
@@ -31,7 +31,7 @@ journalctl -u supernova -f
 For automated environments:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh -s -- --non-interactive \
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash -s -- --non-interactive \
   --provider anthropic \
   --model claude-3-5-sonnet-20241022 \
   --api-key YOUR_API_KEY

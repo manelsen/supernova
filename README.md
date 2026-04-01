@@ -231,7 +231,7 @@ Switch providers per-session. A user can type `/model claude-3-5-sonnet` and the
 ## Quickstart (Linux with systemd)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
 ```
 This single command:
 

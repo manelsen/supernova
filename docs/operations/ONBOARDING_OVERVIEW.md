@@ -26,7 +26,7 @@ Most users should start with the **interactive quickstart** above.
 Run the quickstart installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
 ```
 
 The installer:
@@ -51,7 +51,7 @@ journalctl -u supernova -f
 For automated environments, use the non-interactive mode by passing environment variables:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh -s -- \
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash -s -- \
   --non-interactive \
   --provider anthropic \
   --model claude-3-5-sonnet-20241022 \
@@ -78,7 +78,7 @@ export SUPERNOVA_DB_NAME=supernova
 export SUPERNOVA_DB_USER=supernova
 export SUPERNOVA_DB_PASSWORD=secret
 
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
 ```
 
 The non-interactive mode uses the same validation and config generation as the interactive wizard. It fails with a non-zero exit code if any required input is missing.
