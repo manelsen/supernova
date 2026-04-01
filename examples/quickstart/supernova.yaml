@@ -15,18 +15,16 @@ log_level: info            # debug | info | warn | error
 # Configure at least one provider. The first enabled provider is used by default.
 # Set api_key inline (not recommended) or via environment variable.
 #
+#
+# ⚠️  REQUIRED: Fill in your API key below or set SUPERNOVA_ANTHROPIC_API_KEY
+#
 providers:
   default:
-    provider: anthropic           # anthropic | openai | openrouter | opencode_zen | zhipu | zhipu_coding | minimax | ollama
-    model: claude-haiku-4-5       # any model supported by the provider
-    # api_key: sk-ant-...         # or: SUPERNOVA_ANTHROPIC_API_KEY
+    provider: anthropic
+    model: claude-haiku-4-5
+    api_key: "YOUR_ANTHROPIC_API_KEY"   # ⚠️ Replace with your key
     timeout_ms: 30000
 
-  # Uncomment to add a fallback provider
-  # fallback:
-  #   provider: openai
-  #   model: gpt-4o-mini
-  #   # api_key: sk-...           # or: SUPERNOVA_OPENAI_API_KEY
 
 # ── Budget Limits ─────────────────────────────────────────────────────────────
 #
