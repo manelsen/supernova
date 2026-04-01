@@ -109,16 +109,18 @@ cmd_configure() {
 
     log "Running configuration wizard..."
 
-    # Stop container if running
-    $SN_RUNTIME stop "$SN_CONTAINER_NAME" &>/dev/null || true
-
-    # Run wizard in container
+    # Create config from example
     mkdir -p "$HOME/.config/supernova" "$HOME/.local/supernova/data"
-    $SN_RUNTIME run --rm -i \
-        --name "${SN_CONTAINER_NAME}_wizard" \
-        -v "$HOME/.config/supernova:/config" \
-        "$SN_IMAGE" \
-sh -c 'cd /app && gleam run -m supernova/wizard_main'
+    if [[ -f "$SN_CONFIG" ]]; then
+        log "Configuration already exists at $SN_CONFIG"
+        log "To reconfigure, delete it first: rm $SN_CONFIG"
+    else
+        $SN_RUNTIME create --name "${SN_CONTAINER_NAME}_cfg_tmp" "$SN_IMAGE" >/dev/null 2>&1
+        $SN_RUNTIME cp "${SN_CONTAINER_NAME}_cfg_tmp:/app/examples/quickstart/supernova.yaml" "$SN_CONFIG"
+        $SN_RUNTIME rm "${SN_CONTAINER_NAME}_cfg_tmp" >/dev/null 2>&1
+        log_success "Configuration created at $SN_CONFIG"
+        log "Edit it to add your API keys and bot tokens"
+    fi
 }
 
 # Start service
