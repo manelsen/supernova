@@ -3,6 +3,7 @@
 //// Provides types for requesting a plan from an LLM and parsing the response.
 
 import supernova/core/task_graph.{type TaskGraph}
+
 pub type PlanningRequest {
   PlanningRequest(goal: String, agent_id: String, max_tasks: Int)
 }

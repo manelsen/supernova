@@ -248,7 +248,6 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
   ))
 }
 
-
 // Wait for metrics actor to register in global with retry (up to 2s)
 fn wait_for_metrics(attempts: Int) -> Result(metrics_global.Metrics, String) {
   case attempts <= 0 {

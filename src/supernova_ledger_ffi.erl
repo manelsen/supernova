@@ -1,5 +1,5 @@
 -module(supernova_ledger_ffi).
--export([current_timestamp/0, write_audit/4, format_float/1]).
+-export([current_timestamp/0, write_audit/4, format_float/1, sleep_ms/1]).
 
 current_timestamp() ->
   erlang:system_time(millisecond).
@@ -24,3 +24,6 @@ write_audit(AgentId, Resource, Amount, Timestamp) ->
   io:format("AUDIT: agent=~s resource=~s amount=~p timestamp=~p~n",
             [AgentId, Resource, Amount, Timestamp]),
   {ok, nil}.
+sleep_ms(Ms) ->
+    timer:sleep(Ms),
+    nil.

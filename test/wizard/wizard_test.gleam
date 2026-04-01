@@ -35,7 +35,7 @@ pub fn empty_state_defaults_test() {
   state.wechat_work_webhook_url |> should_equal(None)
   state.whatsapp_bridge_url |> should_equal(None)
   state.whatsapp_device_id |> should_equal(None)
-  state.output_path |> should_equal("supernova.yaml")
+  state.output_path |> should_equal("/config/supernova.yaml")
 }
 
 // ============================================================================

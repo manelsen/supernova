@@ -20,6 +20,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
+import gleam/uri
 
 // ============================================================================
 // Constants
@@ -397,18 +398,25 @@ fn api_get(
     _ -> url <> "?" <> query_string
   }
 
-  let req =
-    request.new()
-    |> request.set_method(http.Get)
-    |> request.prepend_header("User-Agent", "SupernovaBot/1.0")
-
-  let req_with_url = request.set_host(req, full_url)
-
-  case hackney.send(req_with_url) {
-    Ok(response) -> handle_response(response)
-    Error(hackney.InvalidUtf8Response) ->
-      Error(HttpError("Invalid UTF-8 response"))
-    Error(hackney.Other(reason)) -> Error(HttpError(string.inspect(reason)))
+  case uri.parse(full_url) {
+    Ok(parsed_uri) -> {
+      case request.from_uri(parsed_uri) {
+        Ok(req_with_url) -> {
+          let req_with_ua =
+            req_with_url
+            |> request.prepend_header("User-Agent", "SupernovaBot/1.0")
+          case hackney.send(req_with_ua) {
+            Ok(response) -> handle_response(response)
+            Error(hackney.InvalidUtf8Response) ->
+              Error(HttpError("Invalid UTF-8 response"))
+            Error(hackney.Other(reason)) ->
+              Error(HttpError(string.inspect(reason)))
+          }
+        }
+        Error(_) -> Error(HttpError("Failed to build request from URI"))
+      }
+    }
+    Error(_) -> Error(HttpError("Failed to parse URL: " <> full_url))
   }
 }
 
@@ -1056,9 +1064,8 @@ fn polling_loop(poller: Poller, callback: fn(Update) -> Nil) -> Nil {
           // Continue polling
           polling_loop(poller, callback)
         }
-        Error(error) -> {
-          // Log error and continue
-          let _ = error
+        Error(_error) -> {
+          // Continue polling on error
           polling_loop(poller, callback)
         }
       }
@@ -1265,20 +1272,29 @@ fn api_post(
 ) -> Result(String, TelegramError) {
   let url = build_api_url(config.token, endpoint)
 
-  let req =
-    request.new()
-    |> request.set_method(http.Post)
-    |> request.prepend_header("Content-Type", "application/json")
-    |> request.prepend_header("User-Agent", "SupernovaBot/1.0")
+  case uri.parse(url) {
+    Ok(parsed_uri) -> {
+      case request.from_uri(parsed_uri) {
+        Ok(req_with_url) -> {
+          let req =
+            req_with_url
+            |> request.set_method(http.Post)
+            |> request.prepend_header("Content-Type", "application/json")
+            |> request.prepend_header("User-Agent", "SupernovaBot/1.0")
+          let req_with_body = request.set_body(req, body)
 
-  let req_with_url = request.set_host(req, url)
-  let req_with_body = request.set_body(req_with_url, body)
-
-  case hackney.send(req_with_body) {
-    Ok(response) -> handle_response(response)
-    Error(hackney.InvalidUtf8Response) ->
-      Error(HttpError("Invalid UTF-8 response"))
-    Error(hackney.Other(reason)) -> Error(HttpError(string.inspect(reason)))
+          case hackney.send(req_with_body) {
+            Ok(response) -> handle_response(response)
+            Error(hackney.InvalidUtf8Response) ->
+              Error(HttpError("Invalid UTF-8 response"))
+            Error(hackney.Other(reason)) ->
+              Error(HttpError(string.inspect(reason)))
+          }
+        }
+        Error(_) -> Error(HttpError("Failed to build request from URI"))
+      }
+    }
+    Error(_) -> Error(HttpError("Failed to parse URL: " <> url))
   }
 }
 
