@@ -228,30 +228,24 @@ Switch providers per-session. A user can type `/model claude-3-5-sonnet` and the
 
 ---
 
-## Quickstart (Linux with systemd)
+## Quickstart (Linux/macOS)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
+# Download and install
+curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/supernova -o supernova
+chmod +x supernova
+./supernova install
+
+# Configure
+./supernova configure
+
+# Start
+./supernova start
 ```
-This single command:
 
-1. Detects your Linux distro and architecture
-2. Installs PostgreSQL locally (if needed)
-3. Installs the Supernova service via systemd
-4. Runs the interactive configuration wizard
-5. Prompts for confirmation before starting the service
+That's it. No root required.
 
-After confirmation, your service is running. See [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for full details.
-
-### Prerequisites
-
-The quickstart installer handles everything. Requirements:
-
-- Linux with systemd
-- Internet access to download releases
-- A PostgreSQL-compatible database (auto-installed if absent)
-
-For CI/automated environments, see the non-interactive installation mode in [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md).
+See [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for full details.
 
 ### Development
 

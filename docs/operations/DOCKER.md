@@ -1,10 +1,14 @@
 # Supernova with Docker (Development / Advanced)
 
 > **Note:** Docker is not recommended for production deployments.
-> For production, use the Linux with systemd quickstart instead:
-`curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash`
->
-> See [ONBOARDING_OVERVIEW.md](ONBOARDING_OVERVIEW.md) for the production installation guide.
+> For production, use the standard installation:
+> ```
+> curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/supernova -o supernova
+> chmod +x supernova
+> ./supernova install
+> ```
+> See [ONBOARDING_OVERVIEW.md](ONBOARDING_OVERVIEW.md) for details.
+
 
 This document covers Docker usage for local development and advanced setups.
 

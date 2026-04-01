@@ -1,0 +1,476 @@
+#!/usr/bin/env bash
+#
+# Supernova - User-space service manager
+# =====================================
+# Manages Supernova installation and lifecycle without root access.
+#
+# Usage:
+#   supernova install          Install/update Supernova
+#   supernova start            Start the service
+#   supernova stop             Stop the service
+#   supernova status           Show service status
+#   supernova restart          Restart the service
+#   supernova logs             Show logs
+#   supernova configure        Run configuration wizard
+#   supernova help             Show this help
+
+set -euo pipefail
+
+# Paths
+readonly SN_USER_DIR="${SN_USER_DIR:-$HOME/.local/supernova}"
+readonly SN_CONFIG_DIR="${SN_CONFIG_DIR:-$HOME/.config/supernova}"
+readonly SN_CONFIG="$SN_CONFIG_DIR/supernova.yaml"
+readonly SN_SECRETS="$SN_CONFIG_DIR/secrets.env"
+readonly SN_BINARY="$SN_USER_DIR/bin/supernova"
+readonly SN_DATA="$SN_USER_DIR/data"
+readonly SN_LOGS="$SN_USER_DIR/logs"
+readonly SN_PIDFILE="$SN_USER_DIR/supernova.pid"
+readonly SN_VERSION="0.2.0"
+readonly SN_INSTALL_URL="https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Logging
+log() { echo -e "${BLUE}[supernova]${NC} $*"; }
+log_info() { echo -e "${BLUE}[supernova]${NC} $*"; }
+log_success() { echo -e "${GREEN}[supernova]${NC} $*"; }
+log_warn() { echo -e "${YELLOW}[supernova]${NC} $*"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+# Detect architecture
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        armv7l) echo "armhf" ;;
+        *) log_error "Unsupported architecture: $(uname -m)"; exit 1 ;;
+    esac
+}
+
+# Detect OS
+detect_os() {
+    case "$(uname -s)" in
+        Linux) echo "linux" ;;
+        Darwin) echo "darwin" ;;
+        *) log_error "Unsupported OS: $(uname -s)"; exit 1 ;;
+    esac
+}
+
+# Check if installed
+is_installed() {
+    [[ -x "$SN_BINARY" ]]
+}
+
+# Check if running
+is_running() {
+    if [[ -f "$SN_PIDFILE" ]]; then
+        local pid=$(cat "$SN_PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "$SN_PIDFILE"
+    fi
+    return 1
+}
+
+# Show help
+show_help() {
+    cat << EOF
+Supernova - AI Operating System for Multi-Agent Systems
+
+Usage: supernova <command>
+
+Commands:
+  install          Download and install Supernova binary
+  start            Start the Supernova service
+  stop             Stop the Supernova service
+  restart          Restart the Supernova service
+  status           Show if Supernova is running
+  logs             Show recent logs (tail -f style)
+  configure        Run the configuration wizard
+  update           Update to the latest version
+  uninstall        Remove Supernova installation
+  doctor           Check system requirements
+  help             Show this help
+
+Environment variables:
+  SN_USER_DIR      Installation directory (default: ~/.local/supernova)
+  SN_CONFIG_DIR    Config directory (default: ~/.config/supernova)
+
+Examples:
+  supernova install
+  supernova start
+  supernova logs
+
+EOF
+}
+
+# Create directories
+create_dirs() {
+    mkdir -p "$SN_USER_DIR/bin"
+    mkdir -p "$SN_USER_DIR/data"
+    mkdir -p "$SN_USER_DIR/logs"
+    mkdir -p "$SN_CONFIG_DIR"
+    mkdir -p "$HOME/.local/bin"
+}
+
+# Check prerequisites
+check_prereqs() {
+    local missing=()
+
+    command -v curl >/dev/null 2>&1 || missing+=("curl")
+    command -v tar >/dev/null 2>&1 || missing+=("tar")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "Missing required commands: ${missing[*]}"
+        log_info "Install them and try again"
+        exit 1
+    fi
+}
+
+# Get latest version
+get_latest_version() {
+    curl -fsSL "https://api.github.com/repos/manelsen/supernova/releases/latest" 2>/dev/null | \
+        grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^v//' || echo "$SN_VERSION"
+}
+
+# Install binary
+cmd_install() {
+    log "Installing Supernova $SN_VERSION..."
+
+    create_dirs
+    check_prereqs
+
+    local arch=$(detect_arch)
+    local os=$(detect_os)
+    local version="${1:-$(get_latest_version)}"
+
+    local download_url="https://github.com/manelsen/supernova/releases/download/v${version}/supernova-${version}-${os}-${arch}.tar.gz"
+
+    log "Downloading from $download_url..."
+
+    local tmpfile=$(mktemp)
+    if ! curl -fsSL --connect-timeout 30 -o "$tmpfile" "$download_url"; then
+        rm -f "$tmpfile"
+        log_warn "No pre-built release found for $os-$arch"
+        log_info "Building from source requires Gleam and Erlang"
+        log_info "See: https://github.com/manelsen/supernova#development"
+        exit 1
+    fi
+
+    log "Extracting..."
+    tar -xzf "$tmpfile" -C "$SN_USER_DIR/bin"
+    chmod +x "$SN_USER_DIR/bin/supernova"
+    rm -f "$tmpfile"
+
+    # Ensure ~/.local/bin is in PATH
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        log_warn "$HOME/.local/bin not in PATH"
+        echo ""
+        echo "Add this to your ~/.bashrc or ~/.zshrc:"
+        echo ""
+        echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+    fi
+
+    # Ensure config exists
+    if [[ ! -f "$SN_CONFIG" ]]; then
+        log_info "Configuration not found. Run: supernova configure"
+    fi
+
+    log_success "Supernova installed to $SN_BINARY"
+    log "Run 'supernova configure' to set up your first instance"
+}
+
+# Configure
+cmd_configure() {
+    create_dirs
+
+    if is_running; then
+        log_warn "Stopping service for configuration..."
+        cmd_stop
+    fi
+
+    log "Running configuration wizard..."
+
+    if [[ ! -x "$SN_BINARY" ]]; then
+        log_error "Supernova not installed. Run: supernova install"
+        exit 1
+    fi
+
+    # Run wizard
+    "$SN_BINARY" run -m supernova/wizard_main
+
+    if [[ -f "$SN_CONFIG" ]]; then
+        log_success "Configuration saved to $SN_CONFIG"
+    fi
+}
+
+# Start service
+cmd_start() {
+    if is_running; then
+        local pid=$(cat "$SN_PIDFILE")
+        log "Supernova is already running (PID: $pid)"
+        return 0
+    fi
+
+    if [[ ! -f "$SN_CONFIG" ]]; then
+        log_error "Configuration not found. Run: supernova configure"
+        exit 1
+    fi
+
+    # Load secrets if exists
+    local env_args=()
+    if [[ -f "$SN_SECRETS" ]]; then
+        env_args+=(--env-file "$SN_SECRETS")
+    fi
+
+    log "Starting Supernova..."
+
+    # Start in background
+    cd "$SN_USER_DIR"
+    "$SN_BINARY" run >> "$SN_LOGS/supernova.log" 2>&1 &
+    local pid=$!
+
+    echo "$pid" > "$SN_PIDFILE"
+
+    # Wait a moment
+    sleep 2
+
+    if is_running; then
+        log_success "Supernova started (PID: $pid)"
+    else
+        log_error "Failed to start Supernova"
+        log "Check logs: supernova logs"
+        rm -f "$SN_PIDFILE"
+        exit 1
+    fi
+}
+
+# Stop service
+cmd_stop() {
+    if ! is_running; then
+        log "Supernova is not running"
+        return 0
+    fi
+
+    local pid=$(cat "$SN_PIDFILE")
+    log "Stopping Supernova (PID: $pid)..."
+
+    kill "$pid" 2>/dev/null || true
+
+    # Wait for graceful shutdown
+    for i in {1..10}; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$SN_PIDFILE"
+            log_success "Supernova stopped"
+            return 0
+        fi
+        sleep 1
+    done
+
+    # Force kill
+    log_warn "Graceful shutdown timed out, killing..."
+    kill -9 "$pid" 2>/dev/null || true
+    rm -f "$SN_PIDFILE"
+    log_success "Supernova stopped"
+}
+
+# Restart service
+cmd_restart() {
+    cmd_stop
+    sleep 1
+    cmd_start
+}
+
+# Status
+cmd_status() {
+    if is_running; then
+        local pid=$(cat "$SN_PIDFILE")
+        log_success "Supernova is running (PID: $pid)"
+        return 0
+    else
+        log "Supernova is not running"
+        return 1
+    fi
+}
+
+# Logs
+cmd_logs() {
+    if [[ ! -f "$SN_LOGS/supernova.log" ]]; then
+        log "No logs found"
+        return 1
+    fi
+
+    if [[ "${1:-}" == "-f" ]] || [[ "${1:-}" == "--follow" ]]; then
+        log "Following logs (Ctrl+C to exit)..."
+        tail -f "$SN_LOGS/supernova.log"
+    else
+        tail -n 50 "$SN_LOGS/supernova.log"
+    fi
+}
+
+# Update
+cmd_update() {
+    local version="${1:-$(get_latest_version)}"
+    log "Updating to version $version..."
+
+    if is_running; then
+        cmd_stop
+        local was_running=true
+    fi
+
+    create_dirs
+
+    local arch=$(detect_arch)
+    local os=$(detect_os)
+    local download_url="https://github.com/manelsen/supernova/releases/download/v${version}/supernova-${version}-${os}-${arch}.tar.gz"
+
+    log "Downloading..."
+    local tmpfile=$(mktemp)
+    if ! curl -fsSL --connect-timeout 30 -o "$tmpfile" "$download_url"; then
+        rm -f "$tmpfile"
+        log_error "Failed to download version $version"
+        exit 1
+    fi
+
+    # Backup current binary
+    if [[ -x "$SN_BINARY" ]]; then
+        cp "$SN_BINARY" "$SN_BINARY.bak"
+    fi
+
+    # Extract
+    tar -xzf "$tmpfile" -C "$SN_USER_DIR/bin"
+    chmod +x "$SN_BINARY"
+    rm -f "$tmpfile"
+
+    log_success "Updated to version $version"
+
+    [[ "${was_running:-false}" == "true" ]] && cmd_start
+}
+
+# Uninstall
+cmd_uninstall() {
+    if is_running; then
+        log_warn "Stopping service..."
+        cmd_stop
+    fi
+
+    echo ""
+    echo "This will remove Supernova from $SN_USER_DIR"
+    echo "Your configuration at $SN_CONFIG_DIR will be kept."
+    echo ""
+    read -p "Continue? [y/N] " -n 1 -r
+    echo ""
+
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log "Cancelled"
+        return 0
+    fi
+
+    rm -rf "$SN_USER_DIR"
+    log_success "Supernova uninstalled"
+    log "Your configuration is still at $SN_CONFIG_DIR"
+}
+
+# Doctor
+cmd_doctor() {
+    log "Checking system requirements..."
+
+    local issues=0
+
+    # Check curl
+    if command -v curl >/dev/null 2>&1; then
+        log_success "curl: $(curl --version | head -1)"
+    else
+        log_error "curl: not found"
+        ((issues++))
+    fi
+
+    # Check tar
+    if command -v tar >/dev/null 2>&1; then
+        log_success "tar: $(tar --version | head -1)"
+    else
+        log_error "tar: not found"
+        ((issues++))
+    fi
+
+    # Check architecture
+    local arch=$(detect_arch)
+    log "Architecture: $(uname -m) -> $arch"
+
+    # Check OS
+    local os=$(detect_os)
+    log "OS: $os"
+
+    # Check PATH
+    if [[ ":$PATH:" == *":$HOME/.local/bin:"* ]]; then
+        log_success "PATH: $HOME/.local/bin is in PATH"
+    else
+        log_warn "PATH: $HOME/.local/bin not in PATH"
+        echo "  Add to ~/.bashrc: export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+
+    # Check installation
+    if is_installed; then
+        log_success "Supernova: installed at $SN_BINARY"
+        "$SN_BINARY" --version 2>/dev/null || true
+    else
+        log "Supernova: not installed"
+    fi
+
+    # Check config
+    if [[ -f "$SN_CONFIG" ]]; then
+        log_success "Config: $SN_CONFIG"
+    else
+        log "Config: not configured (run supernova configure)"
+    fi
+
+    # Check status
+    if is_running; then
+        log_success "Status: running (PID: $(cat $SN_PIDFILE))"
+    else
+        log "Status: not running"
+    fi
+
+    echo ""
+    if [[ $issues -eq 0 ]]; then
+        log_success "All checks passed!"
+    else
+        log_error "$issues issue(s) found"
+        exit 1
+    fi
+}
+
+# Main
+main() {
+    local cmd="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$cmd" in
+        install) cmd_install "$@" ;;
+        configure|config) cmd_configure ;;
+        start) cmd_start ;;
+        stop) cmd_stop ;;
+        restart) cmd_restart ;;
+        status) cmd_status ;;
+        logs) cmd_logs "$@" ;;
+        update) cmd_update "$@" ;;
+        uninstall|remove) cmd_uninstall ;;
+        doctor|check) cmd_doctor ;;
+        help|--help|-h) show_help ;;
+        *)
+            log_error "Unknown command: $cmd"
+            echo ""
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
