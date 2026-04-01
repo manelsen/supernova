@@ -163,10 +163,25 @@ parse_args() {
     done
 }
 
-# Check if running as root
+# Check if running as root and detect install method
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        log_error "This installer must be run as root (use sudo)"
+        # Detect if script was piped (insecure to run as root)
+        if [[ ! -t 0 ]]; then
+            log_error "ERROR: Piping this script is insecure."
+            echo ""
+            echo "Download the script first, then run with sudo:"
+            echo ""
+            echo "    curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh -o install.sh"
+            echo "    chmod +x install.sh"
+            echo "    sudo ./install.sh"
+            echo ""
+            exit 1
+        fi
+        log_error "This installer must be run as root"
+        echo ""
+        echo "Run with: sudo $0"
+        echo ""
         exit 1
     fi
 }
