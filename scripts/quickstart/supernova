@@ -119,8 +119,8 @@ $SN_RUNTIME run --rm -it \
         -v "$SN_CONFIG_DIR:/config" \
         -v "$SN_DATA:/data" \
         -w /app \
-        "$SN_IMAGE" \
-        run -m supernova/wizard_main
+"$SN_IMAGE" \
+        gleam run -m supernova/wizard_main
 
     if [[ -f "$SN_CONFIG" ]]; then
         log_success "Configuration saved to $SN_CONFIG"
@@ -169,7 +169,7 @@ TR|        --name "$SN_CONTAINER_NAME" \
         "${env_args[@]}" \
         -w /app \
         "$SN_IMAGE" \
-        run
+        gleam run
 
     sleep 2
 
