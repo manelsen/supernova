@@ -6,6 +6,8 @@
 #
 # Usage:
 #   supernova install          Install/update Supernova
+#   supernova enable           Enable systemd user service (auto-start on login)
+#   supernova disable          Disable systemd user service
 #   supernova start            Start the service
 #   supernova stop             Stop the service
 #   supernova status           Show service status
@@ -183,8 +185,14 @@ cmd_install() {
         log_info "Configuration not found. Run: supernova configure"
     fi
 
+    # Copy systemd user service file
+    local service_url="https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/supernova.service"
+    curl -fsSL "$service_url" -o "$SN_USER_DIR/supernova.service"
+    chmod 644 "$SN_USER_DIR/supernova.service"
+
     log_success "Supernova installed to $SN_BINARY"
     log "Run 'supernova configure' to set up your first instance"
+    log "Run 'supernova enable' to start on login (systemd)"
 }
 
 # Configure
@@ -290,6 +298,18 @@ cmd_restart() {
 
 # Status
 cmd_status() {
+    if has_systemd_user && systemctl --user is-enabled supernova &>/dev/null; then
+        # Use systemd
+        if systemctl --user is-active supernova &>/dev/null; then
+            log_success "Supernova is running (systemd)"
+            return 0
+        else
+            log "Supernova is not running"
+            return 1
+        fi
+    fi
+
+    # Fallback: manual
     if is_running; then
         local pid=$(cat "$SN_PIDFILE")
         log_success "Supernova is running (PID: $pid)"
@@ -302,6 +322,18 @@ cmd_status() {
 
 # Logs
 cmd_logs() {
+    if has_systemd_user && systemctl --user is-enabled supernova &>/dev/null; then
+        # Use systemd journal
+        if [[ "${1:-}" == "-f" ]] || [[ "${1:-}" == "--follow" ]]; then
+            log "Following logs (Ctrl+C to exit)..."
+            journalctl --user -u supernova -f
+        else
+            journalctl --user -u supernova -n 50
+        fi
+        return
+    fi
+
+    # Fallback: log file
     if [[ ! -f "$SN_LOGS/supernova.log" ]]; then
         log "No logs found"
         return 1
@@ -454,6 +486,8 @@ main() {
 
     case "$cmd" in
         install) cmd_install "$@" ;;
+        enable) cmd_enable ;;
+        disable) cmd_disable ;;
         configure|config) cmd_configure ;;
         start) cmd_start ;;
         stop) cmd_stop ;;

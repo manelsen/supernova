@@ -32,6 +32,8 @@ That's it. No sudo, no systemd, no PostgreSQL required by default.
 ## Managing the service
 
 ```bash
+./supernova enable       # Auto-start on login (Linux systemd)
+./supernova disable      # Disable auto-start
 ./supernova start       # Start the service
 ./supernova stop        # Stop the service
 ./supernova restart     # Restart the service

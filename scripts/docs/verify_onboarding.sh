@@ -48,7 +48,7 @@ log_info() {
 check_readme_curl_quickstart() {
     log_check "README mentions curl quickstart..."
 
-if grep -q "curl.*raw.githubusercontent.com.*install.sh" "$README"; then
+if grep -q "curl.*raw.githubusercontent.com.*supernova" "$README"; then
         log_pass "README mentions official curl quickstart"
     else
         log_fail "README does not mention official curl quickstart"
@@ -96,7 +96,7 @@ check_onboarding_overview_exists() {
 check_onboarding_overview_curl() {
     log_check "ONBOARDING_OVERVIEW.md mentions curl..."
 
-if grep -q "curl.*raw.githubusercontent.com.*install.sh" "$DOCS_DIR/ONBOARDING_OVERVIEW.md"; then
+if grep -q "curl.*raw.githubusercontent.com.*supernova" "$DOCS_DIR/ONBOARDING_OVERVIEW.md"; then
         log_pass "ONBOARDING_OVERVIEW.md mentions curl quickstart"
     else
         log_fail "ONBOARDING_OVERVIEW.md does not mention curl quickstart"
@@ -140,7 +140,7 @@ check_onboarding_exists() {
 check_onboarding_curl() {
     log_check "ONBOARDING.md mentions curl quickstart..."
 
-    if grep -q "curl.*raw.githubusercontent.com.*install.sh" "$DOCS_DIR/ONBOARDING.md"; then
+if grep -q "curl.*raw.githubusercontent.com.*supernova" "$DOCS_DIR/ONBOARDING.md"; then
         log_pass "ONBOARDING.md mentions curl quickstart"
     else
         log_fail "ONBOARDING.md does not mention curl quickstart"
@@ -191,25 +191,25 @@ check_docker_not_production() {
     fi
 }
 
-# Test: Installer script exists
+# Test: Supernova CLI script exists
 check_installer_exists() {
-    log_check "Quickstart installer script exists..."
+    log_check "Supernova CLI script exists..."
 
-    if [[ -f "$PROJECT_ROOT/scripts/quickstart/install.sh" ]]; then
-        log_pass "Quickstart installer script exists"
+    if [[ -f "$PROJECT_ROOT/scripts/quickstart/supernova" ]]; then
+        log_pass "Supernova CLI script exists"
     else
-        log_fail "Quickstart installer script not found"
+        log_fail "Supernova CLI script not found"
     fi
 }
 
-# Test: Installer script is executable
+# Test: Supernova CLI script is executable
 check_installer_executable() {
-    log_check "Installer script is executable..."
+    log_check "Supernova CLI script is executable..."
 
-    if [[ -x "$PROJECT_ROOT/scripts/quickstart/install.sh" ]]; then
-        log_pass "Installer script is executable"
+    if [[ -x "$PROJECT_ROOT/scripts/quickstart/supernova" ]]; then
+        log_pass "Supernova CLI script is executable"
     else
-        log_fail "Installer script is not executable"
+        log_fail "Supernova CLI script is not executable"
     fi
 }
 
