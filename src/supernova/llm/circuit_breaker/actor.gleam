@@ -6,9 +6,7 @@
 import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/otp/actor
-
 import supernova/llm/circuit_breaker
-import supernova/llm/provider
 
 pub type CircuitBreakerActor =
   Subject(CircuitBreakerCommand)
