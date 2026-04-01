@@ -113,14 +113,13 @@ cmd_configure() {
     $SN_RUNTIME stop "$SN_CONTAINER_NAME" &>/dev/null || true
 
     # Run wizard in container
-$SN_RUNTIME run --rm -it \
+$SN_RUNTIME run --rm -i \
         $SN_RUNTIME_FLAGS \
         --name "${SN_CONTAINER_NAME}_wizard" \
         -v "$SN_CONFIG_DIR:/config" \
         -v "$SN_DATA:/data" \
-        -w /app \
-"$SN_IMAGE" \
-        gleam run -m supernova/wizard_main
+        -w /config \
+        "$SN_IMAGE" \
 
     if [[ -f "$SN_CONFIG" ]]; then
         log_success "Configuration saved to $SN_CONFIG"
