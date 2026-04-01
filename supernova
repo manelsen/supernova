@@ -98,7 +98,7 @@ cmd_install() {
     log "Next: ./supernova configure"
 }
 
-# Configure - run wizard via container
+# Configure - interactive wizard
 cmd_configure() {
     create_dirs
 
@@ -109,17 +109,21 @@ cmd_configure() {
 
     log "Running configuration wizard..."
 
+    # Check for existing config
+    if [[ -f "$SN_CONFIG" ]]; then
+        read -p "Config exists. Overwrite? (y/N): " yn
+        case $yn in [Yy]*) rm "$SN_CONFIG";; *) log "Keeping existing config"; return 0;; esac
+    fi
+
     # Stop container if running
     $SN_RUNTIME stop "$SN_CONTAINER_NAME" &>/dev/null || true
 
-    # Run wizard in container
-$SN_RUNTIME run --rm -it \
-        $SN_RUNTIME_FLAGS \
+    # Run wizard interactively
+    # Run wizard interactively
+    $SN_RUNTIME run --rm -it \
         --name "${SN_CONTAINER_NAME}_wizard" \
-        -v "$SN_CONFIG_DIR:/config" \
-        -v "$SN_DATA:/data" \
-        -w /app \
-"$SN_IMAGE" \
+        -v "$HOME/.config/supernova:/config" \
+        "$SN_IMAGE" \
         gleam run -m supernova/wizard_main
 
     if [[ -f "$SN_CONFIG" ]]; then
@@ -129,6 +133,8 @@ $SN_RUNTIME run --rm -it \
         exit 1
     fi
 }
+
+
 
 # Start service
 cmd_start() {
@@ -159,9 +165,9 @@ cmd_start() {
         done < "$SN_SECRETS"
     fi
 
-PN|    $SN_RUNTIME run -d \
-KB|        $SN_RUNTIME_FLAGS \
-TR|        --name "$SN_CONTAINER_NAME" \
+    $SN_RUNTIME run -d \
+        $SN_RUNTIME_FLAGS \
+        --name "$SN_CONTAINER_NAME" \
         --restart unless-stopped \
         -v "$SN_CONFIG_DIR:/config" \
         -v "$SN_DATA:/data" \
@@ -170,6 +176,7 @@ TR|        --name "$SN_CONTAINER_NAME" \
         -w /app \
         "$SN_IMAGE" \
         gleam run
+
 
     sleep 2
 

@@ -927,7 +927,7 @@ pub fn run() -> Result(Nil, WizardError) {
   print_section("Generate Configuration")
   use output_path <- result_try(ask_with_default(
     "Output file path",
-    "supernova.yaml",
+    "/config/supernova.yaml",
   ))
 
   let final_state = WizardState(..state, output_path: string.trim(output_path))
