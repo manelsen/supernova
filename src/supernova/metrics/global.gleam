@@ -21,7 +21,7 @@ fn global_get(key: String) -> any
 fn global_has(key: String) -> Bool
 
 @external(erlang, "supernova_global_ffi", "safe_is_process_alive")
-fn safe_check_alive(pid: any) -> Bool
+pub fn safe_check_alive(pid: any) -> Bool
 
 const metrics_key = "supernova_global_metrics"
 
@@ -33,10 +33,7 @@ pub fn get_metrics() -> option.Option(Metrics) {
   case global_has(metrics_key) {
     True -> {
       let metrics = global_get(metrics_key)
-      case safe_check_alive(metrics) {
-        True -> option.Some(metrics)
-        False -> option.None
-      }
+      option.Some(metrics)
     }
     False -> option.None
   }
