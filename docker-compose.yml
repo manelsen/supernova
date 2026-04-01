@@ -17,6 +17,7 @@ services:
       retries: 5
 
   supernova:
+    container_name: supernova
     build: .
     depends_on:
       postgres:
@@ -27,7 +28,6 @@ services:
       SUPERNOVA_OPENAI_API_KEY: ${SUPERNOVA_OPENAI_API_KEY:-}
 
       # Channel tokens — set the ones you use
-      SUPERNOVA_TELEGRAM_TOKEN: ${SUPERNOVA_TELEGRAM_TOKEN:-}
       SUPERNOVA_DISCORD_TOKEN: ${SUPERNOVA_DISCORD_TOKEN:-}
       SUPERNOVA_DISCORD_APP_ID: ${SUPERNOVA_DISCORD_APP_ID:-}
 
@@ -45,6 +45,8 @@ services:
       start_period: 10s
     stop_grace_period: 30s
     restart: unless-stopped
+    volumes:
+      - ./supernova.yaml:/config/supernova.yaml:ro
 
 volumes:
   postgres_data:
