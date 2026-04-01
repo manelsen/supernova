@@ -7,3 +7,5 @@ node_modules/
 # Runtime secrets
 .env
 summary.json
+supernova.yaml
+*.local.yaml
