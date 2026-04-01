@@ -113,21 +113,17 @@ cmd_configure() {
     $SN_RUNTIME stop "$SN_CONTAINER_NAME" &>/dev/null || true
 
     # Run wizard in container
-$SN_RUNTIME run --rm -i \
+    # Mount /tmp as /app so wizard writes to host's /tmp
+    mkdir -p "$HOME/.config/supernova" "$HOME/.local/supernova/data"
+    rm -f /tmp/supernova.yaml
+    $SN_RUNTIME run --rm -i \
         $SN_RUNTIME_FLAGS \
         --name "${SN_CONTAINER_NAME}_wizard" \
-        -v "$SN_CONFIG_DIR:/config" \
-        -v "$SN_DATA:/data" \
-        -w /config \
+        -v "/tmp:/app" \
         "$SN_IMAGE" \
+        sh -c 'cd /app && gleam run -m supernova/wizard_main'
+    cp /tmp/supernova.yaml "$HOME/.config/supernova/supernova.yaml" 2>/dev/null || true
 
-    if [[ -f "$SN_CONFIG" ]]; then
-        log_success "Configuration saved to $SN_CONFIG"
-    else
-        log_error "Configuration failed"
-        exit 1
-    fi
-}
 
 # Start service
 cmd_start() {
