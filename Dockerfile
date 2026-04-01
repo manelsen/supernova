@@ -10,7 +10,7 @@ RUN case "$TARGETARCH" in \
   arm64) GLEAM_ARCH="aarch64-unknown-linux-musl" ;; \
   "") GLEAM_ARCH="x86_64-unknown-linux-musl" ;; \
   *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
-esac \
+  esac \
   && curl -fsSL \
     -o /tmp/gleam.tar.gz \
     "https://github.com/gleam-lang/gleam/releases/download/v${GLEAM_VERSION}/gleam-v${GLEAM_VERSION}-${GLEAM_ARCH}.tar.gz" \
@@ -25,4 +25,4 @@ RUN gleam deps download
 COPY . .
 RUN gleam build
 
-CMD ["gleam", "run"]
+CMD ["/bin/sh"]
