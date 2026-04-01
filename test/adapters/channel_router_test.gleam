@@ -632,6 +632,8 @@ pub fn telegram_router_help_uses_channel_specific_text_test() {
         <> "/start - Start a new session\n"
         <> "/help - Show this help\n"
         <> "/status - Show session status\n"
+        <> "/commands - List all commands\n"
+        <> "/reasoning - Toggle reasoning mode\n"
         <> "/model - Change LLM model\n",
       )
     Error(_) -> should.fail()

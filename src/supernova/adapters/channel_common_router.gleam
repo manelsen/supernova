@@ -516,6 +516,14 @@ fn handle_bootstrap_command(
       state,
       Ok(port.reply(to: msg, content: ux.help_text(msg.channel))),
     )
+    CommandsCommand -> #(
+      state,
+      Ok(port.reply(to: msg, content: ux.commands_text(msg.channel))),
+    )
+    ReasoningCommand -> #(
+      state,
+      Ok(port.reply(to: msg, content: ux.reasoning_text())),
+    )
   }
 }
 
@@ -560,6 +568,8 @@ type BootstrapCommand {
   StartCommand
   StatusCommand
   HelpCommand
+  CommandsCommand
+  ReasoningCommand
 }
 
 fn bootstrap_command(content: String) -> Option(BootstrapCommand) {
@@ -568,6 +578,8 @@ fn bootstrap_command(content: String) -> Option(BootstrapCommand) {
     "/start" -> Some(StartCommand)
     "/status" -> Some(StatusCommand)
     "/help" -> Some(HelpCommand)
+    "/commands" -> Some(CommandsCommand)
+    "/reasoning" -> Some(ReasoningCommand)
     _ -> None
   }
 }
