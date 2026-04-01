@@ -106,6 +106,7 @@ cmd_configure() {
 
     # Run wizard in container
     $SN_RUNTIME run --rm -it \
+        --runtime /usr/sbin/runc \
         --name "${SN_CONTAINER_NAME}_wizard" \
         -v "$SN_CONFIG_DIR:/config" \
         -v "$SN_DATA:/data" \
@@ -151,6 +152,7 @@ cmd_start() {
     fi
 
     $SN_RUNTIME run -d \
+        --runtime /usr/sbin/runc \
         --name "$SN_CONTAINER_NAME" \
         --restart unless-stopped \
         -v "$SN_CONFIG_DIR:/config" \
