@@ -1,7 +1,7 @@
-//// Global metrics registry.
-////
-//// Provides a persistent_term backed global reference to the metrics actor.
-//// Accessible from any process without passing the handle explicitly.
+// Global metrics registry.
+//
+// Provides a persistent_term backed global reference to the metrics actor.
+// Accessible from any process without passing the handle explicitly.
 
 import gleam/erlang/process.{type Subject}
 import gleam/option
@@ -20,8 +20,8 @@ fn global_get(key: String) -> any
 @external(erlang, "supernova_global_ffi", "global_has")
 fn global_has(key: String) -> Bool
 
-@external(erlang, "erlang", "is_process_alive")
-fn is_process_alive(pid: any) -> Bool
+@external(erlang, "supernova_global_ffi", "safe_is_process_alive")
+fn safe_check_alive(pid: any) -> Bool
 
 const metrics_key = "supernova_global_metrics"
 
@@ -33,7 +33,7 @@ pub fn get_metrics() -> option.Option(Metrics) {
   case global_has(metrics_key) {
     True -> {
       let metrics = global_get(metrics_key)
-      case is_process_alive(metrics) {
+      case safe_check_alive(metrics) {
         True -> option.Some(metrics)
         False -> option.None
       }

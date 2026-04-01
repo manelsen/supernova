@@ -1,6 +1,6 @@
-//// Global circuit breaker registry.
-////
-//// Provides a persistent_term backed global reference to the circuit breaker actor.
+// Global circuit breaker registry.
+//
+// Provides a persistent_term backed global reference to the circuit breaker actor.
 
 import gleam/erlang/process.{type Subject}
 import gleam/option
@@ -19,8 +19,8 @@ fn global_get(key: String) -> any
 @external(erlang, "supernova_global_ffi", "global_has")
 fn global_has(key: String) -> Bool
 
-@external(erlang, "erlang", "is_process_alive")
-fn is_process_alive(pid: any) -> Bool
+@external(erlang, "supernova_global_ffi", "safe_is_process_alive")
+fn safe_check_alive(pid: any) -> Bool
 
 const cb_key = "supernova_global_circuit_breaker"
 
@@ -32,7 +32,7 @@ pub fn get_circuit_breaker() -> option.Option(CircuitBreaker) {
   case global_has(cb_key) {
     True -> {
       let cb = global_get(cb_key)
-      case is_process_alive(cb) {
+      case safe_check_alive(cb) {
         True -> option.Some(cb)
         False -> option.None
       }

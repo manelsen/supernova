@@ -1,7 +1,7 @@
-//// Global tracing registry.
-////
-//// Provides a persistent_term backed global reference to the tracer actor.
-//// Accessible from any process without passing the handle explicitly.
+// Global tracing registry.
+//
+// Provides a persistent_term backed global reference to the tracer actor.
+// Accessible from any process without passing the handle explicitly.
 
 import gleam/erlang/process.{type Subject}
 import gleam/option
@@ -21,8 +21,8 @@ fn global_get(key: String) -> any
 @external(erlang, "supernova_global_ffi", "global_has")
 fn global_has(key: String) -> Bool
 
-@external(erlang, "erlang", "is_process_alive")
-fn is_process_alive(pid: any) -> Bool
+@external(erlang, "supernova_global_ffi", "safe_is_process_alive")
+fn safe_check_alive(pid: any) -> Bool
 
 const tracer_key = "supernova_global_tracer"
 
@@ -34,7 +34,7 @@ pub fn get_tracer() -> option.Option(Tracer) {
   case global_has(tracer_key) {
     True -> {
       let tracer = global_get(tracer_key)
-      case is_process_alive(tracer) {
+      case safe_check_alive(tracer) {
         True -> option.Some(tracer)
         False -> option.None
       }

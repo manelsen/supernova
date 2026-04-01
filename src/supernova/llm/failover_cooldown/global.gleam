@@ -21,8 +21,8 @@ fn global_get(key: String) -> any
 @external(erlang, "supernova_global_ffi", "global_has")
 fn global_has(key: String) -> Bool
 
-@external(erlang, "erlang", "is_process_alive")
-fn is_process_alive(pid: any) -> Bool
+@external(erlang, "supernova_global_ffi", "safe_is_process_alive")
+fn safe_check_alive(pid: any) -> Bool
 
 const cd_key = "supernova_global_cooldown"
 
@@ -34,7 +34,7 @@ pub fn get_cooldown() -> option.Option(CooldownActor) {
   case global_has(cd_key) {
     True -> {
       let cd = global_get(cd_key)
-      case is_process_alive(cd) {
+      case safe_check_alive(cd) {
         True -> option.Some(cd)
         False -> option.None
       }
