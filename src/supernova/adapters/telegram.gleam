@@ -744,11 +744,20 @@ fn decode_message_entity() -> decode.Decoder(MessageEntity) {
   use entity_type_str <- decode.field("type", decode.string)
   use offset <- decode.field("offset", decode.int)
   use length <- decode.field("length", decode.int)
-  use url <- decode.field("url", decode.optional(decode.string))
-  use user <- decode.field("user", decode.optional(decode_user()))
-  use language <- decode.field("language", decode.optional(decode.string))
-  use custom_emoji_id <- decode.field(
+  use url <- decode.optional_field("url", None, decode.optional(decode.string))
+  use user <- decode.optional_field(
+    "user",
+    None,
+    decode.optional(decode_user()),
+  )
+  use language <- decode.optional_field(
+    "language",
+    None,
+    decode.optional(decode.string),
+  )
+  use custom_emoji_id <- decode.optional_field(
     "custom_emoji_id",
+    None,
     decode.optional(decode.string),
   )
 
