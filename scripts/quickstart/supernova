@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 #
-# Supernova CLI - User-space service manager
-# =========================================
-# No root required. Uses Docker for wizard and runtime.
+# Supernova CLI - Container-based service manager
+# ===========================================
+# Supports Docker and Podman. No root required.
 #
 # Usage:
-#   supernova install          Download and install
+#   supernova install          Pull container image
 #   supernova configure        Run configuration wizard
-#   supernova enable           Enable auto-start on login
-#   supernova start            Start the service
-#   supernova stop             Stop the service
-#   supernova status           Show service status
-#   supernova restart          Restart the service
-#   supernova logs             Show logs
-#   supernova update           Update to latest version
-#   supernova doctor           Check system requirements
-#   supernova help             Show this help
+#   supernova start           Start the service
+#   supernova stop            Stop the service
+#   supernova status          Show service status
+#   supernova restart         Restart the service
+#   supernova logs            Show logs
+#   supernova update          Update to latest version
+#   supernova doctor          Check system requirements
+#   supernova help            Show this help
 
 set -euo pipefail
 
@@ -29,6 +28,19 @@ SN_LOGS="$SN_USER_DIR/logs"
 SN_IMAGE="ghcr.io/manelsen/supernova:latest"
 SN_CONTAINER_NAME="supernova"
 
+# Detect container runtime (podman or docker)
+detect_runtime() {
+    if command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
+        echo "podman"
+    elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        echo "docker"
+    else
+        echo ""
+    fi
+}
+
+SN_RUNTIME="${SN_RUNTIME:-$(detect_runtime)}"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -41,9 +53,9 @@ log_success() { echo -e "${GREEN}[supernova]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[supernova]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
-# Check if Docker is available
-has_docker() {
-    command -v docker &>/dev/null && docker info &>/dev/null
+# Check if container runtime is available
+has_runtime() {
+    [[ -n "$SN_RUNTIME" ]]
 }
 
 # Create directories
@@ -56,42 +68,42 @@ create_dirs() {
 
 # Pull image
 pull_image() {
-    log "Pulling Docker image..."
-    docker pull "$SN_IMAGE"
+    log "Pulling image..."
+    $SN_RUNTIME pull "$SN_IMAGE"
 }
 
-# Install (pull Docker image)
+# Install (pull image)
 cmd_install() {
     create_dirs
 
-    if ! has_docker; then
-        log_error "Docker is required. Install Docker and try again."
+    if ! has_runtime; then
+        log_error "Container runtime (Docker or Podman) is required. Install one and try again."
         exit 1
     fi
 
-    log "Installing Supernova..."
+    log "Installing Supernova using $SN_RUNTIME..."
     pull_image
     log_success "Installation complete."
     log ""
     log "Next: ./supernova configure"
 }
 
-# Configure - run wizard via Docker
+# Configure - run wizard via container
 cmd_configure() {
     create_dirs
 
-    if ! has_docker; then
-        log_error "Docker is required for configuration."
+    if ! has_runtime; then
+        log_error "Container runtime is required for configuration."
         exit 1
     fi
 
     log "Running configuration wizard..."
 
     # Stop container if running
-    docker stop "$SN_CONTAINER_NAME" &>/dev/null || true
+    $SN_RUNTIME stop "$SN_CONTAINER_NAME" &>/dev/null || true
 
     # Run wizard in container
-    docker run --rm -it \
+    $SN_RUNTIME run --rm -it \
         --name "${SN_CONTAINER_NAME}_wizard" \
         -v "$SN_CONFIG_DIR:/config" \
         -v "$SN_DATA:/data" \
@@ -109,13 +121,13 @@ cmd_configure() {
 
 # Start service
 cmd_start() {
-    if ! has_docker; then
-        log_error "Docker is required to run Supernova."
+    if ! has_runtime; then
+        log_error "Container runtime is required to run Supernova."
         exit 1
     fi
 
     # Check if already running
-    if docker ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
+    if $SN_RUNTIME ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
         log "Supernova is already running"
         return 0
     fi
@@ -136,7 +148,7 @@ cmd_start() {
         done < "$SN_SECRETS"
     fi
 
-    docker run -d \
+    $SN_RUNTIME run -d \
         --name "$SN_CONTAINER_NAME" \
         --restart unless-stopped \
         -v "$SN_CONFIG_DIR:/config" \
@@ -149,7 +161,7 @@ cmd_start() {
 
     sleep 2
 
-    if docker ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
+    if $SN_RUNTIME ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
         log_success "Supernova started"
         log "View logs: ./supernova logs"
     else
@@ -160,13 +172,13 @@ cmd_start() {
 
 # Stop service
 cmd_stop() {
-    if ! docker ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
+    if ! $SN_RUNTIME ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
         log "Supernova is not running"
         return 0
     fi
 
     log "Stopping Supernova..."
-    docker stop "$SN_CONTAINER_NAME"
+    $SN_RUNTIME stop "$SN_CONTAINER_NAME"
     log_success "Supernova stopped"
 }
 
@@ -179,7 +191,7 @@ cmd_restart() {
 
 # Status
 cmd_status() {
-    if docker ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
+    if $SN_RUNTIME ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
         log_success "Supernova is running"
         return 0
     else
@@ -191,50 +203,36 @@ cmd_status() {
 # Logs
 cmd_logs() {
     if [[ "${1:-}" == "-f" ]] || [[ "${1:-}" == "--follow" ]]; then
-        docker logs -f "$SN_CONTAINER_NAME"
+        $SN_RUNTIME logs -f "$SN_CONTAINER_NAME"
     else
-        docker logs --tail 50 "$SN_CONTAINER_NAME"
+        $SN_RUNTIME logs --tail 50 "$SN_CONTAINER_NAME"
     fi
 }
 
 # Update
 cmd_update() {
-    if ! has_docker; then
-        log_error "Docker is required."
+    if ! has_runtime; then
+        log_error "Container runtime is required."
         exit 1
     fi
 
     local was_running=false
-    if docker ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
+    if $SN_RUNTIME ps --format '{{.Names}}' | grep -q "^${SN_CONTAINER_NAME}$"; then
         cmd_stop
         was_running=true
     fi
 
-    log "Updating Docker image..."
-    docker pull "$SN_IMAGE"
+    log "Updating container image..."
+    $SN_RUNTIME pull "$SN_IMAGE"
     log_success "Updated to latest"
 
     $was_running && cmd_start
 }
 
-# Enable auto-start (just a note about Docker Desktop)
+# Enable (info about auto-start)
 cmd_enable() {
-    log "For auto-start, configure Docker Desktop to start on login,"
+    log "For auto-start, configure your container runtime to start on login,"
     log "or use Docker Compose with a systemd user service."
-    log ""
-    log "Example docker-compose.yml:"
-    cat << 'EOF'
-services:
-  supernova:
-    image: ghcr.io/manelsen/supernova:latest
-    container_name: supernova
-    restart: unless-stopped
-    volumes:
-      - ~/.config/supernova:/config
-      - ~/.local/supernova/data:/data
-    environment:
-      - SUPERNOVA_ANTHROPIC_API_KEY=${SUPERNOVA_ANTHROPIC_API_KEY}
-EOF
 }
 
 # Doctor
@@ -242,10 +240,10 @@ cmd_doctor() {
     log "Checking system requirements..."
     local issues=0
 
-    if has_docker; then
-        log_success "Docker: installed"
+    if has_runtime; then
+        log_success "Container runtime: $SN_RUNTIME"
     else
-        log_error "Docker: not found"
+        log_error "Container runtime: not found (Docker or Podman required)"
         ((issues++))
     fi
 
@@ -278,20 +276,22 @@ Supernova - AI Operating System for Multi-Agent Systems
 Usage: ./supernova <command>
 
 Commands:
-  install          Pull Docker image
-  configure        Run configuration wizard (via Docker)
-  enable           Show auto-start setup instructions
-  start            Start the service (via Docker)
+  install          Pull container image
+  configure        Run configuration wizard (via container)
+  start            Start the service (via container)
   stop             Stop the service
   restart          Restart the service
   status           Show service status
   logs             Show logs (-f to follow)
   update           Update to latest version
+  enable           Show auto-start setup info
   doctor           Check system requirements
   help             Show this help
 
+Runtime: $SN_RUNTIME (set SN_RUNTIME=docker|podman to override)
+
 Requirements:
-  - Docker installed and running
+  - Docker or Podman installed and running
   - No root access required
 
 Files:
