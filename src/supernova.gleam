@@ -108,7 +108,7 @@ pub fn main() -> Nil {
 fn load_config() -> Result(config.Config, config.ConfigError) {
   // Try to load from supernova.yaml first, but if it fails for any reason,
   // just use defaults. This is more robust than trying to handle all error types.
-  case config.load_from_file("supernova.yaml") {
+  case config.load_from_file("/config/supernova.yaml") {
     Ok(cfg) -> {
       io.println("✓ Loaded configuration from supernova.yaml")
       Ok(cfg)
