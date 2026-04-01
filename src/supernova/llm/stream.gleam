@@ -18,11 +18,13 @@
 
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
+import supernova/llm/client
 import supernova/llm/provider
 
 // ============================================================================
@@ -379,29 +381,58 @@ pub fn start_stream_with_tools(
   config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
 ) -> Subject(StreamChunk) {
-  // Create a relay subject that the caller can use
   let relay = process.new_subject()
 
-  // Start the stream actor
-  let _stream_config =
-    StreamConfig(
-      provider_config: config,
-      messages: messages,
-      tools: tools,
-      timeout_ms: 60_000,
-    )
-
-  let assert Ok(_stream_actor) =
-    actor.new(StreamState(
-      receiver: None,
-      buffer: "",
-      active: True,
-      request_id: None,
-    ))
-    |> actor.on_message(handle_stream_msg)
-    |> actor.start
+  // Spawn a worker that makes a synchronous LLM call and forwards
+  // the result as stream chunks.  This avoids the broken stub that
+  // never wired the relay to the actor.
+  let _ =
+    process.spawn_unlinked(fn() {
+      case client.chat(messages, config, tools) {
+        Ok(response) -> {
+          // Send text content as a single chunk
+          case response.content {
+            "" -> Nil
+            content -> process.send(relay, TextChunk(content: content))
+          }
+          // If there are tool calls, send them
+          case response.tool_calls {
+            Some(calls) -> {
+              list.each(calls, fn(call) {
+                process.send(
+                  relay,
+                  ToolCallChunk(
+                    id: call.id,
+                    name: call.name,
+                    arguments_delta: call.arguments,
+                    index: 0,
+                  ),
+                )
+              })
+              Nil
+            }
+            None -> Nil
+          }
+          process.send(relay, Done)
+        }
+        Error(error) ->
+          process.send(relay, StreamError(reason: format_stream_error(error)))
+      }
+    })
 
   relay
+}
+
+fn format_stream_error(error: provider.LLMError) -> String {
+  case error {
+    provider.APIError(status, message) ->
+      "API error " <> int.to_string(status) <> ": " <> message
+    provider.NetworkError(reason) -> "Network error: " <> reason
+    provider.ConfigError(reason) -> "Config error: " <> reason
+    provider.ProviderNotFound(name) -> "Provider not found: " <> name
+    provider.NotImplemented(reason) -> "Not implemented: " <> reason
+    provider.CircuitOpen(provider) -> "Circuit open: " <> provider
+  }
 }
 
 /// Handle stream actor messages.

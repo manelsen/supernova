@@ -31,6 +31,8 @@ import gleam/dynamic/decode
 import gleam/hackney
 import gleam/http
 import gleam/http/request
+import gleam/int
+import gleam/io
 import gleam/json
 import gleam/option.{None, Some}
 import gleam/string
@@ -88,15 +90,25 @@ fn do_request(body: String, api_key: String) -> Result(String, String) {
     |> request.set_header("authorization", "Bearer " <> api_key)
     |> request.set_body(body)
 
+  let _ = io.println("[minimax] Sending request body: " <> body)
+
   case hackney.send(req) {
     Ok(response) -> {
+      let _ =
+        io.println(
+          "[minimax] Response status: " <> int.to_string(response.status),
+        )
+      let _ = io.println("[minimax] Response body: " <> response.body)
       case response.status {
         200 -> Ok(response.body)
         status ->
           Error("API error " <> string.inspect(status) <> ": " <> response.body)
       }
     }
-    Error(_) -> Error("Network error connecting to MiniMax")
+    Error(err) -> {
+      let _ = io.println("[minimax] Hackney error: " <> string.inspect(err))
+      Error("Network error connecting to MiniMax")
+    }
   }
 }
 

@@ -5,6 +5,8 @@
 
 import gleam/float
 import gleam/int
+import gleam/io
+import gleam/string
 import supernova/llm/provider
 
 pub const default_initial_delay_ms: Int = 1000
@@ -116,8 +118,24 @@ fn with_retry_loop(
   case work() {
     Ok(response) -> Ok(response)
     Error(err) -> {
+      let _ =
+        io.println(
+          "[retry] Attempt "
+          <> int.to_string(attempt)
+          <> " error: "
+          <> string.inspect(err),
+        )
       case attempt >= config.max_attempts {
-        True -> Error(err)
+        True -> {
+          let _ =
+            io.println(
+              "[retry] Giving up after "
+              <> int.to_string(attempt)
+              <> " attempts: "
+              <> string.inspect(err),
+            )
+          Error(err)
+        }
         False -> {
           case is_retryable(err) {
             ShouldRetry -> {
