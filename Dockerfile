@@ -25,4 +25,4 @@ RUN gleam deps download
 COPY . .
 RUN gleam build
 
-CMD ["/bin/sh"]
+CMD ["gleam", "run"]
