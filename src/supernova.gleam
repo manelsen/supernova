@@ -204,7 +204,7 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
 
   // Retrieve metrics from global (set by supervisor child start)
   // Retry for up to 2 seconds to allow actors to fully register
-  use metrics <- result.try(wait_for_metrics(20))
+  use metrics <- result.try(wait_for_metrics(100))
 
   let mcp_servers = config_loader.parse_servers_from_file("supernova.yaml")
   case list.length(mcp_servers) {
@@ -251,16 +251,11 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
 
 // Wait for metrics actor to register in global with retry (up to 2s)
 fn wait_for_metrics(attempts: Int) -> Result(metrics_global.Metrics, String) {
-  io.println("DEBUG: wait_for_metrics attempts=" <> int.to_string(attempts))
   case attempts <= 0 {
     True -> Error("Metrics actor not available after supervisor start")
     False -> {
-      io.println("DEBUG: checking metrics_global.get_metrics()")
       case metrics_global.get_metrics() {
-        Some(m) -> {
-          io.println("DEBUG: got metrics")
-          Ok(m)
-        }
+        Some(m) -> Ok(m)
         None -> {
           sleep(100)
           wait_for_metrics(attempts - 1)
