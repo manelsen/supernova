@@ -1,6 +1,6 @@
 # Supernova CLI
 
-The `supernova` CLI manages the Supernova installation.
+The `supernova` CLI manages the Supernova installation via Docker.
 
 ## Installation
 
@@ -14,25 +14,28 @@ chmod +x supernova
 
 | Command | Description |
 |---------|-------------|
-| `./supernova install` | Download and install the binary |
-| `./supernova configure` | Run the configuration wizard |
-| `./supernova start` | Start the service |
-| `./supernova stop` | Stop the service |
-| `./supernova restart` | Restart the service |
+| `./supernova install` | Pull Docker image |
+| `./supernova configure` | Run wizard (via Docker) |
+| `./supernova enable` | Show auto-start setup |
+| `./supernova start` | Start service (via Docker) |
+| `./supernova stop` | Stop service |
+| `./supernova restart` | Restart service |
 | `./supernova status` | Show service status |
 | `./supernova logs` | Show recent logs |
 | `./supernova logs -f` | Follow logs in real-time |
 | `./supernova update` | Update to latest version |
-| `./supernova uninstall` | Remove installation |
 | `./supernova doctor` | Check system requirements |
 | `./supernova help` | Show help |
 
 ## Environment variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SN_USER_DIR` | Installation directory | `~/.local/supernova` |
-| `SN_CONFIG_DIR` | Config directory | `~/.config/supernova` |
+Set these in `~/.config/supernova/secrets.env`:
+
+```bash
+SUPERNOVA_ANTHROPIC_API_KEY=your_key
+SUPERNOVA_DISCORD_TOKEN=your_token
+# etc.
+```
 
 ## Examples
 
@@ -51,12 +54,7 @@ chmod +x supernova
 ./supernova restart
 ```
 
-## Development
+## Requirements
 
-For local development without the CLI:
-
-```bash
-gleam deps download
-gleam run -m supernova/wizard_main
-gleam run
-```
+- Docker installed and running
+- No root access required

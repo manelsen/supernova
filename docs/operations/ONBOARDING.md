@@ -15,7 +15,7 @@ chmod +x supernova
 ./supernova start
 ```
 
-That's it. No root access required.
+Requirements: Docker installed and running.
 
 ## Managing the service
 
@@ -28,10 +28,6 @@ That's it. No root access required.
 
 ## Troubleshooting
 
-- `command not found: supernova`: Make sure `~/.local/bin` is in your PATH, or run with `./supernova`
+- Docker required: Install Docker from https://docker.com
 - No response from channels: Check logs with `./supernova logs`
 - Configuration issues: Run `./supernova configure` again
-
-## Docker (development only)
-
-For local development with Docker, see [DOCKER.md](DOCKER.md).

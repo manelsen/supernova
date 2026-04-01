@@ -228,26 +228,31 @@ Switch providers per-session. A user can type `/model claude-3-5-sonnet` and the
 
 ---
 
-## Quickstart (Linux/macOS)
-
-```sh
-# Download and install
+## Quickstart
+```bash
+# Download the CLI
 curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/supernova -o supernova
 chmod +x supernova
+
+# Install Docker image
 ./supernova install
 
-# Configure
+# Configure (runs wizard via Docker)
 ./supernova configure
 
 # Start
 ./supernova start
 ```
+Requirements: Docker installed and running.
 
-That's it. No root required.
 
 See [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for full details.
 
+---
+
 ### Development
+
+For local development with Gleam:
 
 ```sh
 gleam deps download   # install dependencies
@@ -255,11 +260,6 @@ gleam build           # compile
 gleam test            # run tests
 gleam format          # format code
 ```
-
-### Docker (development only)
-
-Docker is available for local development and advanced setups. See [docs/operations/DOCKER.md](docs/operations/DOCKER.md).
-Do not use Docker for production deployments — use the systemd quickstart above.
 
 ---
 
