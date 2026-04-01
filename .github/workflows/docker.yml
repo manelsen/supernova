@@ -54,3 +54,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Make container public
+        if: github.event_name != 'pull_request'
+        run: |
+          gh api /user/packages/container/supernova/generic --method PUT -f visibility=public
