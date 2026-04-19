@@ -1,5 +1,5 @@
 -module(supernova_file_system_ffi).
--export([read_file/1, write_file/2, list_dir/1]).
+-export([read_file/1, write_file/2, list_dir/1, ensure_dir/1]).
 
 read_file(Path) ->
   case file:read_file(Path) of
@@ -16,5 +16,11 @@ write_file(Path, Content) ->
 list_dir(Path) ->
   case file:list_dir(Path) of
     {ok, Files} -> {ok, [list_to_binary(F) || F <- Files]};
+    {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
+  end.
+
+ensure_dir(Path) ->
+  case filelib:ensure_dir(filename:join(Path, "__placeholder__")) of
+    ok -> {ok, nil};
     {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
   end.
