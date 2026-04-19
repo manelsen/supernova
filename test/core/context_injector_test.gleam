@@ -1,6 +1,8 @@
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
 import supernova/core/context_injector
+import supernova/core/persona/types as persona_types
 import supernova/core/prompt_assembly
 import supernova/core/world_model/pure as wm_pure
 import supernova/core/world_model/types.{FactDecision, FactEntity, FactGoal}
@@ -144,4 +146,50 @@ pub fn prepare_with_world_model_injects_facts_test() {
     system_msg.content,
     "System constraint: max 3 retries",
   ))
+}
+
+pub fn build_companion_system_context_includes_persona_blocks_test() {
+  let persona =
+    persona_types.PersonaFiles(
+      identity: "# Identidade\n\n**Nome:** Aurora",
+      soul: "# Alma e Valores\n\nHonestidade radical.",
+      user: "# Perfil do Usuário\n\n**Nome:** Micelio",
+      style: "# Estilo de Comunicação\n\nRespostas curtas.",
+    )
+
+  let context =
+    prompt_assembly.build_companion_system_context(
+      workspace_path: "workspaces/agent:user-1",
+      persona: Some(persona),
+      self_state_block: None,
+      lessons_block: [],
+      relationship_block: None,
+      world_model_facts: "Sem fatos relevantes.",
+    )
+
+  should.be_true(string.contains(context, "# IDENTIDADE"))
+  should.be_true(string.contains(context, "## ALMA E VALORES"))
+  should.be_true(string.contains(context, "## USUÁRIO"))
+  should.be_true(string.contains(context, "## ESTILO DE COMUNICAÇÃO"))
+  should.be_true(string.contains(context, "## WORKSPACE"))
+  should.be_true(string.contains(context, "## CONTEXTO DO WORLD MODEL"))
+}
+
+pub fn build_companion_system_context_includes_lessons_block_test() {
+  let context =
+    prompt_assembly.build_companion_system_context(
+      workspace_path: "workspaces/agent:user-1",
+      persona: None,
+      self_state_block: None,
+      lessons_block: [
+        "[Erro] Validar argumentos antes de executar.\nContexto: Build",
+        "[Sucesso] Revisar plano antes de responder.\nContexto: Planejamento",
+      ],
+      relationship_block: None,
+      world_model_facts: "Sem fatos relevantes.",
+    )
+
+  should.be_true(string.contains(context, "## LIÇÕES RECENTES (Auto-melhoria):"))
+  should.be_true(string.contains(context, "1. [Erro]"))
+  should.be_true(string.contains(context, "2. [Sucesso]"))
 }

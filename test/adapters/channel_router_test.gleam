@@ -1,12 +1,15 @@
 //// Tests for Telegram/Discord routers using the shared channel port contract.
 
 import gleam/erlang/process
+import gleam/list
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import supernova/adapters/discord_router
 import supernova/adapters/telegram_router
 import supernova/channel/port
 import supernova/channel/session
+import supernova/core/persona/loader as persona_loader
 import supernova/core/session/server
 import supernova/core/session/supervisor
 import supernova/llm/provider
@@ -62,6 +65,35 @@ fn interaction(
       source_message_id: None,
     ),
   )
+}
+
+fn complete_telegram_bootstrap(
+  router: telegram_router.TelegramRouter,
+  channel_id: String,
+  user_id: String,
+  username: String,
+) -> Nil {
+  [
+    "/reset-identity",
+    "Aurora",
+    "Curiosa e técnica.",
+    "Respostas curtas em português.",
+    "Pode me chamar de Micelio.",
+  ]
+  |> list.each(fn(content) {
+    let msg =
+      message(
+        "tg-bootstrap-" <> content,
+        "telegram",
+        channel_id,
+        user_id,
+        username,
+        content,
+        False,
+      )
+    let _ = telegram_router.route(router, msg)
+    Nil
+  })
 }
 
 pub fn telegram_router_routes_message_test() {
@@ -784,6 +816,7 @@ pub fn telegram_router_records_history_in_supervised_session_test() {
       session_sup,
       mock_provider_config(),
     )
+  complete_telegram_bootstrap(router, "chat-history", "user-history", "alice")
 
   let first_msg =
     message(
@@ -830,6 +863,7 @@ pub fn telegram_router_handler_streams_and_records_history_test() {
       session_sup,
       mock_provider_config(),
     )
+  complete_telegram_bootstrap(router, "chat-stream", "user-stream", "alice")
   let msg =
     message(
       "tg-stream-1",
@@ -889,6 +923,188 @@ pub fn telegram_router_handler_streams_and_records_history_test() {
     server.ChatMessage(role: "user", content: "stream this reply"),
     server.ChatMessage(role: "assistant", content: "Mock streaming response"),
   ])
+}
+
+pub fn telegram_router_supervised_first_message_starts_identity_bootstrap_test() {
+  let assert Ok(session_sup) = supervisor.start()
+  let assert Ok(router) =
+    telegram_router.start_with_session_supervisor(
+      session_sup,
+      mock_provider_config(),
+    )
+
+  let msg =
+    message(
+      "tg-prd-bootstrap-1",
+      "telegram",
+      "chat-prd-bootstrap",
+      "user-prd-bootstrap",
+      "alice",
+      "olá",
+      False,
+    )
+
+  case telegram_router.route(router, msg) {
+    Ok(reply) ->
+      string.contains(reply.content, "Como você quer me chamar?")
+      |> should.equal(True)
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn telegram_router_supervised_bootstrap_writes_persona_files_test() {
+  let assert Ok(session_sup) = supervisor.start()
+  let assert Ok(router) =
+    telegram_router.start_with_session_supervisor(
+      session_sup,
+      mock_provider_config(),
+    )
+
+  let first =
+    message(
+      "tg-prd-bootstrap-2-1",
+      "telegram",
+      "chat-prd-bootstrap-2",
+      "user-prd-bootstrap-2",
+      "alice",
+      "/reset-identity",
+      False,
+    )
+  let second =
+    message(
+      "tg-prd-bootstrap-2-2",
+      "telegram",
+      "chat-prd-bootstrap-2",
+      "user-prd-bootstrap-2",
+      "alice",
+      "Aurora",
+      False,
+    )
+  let third =
+    message(
+      "tg-prd-bootstrap-2-3",
+      "telegram",
+      "chat-prd-bootstrap-2",
+      "user-prd-bootstrap-2",
+      "alice",
+      "Curiosa e direta.",
+      False,
+    )
+  let fourth =
+    message(
+      "tg-prd-bootstrap-2-4",
+      "telegram",
+      "chat-prd-bootstrap-2",
+      "user-prd-bootstrap-2",
+      "alice",
+      "Respostas curtas, sem emojis.",
+      False,
+    )
+  let fifth =
+    message(
+      "tg-prd-bootstrap-2-5",
+      "telegram",
+      "chat-prd-bootstrap-2",
+      "user-prd-bootstrap-2",
+      "alice",
+      "Me chame de Micelio.",
+      False,
+    )
+
+  let assert Ok(r1) = telegram_router.route(router, first)
+  let assert Ok(r2) = telegram_router.route(router, second)
+  let assert Ok(r3) = telegram_router.route(router, third)
+  let assert Ok(r4) = telegram_router.route(router, fourth)
+  let assert Ok(r5) = telegram_router.route(router, fifth)
+
+  string.contains(r1.content, "Como você quer me chamar?") |> should.equal(True)
+  string.contains(
+    r2.content,
+    "Que tipo de personalidade você quer que eu tenha?",
+  )
+  |> should.equal(True)
+  string.contains(r3.content, "Como prefere que eu me comunique?")
+  |> should.equal(True)
+  string.contains(r4.content, "E como devo te chamar?")
+  |> should.equal(True)
+  string.contains(r5.content, "Pronto! Sou Aurora agora.")
+  |> should.equal(True)
+
+  let workspace_path = "workspaces/agent:user-prd-bootstrap-2"
+  let assert Ok(persona) = persona_loader.load(workspace_path)
+  string.contains(persona.identity, "**Nome:** Aurora")
+  |> should.equal(True)
+}
+
+pub fn telegram_router_reset_identity_restarts_bootstrap_test() {
+  let assert Ok(session_sup) = supervisor.start()
+  let assert Ok(router) =
+    telegram_router.start_with_session_supervisor(
+      session_sup,
+      mock_provider_config(),
+    )
+  complete_telegram_bootstrap(
+    router,
+    "chat-prd-bootstrap-reset",
+    "user-prd-bootstrap-reset",
+    "alice",
+  )
+
+  let reset_msg =
+    message(
+      "tg-prd-bootstrap-reset-1",
+      "telegram",
+      "chat-prd-bootstrap-reset",
+      "user-prd-bootstrap-reset",
+      "alice",
+      "/reset-identity",
+      False,
+    )
+
+  case telegram_router.route(router, reset_msg) {
+    Ok(reply) ->
+      string.contains(reply.content, "Como você quer me chamar?")
+      |> should.equal(True)
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn telegram_router_updates_self_state_after_successful_turn_test() {
+  let assert Ok(session_sup) = supervisor.start()
+  let assert Ok(router) =
+    telegram_router.start_with_session_supervisor(
+      session_sup,
+      mock_provider_config(),
+    )
+  complete_telegram_bootstrap(
+    router,
+    "chat-prd-self-state",
+    "user-prd-self-state",
+    "alice",
+  )
+
+  let turn =
+    message(
+      "tg-prd-self-state-1",
+      "telegram",
+      "chat-prd-self-state",
+      "user-prd-self-state",
+      "alice",
+      "responda qualquer coisa",
+      False,
+    )
+  let assert Ok(_) = telegram_router.route(router, turn)
+
+  let assert Ok(serialized_state) =
+    ffi_read_file(
+      "workspaces/agent:user-prd-self-state/.supernova/SELF_STATE.json",
+    )
+  serialized_state
+  |> string.contains("\"mood_cause\":\"turn_success\"")
+  |> should.equal(True)
+  serialized_state
+  |> string.contains("\"valence\":0.0")
+  |> should.equal(False)
 }
 
 pub fn discord_router_selected_model_survives_router_restart_test() {
@@ -973,3 +1189,27 @@ pub fn discord_router_help_uses_channel_specific_text_test() {
     Error(_) -> should.fail()
   }
 }
+
+pub fn discord_router_help_shortcut_alias_test() {
+  let assert Ok(router) = discord_router.start(mock_provider_config())
+  let help_msg =
+    message(
+      "dc-help-alias-1",
+      "discord",
+      "channel-help",
+      "user-help",
+      "bob",
+      "ajuda",
+      False,
+    )
+
+  case discord_router.route(router, help_msg) {
+    Ok(reply) ->
+      string.contains(reply.content, "Supernova AI Agent Framework")
+      |> should.equal(True)
+    Error(_) -> should.fail()
+  }
+}
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn ffi_read_file(path: String) -> Result(String, String)
