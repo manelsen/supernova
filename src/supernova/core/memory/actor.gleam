@@ -13,13 +13,16 @@
 //// ```
 
 import gleam/erlang/process.{type Subject}
+import gleam/int
 import gleam/list
 import gleam/otp/actor
+import gleam/string
+import supernova/core/introspection/lesson
 import supernova/core/memory/pure
 import supernova/core/memory/types.{
   type ConsolidationResult, type HistoryEntry, type MemoryCommand,
   type MemoryEntry, type MemoryError, type MemoryState, EmitTelemetry,
-  HistoryEntry, MemoryState, ReadFile, WriteFile,
+  FileOperationError, HistoryEntry, MemoryState, ReadFile, WriteFile,
 }
 
 // ============================================================================
@@ -56,6 +59,13 @@ pub type MemoryMessage {
   GetHistory(reply_to: Subject(List(HistoryEntry)))
   /// Get all memory entries
   GetMemories(reply_to: Subject(List(MemoryEntry)))
+  /// Store a learned lesson
+  StoreLesson(
+    reply_to: Subject(Result(Nil, MemoryError)),
+    lesson: lesson.Lesson,
+  )
+  /// Get the most recent lessons
+  GetRecentLessons(reply_to: Subject(List(lesson.Lesson)), limit: Int)
   /// Stop the actor
   Stop(reply_to: Subject(Nil))
 }
@@ -63,6 +73,14 @@ pub type MemoryMessage {
 /// A handle to a running memory actor.
 pub type Memory =
   Subject(MemoryMessage)
+
+type ActorState {
+  ActorState(
+    memory_state: MemoryState,
+    lessons: List(lesson.Lesson),
+    lessons_path: String,
+  )
+}
 
 // ============================================================================
 // Actor Handler
@@ -90,9 +108,9 @@ fn execute_commands(commands: List(MemoryCommand)) -> Nil {
 
 /// Handle memory messages.
 fn handle_memory_message(
-  state: MemoryState,
+  state: ActorState,
   message: MemoryMessage,
-) -> actor.Next(MemoryState, MemoryMessage) {
+) -> actor.Next(ActorState, MemoryMessage) {
   case message {
     AppendHistory(reply_to, session_id, content) -> {
       let digest = pure.generate_digest(content)
@@ -107,42 +125,69 @@ fn handle_memory_message(
           consolidated: False,
         )
 
-      let #(new_state, commands) = pure.append_entry(state, entry)
+      let #(next_memory_state, commands) =
+        pure.append_entry(state.memory_state, entry)
       execute_commands(commands)
 
       actor.send(reply_to, Ok(entry))
-      actor.continue(new_state)
+      actor.continue(ActorState(..state, memory_state: next_memory_state))
     }
 
     Consolidate(reply_to, max_age_ms) -> {
       let current_time = ffi_current_timestamp()
-      let #(new_state, result, commands) =
-        pure.consolidate(state, current_time, max_age_ms)
+      let #(next_memory_state, result, commands) =
+        pure.consolidate(state.memory_state, current_time, max_age_ms)
       execute_commands(commands)
 
       actor.send(reply_to, result)
-      actor.continue(new_state)
+      actor.continue(ActorState(..state, memory_state: next_memory_state))
     }
 
     Recall(reply_to, query) -> {
-      let memories = pure.recall(state.memories, query)
+      let memories = pure.recall(state.memory_state.memories, query)
       actor.send(reply_to, memories)
       actor.continue(state)
     }
 
     LoadContext(reply_to, max_entries) -> {
-      let context = pure.build_context(state.memories, max_entries)
+      let context = pure.build_context(state.memory_state.memories, max_entries)
       actor.send(reply_to, context)
       actor.continue(state)
     }
 
     GetHistory(reply_to) -> {
-      actor.send(reply_to, state.history)
+      actor.send(reply_to, state.memory_state.history)
       actor.continue(state)
     }
 
     GetMemories(reply_to) -> {
-      actor.send(reply_to, state.memories)
+      actor.send(reply_to, state.memory_state.memories)
+      actor.continue(state)
+    }
+
+    StoreLesson(reply_to, new_lesson) -> {
+      let updated_lessons =
+        [new_lesson, ..state.lessons]
+        |> list.sort(fn(a, b) { int.compare(b.created_at, a.created_at) })
+        |> list.take(100)
+
+      case ffi_write_file(state.lessons_path, render_lessons(updated_lessons)) {
+        Ok(_) -> {
+          actor.send(reply_to, Ok(Nil))
+          actor.continue(ActorState(..state, lessons: updated_lessons))
+        }
+        Error(reason) -> {
+          actor.send(
+            reply_to,
+            Error(FileOperationError(path: state.lessons_path, reason: reason)),
+          )
+          actor.continue(state)
+        }
+      }
+    }
+
+    GetRecentLessons(reply_to, limit) -> {
+      actor.send(reply_to, list.take(state.lessons, limit))
       actor.continue(state)
     }
 
@@ -165,12 +210,18 @@ pub fn start(
   memory_path: String,
   history_path: String,
 ) -> Result(Memory, actor.StartError) {
-  let initial_state =
+  let initial_memory_state =
     MemoryState(
       history: [],
       memories: [],
       history_path: history_path,
       memory_path: memory_path,
+    )
+  let initial_state =
+    ActorState(
+      memory_state: initial_memory_state,
+      lessons: [],
+      lessons_path: history_path <> ".lessons.json",
     )
 
   case
@@ -232,7 +283,48 @@ pub fn get_memories(memory: Memory) -> List(MemoryEntry) {
   actor.call(memory, waiting: 5000, sending: GetMemories)
 }
 
+/// Store one lesson in memory.
+pub fn store_lesson(
+  memory: Memory,
+  new_lesson: lesson.Lesson,
+) -> Result(Nil, MemoryError) {
+  actor.call(memory, waiting: 5000, sending: StoreLesson(_, new_lesson))
+}
+
+/// Fetch recent lessons (most recent first).
+pub fn get_recent_lessons(memory: Memory, limit: Int) -> List(lesson.Lesson) {
+  actor.call(memory, waiting: 5000, sending: GetRecentLessons(_, limit))
+}
+
 /// Stop the memory actor gracefully.
 pub fn stop(memory: Memory) -> Nil {
   actor.call(memory, waiting: 5000, sending: Stop)
+}
+
+fn render_lessons(lessons: List(lesson.Lesson)) -> String {
+  case lessons {
+    [] -> "# Lessons\n\n_No lessons yet._\n"
+    _ ->
+      "# Lessons\n\n"
+      <> string.join(
+        list.map(lessons, fn(item) {
+          "- ["
+          <> lesson_type_label(item.lesson_type)
+          <> "] "
+          <> item.content
+          <> " ("
+          <> item.context
+          <> ")"
+        }),
+        "\n",
+      )
+      <> "\n"
+  }
+}
+
+fn lesson_type_label(value: lesson.LessonType) -> String {
+  case value {
+    lesson.ErrorLesson -> "error"
+    lesson.SuccessLesson -> "success"
+  }
 }

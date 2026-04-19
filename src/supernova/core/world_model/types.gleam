@@ -21,6 +21,8 @@ pub type FactType {
   FactConstraint
   /// A goal to be achieved
   FactGoal
+  /// Relationship state with an end user (warmth, notes, interactions)
+  FactRelationship
 }
 
 /// A single fact in the world model.
@@ -99,6 +101,7 @@ pub fn fact_type_to_string(ft: FactType) -> String {
     FactDecision -> "decision"
     FactConstraint -> "constraint"
     FactGoal -> "goal"
+    FactRelationship -> "relationship"
   }
 }
 

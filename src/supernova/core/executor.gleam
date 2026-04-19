@@ -14,6 +14,7 @@
 import gleam/dict
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
+import gleam/float
 import gleam/int
 import gleam/json
 import gleam/list
@@ -23,6 +24,7 @@ import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/budget_policy/types as budget_types
 import supernova/core/checkpoint/actor as checkpoint_actor
 import supernova/core/checkpoint/types as checkpoint_types
+import supernova/core/complexity_router
 import supernova/core/turn_outcome
 import supernova/llm/circuit_breaker/actor as cb_actor
 import supernova/llm/circuit_breaker/global as cb_global
@@ -89,6 +91,26 @@ fn record_llm_error(provider_name: String, model: String, error_type: String) {
         #("status", "error"),
         #("error_type", error_type),
       ])
+    option.None -> Nil
+  }
+}
+
+fn record_complexity_selection(
+  score: Float,
+  tier: complexity_router.ComplexityTier,
+  model_used: String,
+) {
+  case metrics_global.get_metrics() {
+    option.Some(metrics) -> {
+      metrics_actor.observe_histogram(metrics, "complexity_score", score, [
+        #("tier", complexity_router.tier_to_string(tier)),
+      ])
+      metrics_actor.inc_counter(metrics, "complexity_selected_tier_total", [
+        #("tier", complexity_router.tier_to_string(tier)),
+        #("model_used", model_used),
+        #("complexity_score", float.to_string(score)),
+      ])
+    }
     option.None -> Nil
   }
 }
@@ -220,18 +242,33 @@ fn run_loop(
   case depth > max_recursion_depth {
     True -> Error(MaxDepthExceeded(depth: depth))
     False -> {
+      let decision =
+        complexity_router.route(config, messages, list.length(tools), depth)
+      let selected_config = decision.selected_config
+      record_complexity_selection(
+        decision.score,
+        decision.tier,
+        selected_config.default_model,
+      )
       // Call LLM with metrics
       let start = current_timestamp()
       case
         retry.with_retry(default_retry_config, fn() {
-          with_llm_span(config.name, config.default_model, depth, fn() {
-            client.chat(messages, config, tools)
-          })
+          with_llm_span(
+            selected_config.name,
+            selected_config.default_model,
+            depth,
+            fn() { client.chat(messages, selected_config, tools) },
+          )
         })
       {
         Ok(response) -> {
           let elapsed = current_timestamp() - start
-          record_llm_latency(config.name, config.default_model, elapsed)
+          record_llm_latency(
+            selected_config.name,
+            selected_config.default_model,
+            elapsed,
+          )
           // Classify the outcome
           let outcome = turn_outcome.classify(response)
 
@@ -259,13 +296,94 @@ fn run_loop(
         }
         Error(err) -> {
           record_llm_error(
-            config.name,
-            config.default_model,
+            selected_config.name,
+            selected_config.default_model,
             error_type_name(err),
           )
           Error(LLMError(reason: err))
         }
       }
+    }
+  }
+}
+
+/// Inner loop body shared between yield-check and no-yield-check paths.
+fn run_loop_inner_with_checkpoint(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+  tools: List(provider.ToolDefinition),
+  depth: Int,
+  yield_config: YieldConfig,
+) -> Result(provider.ChatResponse, ExecutorError) {
+  let decision =
+    complexity_router.route(config, messages, list.length(tools), depth)
+  let selected_config = decision.selected_config
+  record_complexity_selection(
+    decision.score,
+    decision.tier,
+    selected_config.default_model,
+  )
+  let start = current_timestamp()
+  case
+    retry.with_retry(default_retry_config, fn() {
+      with_llm_span(
+        selected_config.name,
+        selected_config.default_model,
+        depth,
+        fn() { client.chat(messages, selected_config, tools) },
+      )
+    })
+  {
+    Ok(response) -> {
+      let elapsed = current_timestamp() - start
+      record_llm_latency(
+        selected_config.name,
+        selected_config.default_model,
+        elapsed,
+      )
+      let outcome = turn_outcome.classify(response)
+      case outcome {
+        turn_outcome.TextResponse -> Ok(response)
+        turn_outcome.ToolCall(calls) -> {
+          let updated_history =
+            list.append(messages, [
+              provider.assistant_message_with_tools(response.content, calls),
+            ])
+          case
+            maybe_consume_tool_budget(
+              updated_history,
+              calls,
+              depth,
+              yield_config,
+            )
+          {
+            Ok(Nil) -> {
+              let tool_results = execute_tool_calls(calls, tools)
+              let history_with_results =
+                list.append(updated_history, tool_results)
+              run_loop_with_checkpoint(
+                history_with_results,
+                config,
+                tools,
+                depth + 1,
+                yield_config,
+              )
+            }
+            Error(error) -> Error(error)
+          }
+        }
+        turn_outcome.Empty -> Ok(response)
+        turn_outcome.Error(msg) ->
+          Error(LLMError(reason: provider.APIError(status: 0, message: msg)))
+      }
+    }
+    Error(err) -> {
+      record_llm_error(
+        selected_config.name,
+        selected_config.default_model,
+        error_type_name(err),
+      )
+      Error(LLMError(reason: err))
     }
   }
 }
@@ -602,68 +720,6 @@ fn run_loop_with_checkpoint(
           )
         Error(error) -> Error(error)
       }
-    }
-  }
-}
-
-/// Inner loop body shared between yield-check and no-yield-check paths.
-fn run_loop_inner_with_checkpoint(
-  messages: List(provider.ChatMessage),
-  config: provider.ProviderConfig,
-  tools: List(provider.ToolDefinition),
-  depth: Int,
-  yield_config: YieldConfig,
-) -> Result(provider.ChatResponse, ExecutorError) {
-  let start = current_timestamp()
-  case
-    retry.with_retry(default_retry_config, fn() {
-      with_llm_span(config.name, config.default_model, depth, fn() {
-        client.chat(messages, config, tools)
-      })
-    })
-  {
-    Ok(response) -> {
-      let elapsed = current_timestamp() - start
-      record_llm_latency(config.name, config.default_model, elapsed)
-      let outcome = turn_outcome.classify(response)
-      case outcome {
-        turn_outcome.TextResponse -> Ok(response)
-        turn_outcome.ToolCall(calls) -> {
-          let updated_history =
-            list.append(messages, [
-              provider.assistant_message_with_tools(response.content, calls),
-            ])
-          case
-            maybe_consume_tool_budget(
-              updated_history,
-              calls,
-              depth,
-              yield_config,
-            )
-          {
-            Ok(Nil) -> {
-              let tool_results = execute_tool_calls(calls, tools)
-              let history_with_results =
-                list.append(updated_history, tool_results)
-              run_loop_with_checkpoint(
-                history_with_results,
-                config,
-                tools,
-                depth + 1,
-                yield_config,
-              )
-            }
-            Error(error) -> Error(error)
-          }
-        }
-        turn_outcome.Empty -> Ok(response)
-        turn_outcome.Error(msg) ->
-          Error(LLMError(reason: provider.APIError(status: 0, message: msg)))
-      }
-    }
-    Error(err) -> {
-      record_llm_error(config.name, config.default_model, error_type_name(err))
-      Error(LLMError(reason: err))
     }
   }
 }

@@ -4,6 +4,7 @@
 
 import gleam/list
 import gleeunit
+import supernova/core/introspection/lesson
 import supernova/core/memory/actor
 
 pub fn main() -> Nil {
@@ -149,6 +150,33 @@ pub fn get_memories_returns_empty_initially_test() {
   let memories = actor.get_memories(memory)
 
   assert memories == []
+
+  actor.stop(memory)
+}
+
+pub fn store_lesson_and_get_recent_lessons_test() {
+  let assert Ok(memory) =
+    actor.start("/tmp/test_memory.md", "/tmp/test_history.md")
+
+  let error_lesson =
+    lesson.make_error_lesson(
+      "session_1",
+      "Falha ao executar ferramenta.",
+      "Comando shell",
+    )
+  let success_lesson =
+    lesson.make_success_lesson(
+      "session_1",
+      "Revisar contexto antes de responder.",
+      "Resposta final",
+    )
+
+  let assert Ok(_) = actor.store_lesson(memory, error_lesson)
+  let assert Ok(_) = actor.store_lesson(memory, success_lesson)
+
+  let recent = actor.get_recent_lessons(memory, 1)
+  let assert [head] = recent
+  assert head.lesson_type == lesson.SuccessLesson
 
   actor.stop(memory)
 }

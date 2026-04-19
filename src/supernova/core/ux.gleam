@@ -2,6 +2,42 @@
 ////
 //// Provides channel-specific help text for Supernova.
 
+import gleam/string
+
+pub type Command {
+  Menu
+  Status
+  Models
+  NewSession
+  ResetIdentity
+  Help
+  Ping
+  Think
+}
+
+pub fn resolve_shortcut(input: String) -> Result(Command, Nil) {
+  let normalized =
+    input
+    |> string.trim
+    |> string.lowercase
+  let normalized = case string.starts_with(normalized, "/") {
+    True -> string.drop_start(normalized, 1)
+    False -> normalized
+  }
+
+  case normalized {
+    "help" | "ajuda" | "?" -> Ok(Help)
+    "menu" | "inicio" | "início" | "commands" -> Ok(Menu)
+    "modelo" | "modelos" | "models" | "model" -> Ok(Models)
+    "novo" | "new" | "reset" | "start" -> Ok(NewSession)
+    "status" | "estado" -> Ok(Status)
+    "ping" -> Ok(Ping)
+    "pensa" | "think" | "raciocina" | "reasoning" -> Ok(Think)
+    "reset-identity" -> Ok(ResetIdentity)
+    _ -> Error(Nil)
+  }
+}
+
 /// Get help text for a specific channel.
 pub fn help_text(channel: String) -> String {
   let base = "Supernova AI Agent Framework\n\n"
@@ -74,7 +110,6 @@ pub fn help_text(channel: String) -> String {
   base <> commands
 }
 
-
 /// Get the full commands list for a specific channel.
 pub fn commands_text(channel: String) -> String {
   let base = "Available Commands\n\n"
@@ -94,7 +129,8 @@ pub fn commands_text(channel: String) -> String {
       <> "/status - Show session status\n"
       <> "/model - Change LLM model\n"
   }
-  let tools = "\nTools (via natural language):\n"
+  let tools =
+    "\nTools (via natural language):\n"
     <> "Browse web pages and interact with websites\n"
     <> "Read, write and manage files\n"
     <> "Execute shell commands\n"

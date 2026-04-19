@@ -175,6 +175,7 @@ fn fact_type_to_string(fact_type: world_model.FactType) -> String {
     world_model.FactDecision -> "decision"
     world_model.FactConstraint -> "constraint"
     world_model.FactGoal -> "goal"
+    world_model.FactRelationship -> "relationship"
   }
 }
 

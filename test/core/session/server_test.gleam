@@ -56,3 +56,19 @@ pub fn stop_session_test() {
 
   let assert Ok(Nil) = server.stop(session)
 }
+
+pub fn preferences_can_be_updated_test() {
+  let assert Ok(session) = server.new("test_session_006")
+  let prefs =
+    server.SessionPreferences(
+      model_override: Some("mock-alt-model"),
+      thinking_enabled: True,
+      reasoning_visible: True,
+      language: "pt-BR",
+      response_length: server.Verbose,
+    )
+
+  let assert Ok(Nil) = server.set_preferences(session, prefs)
+  server.get_preferences(session)
+  |> should.equal(prefs)
+}

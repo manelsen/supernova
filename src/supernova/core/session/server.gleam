@@ -38,6 +38,32 @@ pub type ChatMessage {
   ChatMessage(role: String, content: String)
 }
 
+pub type ResponseLength {
+  Short
+  Normal
+  Verbose
+}
+
+pub type SessionPreferences {
+  SessionPreferences(
+    model_override: Option(String),
+    thinking_enabled: Bool,
+    reasoning_visible: Bool,
+    language: String,
+    response_length: ResponseLength,
+  )
+}
+
+pub fn default_preferences() -> SessionPreferences {
+  SessionPreferences(
+    model_override: None,
+    thinking_enabled: False,
+    reasoning_visible: False,
+    language: "pt-BR",
+    response_length: Normal,
+  )
+}
+
 /// Messages that the session server handles.
 pub type SessionMessage {
   /// Get the session ID
@@ -50,12 +76,19 @@ pub type SessionMessage {
   GetModel(reply_to: Subject(Option(String)))
   /// Get the full persisted LLM config override (if any)
   GetLLMConfig(reply_to: Subject(Option(provider.ProviderConfig)))
+  /// Get session preferences
+  GetPreferences(reply_to: Subject(SessionPreferences))
   /// Set the model override
   SetModel(reply_to: Subject(Result(Nil, Nil)), model: String)
   /// Set the full persisted LLM config override
   SetLLMConfig(
     reply_to: Subject(Result(Nil, Nil)),
     llm_config: provider.ProviderConfig,
+  )
+  /// Replace session preferences
+  SetPreferences(
+    reply_to: Subject(Result(Nil, Nil)),
+    preferences: SessionPreferences,
   )
   /// Clear the model override
   ClearModel(reply_to: Subject(Result(Nil, Nil)))
@@ -82,6 +115,7 @@ type SessionState {
     history: List(ChatMessage),
     model_override: Option(String),
     llm_config_override: Option(provider.ProviderConfig),
+    preferences: SessionPreferences,
   )
 }
 
@@ -120,17 +154,25 @@ fn handle_session_message(
       actor.continue(state)
     }
 
+    GetPreferences(reply_to) -> {
+      actor.send(reply_to, state.preferences)
+      actor.continue(state)
+    }
+
     SetModel(reply_to, model) -> {
       let next_llm_config = case state.llm_config_override {
         Some(config) ->
           Some(provider.ProviderConfig(..config, default_model: model))
         None -> None
       }
+      let next_preferences =
+        SessionPreferences(..state.preferences, model_override: Some(model))
       let new_state =
         SessionState(
           ..state,
           model_override: Some(model),
           llm_config_override: next_llm_config,
+          preferences: next_preferences,
         )
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
@@ -142,6 +184,10 @@ fn handle_session_message(
           ..state,
           model_override: Some(llm_config.default_model),
           llm_config_override: Some(llm_config),
+          preferences: SessionPreferences(
+            ..state.preferences,
+            model_override: Some(llm_config.default_model),
+          ),
         )
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
@@ -149,14 +195,36 @@ fn handle_session_message(
 
     ClearModel(reply_to) -> {
       let new_state =
-        SessionState(..state, model_override: None, llm_config_override: None)
+        SessionState(
+          ..state,
+          model_override: None,
+          llm_config_override: None,
+          preferences: SessionPreferences(
+            ..state.preferences,
+            model_override: None,
+          ),
+        )
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
     }
 
     ClearLLMConfig(reply_to) -> {
       let new_state =
-        SessionState(..state, model_override: None, llm_config_override: None)
+        SessionState(
+          ..state,
+          model_override: None,
+          llm_config_override: None,
+          preferences: SessionPreferences(
+            ..state.preferences,
+            model_override: None,
+          ),
+        )
+      actor.send(reply_to, Ok(Nil))
+      actor.continue(new_state)
+    }
+
+    SetPreferences(reply_to, preferences) -> {
+      let new_state = SessionState(..state, preferences: preferences)
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
     }
@@ -190,6 +258,7 @@ pub fn new(session_id: String) -> Result(Session, actor.StartError) {
       history: [],
       model_override: None,
       llm_config_override: None,
+      preferences: default_preferences(),
     )
 
   actor.new(initial_state)
@@ -223,6 +292,11 @@ pub fn get_llm_config(session: Session) -> Option(provider.ProviderConfig) {
   actor.call(session, waiting: 5000, sending: GetLLMConfig)
 }
 
+/// Get session preferences.
+pub fn get_preferences(session: Session) -> SessionPreferences {
+  actor.call(session, waiting: 5000, sending: GetPreferences)
+}
+
 /// Set the model override.
 pub fn set_model(session: Session, model: String) -> Result(Nil, Nil) {
   actor.call(session, waiting: 5000, sending: SetModel(_, model))
@@ -234,6 +308,14 @@ pub fn set_llm_config(
   llm_config: provider.ProviderConfig,
 ) -> Result(Nil, Nil) {
   actor.call(session, waiting: 5000, sending: SetLLMConfig(_, llm_config))
+}
+
+/// Replace session preferences.
+pub fn set_preferences(
+  session: Session,
+  preferences: SessionPreferences,
+) -> Result(Nil, Nil) {
+  actor.call(session, waiting: 5000, sending: SetPreferences(_, preferences))
 }
 
 /// Clear the model override.
