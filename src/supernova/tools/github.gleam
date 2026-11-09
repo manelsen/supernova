@@ -243,7 +243,7 @@ fn get_env(key: String) -> Option(String) {
 fn parse_runtime_config_from_yaml(
   yaml_string: String,
 ) -> #(Option(String), Option(String)) {
-  case yay.parse_string(yaml_string) {
+  case yay.parse_string(string.trim(yaml_string)) {
     Ok([document]) -> parse_runtime_config_root(yay.document_root(document))
     _ -> #(None, None)
   }

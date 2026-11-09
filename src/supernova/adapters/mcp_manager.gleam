@@ -46,10 +46,12 @@ pub type ServerConfig {
 /// A discovered tool from an MCP server.
 pub type MCPTool {
   MCPTool(
-    /// Tool definition (for LLM)
+    /// Tool definition (for LLM). spec.name is qualified: "server_name/tool_name"
     spec: provider.ToolDefinition,
     /// Which server provides this tool
     server_name: String,
+    /// Original tool name as declared by the MCP server (unqualified)
+    original_name: String,
   )
 }
 
@@ -134,19 +136,44 @@ fn initialize_params() -> String {
   "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"supernova\",\"version\":\"1.0.0\"}}"
 }
 
+fn supported_protocol_versions() -> List(String) {
+  ["2024-11-05"]
+}
+
+fn protocol_version_decoder() -> decode.Decoder(String) {
+  use version <- decode.field("protocolVersion", decode.string)
+  decode.success(version)
+}
+
+fn validate_protocol_version(result_json: String) -> Result(Nil, String) {
+  case json.parse(result_json, protocol_version_decoder()) {
+    Ok(version) ->
+      case list.contains(supported_protocol_versions(), version) {
+        True -> Ok(Nil)
+        False -> Error("Unsupported MCP protocol version: " <> version)
+      }
+    Error(_) ->
+      Error("Missing protocolVersion in initialize response")
+  }
+}
+
 /// Send the initialize handshake to an MCP server.
 fn send_initialize(transport: StdioTransport, id: Int) -> Result(Nil, String) {
   let request = jsonrpc_request(id, "initialize", initialize_params())
   case stdio.send_and_receive(transport, request, 10_000) {
     Ok(response) -> {
       case parse_jsonrpc_result(response) {
-        Ok(_) -> {
-          // Send initialized notification
-          let notification =
-            jsonrpc_notification("notifications/initialized", "{}")
-          case stdio.send_only(transport, notification) {
-            Ok(_) -> Ok(Nil)
-            Error(e) -> Error("Failed to send initialized: " <> e)
+        Ok(result_json) -> {
+          case validate_protocol_version(result_json) {
+            Error(e) -> Error(e)
+            Ok(_) -> {
+              let notification =
+                jsonrpc_notification("notifications/initialized", "{}")
+              case stdio.send_only(transport, notification) {
+                Ok(_) -> Ok(Nil)
+                Error(e) -> Error("Failed to send initialized: " <> e)
+              }
+            }
           }
         }
         Error(e) -> Error("Initialize failed: " <> e)
@@ -202,13 +229,18 @@ fn tools_list_decoder(server_name: String) -> decode.Decoder(List(MCPTool)) {
 fn tool_decoder(server_name: String) -> decode.Decoder(MCPTool) {
   use name <- decode.field("name", decode.string)
   use description <- decode.optional_field("description", "", decode.string)
+  let qualified_name = server_name <> "/" <> name
   let spec =
     provider.ToolDefinition(
-      name: name,
+      name: qualified_name,
       description: description,
       parameters: [],
     )
-  decode.success(MCPTool(spec: spec, server_name: server_name))
+  decode.success(MCPTool(
+    spec: spec,
+    server_name: server_name,
+    original_name: name,
+  ))
 }
 
 // ============================================================================
@@ -427,25 +459,39 @@ fn handle_message(
     ExecuteTool(reply_to, tool_name, args) -> {
       case dict.get(state.tools, tool_name) {
         Ok(mcp_tool) -> {
-          // Find the server connection
           case dict.get(state.servers, mcp_tool.server_name) {
             Ok(connection) -> {
               let id = connection.request_id
               let result =
-                send_tools_call(connection.transport, id, tool_name, args)
-
-              // Update request ID
-              let updated_connection =
-                ServerConnection(..connection, request_id: id + 1)
-              let new_servers =
-                dict.insert(
-                  state.servers,
-                  mcp_tool.server_name,
-                  updated_connection,
+                send_tools_call(
+                  connection.transport,
+                  id,
+                  mcp_tool.original_name,
+                  args,
                 )
 
-              actor.send(reply_to, result)
-              actor.continue(ManagerState(..state, servers: new_servers))
+              case result {
+                Ok(_) -> {
+                  let updated_connection =
+                    ServerConnection(..connection, request_id: id + 1)
+                  let new_servers =
+                    dict.insert(
+                      state.servers,
+                      mcp_tool.server_name,
+                      updated_connection,
+                    )
+                  actor.send(reply_to, result)
+                  actor.continue(ManagerState(..state, servers: new_servers))
+                }
+                Error(e) -> {
+                  let new_state = case is_process_dead_error(e) {
+                    True -> evict_dead_server(state, mcp_tool.server_name)
+                    False -> state
+                  }
+                  actor.send(reply_to, Error(e))
+                  actor.continue(new_state)
+                }
+              }
             }
             Error(_) -> {
               actor.send(
@@ -476,6 +522,17 @@ fn handle_message(
 
 fn string_compare(a: String, b: String) -> order.Order {
   string.compare(a, b)
+}
+
+fn is_process_dead_error(e: String) -> Bool {
+  string.contains(e, "exited") || string.contains(e, "Port not open")
+}
+
+fn evict_dead_server(state: ManagerState, server_name: String) -> ManagerState {
+  let new_servers = dict.delete(state.servers, server_name)
+  let new_tools =
+    dict.filter(state.tools, fn(_k, t) { t.server_name != server_name })
+  ManagerState(servers: new_servers, tools: new_tools)
 }
 
 // ============================================================================

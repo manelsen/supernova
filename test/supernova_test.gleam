@@ -1,4 +1,5 @@
 import gleeunit
+import supernova
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -10,4 +11,8 @@ pub fn hello_world_test() {
   let greeting = "Hello, " <> name <> "!"
 
   assert greeting == "Hello, Joe!"
+}
+
+pub fn main_handles_missing_runtime_config_without_crashing_test() {
+  supernova.main()
 }

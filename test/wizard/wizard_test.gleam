@@ -4,14 +4,27 @@
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit
+import gleeunit/should
 import supernova/wizard.{
-  WizardState, discord_guide_steps, empty_state, format_guide, generate_yaml,
-  telegram_guide_steps,
+  FileWriteError, UserCancelled, WizardState, discord_guide_steps, empty_state,
+  format_guide, generate_yaml, run, telegram_guide_steps,
 }
 
 pub fn main() -> Nil {
   gleeunit.main()
 }
+
+@external(erlang, "supernova_wizard_ffi", "set_test_inputs")
+fn set_test_inputs(inputs: List(String)) -> Nil
+
+@external(erlang, "supernova_wizard_ffi", "set_test_write_error")
+fn set_test_write_error(message: String) -> Nil
+
+@external(erlang, "supernova_wizard_ffi", "get_test_writes")
+fn get_test_writes() -> List(#(String, String))
+
+@external(erlang, "supernova_wizard_ffi", "clear_test_state")
+fn clear_test_state() -> Nil
 
 // ============================================================================
 // empty_state Tests
@@ -439,6 +452,131 @@ pub fn generate_yaml_discord_with_guild_id_test() {
     True -> Nil
     False -> panic as "YAML should contain guild_id when set"
   }
+}
+
+pub fn run_wizard_discord_flow_writes_configuration_test() {
+  clear_test_state()
+  set_test_inputs([
+    "wizard-app",
+    "1",
+    "discord-token-xyz",
+    "app-123",
+    "",
+    "1",
+    "sk-test",
+    "gpt-4o-mini",
+    "2",
+    "/tmp/supernova-wizard-test.yaml",
+  ])
+
+  run() |> should_equal(Ok(Nil))
+
+  case get_test_writes() {
+    [#(path, content)] -> {
+      path |> should_equal("/tmp/supernova-wizard-test.yaml")
+      string.contains(content, "app_name: \"wizard-app\"") |> should_equal(True)
+      string.contains(content, "discord:") |> should_equal(True)
+      string.contains(content, "token: \"discord-token-xyz\"")
+      |> should_equal(True)
+      string.contains(content, "app_id: \"app-123\"") |> should_equal(True)
+      string.contains(content, "providers:") |> should_equal(True)
+      string.contains(content, "api_key: \"sk-test\"") |> should_equal(True)
+      string.contains(content, "memory_backend: \"sqlite\"")
+      |> should_equal(True)
+    }
+    _ -> panic as "Wizard should write exactly one config file in test mode"
+  }
+
+  clear_test_state()
+}
+
+pub fn run_wizard_returns_file_write_error_when_write_fails_test() {
+  clear_test_state()
+  set_test_inputs([
+    "wizard-app",
+    "2",
+    "telegram-token-xyz",
+    "1",
+    "",
+    "",
+    "1",
+    "/tmp/supernova-wizard-test.yaml",
+  ])
+  set_test_write_error("disk_full")
+
+  case run() {
+    Error(FileWriteError("disk_full")) -> Nil
+    _ -> should.fail()
+  }
+
+  clear_test_state()
+}
+
+pub fn run_wizard_all_channels_flow_with_invalid_choices_test() {
+  clear_test_state()
+  set_test_inputs([
+    "all-app",
+    "99",
+    "10",
+    "",
+    "",
+    "",
+    "telegram-token-all",
+    "",
+    "lark-token-all",
+    "",
+    "https://chat.googleapis.com/v1/spaces/a/messages?key=x&token=y",
+    "",
+    "matter-token",
+    "https://matter.example.com",
+    "",
+    "http://localhost:3000",
+    "",
+    "0",
+    "1",
+    "",
+    "",
+    "3",
+    "/tmp/supernova-all.yaml",
+  ])
+
+  run() |> should_equal(Ok(Nil))
+
+  case get_test_writes() {
+    [#(path, content)] -> {
+      path |> should_equal("/tmp/supernova-all.yaml")
+      string.contains(content, "app_name: \"all-app\"") |> should_equal(True)
+      string.contains(content, "telegram:") |> should_equal(True)
+      string.contains(content, "token: \"telegram-token-all\"")
+      |> should_equal(True)
+      string.contains(content, "lark:") |> should_equal(True)
+      string.contains(content, "token: \"lark-token-all\"")
+      |> should_equal(True)
+      string.contains(content, "mattermost:") |> should_equal(True)
+      string.contains(content, "base_url: \"https://matter.example.com\"")
+      |> should_equal(True)
+      string.contains(content, "whatsapp:") |> should_equal(True)
+      string.contains(content, "bridge_url: \"http://localhost:3000\"")
+      |> should_equal(True)
+      string.contains(content, "memory_backend: \"redis\"")
+      |> should_equal(True)
+    }
+    _ -> panic as "Wizard should write one file for all-channels flow"
+  }
+
+  clear_test_state()
+}
+
+pub fn run_wizard_returns_user_cancelled_on_eof_test() {
+  clear_test_state()
+  set_test_inputs([])
+
+  case run() {
+    Error(UserCancelled) -> Nil
+    _ -> should.fail()
+  }
+
+  clear_test_state()
 }
 
 // ============================================================================

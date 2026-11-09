@@ -21,7 +21,7 @@ import yay
 ///       env:
 ///         TOKEN: "value"
 pub fn parse_servers(yaml_content: String) -> List(mcp_manager.ServerConfig) {
-  case yay.parse_string(yaml_content) {
+  case yay.parse_string(string.trim(yaml_content)) {
     Ok([doc]) -> {
       let root = yay.document_root(doc)
       parse_server_blocks(root, [], None)

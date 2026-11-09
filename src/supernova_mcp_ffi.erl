@@ -16,9 +16,8 @@ open_port(Command, Args, Env) ->
             binary,
             {args, ArgsStrs},
             {env, EnvStrs},
-            {line, 1024},
-            exit_status,
-            stderr_to_stdout
+            {line, 1048576},
+            exit_status
           ]
         ),
         {ok, Port};
@@ -125,15 +124,22 @@ dynamic_to_json(Term) ->
       {error, list_to_binary(io_lib:format("Failed to encode JSON: ~p", [Reason]))}
   end.
 
+%% Escape a string for safe JSON embedding.
+escape_json_string([]) -> [];
+escape_json_string([$" | Rest])  -> [$\\, $"  | escape_json_string(Rest)];
+escape_json_string([$\\ | Rest]) -> [$\\, $\\ | escape_json_string(Rest)];
+escape_json_string([$\n | Rest]) -> [$\\, $n  | escape_json_string(Rest)];
+escape_json_string([$\r | Rest]) -> [$\\, $r  | escape_json_string(Rest)];
+escape_json_string([$\t | Rest]) -> [$\\, $t  | escape_json_string(Rest)];
+escape_json_string([C | Rest])   -> [C        | escape_json_string(Rest)].
+
 %% Simple JSON formatter for common Erlang terms.
 format_as_json(Term) when is_binary(Term) ->
-  %% Binary string - quote it
-  "\"" ++ binary_to_list(Term) ++ "\"";
+  "\"" ++ escape_json_string(binary_to_list(Term)) ++ "\"";
 format_as_json(Term) when is_list(Term) ->
   case io_lib:printable_list(Term) of
     true ->
-      %% It's a string
-      "\"" ++ Term ++ "\"";
+      "\"" ++ escape_json_string(Term) ++ "\"";
     false ->
       %% It's a list/array
       "[" ++ string:join([format_as_json(E) || E <- Term], ",") ++ "]"

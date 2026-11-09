@@ -777,8 +777,9 @@ fn convert_yaml_error(e: yay.YamlError) -> ConfigError {
         <> int.to_string(line)
         <> ", column "
         <> int.to_string(column),
-      )
+        )
     }
+    _ -> YamlParseError("YAML parse error: " <> string.inspect(e))
   }
 }
 
@@ -788,7 +789,7 @@ fn convert_yaml_error(e: yay.YamlError) -> ConfigError {
 
 /// Parse configuration from YAML string
 pub fn parse_yaml(yaml_string: String) -> Result(Config, ConfigError) {
-  case yay.parse_string(yaml_string) {
+  case yay.parse_string(string.trim(yaml_string)) {
     Ok([doc]) -> {
       let root = yay.document_root(doc)
       decode_config(root)

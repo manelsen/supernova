@@ -1092,3 +1092,309 @@ pub fn format_event_for_log_interaction_test() {
   string.contains(log, "inter123") |> should.equal(True)
   string.contains(log, "ApplicationCommand") |> should.equal(True)
 }
+
+pub fn parse_event_message_create_with_mentions_reference_and_member_test() {
+  let raw =
+    "{\"id\":\"m-1\",\"channel_id\":\"c-1\",\"guild_id\":\"g-1\",\"content\":\"Hello\",\"timestamp\":\"2024-01-01T00:00:00Z\",\"author\":{\"id\":\"u-1\",\"username\":\"author\",\"discriminator\":\"1234\",\"bot\":false},\"member\":{\"user\":{\"id\":\"u-1\",\"username\":\"author\",\"discriminator\":\"1234\",\"bot\":false},\"nick\":\"Author Nick\",\"roles\":[\"r-1\",\"r-2\"],\"joined_at\":\"2024-01-01T00:00:00Z\"},\"mentions\":[{\"id\":\"u-2\",\"username\":\"mentioned\",\"discriminator\":\"4321\",\"bot\":false}],\"mention_roles\":[\"r-9\"],\"message_reference\":{\"message_id\":\"m-parent\",\"channel_id\":\"c-parent\",\"guild_id\":\"g-parent\"},\"tts\":true,\"mention_everyone\":true,\"pinned\":true,\"webhook_id\":\"wh-1\",\"flags\":64}"
+
+  let event = events.parse_event("MESSAGE_CREATE", raw)
+
+  case event {
+    events.EventMessageCreate(msg) -> {
+      msg.mentions |> should.equal([
+        events.User(
+          id: "u-2",
+          username: "mentioned",
+          discriminator: "4321",
+          bot: Some(False),
+          avatar: None,
+        ),
+      ])
+      msg.mention_roles |> should.equal(["r-9"])
+      msg.tts |> should.equal(True)
+      msg.mention_everyone |> should.equal(True)
+      msg.pinned |> should.equal(True)
+      msg.webhook_id |> should.equal(Some("wh-1"))
+      msg.flags |> should.equal(Some(64))
+
+      case msg.member {
+        Some(member) -> {
+          member.nick |> should.equal(Some("Author Nick"))
+          member.roles |> should.equal(["r-1", "r-2"])
+          member.joined_at |> should.equal(Some("2024-01-01T00:00:00Z"))
+        }
+        None -> panic as "Expected member to be parsed"
+      }
+
+      case msg.message_reference {
+        Some(reference) -> {
+          reference.message_id |> should.equal(Some("m-parent"))
+          reference.channel_id |> should.equal(Some("c-parent"))
+          reference.guild_id |> should.equal(Some("g-parent"))
+        }
+        None -> panic as "Expected message reference to be parsed"
+      }
+    }
+    _ -> panic as "Expected EventMessageCreate"
+  }
+}
+
+pub fn parse_event_message_create_invalid_payload_returns_unknown_test() {
+  let raw = "{\"id\":\"m-1\",\"channel_id\":\"c-1\",\"author\":{\"id\":\"u-1\"}}"
+
+  case events.parse_event("MESSAGE_CREATE", raw) {
+    events.EventUnknown("MESSAGE_CREATE", _) -> Nil
+    _ -> panic as "Expected EventUnknown for invalid message payload"
+  }
+}
+
+pub fn parse_event_interaction_create_with_command_options_test() {
+  let raw =
+    "{\"id\":\"i-1\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"tok\",\"version\":1,\"data\":{\"id\":\"cmd-1\",\"name\":\"config\",\"type\":1,\"options\":[{\"name\":\"text\",\"type\":3,\"value\":\"hello\"},{\"name\":\"count\",\"type\":4,\"value\":7},{\"name\":\"verbose\",\"type\":5,\"value\":true},{\"name\":\"user\",\"type\":6,\"value\":\"u-1\"},{\"name\":\"channel\",\"type\":7,\"value\":\"c-1\"},{\"name\":\"role\",\"type\":8,\"value\":\"r-1\"},{\"name\":\"unknown_opt\",\"type\":42,\"value\":\"ignored\"}]}}"
+
+  case events.parse_event("INTERACTION_CREATE", raw) {
+    events.EventInteractionCreate(interaction) -> {
+      interaction.interaction_type |> should.equal(events.ApplicationCommand)
+
+      case interaction.data {
+        Some(events.ApplicationCommandData(
+          id: "cmd-1",
+          name: "config",
+          command_type: events.ChatInput,
+          options: options,
+          resolved: _,
+          target_id: _,
+        )) -> {
+          case options {
+            [first, second, third, fourth, fifth, sixth, seventh] -> {
+              first.value |> should.equal(Some(events.StringValue("hello")))
+              second.value |> should.equal(Some(events.IntValue(7)))
+              third.value |> should.equal(Some(events.BoolValue(True)))
+              fourth.value |> should.equal(Some(events.UserValue("u-1")))
+              fifth.value |> should.equal(Some(events.ChannelValue("c-1")))
+              sixth.value |> should.equal(Some(events.RoleValue("r-1")))
+              seventh.option_type |> should.equal(events.UnknownOptionType(42))
+              seventh.value |> should.equal(None)
+            }
+            _ -> panic as "Expected seven command options"
+          }
+        }
+        _ -> panic as "Expected ApplicationCommandData"
+      }
+    }
+    _ -> panic as "Expected EventInteractionCreate"
+  }
+}
+
+pub fn parse_event_interaction_create_message_component_values_test() {
+  let raw =
+    "{\"id\":\"i-2\",\"application_id\":\"app-1\",\"type\":3,\"token\":\"tok\",\"version\":1,\"data\":{\"custom_id\":\"picker_model_select\",\"component_type\":3,\"values\":[\"openai|gpt-5\",\"anthropic|claude\"]}}"
+
+  case events.parse_event("INTERACTION_CREATE", raw) {
+    events.EventInteractionCreate(interaction) -> {
+      interaction.interaction_type |> should.equal(events.MessageComponent)
+      case interaction.data {
+        Some(events.MessageComponentData(
+          custom_id: "picker_model_select",
+          component_type: events.StringSelectType,
+          values: Some(values),
+          resolved: _,
+        )) ->
+          values |> should.equal(["openai|gpt-5", "anthropic|claude"])
+        _ -> panic as "Expected MessageComponentData with parsed values"
+      }
+    }
+    _ -> panic as "Expected EventInteractionCreate"
+  }
+}
+
+pub fn parse_event_interaction_create_modal_submit_test() {
+  let raw =
+    "{\"id\":\"i-3\",\"application_id\":\"app-1\",\"type\":5,\"token\":\"tok\",\"version\":1,\"data\":{\"custom_id\":\"feedback_modal\"}}"
+
+  case events.parse_event("INTERACTION_CREATE", raw) {
+    events.EventInteractionCreate(interaction) -> {
+      interaction.interaction_type |> should.equal(events.ModalSubmit)
+      case interaction.data {
+        Some(events.ModalSubmitData(custom_id, components)) -> {
+          custom_id |> should.equal("feedback_modal")
+          components |> should.equal([])
+        }
+        _ -> panic as "Expected ModalSubmitData"
+      }
+    }
+    _ -> panic as "Expected EventInteractionCreate"
+  }
+}
+
+pub fn parse_event_interaction_create_unknown_type_without_data_test() {
+  let raw =
+    "{\"id\":\"i-4\",\"application_id\":\"app-1\",\"type\":99,\"token\":\"tok\",\"version\":1}"
+
+  case events.parse_event("INTERACTION_CREATE", raw) {
+    events.EventInteractionCreate(interaction) -> {
+      interaction.interaction_type |> should.equal(events.UnknownInteractionType(99))
+      interaction.data |> should.equal(None)
+    }
+    _ -> panic as "Expected EventInteractionCreate"
+  }
+}
+
+pub fn matches_filter_interaction_user_comes_from_member_user_test() {
+  let filter =
+    events.new_filter()
+    |> events.filter_by_user("member-user")
+
+  let interaction =
+    events.Interaction(
+      id: "i-member",
+      application_id: "app",
+      interaction_type: events.ApplicationCommand,
+      data: None,
+      guild_id: Some("g-1"),
+      channel_id: Some("c-1"),
+      member: Some(events.Member(
+        user: Some(events.User(
+          id: "member-user",
+          username: "member",
+          discriminator: "0001",
+          bot: Some(False),
+          avatar: None,
+        )),
+        nick: None,
+        roles: [],
+        joined_at: None,
+      )),
+      user: None,
+      token: "token",
+      version: 1,
+      app_permissions: None,
+      locale: None,
+      guild_locale: None,
+    )
+
+  events.matches_filter(events.EventInteractionCreate(interaction), filter)
+  |> should.equal(True)
+}
+
+pub fn parse_event_interaction_component_with_empty_values_array_test() {
+  let raw =
+    "{\"id\":\"i-empty-values\",\"application_id\":\"app-1\",\"type\":3,\"token\":\"tok\",\"version\":1,\"data\":{\"custom_id\":\"picker_model_select\",\"component_type\":3,\"values\":[]}}"
+
+  case events.parse_event("INTERACTION_CREATE", raw) {
+    events.EventInteractionCreate(interaction) -> {
+      interaction.interaction_type |> should.equal(events.MessageComponent)
+      case interaction.data {
+        Some(events.MessageComponentData(
+          custom_id: "picker_model_select",
+          component_type: events.StringSelectType,
+          values: values,
+          resolved: _,
+        )) -> values |> should.equal(None)
+        _ -> panic as "Expected MessageComponentData with None values"
+      }
+    }
+    _ -> panic as "Expected EventInteractionCreate"
+  }
+}
+
+pub fn parse_event_interaction_autocomplete_command_test() {
+  let raw =
+    "{\"id\":\"i-auto\",\"application_id\":\"app-1\",\"type\":4,\"token\":\"tok\",\"version\":1,\"data\":{\"id\":\"cmd-1\",\"name\":\"search\",\"type\":1}}"
+
+  case events.parse_event("INTERACTION_CREATE", raw) {
+    events.EventInteractionCreate(interaction) -> {
+      interaction.interaction_type
+      |> should.equal(events.ApplicationCommandAutocomplete)
+      case interaction.data {
+        Some(events.ApplicationCommandData(
+          id: "cmd-1",
+          name: "search",
+          command_type: events.ChatInput,
+          options: [],
+          resolved: _,
+          target_id: _,
+        )) -> Nil
+        _ -> panic as "Expected ApplicationCommandData for autocomplete"
+      }
+    }
+    _ -> panic as "Expected EventInteractionCreate"
+  }
+}
+
+pub fn parse_event_interaction_nested_subcommand_options_test() {
+  let raw =
+    "{\"id\":\"i-nested\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"tok\",\"version\":1,\"data\":{\"id\":\"cmd-nested\",\"name\":\"admin\",\"type\":1,\"options\":[{\"name\":\"group\",\"type\":1,\"options\":[{\"name\":\"text\",\"type\":3,\"value\":\"hello\"}]}]}}"
+
+  case events.parse_event("INTERACTION_CREATE", raw) {
+    events.EventInteractionCreate(interaction) -> {
+      case interaction.data {
+        Some(events.ApplicationCommandData(options: options, ..)) ->
+          case options {
+            [outer] -> {
+              outer.option_type |> should.equal(events.SubCommand)
+              outer.value |> should.equal(None)
+              case outer.options {
+                [inner] -> {
+                  inner.option_type |> should.equal(events.StringOption)
+                  inner.value |> should.equal(Some(events.StringValue("hello")))
+                }
+                _ -> panic as "Expected nested inner option"
+              }
+            }
+            _ -> panic as "Expected one outer option"
+          }
+        _ -> panic as "Expected ApplicationCommandData"
+      }
+    }
+    _ -> panic as "Expected EventInteractionCreate"
+  }
+}
+
+pub fn parse_event_interaction_create_invalid_payload_returns_unknown_test() {
+  let raw = "{\"id\":\"i-invalid\",\"application_id\":\"app-1\",\"type\":2}"
+
+  case events.parse_event("INTERACTION_CREATE", raw) {
+    events.EventUnknown("INTERACTION_CREATE", _) -> Nil
+    _ -> panic as "Expected EventUnknown for invalid interaction payload"
+  }
+}
+
+pub fn parse_interaction_missing_required_fields_returns_error_test() {
+  events.parse_interaction("{\"id\":\"x\"}")
+  |> should.equal(Error(Nil))
+}
+
+pub fn parse_event_message_update_with_author_details_test() {
+  let raw =
+    "{\"id\":\"m-upd\",\"channel_id\":\"c-upd\",\"guild_id\":\"g-upd\",\"content\":\"Updated\",\"edited_timestamp\":\"2024-01-01T00:01:00Z\",\"author\":{\"id\":\"u-upd\",\"username\":\"upd-user\",\"discriminator\":\"1234\",\"bot\":true}}"
+
+  case events.parse_event("MESSAGE_UPDATE", raw) {
+    events.EventMessageUpdate(id, channel_id, guild_id, content, edited_ts, author) -> {
+      id |> should.equal("m-upd")
+      channel_id |> should.equal("c-upd")
+      guild_id |> should.equal(Some("g-upd"))
+      content |> should.equal(Some("Updated"))
+      edited_ts |> should.equal(Some("2024-01-01T00:01:00Z"))
+      case author {
+        Some(parsed) -> {
+          parsed.id |> should.equal("u-upd")
+          parsed.bot |> should.equal(Some(True))
+        }
+        None -> panic as "Expected author to be parsed"
+      }
+    }
+    _ -> panic as "Expected EventMessageUpdate"
+  }
+}
+
+pub fn format_event_for_log_unknown_event_includes_raw_data_preview_test() {
+  let raw =
+    "{\"field\":\"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz\"}"
+
+  let log = events.format_event_for_log(events.EventUnknown("CUSTOM", raw))
+  string.contains(log, "[Discord Event] CUSTOM")
+  |> should.equal(True)
+  string.contains(log, "raw_data=")
+  |> should.equal(True)
+}
