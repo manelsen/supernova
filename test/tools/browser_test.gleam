@@ -54,6 +54,17 @@ pub fn browser_evaluate_enabled_via_env_reaches_runner_test() {
   |> should.not_equal("browser evaluate is disabled by configuration")
 }
 
+pub fn browser_open_blocks_ssrf_urls_before_ffi_test() {
+  browser.open("http://169.254.169.254/latest/meta-data", 5000)
+  |> should.be_error
+
+  browser.open("http://127.0.0.1:8080/admin", 5000)
+  |> should.be_error
+
+  browser.open("file:///etc/passwd", 5000)
+  |> should.be_error
+}
+
 pub fn browser_session_round_trip_test() {
   case browser.open(fixture_browser_page_url(), 5000) {
     Ok(open_result) -> {
