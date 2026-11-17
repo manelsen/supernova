@@ -152,8 +152,7 @@ fn validate_protocol_version(result_json: String) -> Result(Nil, String) {
         True -> Ok(Nil)
         False -> Error("Unsupported MCP protocol version: " <> version)
       }
-    Error(_) ->
-      Error("Missing protocolVersion in initialize response")
+    Error(_) -> Error("Missing protocolVersion in initialize response")
   }
 }
 

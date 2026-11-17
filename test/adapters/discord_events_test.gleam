@@ -1101,7 +1101,8 @@ pub fn parse_event_message_create_with_mentions_reference_and_member_test() {
 
   case event {
     events.EventMessageCreate(msg) -> {
-      msg.mentions |> should.equal([
+      msg.mentions
+      |> should.equal([
         events.User(
           id: "u-2",
           username: "mentioned",
@@ -1140,7 +1141,8 @@ pub fn parse_event_message_create_with_mentions_reference_and_member_test() {
 }
 
 pub fn parse_event_message_create_invalid_payload_returns_unknown_test() {
-  let raw = "{\"id\":\"m-1\",\"channel_id\":\"c-1\",\"author\":{\"id\":\"u-1\"}}"
+  let raw =
+    "{\"id\":\"m-1\",\"channel_id\":\"c-1\",\"author\":{\"id\":\"u-1\"}}"
 
   case events.parse_event("MESSAGE_CREATE", raw) {
     events.EventUnknown("MESSAGE_CREATE", _) -> Nil
@@ -1199,8 +1201,7 @@ pub fn parse_event_interaction_create_message_component_values_test() {
           component_type: events.StringSelectType,
           values: Some(values),
           resolved: _,
-        )) ->
-          values |> should.equal(["openai|gpt-5", "anthropic|claude"])
+        )) -> values |> should.equal(["openai|gpt-5", "anthropic|claude"])
         _ -> panic as "Expected MessageComponentData with parsed values"
       }
     }
@@ -1233,7 +1234,8 @@ pub fn parse_event_interaction_create_unknown_type_without_data_test() {
 
   case events.parse_event("INTERACTION_CREATE", raw) {
     events.EventInteractionCreate(interaction) -> {
-      interaction.interaction_type |> should.equal(events.UnknownInteractionType(99))
+      interaction.interaction_type
+      |> should.equal(events.UnknownInteractionType(99))
       interaction.data |> should.equal(None)
     }
     _ -> panic as "Expected EventInteractionCreate"
@@ -1370,7 +1372,14 @@ pub fn parse_event_message_update_with_author_details_test() {
     "{\"id\":\"m-upd\",\"channel_id\":\"c-upd\",\"guild_id\":\"g-upd\",\"content\":\"Updated\",\"edited_timestamp\":\"2024-01-01T00:01:00Z\",\"author\":{\"id\":\"u-upd\",\"username\":\"upd-user\",\"discriminator\":\"1234\",\"bot\":true}}"
 
   case events.parse_event("MESSAGE_UPDATE", raw) {
-    events.EventMessageUpdate(id, channel_id, guild_id, content, edited_ts, author) -> {
+    events.EventMessageUpdate(
+      id,
+      channel_id,
+      guild_id,
+      content,
+      edited_ts,
+      author,
+    ) -> {
       id |> should.equal("m-upd")
       channel_id |> should.equal("c-upd")
       guild_id |> should.equal(Some("g-upd"))

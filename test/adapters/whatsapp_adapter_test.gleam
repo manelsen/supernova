@@ -455,11 +455,9 @@ pub fn build_document_reply_without_caption_skips_caption_field_test() {
 
 pub fn start_adapter_send_invalid_bridge_url_returns_error_test() {
   let assert Ok(adapter) =
-    whatsapp_adapter.start(
-      "://invalid-url",
-      option.None,
-      fn(_, _) { Error(port.Ignored("not used")) },
-    )
+    whatsapp_adapter.start("://invalid-url", option.None, fn(_, _) {
+      Error(port.Ignored("not used"))
+    })
 
   let reply =
     port.ChannelReply(
@@ -473,7 +471,10 @@ pub fn start_adapter_send_invalid_bridge_url_returns_error_test() {
       media: [],
     )
 
-  should.equal(adapter.send(reply), Error(port.SendFailed("invalid bridge URL")))
+  should.equal(
+    adapter.send(reply),
+    Error(port.SendFailed("invalid bridge URL")),
+  )
 }
 
 pub fn session_resolver_uses_whatsapp_prefix_test() {

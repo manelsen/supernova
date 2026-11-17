@@ -45,8 +45,14 @@ pub fn format_metrics_renders_counter_gauge_histogram_test() {
   |> should.equal(True)
   string.contains(rendered, "# TYPE supernova_latency_seconds histogram")
   |> should.equal(True)
-  string.contains(rendered, "supernova_latency_seconds_count{route=\"/health\"} 2")
+  string.contains(
+    rendered,
+    "supernova_latency_seconds_count{route=\"/health\"} 2",
+  )
   |> should.equal(True)
-  string.contains(rendered, "supernova_latency_seconds_sum{route=\"/health\"} 1.5")
+  string.contains(
+    rendered,
+    "supernova_latency_seconds_sum{route=\"/health\"} 1.5",
+  )
   |> should.equal(True)
 }

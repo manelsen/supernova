@@ -187,4 +187,3 @@ pub fn send_only(transport: StdioTransport, data: String) -> Result(Nil, String)
 pub fn stop(transport: StdioTransport) -> Nil {
   actor.call(transport, waiting: 5000, sending: Stop)
 }
-

@@ -10,7 +10,7 @@ pub fn main() {
 fn test_config() -> cb.CircuitConfig {
   cb.CircuitConfig(
     failure_threshold: 2,
-    recovery_timeout_ms: 1_000,
+    recovery_timeout_ms: 1000,
     half_open_max_calls: 2,
   )
 }
@@ -39,7 +39,7 @@ pub fn record_failure_at_threshold_opens_circuit_test() {
       failure_count: 1,
       success_count: 0,
       last_failure_time_ms: 0,
-      cooldown_ms: 1_000,
+      cooldown_ms: 1000,
     )
   let next = cb.record_failure(breaker, test_config())
 
@@ -55,7 +55,7 @@ pub fn is_call_allowed_open_before_timeout_returns_false_test() {
       failure_count: 2,
       success_count: 0,
       last_failure_time_ms: 9_999_999_999_999,
-      cooldown_ms: 1_000,
+      cooldown_ms: 1000,
     )
 
   cb.is_call_allowed(breaker, test_config())
@@ -70,7 +70,7 @@ pub fn is_call_allowed_open_after_timeout_returns_true_test() {
       failure_count: 2,
       success_count: 0,
       last_failure_time_ms: 0,
-      cooldown_ms: 1_000,
+      cooldown_ms: 1000,
     )
 
   cb.is_call_allowed(breaker, test_config())
@@ -85,7 +85,7 @@ pub fn record_success_in_half_open_closes_after_limit_test() {
       failure_count: 0,
       success_count: 1,
       last_failure_time_ms: 0,
-      cooldown_ms: 1_000,
+      cooldown_ms: 1000,
     )
   let next = cb.record_success(breaker, test_config())
 
@@ -101,7 +101,7 @@ pub fn record_failure_in_half_open_reopens_immediately_test() {
       failure_count: 0,
       success_count: 1,
       last_failure_time_ms: 0,
-      cooldown_ms: 1_000,
+      cooldown_ms: 1000,
     )
   let next = cb.record_failure(breaker, test_config())
 
@@ -117,6 +117,6 @@ pub fn state_name_maps_all_states_test() {
   let breaker = cb.new("openai", test_config())
   cb.is_call_allowed(breaker, test_config()) |> should.equal(True)
   breaker.last_failure_time_ms |> should.equal(0)
-  breaker.cooldown_ms |> should.equal(1_000)
+  breaker.cooldown_ms |> should.equal(1000)
   Some(breaker.name) |> should.equal(Some("openai"))
 }

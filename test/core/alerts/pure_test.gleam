@@ -10,17 +10,17 @@ pub fn main() {
 }
 
 pub fn create_budget_alert_thresholds_test() {
-  pure.create_budget_alert("agent-1", 79, 100, 1_000) |> should.equal(Error(Nil))
-  pure.create_budget_alert("agent-1", 80, 100, 1_000)
+  pure.create_budget_alert("agent-1", 79, 100, 1000) |> should.equal(Error(Nil))
+  pure.create_budget_alert("agent-1", 80, 100, 1000)
   |> should.be_ok()
 
-  let assert Ok(alert) = pure.create_budget_alert("agent-1", 95, 100, 2_000)
+  let assert Ok(alert) = pure.create_budget_alert("agent-1", 95, 100, 2000)
   alert.severity |> should.equal(types.Critical)
   dict.get(alert.context, "percentage") |> should.equal(Ok("95"))
 }
 
 pub fn create_stall_and_llm_failure_alert_test() {
-  pure.create_stall_alert("agent-1", 1_000, 2_000) |> should.equal(Error(Nil))
+  pure.create_stall_alert("agent-1", 1000, 2000) |> should.equal(Error(Nil))
   let assert Ok(stall) = pure.create_stall_alert("agent-1", 0, 3_600_000)
   stall.alert_type |> should.equal(types.StallWarning)
 
@@ -48,7 +48,9 @@ pub fn add_acknowledge_and_query_alerts_test() {
 
   // max_alerts=2 should trim oldest alert
   pure.get_all_alerts(state_3) |> list.length() |> should.equal(2)
-  pure.get_alerts_by_agent(state_3, "agent-1") |> list.length() |> should.equal(1)
+  pure.get_alerts_by_agent(state_3, "agent-1")
+  |> list.length()
+  |> should.equal(1)
   pure.get_alerts_by_type(state_3, types.LLMFailureChain)
   |> list.length()
   |> should.equal(1)

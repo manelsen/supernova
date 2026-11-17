@@ -7,8 +7,7 @@ pub fn main() {
 }
 
 pub fn log_builds_audit_entry_test() {
-  let entry =
-    security_audit.log("s-1", "shell", "ls -la", False)
+  let entry = security_audit.log("s-1", "shell", "ls -la", False)
 
   entry.session_id |> should.equal("s-1")
   entry.operation |> should.equal("shell")
@@ -23,8 +22,12 @@ pub fn format_includes_status_and_details_test() {
     security_audit.log("s-blocked", "network", "http://example.com", False)
 
   security_audit.format(allowed_entry)
-  |> should.equal("[AUDIT] [ALLOWED] [session:s-allowed] file_read: /tmp/config.yaml")
+  |> should.equal(
+    "[AUDIT] [ALLOWED] [session:s-allowed] file_read: /tmp/config.yaml",
+  )
 
   security_audit.format(blocked_entry)
-  |> should.equal("[AUDIT] [BLOCKED] [session:s-blocked] network: http://example.com")
+  |> should.equal(
+    "[AUDIT] [BLOCKED] [session:s-blocked] network: http://example.com",
+  )
 }

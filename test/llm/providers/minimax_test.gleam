@@ -1,6 +1,6 @@
+import gleam/option
 import gleeunit
 import gleeunit/should
-import gleam/option
 import supernova/llm/provider
 import supernova/llm/providers/minimax
 

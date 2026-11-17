@@ -108,7 +108,9 @@ mcp_servers:
 }
 
 pub fn parse_servers_from_file_handles_missing_file_test() {
-  config_loader.parse_servers_from_file("/tmp/definitely-not-existing-supernova.yaml")
+  config_loader.parse_servers_from_file(
+    "/tmp/definitely-not-existing-supernova.yaml",
+  )
   |> should.equal([])
 }
 

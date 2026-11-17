@@ -161,8 +161,7 @@ pub fn decode_repositories_invalid_payload_returns_error_test() {
 }
 
 pub fn resolve_runtime_config_defaults_when_yaml_invalid_test() {
-  let config =
-    github.resolve_runtime_config("github: [", None, None)
+  let config = github.resolve_runtime_config("github: [", None, None)
 
   config.token |> should.equal(None)
   config.base_url |> should.equal("https://api.github.com")

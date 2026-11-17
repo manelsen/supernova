@@ -19,8 +19,8 @@ import supernova/config.{
   default_provider_config, error_to_string, get_provider, is_discord_enabled,
   is_google_chat_enabled, is_lark_enabled, is_matrix_enabled,
   is_mattermost_enabled, is_slack_enabled, is_telegram_enabled,
-  is_wechat_work_enabled, is_whatsapp_enabled, load, load_from_file,
-  load_unsafe, parse_yaml, provider_default_model, provider_requires_api_key,
+  is_wechat_work_enabled, is_whatsapp_enabled, load, load_from_file, load_unsafe,
+  parse_yaml, provider_default_model, provider_requires_api_key,
   provider_runtime_name, validate,
 }
 

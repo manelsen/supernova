@@ -39,24 +39,15 @@ pub fn chat_all_unknown_providers_returns_aggregated_error_test() {
 }
 
 pub fn chat_with_cooldown_skips_provider_after_first_failure_test() {
-  let assert Ok(cooldown_ref) = cooldown_actor.start(cooldown_types.default_config())
+  let assert Ok(cooldown_ref) =
+    cooldown_actor.start(cooldown_types.default_config())
   let provider = unknown_provider("unknown-provider")
   let messages = [provider.user_message("hello")]
 
   let first =
-    failover.chat_with_cooldown(
-      messages,
-      [provider],
-      [],
-      cooldown_ref,
-    )
+    failover.chat_with_cooldown(messages, [provider], [], cooldown_ref)
   let second =
-    failover.chat_with_cooldown(
-      messages,
-      [provider],
-      [],
-      cooldown_ref,
-    )
+    failover.chat_with_cooldown(messages, [provider], [], cooldown_ref)
 
   case first {
     Error(provider.APIError(status: 0, message: message)) -> {
@@ -76,12 +67,13 @@ pub fn chat_with_cooldown_skips_provider_after_first_failure_test() {
 }
 
 pub fn cooldown_actor_records_failure_and_success_test() {
-  let assert Ok(cooldown_ref) = cooldown_actor.start(cooldown_types.default_config())
+  let assert Ok(cooldown_ref) =
+    cooldown_actor.start(cooldown_types.default_config())
 
   let reply_1 =
     actor.call(
       cooldown_ref,
-      waiting: 1_000,
+      waiting: 1000,
       sending: cooldown_actor.CheckCooldown("provider-a", _),
     )
   reply_1 |> should.equal(cooldown_types.NotInCooldown)
@@ -89,18 +81,21 @@ pub fn cooldown_actor_records_failure_and_success_test() {
   let cooldown_actor.FailureRecorded(_) =
     actor.call(
       cooldown_ref,
-      waiting: 1_000,
+      waiting: 1000,
       sending: cooldown_actor.RecordFailure("provider-a", _),
     )
 
   let reply_2 =
     actor.call(
       cooldown_ref,
-      waiting: 1_000,
+      waiting: 1000,
       sending: cooldown_actor.CheckCooldown("provider-a", _),
     )
   case reply_2 {
-    cooldown_types.InCooldown(provider_name: "provider-a", remaining_ms: remaining) -> {
+    cooldown_types.InCooldown(
+      provider_name: "provider-a",
+      remaining_ms: remaining,
+    ) -> {
       { remaining > 0 } |> should.equal(True)
     }
     _ -> panic as "expected provider-a in cooldown after failure"
@@ -109,14 +104,14 @@ pub fn cooldown_actor_records_failure_and_success_test() {
   let cooldown_actor.SuccessRecorded(_) =
     actor.call(
       cooldown_ref,
-      waiting: 1_000,
+      waiting: 1000,
       sending: cooldown_actor.RecordSuccess("provider-a", _),
     )
 
   let reply_3 =
     actor.call(
       cooldown_ref,
-      waiting: 1_000,
+      waiting: 1000,
       sending: cooldown_actor.CheckCooldown("provider-a", _),
     )
   reply_3 |> should.equal(cooldown_types.NotInCooldown)

@@ -9,11 +9,14 @@ pub fn browser_session_round_trip_test() {
     Ok(open_result) -> {
       let session_id = decode_open_result(open_result)
 
-      let assert Ok(readable_result) = browser.extract_readable(session_id, 5000)
-      let #(readable_title, readable_text) = decode_readable_result(readable_result)
+      let assert Ok(readable_result) =
+        browser.extract_readable(session_id, 5000)
+      let #(readable_title, readable_text) =
+        decode_readable_result(readable_result)
       readable_title |> should.equal("Browser Test")
       string.contains(readable_text, "Readable Title") |> should.equal(True)
-      string.contains(readable_text, "Readable body text.") |> should.equal(True)
+      string.contains(readable_text, "Readable body text.")
+      |> should.equal(True)
 
       let assert Ok(screenshot_result) = browser.screenshot(session_id, 5000)
       should.equal(decode_screenshot_mime_type(screenshot_result), "image/png")
@@ -25,8 +28,7 @@ pub fn browser_session_round_trip_test() {
       let assert Ok(close_result) = browser.close(session_id)
       decode_closed_result(close_result) |> should.equal(True)
     }
-    Error(reason) ->
-      is_runner_unavailable(reason) |> should.equal(True)
+    Error(reason) -> is_runner_unavailable(reason) |> should.equal(True)
   }
 }
 
@@ -45,11 +47,11 @@ pub fn browser_timeout_cleans_up_session_test() {
       case browser.close(session_id) {
         Ok(_) -> should.fail()
         Error(reason) ->
-          string.contains(reason, "Unknown browser session") |> should.equal(True)
+          string.contains(reason, "Unknown browser session")
+          |> should.equal(True)
       }
     }
-    Error(reason) ->
-      is_runner_unavailable(reason) |> should.equal(True)
+    Error(reason) -> is_runner_unavailable(reason) |> should.equal(True)
   }
 }
 

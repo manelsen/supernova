@@ -777,7 +777,7 @@ fn convert_yaml_error(e: yay.YamlError) -> ConfigError {
         <> int.to_string(line)
         <> ", column "
         <> int.to_string(column),
-        )
+      )
     }
     _ -> YamlParseError("YAML parse error: " <> string.inspect(e))
   }

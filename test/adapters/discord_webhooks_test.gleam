@@ -765,13 +765,7 @@ pub fn edit_webhook_message_connection_error_test() {
     webhooks.new_edit_webhook_message_options()
     |> webhooks.edit_with_content("edited")
 
-  webhooks.edit_webhook_message(
-    client,
-    "123456789",
-    "token",
-    "message-1",
-    opts,
-  )
+  webhooks.edit_webhook_message(client, "123456789", "token", "message-1", opts)
   |> should_be_http_error
 }
 
@@ -791,13 +785,7 @@ pub fn edit_webhook_message_with_embeds_and_mentions_connection_error_test() {
     |> webhooks.edit_with_embed(embed)
     |> webhooks.edit_with_allowed_mentions(mentions)
 
-  webhooks.edit_webhook_message(
-    client,
-    "123456789",
-    "token",
-    "message-2",
-    opts,
-  )
+  webhooks.edit_webhook_message(client, "123456789", "token", "message-2", opts)
   |> should_be_http_error
 }
 
@@ -821,7 +809,6 @@ fn should_be_http_error(result: Result(a, webhooks.WebhookError)) {
   case result {
     Error(webhooks.HttpError(message)) ->
       string.contains(message, "HTTP error:") |> should.equal(True)
-    _ ->
-      should.fail()
+    _ -> should.fail()
   }
 }

@@ -1541,7 +1541,9 @@ pub fn encode_response_covers_select_component_variants_test() {
 
   let response =
     cmds.message_response("Choose")
-    |> cmds.with_components([cmds.action_row([user_select, role_select, channel_select])])
+    |> cmds.with_components([
+      cmds.action_row([user_select, role_select, channel_select]),
+    ])
   let encoded = cmds.encode_response(response)
 
   string.contains(encoded, "\"type\":5") |> should.equal(True)
@@ -1662,7 +1664,11 @@ pub fn register_global_command_complex_options_still_reports_http_error_test() {
 
   let command =
     cmds.new_command("complex", "Complex command")
-    |> cmds.command_with_options([complex_option, nested_subcommand, channel_option])
+    |> cmds.command_with_options([
+      complex_option,
+      nested_subcommand,
+      channel_option,
+    ])
 
   cmds.register_global_command(client, command)
   |> should_be_http_error()

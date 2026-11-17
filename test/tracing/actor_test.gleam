@@ -41,11 +41,9 @@ pub fn start_span_event_attributes_end_and_flush_test() {
     "request_sent",
     [#("method", "POST")],
   )
-  tracing_actor.set_span_attributes(
-    tracer,
-    child_span.span_context.span_id,
-    [#("http.status_code", "200")],
-  )
+  tracing_actor.set_span_attributes(tracer, child_span.span_context.span_id, [
+    #("http.status_code", "200"),
+  ])
   tracing_actor.end_span(
     tracer,
     child_span.span_context.span_id,
@@ -64,10 +62,6 @@ pub fn operations_on_unknown_span_do_not_crash_test() {
   let assert Ok(tracer) = tracing_actor.start(tracer_config())
   tracing_actor.add_span_event(tracer, "missing", "ignored", [])
   tracing_actor.set_span_attributes(tracer, "missing", [#("k", "v")])
-  tracing_actor.end_span(
-    tracer,
-    "missing",
-    tracing_types.SpanStatusUnset,
-  )
+  tracing_actor.end_span(tracer, "missing", tracing_types.SpanStatusUnset)
   tracing_actor.shutdown(tracer) |> should.equal(Nil)
 }

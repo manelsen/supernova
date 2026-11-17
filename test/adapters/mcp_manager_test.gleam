@@ -333,8 +333,7 @@ pub fn large_response_does_not_truncate_test() {
 
   let assert Ok(Nil) = mcp_manager.register(mgr, config)
 
-  let result =
-    mcp_manager.execute_tool(mgr, "large-server/big_data", "{}")
+  let result = mcp_manager.execute_tool(mgr, "large-server/big_data", "{}")
   case result {
     Ok(response) ->
       // The big_data tool returns 8192 'A' characters — verify none were lost

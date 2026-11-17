@@ -85,7 +85,8 @@ pub fn handle_message_rejects_mismatch_and_accepts_normal_message_test() {
       cfg,
       fn(_) { "session-1" },
     )
-  mismatch |> should.equal(Error(port.Ignored(reason: "channel mismatch: telegram")))
+  mismatch
+  |> should.equal(Error(port.Ignored(reason: "channel mismatch: telegram")))
 
   let result =
     router.handle_message(
@@ -113,7 +114,9 @@ pub fn handle_inbound_start_and_status_commands_test() {
     )
 
   case start_result {
-    Ok(reply) -> string.contains(reply.content, "Session bootstrapped.") |> should.equal(True)
+    Ok(reply) ->
+      string.contains(reply.content, "Session bootstrapped.")
+      |> should.equal(True)
     Error(_) -> should.fail()
   }
 
@@ -128,7 +131,8 @@ pub fn handle_inbound_start_and_status_commands_test() {
 
   case status_result {
     Ok(reply) -> {
-      string.contains(reply.content, "Session status: ready") |> should.equal(True)
+      string.contains(reply.content, "Session status: ready")
+      |> should.equal(True)
       string.contains(reply.content, "Provider: Mock") |> should.equal(True)
     }
     Error(_) -> should.fail()
@@ -166,7 +170,10 @@ pub fn handle_inbound_model_command_supported_and_fallback_channels_test() {
     )
   case matrix_result {
     Ok(reply) ->
-      string.contains(reply.content, "Interactive picker is unavailable in matrix")
+      string.contains(
+        reply.content,
+        "Interactive picker is unavailable in matrix",
+      )
       |> should.equal(True)
     Error(_) -> should.fail()
   }
@@ -303,7 +310,8 @@ pub fn handle_inbound_interaction_model_selection_paths_test() {
     Ok(reply) -> {
       reply.edit_message_id |> should.equal(Some("origin-message"))
       reply.reply_to_id |> should.equal(Some("origin-message"))
-      reply.content |> should.equal("Model set to mock-alt-model for this session.")
+      reply.content
+      |> should.equal("Model set to mock-alt-model for this session.")
     }
     Error(_) -> should.fail()
   }
@@ -413,7 +421,8 @@ pub fn handle_inbound_with_session_supervisor_wrappers_test() {
       supervisor,
     )
   case reply_result {
-    Ok(reply) -> string.contains(reply.content, "Session status:") |> should.equal(True)
+    Ok(reply) ->
+      string.contains(reply.content, "Session status:") |> should.equal(True)
     Error(_) -> should.fail()
   }
 
@@ -591,7 +600,8 @@ pub fn handle_inbound_bootstrap_progression_with_reset_identity_test() {
       supervisor,
     )
   case user_question_result {
-    Ok(reply) -> string.contains(reply.content, "devo te chamar") |> should.equal(True)
+    Ok(reply) ->
+      string.contains(reply.content, "devo te chamar") |> should.equal(True)
     Error(_) -> should.fail()
   }
 
@@ -611,7 +621,8 @@ pub fn handle_inbound_bootstrap_progression_with_reset_identity_test() {
       supervisor,
     )
   case completed_result {
-    Ok(reply) -> string.contains(reply.content, "Pronto! Sou Nova") |> should.equal(True)
+    Ok(reply) ->
+      string.contains(reply.content, "Pronto! Sou Nova") |> should.equal(True)
     Error(_) -> should.fail()
   }
 
@@ -631,7 +642,9 @@ pub fn handle_inbound_bootstrap_progression_with_reset_identity_test() {
       supervisor,
     )
   case status_result {
-    Ok(reply) -> string.contains(reply.content, "Session status: ready") |> should.equal(True)
+    Ok(reply) ->
+      string.contains(reply.content, "Session status: ready")
+      |> should.equal(True)
     Error(_) -> should.fail()
   }
 
@@ -690,7 +703,13 @@ pub fn handle_inbound_commands_and_reasoning_shortcuts_toggle_test() {
   let #(state1, commands_result) =
     router.handle_inbound(
       "telegram",
-      port.inbound_message(message("telegram", "c-110", "u-110", "commands", False)),
+      port.inbound_message(message(
+        "telegram",
+        "c-110",
+        "u-110",
+        "commands",
+        False,
+      )),
       cfg,
       state0,
       resolve_session_id,
@@ -706,7 +725,13 @@ pub fn handle_inbound_commands_and_reasoning_shortcuts_toggle_test() {
   let #(state2, reasoning_on_result) =
     router.handle_inbound(
       "telegram",
-      port.inbound_message(message("telegram", "c-110", "u-110", "reasoning", False)),
+      port.inbound_message(message(
+        "telegram",
+        "c-110",
+        "u-110",
+        "reasoning",
+        False,
+      )),
       cfg,
       state1,
       resolve_session_id,
@@ -722,7 +747,13 @@ pub fn handle_inbound_commands_and_reasoning_shortcuts_toggle_test() {
   let #(_, reasoning_off_result) =
     router.handle_inbound(
       "telegram",
-      port.inbound_message(message("telegram", "c-110", "u-110", "reasoning", False)),
+      port.inbound_message(message(
+        "telegram",
+        "c-110",
+        "u-110",
+        "reasoning",
+        False,
+      )),
       cfg,
       state2,
       resolve_session_id,
@@ -754,7 +785,8 @@ pub fn handle_inbound_models_alias_returns_interactive_for_slack_test() {
       string.contains(reply.content, "Current selection:")
       |> should.equal(True)
       case reply.interactive {
-        Some(interactive) -> interactive.blocks |> list.length |> should.equal(3)
+        Some(interactive) ->
+          interactive.blocks |> list.length |> should.equal(3)
         None -> should.fail()
       }
     }
@@ -785,7 +817,8 @@ pub fn handle_inbound_interaction_model_selection_without_provider_prefix_test()
 
   case result {
     Ok(reply) ->
-      reply.content |> should.equal("Model set to mock-alt-model for this session.")
+      reply.content
+      |> should.equal("Model set to mock-alt-model for this session.")
     Error(_) -> should.fail()
   }
 

@@ -649,7 +649,8 @@ pub fn parse_update_decodes_all_message_entity_types_test() -> Nil {
   let assert Some(message) = update.message
   list.length(message.entities) |> should.equal(18)
 
-  let entity_types = list.map(message.entities, fn(entity) { entity.entity_type })
+  let entity_types =
+    list.map(message.entities, fn(entity) { entity.entity_type })
   list.any(entity_types, fn(t) { t == telegram.CustomEmojiEntity })
   |> should.equal(True)
   // Unknown entity type falls back to MentionEntity

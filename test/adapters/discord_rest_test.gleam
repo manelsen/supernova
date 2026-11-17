@@ -839,9 +839,12 @@ pub fn snowflake_type_test() {
 
 pub fn send_message_requires_payload_test() {
   let client = unreachable_rest_client()
-  case rest.send_message_with_options(client, "123", rest.new_message_options()) {
+  case
+    rest.send_message_with_options(client, "123", rest.new_message_options())
+  {
     Error(rest.BadRequest(message)) ->
-      message |> should.equal("Message must have content, embeds, or attachments")
+      message
+      |> should.equal("Message must have content, embeds, or attachments")
     _ -> should.fail()
   }
 }
@@ -857,7 +860,8 @@ pub fn edit_message_requires_payload_test() {
     )
   {
     Error(rest.BadRequest(message)) ->
-      message |> should.equal("Message must have content, embeds, or attachments")
+      message
+      |> should.equal("Message must have content, embeds, or attachments")
     _ -> should.fail()
   }
 }
@@ -926,7 +930,6 @@ fn should_be_http_error(result: Result(a, rest.DiscordRestError)) {
   case result {
     Error(rest.HttpError(message)) ->
       string.contains(message, "HTTP error:") |> should.equal(True)
-    _ ->
-      should.fail()
+    _ -> should.fail()
   }
 }

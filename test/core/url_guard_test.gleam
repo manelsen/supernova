@@ -39,9 +39,7 @@ pub fn blocks_internal_hosts_and_metadata_endpoints_test() {
   ]
 
   blocked
-  |> list.each(fn(url) {
-    url_guard.validate_url(url) |> should.be_error
-  })
+  |> list.each(fn(url) { url_guard.validate_url(url) |> should.be_error })
 }
 
 pub fn strips_userinfo_before_blocklist_check_test() {

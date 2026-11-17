@@ -2,8 +2,8 @@
 ////
 //// Verifies the agent execution loop: LLM calls, tool dispatch, recursion.
 
-import gleam/list
 import gleam/erlang/process
+import gleam/list
 import gleam/option.{None}
 import gleam/string
 import gleeunit/should
@@ -322,7 +322,9 @@ pub fn git_inspect_alias_invalid_action_returns_error_message_test() {
   case messages {
     [msg] ->
       msg.content
-      |> should.equal("ERROR: git_inspect action must be status, log, or branch")
+      |> should.equal(
+        "ERROR: git_inspect action must be status, log, or branch",
+      )
     _ -> should.fail()
   }
 }

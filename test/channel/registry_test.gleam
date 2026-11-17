@@ -1381,7 +1381,10 @@ pub fn start_channels_routes_discord_interaction_with_root_user_fallback_test() 
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
       ignoring_handler(received),
-      test_hooks([discord_fixture_interaction_command_with_user_fallback_event()], []),
+      test_hooks(
+        [discord_fixture_interaction_command_with_user_fallback_event()],
+        [],
+      ),
     )
 
   let assert Ok(inbound) = process.receive(received, within: 1000)
@@ -1429,7 +1432,8 @@ pub fn start_channels_ignores_discord_interaction_missing_data_test() {
 
 pub fn start_channels_ignores_telegram_message_without_sender_test() {
   let received = process.new_subject()
-  let assert Ok(update) = telegram.parse_update(telegram_fixture_update_without_sender())
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_update_without_sender())
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
@@ -1445,7 +1449,8 @@ pub fn start_channels_ignores_telegram_message_without_sender_test() {
 
 pub fn start_channels_routes_telegram_caption_when_text_missing_test() {
   let received = process.new_subject()
-  let assert Ok(update) = telegram.parse_update(telegram_fixture_update_with_caption_only())
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_update_with_caption_only())
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
@@ -1465,7 +1470,9 @@ pub fn start_channels_routes_telegram_caption_when_text_missing_test() {
 pub fn start_channels_ignores_telegram_callback_missing_message_test() {
   let received = process.new_subject()
   let assert Ok(update) =
-    telegram.parse_update(telegram_fixture_callback_query_without_message_update())
+    telegram.parse_update(
+      telegram_fixture_callback_query_without_message_update(),
+    )
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
@@ -1942,7 +1949,8 @@ pub fn e2e_matrix_follow_up_uses_session_history_test() {
 }
 
 pub fn send_returns_error_for_unregistered_channel_test() {
-  let assert Ok(channel_registry) = registry.start_channels(config.default_config())
+  let assert Ok(channel_registry) =
+    registry.start_channels(config.default_config())
 
   case registry.send(channel_registry, "discord", discord_reply("hello")) {
     Error(port.SendFailed(reason)) ->
@@ -1954,7 +1962,8 @@ pub fn send_returns_error_for_unregistered_channel_test() {
 }
 
 pub fn send_stream_returns_error_for_unregistered_channel_test() {
-  let assert Ok(channel_registry) = registry.start_channels(config.default_config())
+  let assert Ok(channel_registry) =
+    registry.start_channels(config.default_config())
   let events = process.new_subject()
 
   case
@@ -1979,7 +1988,10 @@ pub fn start_channels_routes_discord_autocomplete_with_channel_and_role_options_
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
       ignoring_handler(received),
-      test_hooks([discord_fixture_interaction_autocomplete_with_channel_role_event()], []),
+      test_hooks(
+        [discord_fixture_interaction_autocomplete_with_channel_role_event()],
+        [],
+      ),
     )
 
   let assert Ok(inbound) = process.receive(received, within: 1000)
@@ -1998,7 +2010,10 @@ pub fn start_channels_routes_discord_nested_command_options_test() {
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
       ignoring_handler(received),
-      test_hooks([discord_fixture_interaction_command_with_nested_options_event()], []),
+      test_hooks(
+        [discord_fixture_interaction_command_with_nested_options_event()],
+        [],
+      ),
     )
 
   let assert Ok(inbound) = process.receive(received, within: 1000)
@@ -2017,7 +2032,10 @@ pub fn start_channels_routes_discord_component_without_values_as_empty_list_test
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
       ignoring_handler(received),
-      test_hooks([discord_fixture_interaction_component_without_values_event()], []),
+      test_hooks(
+        [discord_fixture_interaction_component_without_values_event()],
+        [],
+      ),
     )
 
   let assert Ok(inbound) = process.receive(received, within: 1000)
@@ -2036,7 +2054,10 @@ pub fn start_channels_routes_discord_interaction_without_user_defaults_sender_te
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
       ignoring_handler(received),
-      test_hooks([discord_fixture_interaction_without_user_or_member_event()], []),
+      test_hooks(
+        [discord_fixture_interaction_without_user_or_member_event()],
+        [],
+      ),
     )
 
   let assert Ok(inbound) = process.receive(received, within: 1000)
@@ -2120,7 +2141,8 @@ pub fn adapter_send_telegram_rejects_invalid_reply_to_id_test() {
 
   let assert Some(adapter) =
     registry.get_channel_adapter(channel_registry, "telegram")
-  let bad_reply = port.ChannelReply(..telegram_reply("hello"), reply_to_id: Some("oops"))
+  let bad_reply =
+    port.ChannelReply(..telegram_reply("hello"), reply_to_id: Some("oops"))
 
   adapter.send(bad_reply)
   |> should.equal(Error(port.SendFailed("invalid telegram reply_to_id: oops")))
@@ -2147,7 +2169,9 @@ pub fn adapter_send_telegram_rejects_invalid_thread_id_test() {
     )
 
   adapter.send(bad_reply)
-  |> should.equal(Error(port.SendFailed("invalid telegram thread_id: thread-x")))
+  |> should.equal(
+    Error(port.SendFailed("invalid telegram thread_id: thread-x")),
+  )
 
   registry.stop_channels(channel_registry)
 }
@@ -2171,7 +2195,9 @@ pub fn adapter_send_telegram_rejects_invalid_edit_message_id_test() {
     )
 
   adapter.send(bad_reply)
-  |> should.equal(Error(port.SendFailed("invalid telegram edit_message_id: bad")))
+  |> should.equal(
+    Error(port.SendFailed("invalid telegram edit_message_id: bad")),
+  )
 
   registry.stop_channels(channel_registry)
 }
@@ -2213,7 +2239,9 @@ pub fn send_stream_telegram_rejects_invalid_thread_id_test() {
     )
 
   registry.send_stream(channel_registry, "telegram", bad_base_reply, events)
-  |> should.equal(Error(port.SendFailed("invalid telegram thread_id: thread-x")))
+  |> should.equal(
+    Error(port.SendFailed("invalid telegram thread_id: thread-x")),
+  )
 
   registry.stop_channels(channel_registry)
 }
@@ -2232,7 +2260,10 @@ pub fn send_stream_discord_propagates_stream_failure_test() {
   let base_reply = discord_reply("") |> port.with_typing(True)
   let _ =
     process.spawn_unlinked(fn() {
-      process.send(events, port.StreamFailure(port.SendFailed("discord-failure")))
+      process.send(
+        events,
+        port.StreamFailure(port.SendFailed("discord-failure")),
+      )
     })
 
   registry.send_stream(channel_registry, "discord", base_reply, events)
@@ -2260,7 +2291,10 @@ pub fn send_stream_telegram_propagates_stream_failure_test() {
   let base_reply = telegram_reply("") |> port.with_typing(True)
   let _ =
     process.spawn_unlinked(fn() {
-      process.send(events, port.StreamFailure(port.SendFailed("telegram-failure")))
+      process.send(
+        events,
+        port.StreamFailure(port.SendFailed("telegram-failure")),
+      )
     })
 
   registry.send_stream(channel_registry, "telegram", base_reply, events)
