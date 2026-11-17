@@ -5,12 +5,11 @@
 %% Returns {ok, RequestId} or {error, Reason}.
 start_request(Url, Headers, Body) ->
   try
-    ReqHeaders = [{list_to_binary(K), list_to_binary(V)} || {K, V} <- Headers],
+    ReqHeaders = [{to_binary(K), to_binary(V)} || {K, V} <- Headers],
     Opts = [async, {stream_to, self()}],
     case hackney:request(post, Url, ReqHeaders, Body, Opts) of
-      {ok, ClientRef} ->
-        RequestId = erlang:ref_to_list(ClientRef),
-        {ok, list_to_binary(RequestId)};
+      {ok, ClientHandle} ->
+        {ok, encode_handle(ClientHandle)};
       {error, Reason} ->
         {error, list_to_binary(io_lib:format("~p", [Reason]))}
     end
@@ -22,7 +21,7 @@ start_request(Url, Headers, Body) ->
 %% Returns {ok, Data} | {done} | {error, Reason}.
 read_chunk(RequestIdBin, TimeoutMs) ->
   try
-    RequestId = list_to_ref(binary_to_list(RequestIdBin)),
+    RequestId = decode_handle(RequestIdBin),
     receive
       {hackney_response, RequestId, {status, _Status, _Reason}} ->
         read_chunk(RequestIdBin, TimeoutMs);
@@ -44,9 +43,26 @@ read_chunk(RequestIdBin, TimeoutMs) ->
 %% Cancel a streaming request.
 cancel_request(RequestIdBin) ->
   try
-    RequestId = list_to_ref(binary_to_list(RequestIdBin)),
+    RequestId = decode_handle(RequestIdBin),
     hackney:close(RequestId)
   catch
     _:_ -> nil
   end,
   nil.
+
+to_binary(Val) when is_binary(Val) -> Val;
+to_binary(Val) when is_list(Val) -> list_to_binary(Val).
+
+%% Hackney 4.x returns a connection PID for async requests; 1.x returned a ref.
+encode_handle(Handle) when is_pid(Handle) ->
+  list_to_binary(pid_to_list(Handle));
+encode_handle(Handle) when is_reference(Handle) ->
+  list_to_binary(ref_to_list(Handle)).
+
+decode_handle(Bin) ->
+  List = binary_to_list(Bin),
+  try
+    list_to_pid(List)
+  catch
+    error:badarg -> list_to_ref(List)
+  end.
