@@ -808,12 +808,12 @@ pub fn start_channels_refreshes_discord_typing_while_stream_waits_test() {
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
-      delayed_streaming_handler(15, 1),
+      delayed_streaming_handler(90, 1),
       test_hooks_with_recorder_and_keepalive(
         [discord_fixture_message_create_event()],
         [],
         recorder,
-        10,
+        60,
       ),
     )
 
@@ -915,8 +915,8 @@ pub fn start_channels_refreshes_telegram_typing_while_stream_waits_test() {
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
-      delayed_streaming_handler(15, 1),
-      test_hooks_with_recorder_and_keepalive([], [update], recorder, 10),
+      delayed_streaming_handler(90, 1),
+      test_hooks_with_recorder_and_keepalive([], [update], recorder, 60),
     )
 
   let assert Ok(first) = process.receive(recorder, within: 1000)

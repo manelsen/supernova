@@ -22,7 +22,6 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/otp/actor
 import gleam/string
 import supernova/llm/client
 import supernova/llm/provider
@@ -55,36 +54,6 @@ pub type StreamConfig {
     /// Timeout in milliseconds (default: 60000)
     timeout_ms: Int,
   )
-}
-
-/// Internal actor state.
-type StreamState {
-  StreamState(
-    /// Subject to send chunks to
-    receiver: Option(Subject(StreamChunk)),
-    /// Accumulated SSE buffer
-    buffer: String,
-    /// Whether the stream is active
-    active: Bool,
-    /// Request ID from FFI
-    request_id: Option(String),
-  )
-}
-
-/// Messages the stream actor handles.
-type StreamMsg {
-  /// Incoming raw data chunk from HTTP
-  RawData(data: String)
-  /// HTTP stream ended
-  StreamEnded
-  /// HTTP error
-  StreamFailed(reason: String)
-  /// Register a receiver
-  RegisterReceiver(Subject(StreamChunk))
-  /// Request current state (for testing)
-  GetState(Subject(StreamState))
-  /// Shutdown
-  Shutdown
 }
 
 // ============================================================================
@@ -432,91 +401,6 @@ fn format_stream_error(error: provider.LLMError) -> String {
     provider.ProviderNotFound(name) -> "Provider not found: " <> name
     provider.NotImplemented(reason) -> "Not implemented: " <> reason
     provider.CircuitOpen(provider) -> "Circuit open: " <> provider
-  }
-}
-
-/// Handle stream actor messages.
-fn handle_stream_msg(
-  state: StreamState,
-  msg: StreamMsg,
-) -> actor.Next(StreamState, StreamMsg) {
-  case msg {
-    RawData(data) -> {
-      // Parse the raw data based on accumulated buffer
-      let new_buffer = state.buffer <> data
-      let chunks = parse_buffer(new_buffer, state)
-
-      // Send chunks to receiver
-      case state.receiver {
-        Some(receiver) -> {
-          list.each(chunks.chunks, fn(chunk) { actor.send(receiver, chunk) })
-        }
-        None -> Nil
-      }
-
-      actor.continue(StreamState(..state, buffer: chunks.remainder))
-    }
-
-    StreamEnded -> {
-      // Parse any remaining buffer
-      case state.receiver {
-        Some(receiver) -> {
-          let remaining = parse_buffer(state.buffer, state)
-          list.each(remaining.chunks, fn(chunk) { actor.send(receiver, chunk) })
-          actor.send(receiver, Done)
-        }
-        None -> Nil
-      }
-      actor.stop()
-    }
-
-    StreamFailed(reason) -> {
-      case state.receiver {
-        Some(receiver) -> actor.send(receiver, StreamError(reason: reason))
-        None -> Nil
-      }
-      actor.stop()
-    }
-
-    RegisterReceiver(subject) -> {
-      actor.continue(StreamState(..state, receiver: Some(subject)))
-    }
-
-    GetState(reply_to) -> {
-      actor.send(reply_to, state)
-      actor.continue(state)
-    }
-
-    Shutdown -> actor.stop()
-  }
-}
-
-/// Parse accumulated buffer into chunks, returning chunks and remainder.
-type ParseResult {
-  ParseResult(chunks: List(StreamChunk), remainder: String)
-}
-
-fn parse_buffer(buffer: String, _state: StreamState) -> ParseResult {
-  // Split on double newline (SSE event separator)
-  let parts = string.split(buffer, "\n\n")
-  case parts {
-    [] -> ParseResult(chunks: [], remainder: "")
-    [single] -> ParseResult(chunks: [], remainder: single)
-    _ -> {
-      let #(complete, incomplete) = split_complete(parts)
-      let chunks =
-        list.flat_map(complete, fn(event) { parse_openai_sse(event) })
-      let remainder = string.join(incomplete, "\n\n")
-      ParseResult(chunks: chunks, remainder: remainder)
-    }
-  }
-}
-
-/// Split a list into complete (all but last) and incomplete (last) parts.
-fn split_complete(parts: List(String)) -> #(List(String), List(String)) {
-  case list.reverse(parts) {
-    [] -> #([], [])
-    [last, ..reversed_rest] -> #(list.reverse(reversed_rest), [last])
   }
 }
 

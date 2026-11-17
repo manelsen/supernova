@@ -827,7 +827,6 @@ fn convert_yaml_error(e: yay.YamlError) -> ConfigError {
         <> int.to_string(column),
       )
     }
-    _ -> YamlParseError("YAML parse error: " <> string.inspect(e))
   }
 }
 
@@ -1382,25 +1381,21 @@ pub fn load(yaml_string: String) -> Result(Config, ConfigError) {
   Ok(config_with_env)
 }
 
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read_config_file(path: String) -> Result(String, String)
+
 /// Load configuration from file path
 pub fn load_from_file(path: String) -> Result(Config, ConfigError) {
-  case yay.parse_file(path) {
-    Ok([doc]) -> {
-      let root = yay.document_root(doc)
-      use config <- result.try(decode_config(root))
-
-      let config_with_env = apply_env_overrides(config)
-
-      use _ <- result.try(validate(config_with_env))
-
-      Ok(config_with_env)
-    }
-    Ok(docs) ->
-      Error(YamlParseError(
-        "Expected 1 YAML document, got " <> int.to_string(list.length(docs)),
-      ))
-    Error(e) -> Error(convert_yaml_error(e))
-  }
+  use yaml_string <- result.try(
+    read_config_file(path)
+    |> result.map_error(fn(err) {
+      FileError("Failed to read configuration file \"" <> path <> "\": " <> err)
+    }),
+  )
+  use config <- result.try(parse_yaml(yaml_string))
+  let config_with_env = apply_env_overrides(config)
+  use _ <- result.try(validate(config_with_env))
+  Ok(config_with_env)
 }
 
 /// Load configuration from YAML string without validation
