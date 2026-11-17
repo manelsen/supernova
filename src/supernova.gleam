@@ -37,6 +37,7 @@ import supernova/llm/failover_cooldown/types as cd_types
 import supernova/llm/provider
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
+import supernova/tools/browser
 import supernova/tracing/actor as tracing_actor
 import supernova/tracing/global as tracing_global
 import supernova/tracing/types as tracing_types
@@ -159,6 +160,8 @@ pub type Services {
 
 /// Start all core services
 fn start_services(cfg: config.Config) -> Result(Services, String) {
+  browser.set_evaluate_allowed(cfg.tools.browser.allow_evaluate)
+
   // Start Session Supervisor
   use session_sup <- result.try(
     supervisor.start()

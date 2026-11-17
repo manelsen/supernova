@@ -3,6 +3,56 @@ import gleam/json
 import gleam/string
 import gleeunit/should
 import supernova/tools/browser
+import test_env
+
+pub fn browser_evaluate_disabled_by_default_without_ffi_test() {
+  use <- test_env.without_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE")
+  browser.set_evaluate_allowed(False)
+
+  browser.evaluate("nonexistent-session", "1 + 1", 5000)
+  |> should.equal(Error("browser evaluate is disabled by configuration"))
+
+  browser.execute(
+    "{\"operation\":\"evaluate\",\"session_id\":\"nonexistent-session\",\"script\":\"1 + 1\"}",
+  )
+  |> should.equal(Error("browser evaluate is disabled by configuration"))
+}
+
+pub fn browser_evaluate_enabled_via_config_reaches_runner_test() {
+  use <- test_env.without_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE")
+  browser.set_evaluate_allowed(True)
+
+  let assert Error(reason) =
+    browser.evaluate("nonexistent-session", "1 + 1", 5000)
+  let _ =
+    reason |> should.not_equal("browser evaluate is disabled by configuration")
+
+  let assert Error(exec_reason) =
+    browser.execute_with_config(
+      "{\"operation\":\"evaluate\",\"session_id\":\"nonexistent-session\",\"script\":\"1 + 1\"}",
+      True,
+    )
+  exec_reason
+  |> should.not_equal("browser evaluate is disabled by configuration")
+
+  browser.set_evaluate_allowed(False)
+}
+
+pub fn browser_evaluate_enabled_via_env_reaches_runner_test() {
+  browser.set_evaluate_allowed(False)
+  use <- test_env.with_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE", "true")
+
+  let assert Error(reason) =
+    browser.evaluate("nonexistent-session", "1 + 1", 5000)
+  reason |> should.not_equal("browser evaluate is disabled by configuration")
+
+  let assert Error(exec_reason) =
+    browser.execute(
+      "{\"operation\":\"evaluate\",\"session_id\":\"nonexistent-session\",\"script\":\"1 + 1\"}",
+    )
+  exec_reason
+  |> should.not_equal("browser evaluate is disabled by configuration")
+}
 
 pub fn browser_session_round_trip_test() {
   case browser.open(fixture_browser_page_url(), 5000) {
@@ -37,10 +87,11 @@ pub fn browser_timeout_cleans_up_session_test() {
     Ok(open_result) -> {
       let session_id = decode_open_result(open_result)
 
-      browser.evaluate(
+      browser.evaluate_with_config(
         session_id,
         "new Promise(resolve => setTimeout(() => resolve('done'), 200))",
         10,
+        True,
       )
       |> should.be_error
 

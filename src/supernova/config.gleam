@@ -212,6 +212,22 @@ pub type BudgetsConfig {
   )
 }
 
+/// Browser tool configuration
+pub type BrowserToolsConfig {
+  BrowserToolsConfig(
+    /// Allow arbitrary JS evaluation via browser evaluate (disabled by default)
+    allow_evaluate: Bool,
+  )
+}
+
+/// Tools configuration section
+pub type ToolsConfig {
+  ToolsConfig(
+    /// Browser tool configuration
+    browser: BrowserToolsConfig,
+  )
+}
+
 /// Main application configuration
 pub type Config {
   Config(
@@ -245,6 +261,8 @@ pub type Config {
     database: DatabaseConfig,
     /// Budget configuration
     budgets: BudgetsConfig,
+    /// Tools configuration
+    tools: ToolsConfig,
   )
 }
 
@@ -299,7 +317,13 @@ pub fn default_config() -> Config {
       pool_size: 10,
     ),
     budgets: default_budgets_config(),
+    tools: default_tools_config(),
   )
+}
+
+/// Create a default tools configuration
+pub fn default_tools_config() -> ToolsConfig {
+  ToolsConfig(browser: BrowserToolsConfig(allow_evaluate: False))
 }
 
 /// Create a default budgets configuration
@@ -745,6 +769,9 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
   // Parse budgets
   let budgets = decode_budgets(root)
 
+  // Parse tools
+  let tools = decode_tools(root)
+
   Ok(Config(
     app_name: app_name,
     environment: environment,
@@ -761,7 +788,28 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     whatsapp: whatsapp,
     database: database,
     budgets: budgets,
+    tools: tools,
   ))
+}
+
+/// Decode Tools configuration from YAML
+fn decode_tools(root: yay.Node) -> ToolsConfig {
+  let default = default_tools_config()
+  case yay.select_sugar(root, "tools") {
+    Ok(tools_node) -> {
+      let browser = case yay.select_sugar(tools_node, "browser") {
+        Ok(browser_node) ->
+          BrowserToolsConfig(allow_evaluate: get_bool_or(
+            browser_node,
+            "allow_evaluate",
+            default.browser.allow_evaluate,
+          ))
+        Error(_) -> default.browser
+      }
+      ToolsConfig(browser: browser)
+    }
+    Error(_) -> default
+  }
 }
 
 /// Convert yay YAML error to ConfigError
@@ -957,6 +1005,19 @@ pub fn apply_env_overrides(config: Config) -> Config {
   // Provider API key overrides (for each provider in config)
   let providers = apply_provider_env_overrides(config.providers)
 
+  // Tools overrides
+  let browser_allow_evaluate = case
+    get_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE")
+  {
+    Some(value) ->
+      case string.lowercase(string.trim(value)) {
+        "true" -> True
+        "false" -> False
+        _ -> config.tools.browser.allow_evaluate
+      }
+    None -> config.tools.browser.allow_evaluate
+  }
+
   Config(
     app_name: app_name,
     environment: environment,
@@ -1008,6 +1069,9 @@ pub fn apply_env_overrides(config: Config) -> Config {
       pool_size: db_pool_size,
     ),
     budgets: config.budgets,
+    tools: ToolsConfig(browser: BrowserToolsConfig(
+      allow_evaluate: browser_allow_evaluate,
+    )),
   )
 }
 
