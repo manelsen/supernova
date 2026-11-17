@@ -28,6 +28,17 @@ pub fn path_traversal_is_blocked_test() {
   }
 }
 
+pub fn absolute_path_is_blocked_test() {
+  file_system.read("workspace", "/etc/passwd")
+  |> should.equal(Error("Absolute path blocked: /etc/passwd"))
+
+  file_system.write("workspace", "/etc/passwd", "x")
+  |> should.equal(Error("Absolute path blocked: /etc/passwd"))
+
+  file_system.list("workspace", "/etc")
+  |> should.equal(Error("Absolute path blocked: /etc"))
+}
+
 pub fn tool_definition_has_expected_name_test() {
   let tool = file_system.tool()
   tool.name |> should.equal("file_system")
