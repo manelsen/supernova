@@ -81,7 +81,10 @@ pub fn tier_to_string(tier: ComplexityTier) -> String {
   }
 }
 
-fn select_model(config: provider.ProviderConfig, tier: ComplexityTier) -> String {
+fn select_model(
+  config: provider.ProviderConfig,
+  tier: ComplexityTier,
+) -> String {
   case has_user_override(config) {
     True -> config.default_model
     False ->

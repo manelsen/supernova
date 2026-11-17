@@ -276,7 +276,10 @@ pub fn new_config(bot_token: String) -> RestClientConfig {
 }
 
 /// Set custom base URL
-pub fn with_base_url(config: RestClientConfig, url: String) -> RestClientConfig {
+pub fn with_base_url(
+  config: RestClientConfig,
+  url: String,
+) -> RestClientConfig {
   RestClientConfig(..config, base_url: Some(url))
 }
 
@@ -912,7 +915,9 @@ fn parse_response(
   }
 }
 
-fn parse_empty_response(resp: Response(String)) -> Result(Nil, DiscordRestError) {
+fn parse_empty_response(
+  resp: Response(String),
+) -> Result(Nil, DiscordRestError) {
   case parse_response(resp) {
     Ok(_) -> Ok(Nil)
     Error(error) -> Error(error)

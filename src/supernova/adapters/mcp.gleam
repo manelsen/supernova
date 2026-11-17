@@ -1034,7 +1034,10 @@ pub fn with_max_tokens(context: ChatContext, max_tokens: Int) -> ChatContext {
 }
 
 /// Set the temperature for the chat context
-pub fn with_temperature(context: ChatContext, temperature: Float) -> ChatContext {
+pub fn with_temperature(
+  context: ChatContext,
+  temperature: Float,
+) -> ChatContext {
   ChatContext(..context, temperature: Some(temperature))
 }
 
@@ -1450,7 +1453,10 @@ pub fn serialize_tool_for_llm(tool: Tool) -> String {
 }
 
 /// Serialize a ToolResult to JSON for returning to the LLM
-pub fn serialize_tool_result(result: ToolResult, tool_call_id: String) -> String {
+pub fn serialize_tool_result(
+  result: ToolResult,
+  tool_call_id: String,
+) -> String {
   case result {
     ToolSuccess(content) ->
       "{\"tool_call_id\":\""

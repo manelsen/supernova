@@ -1183,7 +1183,10 @@ pub fn input_required(
 }
 
 /// Set input minimum length
-pub fn input_min_length(input: ResponseComponent, min: Int) -> ResponseComponent {
+pub fn input_min_length(
+  input: ResponseComponent,
+  min: Int,
+) -> ResponseComponent {
   case input {
     ResponseTextInput(
       custom_id,
@@ -1210,7 +1213,10 @@ pub fn input_min_length(input: ResponseComponent, min: Int) -> ResponseComponent
 }
 
 /// Set input maximum length
-pub fn input_max_length(input: ResponseComponent, max: Int) -> ResponseComponent {
+pub fn input_max_length(
+  input: ResponseComponent,
+  max: Int,
+) -> ResponseComponent {
   case input {
     ResponseTextInput(
       custom_id,
@@ -1506,7 +1512,9 @@ pub fn validate_range(
 }
 
 /// Combine multiple validation results
-pub fn combine_validations(results: List(ValidationResult)) -> ValidationResult {
+pub fn combine_validations(
+  results: List(ValidationResult),
+) -> ValidationResult {
   case
     list.find(results, fn(r) {
       case r {
@@ -1815,7 +1823,10 @@ pub fn get_string_option(
 }
 
 /// Get integer option value from interaction data
-pub fn get_int_option(data: InteractionPayloadData, name: String) -> Option(Int) {
+pub fn get_int_option(
+  data: InteractionPayloadData,
+  name: String,
+) -> Option(Int) {
   case data {
     CommandPayload(options: opts, ..) -> {
       find_option_value(opts, name, fn(v) {

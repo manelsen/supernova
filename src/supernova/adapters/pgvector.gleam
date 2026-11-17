@@ -122,7 +122,10 @@ pub fn new_config(
 }
 
 /// Set the password for the PostgreSQL connection.
-pub fn with_password(config: PgVectorConfig, password: String) -> PgVectorConfig {
+pub fn with_password(
+  config: PgVectorConfig,
+  password: String,
+) -> PgVectorConfig {
   PgVectorConfig(
     ..config,
     pog_config: pog.password(config.pog_config, Some(password)),
@@ -151,7 +154,10 @@ pub fn with_dimensions(
 }
 
 /// Set the default limit for similarity search results.
-pub fn with_default_limit(config: PgVectorConfig, limit: Int) -> PgVectorConfig {
+pub fn with_default_limit(
+  config: PgVectorConfig,
+  limit: Int,
+) -> PgVectorConfig {
   PgVectorConfig(..config, default_limit: limit)
 }
 

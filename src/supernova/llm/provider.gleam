@@ -169,7 +169,10 @@ pub fn assistant_message_with_tools(
 }
 
 /// Create a tool result message.
-pub fn tool_result_message(tool_call_id: String, content: String) -> ChatMessage {
+pub fn tool_result_message(
+  tool_call_id: String,
+  content: String,
+) -> ChatMessage {
   ChatMessage(
     role: "tool",
     content: content,

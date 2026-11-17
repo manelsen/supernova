@@ -21,11 +21,8 @@ import supernova/core/kernel_version/types
 /// The current syscall interface version.
 /// This is the version agents should query to understand what features
 /// are available in this kernel.
-pub const current_version: types.KernelVersion = types.KernelVersion(
-  major: 1,
-  minor: 0,
-  patch: 0,
-)
+pub const current_version: types.KernelVersion =
+  types.KernelVersion(major: 1, minor: 0, patch: 0)
 
 /// Get the current kernel version.
 pub fn get_version() -> types.KernelVersion {
@@ -33,7 +30,9 @@ pub fn get_version() -> types.KernelVersion {
 }
 
 /// Format version result as a KernelVersionResult.
-pub fn version_result(version: types.KernelVersion) -> types.KernelVersionResult {
+pub fn version_result(
+  version: types.KernelVersion,
+) -> types.KernelVersionResult {
   types.KernelVersionOk(types.version_to_string(version))
 }
 

@@ -458,7 +458,10 @@ pub fn cancel(agent: SubAgent) -> Result(Nil, String) {
 /// Wait for a sub-agent to complete and return its result.
 ///
 /// Blocks until the agent completes, is cancelled, or the timeout expires.
-pub fn await(agent: SubAgent, timeout_ms: Int) -> Result(SubAgentResult, String) {
+pub fn await(
+  agent: SubAgent,
+  timeout_ms: Int,
+) -> Result(SubAgentResult, String) {
   let reply_subject = process.new_subject()
   actor.send(agent, AwaitResult(reply_subject, timeout_ms))
 

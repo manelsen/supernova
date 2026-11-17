@@ -339,7 +339,10 @@ pub fn new_plugin_message(content: String) -> PluginMessage {
 }
 
 /// Set message role
-pub fn message_with_role(message: PluginMessage, role: String) -> PluginMessage {
+pub fn message_with_role(
+  message: PluginMessage,
+  role: String,
+) -> PluginMessage {
   PluginMessage(..message, role: role)
 }
 

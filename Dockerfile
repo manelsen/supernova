@@ -1,6 +1,6 @@
-FROM erlang:28-alpine
+FROM erlang:28.5.0.8-alpine
 
-ARG GLEAM_VERSION=1.15.0
+ARG GLEAM_VERSION=1.19.2
 ARG TARGETARCH
 
 RUN apk add --no-cache curl tar rebar3

@@ -218,7 +218,9 @@ fn normalize_policy_path(token: String) -> String {
   }
 }
 
-fn parse_snapshots(lines: List(String)) -> Result(List(ProcessSnapshot), String) {
+fn parse_snapshots(
+  lines: List(String),
+) -> Result(List(ProcessSnapshot), String) {
   parse_snapshots_acc(lines, [])
 }
 

@@ -84,7 +84,11 @@ pub fn render(data: DashboardData) -> String {
 // ============================================================================
 
 /// Render the dashboard header with kernel version and uptime.
-fn render_header(version: String, uptime_ms: Int, _started_at_ms: Int) -> String {
+fn render_header(
+  version: String,
+  uptime_ms: Int,
+  _started_at_ms: Int,
+) -> String {
   let uptime_str = format_uptime(uptime_ms)
   string.join(
     [
@@ -217,7 +221,9 @@ pub fn status_to_string(status: scheduler_types.AgentStatus) -> String {
 }
 
 /// Convert scheduler SchedulerPriority to a display string.
-pub fn priority_to_string(priority: scheduler_types.SchedulerPriority) -> String {
+pub fn priority_to_string(
+  priority: scheduler_types.SchedulerPriority,
+) -> String {
   scheduler_types.priority_to_string(priority)
 }
 

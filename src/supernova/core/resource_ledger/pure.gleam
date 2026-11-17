@@ -206,7 +206,10 @@ fn resource_type_to_string(resource: ResourceType) -> String {
 }
 
 /// Get the current value for a specific resource from counters.
-fn get_resource_value(counters: ResourceCounters, resource: ResourceType) -> Int {
+fn get_resource_value(
+  counters: ResourceCounters,
+  resource: ResourceType,
+) -> Int {
   case resource {
     LLMTokensPrompt -> counters.llm_tokens_prompt
     LLMTokensCompletion -> counters.llm_tokens_completion

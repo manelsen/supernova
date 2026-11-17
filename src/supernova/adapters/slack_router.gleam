@@ -154,7 +154,10 @@ fn start_with_optional_session_supervisor(
 }
 
 /// Route a normalized Slack message through the inbound pipeline.
-pub fn route(router: SlackRouter, msg: port.ChannelMessage) -> SlackRouteResult {
+pub fn route(
+  router: SlackRouter,
+  msg: port.ChannelMessage,
+) -> SlackRouteResult {
   route_inbound(router, port.inbound_message(msg))
 }
 

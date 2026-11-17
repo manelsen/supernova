@@ -150,7 +150,10 @@ pub fn extract_readable(
 }
 
 /// Take a PNG screenshot of the current page.
-pub fn screenshot(session_id: String, timeout_ms: Int) -> Result(String, String) {
+pub fn screenshot(
+  session_id: String,
+  timeout_ms: Int,
+) -> Result(String, String) {
   do_screenshot(session_id, timeout_ms)
 }
 

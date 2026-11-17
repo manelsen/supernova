@@ -382,7 +382,10 @@ fn matches_topic(repository: Repository, filter: Option(String)) -> Bool {
   }
 }
 
-fn matches_updated_since(repository: Repository, filter: Option(String)) -> Bool {
+fn matches_updated_since(
+  repository: Repository,
+  filter: Option(String),
+) -> Bool {
   case filter {
     None -> True
     Some(expected) ->

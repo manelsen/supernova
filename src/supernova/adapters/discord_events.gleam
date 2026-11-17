@@ -413,7 +413,10 @@ pub fn new_filter() -> EventFilter {
 }
 
 /// Add guild filter
-pub fn filter_by_guild(filter: EventFilter, guild_id: Snowflake) -> EventFilter {
+pub fn filter_by_guild(
+  filter: EventFilter,
+  guild_id: Snowflake,
+) -> EventFilter {
   EventFilter(..filter, guild_id: Some(guild_id))
 }
 
@@ -700,7 +703,10 @@ pub fn register_handler_with_filter(
 }
 
 /// Unregister an event handler
-pub fn unregister_handler(dispatcher: EventDispatcher, handler_id: Int) -> Bool {
+pub fn unregister_handler(
+  dispatcher: EventDispatcher,
+  handler_id: Int,
+) -> Bool {
   actor.call(dispatcher, waiting: 5000, sending: UnregisterHandler(
     _,
     handler_id,

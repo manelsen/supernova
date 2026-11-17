@@ -179,7 +179,10 @@ pub fn send_and_receive(
 }
 
 /// Send a JSON-RPC notification (no response expected).
-pub fn send_only(transport: StdioTransport, data: String) -> Result(Nil, String) {
+pub fn send_only(
+  transport: StdioTransport,
+  data: String,
+) -> Result(Nil, String) {
   actor.call(transport, waiting: 5000, sending: SendOnly(_, data))
 }
 

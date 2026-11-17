@@ -17,7 +17,8 @@ pub type PlanningConfig {
   PlanningConfig(model: String, planning_prompt: String)
 }
 
-pub const default_planning_config = PlanningConfig(
-  model: "glm-5",
-  planning_prompt: "Decompose the following goal into independent subtasks. Return a JSON array of tasks where each task has: id, name, and depends_on (array of task ids that must complete first). Tasks that can run in parallel should have no dependencies. Example: [{\"id\":\"task1\",\"name\":\"Do thing A\",\"depends_on\":[]},{\"id\":\"task2\",\"name\":\"Do thing B\",\"depends_on\":[]},{\"id\":\"task3\",\"name\":\"Do thing C\",\"depends_on\":[\"task1\",\"task2\"]}]",
-)
+pub const default_planning_config =
+  PlanningConfig(
+    model: "glm-5",
+    planning_prompt: "Decompose the following goal into independent subtasks. Return a JSON array of tasks where each task has: id, name, and depends_on (array of task ids that must complete first). Tasks that can run in parallel should have no dependencies. Example: [{\"id\":\"task1\",\"name\":\"Do thing A\",\"depends_on\":[]},{\"id\":\"task2\",\"name\":\"Do thing B\",\"depends_on\":[]},{\"id\":\"task3\",\"name\":\"Do thing C\",\"depends_on\":[\"task1\",\"task2\"]}]",
+  )

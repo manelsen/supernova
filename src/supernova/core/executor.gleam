@@ -55,12 +55,13 @@ fn current_timestamp() -> Int
 
 const max_recursion_depth = 25
 
-const default_retry_config = retry.RetryConfig(
-  initial_delay_ms: 1000,
-  max_delay_ms: 30_000,
-  max_attempts: 3,
-  jitter_factor: 0.2,
-)
+const default_retry_config =
+  retry.RetryConfig(
+    initial_delay_ms: 1000,
+    max_delay_ms: 30_000,
+    max_attempts: 3,
+    jitter_factor: 0.2,
+  )
 
 fn record_llm_latency(provider_name: String, model: String, latency_ms: Int) {
   case metrics_global.get_metrics() {
@@ -553,7 +554,10 @@ fn record_tool_error(tool_name: String) {
   }
 }
 
-fn is_declared_tool(name: String, tools: List(provider.ToolDefinition)) -> Bool {
+fn is_declared_tool(
+  name: String,
+  tools: List(provider.ToolDefinition),
+) -> Bool {
   list.any(tools, fn(tool) { tool.name == name })
 }
 
@@ -881,7 +885,9 @@ fn normalize_yield_interval(interval: Int) -> Int {
   int.max(1, interval)
 }
 
-fn first_tool_call(calls: List(provider.ToolCall)) -> Option(provider.ToolCall) {
+fn first_tool_call(
+  calls: List(provider.ToolCall),
+) -> Option(provider.ToolCall) {
   case calls {
     [first, ..] -> Some(first)
     [] -> None
