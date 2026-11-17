@@ -3,11 +3,13 @@
 //// Verifies the agent execution loop: LLM calls, tool dispatch, recursion.
 
 import gleam/list
+import gleam/erlang/process
 import gleam/option.{None}
 import gleam/string
 import gleeunit/should
 import supernova/core/executor
 import supernova/llm/provider
+import supernova/llm/stream
 import supernova/tools/browser
 import supernova/tools/canvas as canvas_tool
 import supernova/tools/gateway as gateway_tool
@@ -155,6 +157,24 @@ pub fn builtin_tools_include_github_test() {
   |> should.equal(True)
 }
 
+pub fn builtin_tools_include_web_fetch_test() {
+  executor.builtin_tools()
+  |> list.any(fn(tool) { tool.name == "web_fetch" })
+  |> should.equal(True)
+}
+
+pub fn builtin_tools_include_git_inspect_test() {
+  executor.builtin_tools()
+  |> list.any(fn(tool) { tool.name == "git_inspect" })
+  |> should.equal(True)
+}
+
+pub fn builtin_tools_include_file_system_test() {
+  executor.builtin_tools()
+  |> list.any(fn(tool) { tool.name == "file_system" })
+  |> should.equal(True)
+}
+
 pub fn invalid_browser_tool_arguments_returns_error_message_test() {
   let calls = [
     provider.ToolCall(
@@ -248,5 +268,179 @@ pub fn invalid_github_tool_arguments_returns_error_message_test() {
       string.starts_with(msg.content, "ERROR: Invalid arguments for github")
       |> should.equal(True)
     _ -> should.fail()
+  }
+}
+
+pub fn invalid_web_fetch_tool_arguments_returns_error_message_test() {
+  let calls = [
+    provider.ToolCall(id: "c1", name: "web_fetch", arguments: "{\"uri\":\"x\"}"),
+  ]
+  let tools = [provider.new_tool("web_fetch", "Web fetch", [])]
+
+  let messages = executor.execute_tool_calls_for_test(calls, tools)
+
+  case messages {
+    [msg] ->
+      msg.content
+      |> should.equal("ERROR: Invalid arguments for web_fetch")
+    _ -> should.fail()
+  }
+}
+
+pub fn invalid_git_inspect_tool_arguments_returns_error_message_test() {
+  let calls = [
+    provider.ToolCall(
+      id: "c1",
+      name: "git_inspect",
+      arguments: "{\"wrong\":\"field\"}",
+    ),
+  ]
+  let tools = [provider.new_tool("git_inspect", "Git inspect", [])]
+
+  let messages = executor.execute_tool_calls_for_test(calls, tools)
+
+  case messages {
+    [msg] ->
+      msg.content
+      |> should.equal("ERROR: Invalid arguments for git_inspect")
+    _ -> should.fail()
+  }
+}
+
+pub fn git_inspect_alias_invalid_action_returns_error_message_test() {
+  let calls = [
+    provider.ToolCall(
+      id: "c1",
+      name: "git_inspect",
+      arguments: "{\"command\":\"fetch\"}",
+    ),
+  ]
+  let tools = [provider.new_tool("git_inspect", "Git inspect", [])]
+
+  let messages = executor.execute_tool_calls_for_test(calls, tools)
+
+  case messages {
+    [msg] ->
+      msg.content
+      |> should.equal("ERROR: git_inspect action must be status, log, or branch")
+    _ -> should.fail()
+  }
+}
+
+pub fn invalid_file_system_tool_arguments_returns_error_message_test() {
+  let calls = [
+    provider.ToolCall(
+      id: "c1",
+      name: "file_system",
+      arguments: "{\"path\":\".\"}",
+    ),
+  ]
+  let tools = [provider.new_tool("file_system", "File system", [])]
+
+  let messages = executor.execute_tool_calls_for_test(calls, tools)
+
+  case messages {
+    [msg] ->
+      msg.content
+      |> should.equal("ERROR: Invalid arguments for file_system")
+    _ -> should.fail()
+  }
+}
+
+pub fn declared_but_unwired_tool_returns_executor_error_message_test() {
+  let calls = [
+    provider.ToolCall(id: "c1", name: "custom_tool", arguments: "{}"),
+  ]
+  let tools = [provider.new_tool("custom_tool", "Custom", [])]
+
+  let messages = executor.execute_tool_calls_for_test(calls, tools)
+
+  case messages {
+    [msg] ->
+      msg.content
+      |> should.equal("ERROR: Tool 'custom_tool' is not wired in executor")
+    _ -> should.fail()
+  }
+}
+
+pub fn run_stream_mock_default_chunks_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "mock",
+      api_key: None,
+      base_url: None,
+      default_model: "mock-model",
+    )
+  let stream_subject =
+    executor.run_stream_mock([provider.user_message("hello")], config, [])
+
+  let assert Ok(stream.TextChunk(content: "Mock ")) =
+    process.receive(stream_subject, within: 100)
+  let assert Ok(stream.TextChunk(content: "streaming ")) =
+    process.receive(stream_subject, within: 100)
+  let assert Ok(stream.TextChunk(content: "response")) =
+    process.receive(stream_subject, within: 100)
+  let assert Ok(stream.Done) = process.receive(stream_subject, within: 100)
+}
+
+pub fn run_stream_mock_echo_model_chunks_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "mock",
+      api_key: None,
+      base_url: None,
+      default_model: "mock-model",
+    )
+  let stream_subject =
+    executor.run_stream_mock(
+      [provider.user_message("please [echo-model]")],
+      config,
+      [],
+    )
+
+  let assert Ok(stream.TextChunk(content)) =
+    process.receive(stream_subject, within: 100)
+  content |> should.equal("Mock response via mock-model")
+  let assert Ok(stream.Done) = process.receive(stream_subject, within: 100)
+}
+
+pub fn run_stream_mock_stream_error_marker_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "mock",
+      api_key: None,
+      base_url: None,
+      default_model: "mock-model",
+    )
+  let stream_subject =
+    executor.run_stream_mock(
+      [provider.user_message("trigger [stream-error] now")],
+      config,
+      [],
+    )
+
+  let assert Ok(stream.StreamError(reason: reason)) =
+    process.receive(stream_subject, within: 100)
+  reason |> should.equal("simulated mock stream error")
+}
+
+pub fn run_stream_mock_stream_timeout_marker_emits_no_chunks_test() {
+  let config =
+    provider.ProviderConfig(
+      name: "mock",
+      api_key: None,
+      base_url: None,
+      default_model: "mock-model",
+    )
+  let stream_subject =
+    executor.run_stream_mock(
+      [provider.user_message("simulate [stream-timeout]")],
+      config,
+      [],
+    )
+
+  case process.receive(stream_subject, within: 50) {
+    Error(_) -> Nil
+    Ok(_) -> should.fail()
   }
 }

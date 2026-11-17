@@ -71,6 +71,22 @@ def handle_request(request):
                             "required": ["a", "b"],
                         },
                     },
+                    {
+                        "name": "big_data",
+                        "description": "Returns a large payload to test buffer handling",
+                        "inputSchema": {"type": "object", "properties": {}, "required": []},
+                    },
+                    {
+                        "name": "special_chars",
+                        "description": "Returns text with JSON special characters",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "input": {"type": "string", "description": "Input text"}
+                            },
+                            "required": ["input"],
+                        },
+                    },
                 ]
             },
         }
@@ -95,6 +111,25 @@ def handle_request(request):
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": {"content": [{"type": "text", "text": str(result)}]},
+            }
+
+        elif tool_name == "big_data":
+            # 8 KB of text — well above the old 1024-byte line buffer
+            text = "A" * 8192
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": text}]},
+            }
+
+        elif tool_name == "special_chars":
+            inp = arguments.get("input", "")
+            # Echo back inside a string that itself contains JSON special chars
+            text = f'Result: "{inp}" with backslash \\ and newline embedded'
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": text}]},
             }
 
         else:

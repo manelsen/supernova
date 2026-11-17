@@ -773,7 +773,7 @@ pub fn parse_config_yaml(
 fn do_parse_config_yaml(
   yaml: String,
 ) -> Result(PluginsConfigFile, ConfigParseError) {
-  case yay.parse_string(yaml) {
+  case yay.parse_string(string.trim(yaml)) {
     Ok([doc]) -> {
       let root = yay.document_root(doc)
       // Try to get plugins list

@@ -15,6 +15,7 @@
 import gleam/erlang/process.{type Subject}
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/string
 
 // ============================================================================
 // FFI Bindings
@@ -187,5 +188,3 @@ pub fn stop(transport: StdioTransport) -> Nil {
   actor.call(transport, waiting: 5000, sending: Stop)
 }
 
-// Import for string.inspect
-import gleam/string

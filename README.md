@@ -258,6 +258,7 @@ For local development with Gleam:
 gleam deps download   # install dependencies
 gleam build           # compile
 gleam test            # run tests
+make coverage         # enforce 85% minimum line coverage
 gleam format          # format code
 ```
 

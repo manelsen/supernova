@@ -523,6 +523,90 @@ pub fn start_channels_registers_remaining_native_adapters_test() {
   registry.stop_channels(channel_registry)
 }
 
+pub fn start_channels_skips_enabled_channels_with_missing_credentials_test() {
+  let base = config.default_config()
+  let cfg =
+    config.Config(
+      ..base,
+      discord: config.DiscordConfig(
+        token: None,
+        app_id: None,
+        guild_id: None,
+        enabled: True,
+      ),
+      telegram: config.TelegramConfig(token: None, enabled: True),
+      matrix: config.MatrixConfig(
+        homeserver_url: None,
+        token: None,
+        enabled: True,
+      ),
+      lark: config.LarkConfig(token: None, base_url: None, enabled: True),
+      google_chat: config.GoogleChatConfig(webhook_url: None, enabled: True),
+      slack: config.SlackConfig(token: None, enabled: True),
+      mattermost: config.MattermostConfig(
+        token: None,
+        base_url: Some("https://mattermost.example.com"),
+        enabled: True,
+      ),
+      wechat_work: config.WechatWorkConfig(webhook_url: None, enabled: True),
+      whatsapp: config.WhatsAppConfig(
+        bridge_url: None,
+        device_id: None,
+        enabled: True,
+      ),
+    )
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler(cfg, ignoring_handler(received))
+
+  registry.list_channels(channel_registry)
+  |> should.equal([])
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_skips_matrix_when_token_missing_test() {
+  let base = config.default_config()
+  let cfg =
+    config.Config(
+      ..base,
+      matrix: config.MatrixConfig(
+        homeserver_url: Some("https://matrix.example.org"),
+        token: None,
+        enabled: True,
+      ),
+    )
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler(cfg, ignoring_handler(received))
+
+  registry.is_channel_available(channel_registry, "matrix")
+  |> should.equal(False)
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_skips_mattermost_when_base_url_missing_test() {
+  let base = config.default_config()
+  let cfg =
+    config.Config(
+      ..base,
+      mattermost: config.MattermostConfig(
+        token: Some("mattermost-token"),
+        base_url: None,
+        enabled: True,
+      ),
+    )
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler(cfg, ignoring_handler(received))
+
+  registry.is_channel_available(channel_registry, "mattermost")
+  |> should.equal(False)
+
+  registry.stop_channels(channel_registry)
+}
+
 pub fn start_channels_routes_discord_gateway_message_to_handler_test() {
   let received = process.new_subject()
   let assert Ok(channel_registry) =
@@ -1266,6 +1350,158 @@ pub fn e2e_discord_invalid_callback_produces_no_outbound_test() {
   supervisor.stop(session_sup)
 }
 
+pub fn start_channels_routes_discord_command_with_typed_options_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_command_with_options_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+
+  case inbound {
+    port.InboundMessage(msg) -> {
+      msg.channel |> should.equal("discord")
+      msg.content
+      |> should.equal(
+        "/deploy env:prod retries:3 dry:true user:900000000000000111",
+      )
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_interaction_with_root_user_fallback_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_command_with_user_fallback_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundMessage(msg) -> {
+      msg.user_id |> should.equal("900000000000000333")
+      msg.username |> should.equal("fallback_user")
+      msg.is_bot |> should.equal(False)
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_ignores_discord_interaction_missing_channel_id_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_missing_channel_event()], []),
+    )
+
+  process.receive(received, within: 200)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_ignores_discord_interaction_missing_data_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_missing_data_event()], []),
+    )
+
+  process.receive(received, within: 200)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_ignores_telegram_message_without_sender_test() {
+  let received = process.new_subject()
+  let assert Ok(update) = telegram.parse_update(telegram_fixture_update_without_sender())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  process.receive(received, within: 200)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_telegram_caption_when_text_missing_test() {
+  let received = process.new_subject()
+  let assert Ok(update) = telegram.parse_update(telegram_fixture_update_with_caption_only())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundMessage(msg) -> msg.content |> should.equal("caption only")
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_ignores_telegram_callback_missing_message_test() {
+  let received = process.new_subject()
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_callback_query_without_message_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  process.receive(received, within: 200)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_telegram_callback_non_model_action_test() {
+  let received = process.new_subject()
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_callback_query_non_model_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundInteraction(interaction) -> {
+      interaction.event.action_id |> should.equal("custom_action")
+      interaction.event.values |> should.equal([])
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
 fn discord_fixture_message_create_event() -> discord_gateway.DiscordEvent {
   discord_fixture_message_create_event_with_content("content_2")
 }
@@ -1284,6 +1520,34 @@ fn discord_fixture_interaction_command_event() -> discord_gateway.DiscordEvent {
   discord_gateway.RawEvent(
     "INTERACTION_CREATE",
     "{\"id\":\"interaction-help-1\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"token-help\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}} ,\"data\":{\"id\":\"cmd-help-1\",\"name\":\"help\",\"type\":1}}",
+  )
+}
+
+fn discord_fixture_interaction_command_with_options_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-deploy-1\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"token-deploy\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}},\"data\":{\"id\":\"cmd-deploy-1\",\"name\":\"deploy\",\"type\":1,\"options\":[{\"name\":\"env\",\"type\":3,\"value\":\"prod\"},{\"name\":\"retries\",\"type\":4,\"value\":3},{\"name\":\"dry\",\"type\":5,\"value\":true},{\"name\":\"user\",\"type\":6,\"value\":\"900000000000000111\"}]}}",
+  )
+}
+
+fn discord_fixture_interaction_command_with_user_fallback_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-fallback-1\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"token-fallback\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"user\":{\"id\":\"900000000000000333\",\"username\":\"fallback_user\",\"discriminator\":\"0\",\"bot\":false},\"data\":{\"id\":\"cmd-fallback-1\",\"name\":\"help\",\"type\":1}}",
+  )
+}
+
+fn discord_fixture_interaction_missing_channel_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-missing-channel\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"token\",\"version\":1,\"guild_id\":\"900000000000000009\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}},\"data\":{\"id\":\"cmd-help-1\",\"name\":\"help\",\"type\":1}}",
+  )
+}
+
+fn discord_fixture_interaction_missing_data_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-missing-data\",\"application_id\":\"app-1\",\"type\":3,\"token\":\"token\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}}}",
   )
 }
 
@@ -1325,6 +1589,22 @@ fn telegram_fixture_update_with_text(text: String) -> String {
 
 fn telegram_fixture_callback_query_update() -> String {
   "{\"update_id\":737343145,\"message\":null,\"edited_message\":null,\"channel_post\":null,\"edited_channel_post\":null,\"inline_query\":null,\"chosen_inline_result\":null,\"callback_query\":{\"id\":\"cb-telegram-1\",\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":171,\"from\":{\"is_bot\":true,\"id\":999999,\"first_name\":\"SupernovaBot\",\"username\":\"supernova_bot\"},\"text\":\"Current selection: Mock / mock-model\",\"date\":1774569232},\"inline_message_id\":null,\"chat_instance\":\"instance-1\",\"data\":\"picker_model_select:mock|mock-alt-model\",\"game_short_name\":null}}"
+}
+
+fn telegram_fixture_update_without_sender() -> String {
+  "{\"update_id\":737343146,\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":172,\"from\":null,\"text\":\"Hello\",\"date\":1774569232}}"
+}
+
+fn telegram_fixture_update_with_caption_only() -> String {
+  "{\"update_id\":737343147,\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":173,\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"text\":null,\"caption\":\"caption only\",\"date\":1774569232}}"
+}
+
+fn telegram_fixture_callback_query_without_message_update() -> String {
+  "{\"update_id\":737343148,\"callback_query\":{\"id\":\"cb-telegram-2\",\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message\":null,\"inline_message_id\":null,\"chat_instance\":\"instance-2\",\"data\":\"picker_model_select:mock|mock-alt-model\",\"game_short_name\":null}}"
+}
+
+fn telegram_fixture_callback_query_non_model_update() -> String {
+  "{\"update_id\":737343149,\"callback_query\":{\"id\":\"cb-telegram-3\",\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":174,\"from\":{\"is_bot\":true,\"id\":999999,\"first_name\":\"SupernovaBot\",\"username\":\"supernova_bot\"},\"text\":\"Current selection\",\"date\":1774569232},\"inline_message_id\":null,\"chat_instance\":\"instance-3\",\"data\":\"custom_action\",\"game_short_name\":null}}"
 }
 
 // ============================================================================
@@ -1659,4 +1939,459 @@ pub fn e2e_matrix_follow_up_uses_session_history_test() {
 
   registry.stop_channels(channel_registry)
   supervisor.stop(session_sup)
+}
+
+pub fn send_returns_error_for_unregistered_channel_test() {
+  let assert Ok(channel_registry) = registry.start_channels(config.default_config())
+
+  case registry.send(channel_registry, "discord", discord_reply("hello")) {
+    Error(port.SendFailed(reason)) ->
+      reason |> should.equal("Channel not registered: discord")
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn send_stream_returns_error_for_unregistered_channel_test() {
+  let assert Ok(channel_registry) = registry.start_channels(config.default_config())
+  let events = process.new_subject()
+
+  case
+    registry.send_stream(
+      channel_registry,
+      "discord",
+      discord_reply("base"),
+      events,
+    )
+  {
+    Error(port.SendFailed(reason)) ->
+      reason |> should.equal("Channel stream not registered: discord")
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_autocomplete_with_channel_and_role_options_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_autocomplete_with_channel_role_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundMessage(msg) ->
+      msg.content |> should.equal("/configure channel:123 role:456")
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_nested_command_options_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_command_with_nested_options_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundMessage(msg) ->
+      msg.content |> should.equal("/ops deploy dry:false")
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_component_without_values_as_empty_list_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_component_without_values_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundInteraction(interaction) ->
+      interaction.event.values |> should.equal([])
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_interaction_without_user_defaults_sender_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([discord_fixture_interaction_without_user_or_member_event()], []),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundMessage(msg) -> {
+      msg.user_id |> should.equal("unknown")
+      msg.username |> should.equal("unknown")
+      msg.is_bot |> should.equal(False)
+    }
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_ignores_telegram_callback_missing_data_test() {
+  let received = process.new_subject()
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_callback_query_without_data_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  process.receive(received, within: 200)
+  |> should.equal(Error(Nil))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_telegram_message_without_username_falls_back_to_first_name_test() {
+  let received = process.new_subject()
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_update_without_username())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundMessage(msg) -> msg.username |> should.equal("NoUser")
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_telegram_message_without_text_or_caption_test() {
+  let received = process.new_subject()
+  let assert Ok(update) =
+    telegram.parse_update(telegram_fixture_update_without_text_and_caption())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], [update]),
+    )
+
+  let assert Ok(inbound) = process.receive(received, within: 1000)
+  case inbound {
+    port.InboundMessage(msg) -> msg.content |> should.equal("")
+    _ -> should.fail()
+  }
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn adapter_send_telegram_rejects_invalid_reply_to_id_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  let assert Some(adapter) =
+    registry.get_channel_adapter(channel_registry, "telegram")
+  let bad_reply = port.ChannelReply(..telegram_reply("hello"), reply_to_id: Some("oops"))
+
+  adapter.send(bad_reply)
+  |> should.equal(Error(port.SendFailed("invalid telegram reply_to_id: oops")))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn adapter_send_telegram_rejects_invalid_thread_id_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  let assert Some(adapter) =
+    registry.get_channel_adapter(channel_registry, "telegram")
+  let bad_reply =
+    port.ChannelReply(
+      ..telegram_reply("hello"),
+      reply_to_id: Some("171"),
+      thread_id: Some("thread-x"),
+    )
+
+  adapter.send(bad_reply)
+  |> should.equal(Error(port.SendFailed("invalid telegram thread_id: thread-x")))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn adapter_send_telegram_rejects_invalid_edit_message_id_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  let assert Some(adapter) =
+    registry.get_channel_adapter(channel_registry, "telegram")
+  let bad_reply =
+    port.ChannelReply(
+      ..telegram_reply("hello"),
+      reply_to_id: None,
+      edit_message_id: Some("bad"),
+    )
+
+  adapter.send(bad_reply)
+  |> should.equal(Error(port.SendFailed("invalid telegram edit_message_id: bad")))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn send_stream_telegram_rejects_invalid_reply_to_id_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  let events = process.new_subject()
+  let bad_base_reply =
+    port.ChannelReply(..telegram_reply(""), reply_to_id: Some("oops"))
+
+  registry.send_stream(channel_registry, "telegram", bad_base_reply, events)
+  |> should.equal(Error(port.SendFailed("invalid telegram reply_to_id: oops")))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn send_stream_telegram_rejects_invalid_thread_id_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks([], []),
+    )
+
+  let events = process.new_subject()
+  let bad_base_reply =
+    port.ChannelReply(
+      ..telegram_reply(""),
+      reply_to_id: Some("171"),
+      thread_id: Some("thread-x"),
+    )
+
+  registry.send_stream(channel_registry, "telegram", bad_base_reply, events)
+  |> should.equal(Error(port.SendFailed("invalid telegram thread_id: thread-x")))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn send_stream_discord_propagates_stream_failure_test() {
+  let recorder = process.new_subject()
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks_with_recorder([], [], recorder),
+    )
+
+  let events = process.new_subject()
+  let base_reply = discord_reply("") |> port.with_typing(True)
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(events, port.StreamFailure(port.SendFailed("discord-failure")))
+    })
+
+  registry.send_stream(channel_registry, "discord", base_reply, events)
+  |> should.equal(Error(port.SendFailed("discord-failure")))
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  first.action |> should.equal("typing")
+  second.action |> should.equal("send")
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn send_stream_telegram_propagates_stream_failure_test() {
+  let recorder = process.new_subject()
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks_with_recorder([], [], recorder),
+    )
+
+  let events = process.new_subject()
+  let base_reply = telegram_reply("") |> port.with_typing(True)
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(events, port.StreamFailure(port.SendFailed("telegram-failure")))
+    })
+
+  registry.send_stream(channel_registry, "telegram", base_reply, events)
+  |> should.equal(Error(port.SendFailed("telegram-failure")))
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  first.action |> should.equal("typing")
+  second.action |> should.equal("send")
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn send_stream_matrix_complete_without_updates_records_final_edit_test() {
+  let recorder = process.new_subject()
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_matrix_config(),
+      ignoring_handler(received),
+      test_hooks_with_matrix_inbound([], recorder),
+    )
+
+  let base_reply =
+    port.ChannelReply(
+      channel_id: "!room:example.org",
+      content: "",
+      reply_to_id: None,
+      thread_id: None,
+      typing: False,
+      edit_message_id: None,
+      interactive: None,
+      media: [],
+    )
+  let events = process.new_subject()
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(
+        events,
+        port.StreamComplete(port.ChannelReply(..base_reply, content: "final")),
+      )
+    })
+
+  registry.send_stream(channel_registry, "matrix", base_reply, events)
+  |> should.equal(Ok(Nil))
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  let assert Ok(second) = process.receive(recorder, within: 1000)
+  first.action |> should.equal("send")
+  second
+  |> should.equal(registry.OutboundRecord(
+    channel: "matrix",
+    action: "edit",
+    content: "final",
+    message_id: Some("matrix-stream-1"),
+  ))
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn send_stream_slack_native_propagates_stream_failure_test() {
+  let recorder = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_slack_config(),
+      ignoring_handler(process.new_subject()),
+      test_hooks_with_recorder([], [], recorder),
+    )
+
+  let base_reply =
+    port.ChannelReply(
+      channel_id: "D012345678",
+      content: "",
+      reply_to_id: Some("1721609600.123456"),
+      thread_id: None,
+      typing: False,
+      edit_message_id: None,
+      interactive: None,
+      media: [],
+    )
+  let events = process.new_subject()
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(events, port.StreamFailure(port.SendFailed("slack-failure")))
+    })
+
+  registry.send_stream(channel_registry, "slack", base_reply, events)
+  |> should.equal(Error(port.SendFailed("slack-failure")))
+
+  let assert Ok(first) = process.receive(recorder, within: 1000)
+  first.action |> should.equal("progress_start")
+
+  registry.stop_channels(channel_registry)
+}
+
+fn discord_fixture_interaction_autocomplete_with_channel_role_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-auto-1\",\"application_id\":\"app-1\",\"type\":4,\"token\":\"token-auto\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}},\"data\":{\"id\":\"cmd-config-1\",\"name\":\"configure\",\"type\":1,\"options\":[{\"name\":\"channel\",\"type\":7,\"value\":\"123\"},{\"name\":\"role\",\"type\":8,\"value\":\"456\"}]}}",
+  )
+}
+
+fn discord_fixture_interaction_command_with_nested_options_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-nested-1\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"token-nested\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}},\"data\":{\"id\":\"cmd-ops-1\",\"name\":\"ops\",\"type\":1,\"options\":[{\"name\":\"deploy\",\"type\":1,\"options\":[{\"name\":\"dry\",\"type\":5,\"value\":false}]}]}}",
+  )
+}
+
+fn discord_fixture_interaction_component_without_values_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-component-empty\",\"application_id\":\"app-1\",\"type\":3,\"token\":\"token-component\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}},\"data\":{\"custom_id\":\"picker_model_select\",\"component_type\":3}}",
+  )
+}
+
+fn discord_fixture_interaction_without_user_or_member_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-anon-1\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"token-anon\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"data\":{\"id\":\"cmd-help-1\",\"name\":\"help\",\"type\":1}}",
+  )
+}
+
+fn telegram_fixture_callback_query_without_data_update() -> String {
+  "{\"update_id\":737343150,\"callback_query\":{\"id\":\"cb-telegram-4\",\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":175,\"from\":{\"is_bot\":true,\"id\":999999,\"first_name\":\"SupernovaBot\",\"username\":\"supernova_bot\"},\"text\":\"Current selection\",\"date\":1774569232},\"inline_message_id\":null,\"chat_instance\":\"instance-4\",\"data\":null,\"game_short_name\":null}}"
+}
+
+fn telegram_fixture_update_without_username() -> String {
+  "{\"update_id\":737343151,\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"NoUser\",\"username\":null},\"message_id\":176,\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"NoUser\",\"username\":null},\"text\":\"hello\",\"date\":1774569232}}"
+}
+
+fn telegram_fixture_update_without_text_and_caption() -> String {
+  "{\"update_id\":737343152,\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":177,\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"text\":null,\"caption\":null,\"date\":1774569232}}"
 }
