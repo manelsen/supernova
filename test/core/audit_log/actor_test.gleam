@@ -8,6 +8,7 @@ import gleeunit
 import gleeunit/should
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types
+import test_workspace
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -18,7 +19,8 @@ pub fn main() -> Nil {
 // ============================================================================
 
 pub fn start_and_stop_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
   audit_actor.stop(log)
 
   // Give actor time to terminate
@@ -26,7 +28,8 @@ pub fn start_and_stop_test() {
 }
 
 pub fn start_with_capacity_test() {
-  let assert Ok(log) = audit_actor.start_with_capacity("workspaces", 100)
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start_with_capacity(root, 100)
   audit_actor.stop(log)
 
   process.sleep(100)
@@ -37,7 +40,8 @@ pub fn start_with_capacity_test() {
 // ============================================================================
 
 pub fn log_success_entry_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry =
     types.success_entry(1000, "agent_1", "tool_call", "read_file", "OK")
@@ -60,7 +64,8 @@ pub fn log_success_entry_test() {
 }
 
 pub fn log_failure_entry_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry =
     types.failure_entry(
@@ -85,7 +90,8 @@ pub fn log_failure_entry_test() {
 }
 
 pub fn log_denied_entry_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry =
     types.denied_entry(
@@ -112,7 +118,8 @@ pub fn log_denied_entry_test() {
 }
 
 pub fn log_multiple_entries_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry1 =
     types.success_entry(1000, "agent_1", "tool_call", "read_file", "OK")
@@ -138,7 +145,8 @@ pub fn log_multiple_entries_test() {
 // ============================================================================
 
 pub fn query_by_agent_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry1 =
     types.success_entry(1000, "agent_1", "tool_call", "read_file", "OK")
@@ -162,7 +170,8 @@ pub fn query_by_agent_test() {
 }
 
 pub fn query_by_operation_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry1 =
     types.success_entry(1000, "agent_1", "tool_call", "read_file", "OK")
@@ -186,7 +195,8 @@ pub fn query_by_operation_test() {
 }
 
 pub fn query_by_result_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry1 =
     types.success_entry(1000, "agent_1", "tool_call", "read_file", "OK")
@@ -218,7 +228,8 @@ pub fn query_by_result_test() {
 // ============================================================================
 
 pub fn recent_returns_limited_entries_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry1 =
     types.success_entry(1000, "agent_1", "tool_call", "read_file", "OK")
@@ -249,7 +260,8 @@ pub fn recent_returns_limited_entries_test() {
 // ============================================================================
 
 pub fn count_for_agent_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry1 =
     types.success_entry(1000, "agent_1", "tool_call", "read_file", "OK")
@@ -280,7 +292,8 @@ pub fn count_for_agent_test() {
 // ============================================================================
 
 pub fn get_by_operation_test() {
-  let assert Ok(log) = audit_actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("audit-actor")
+  let assert Ok(log) = audit_actor.start(root)
 
   let entry1 =
     types.success_entry(1000, "agent_1", "tool_call", "read_file", "OK")

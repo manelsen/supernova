@@ -13,6 +13,7 @@ import supernova/core/persona/loader as persona_loader
 import supernova/core/session/server
 import supernova/core/session/supervisor
 import supernova/llm/provider
+import test_workspace
 
 fn mock_provider_config() -> provider.ProviderConfig {
   provider.ProviderConfig(
@@ -97,6 +98,7 @@ fn complete_telegram_bootstrap(
 }
 
 pub fn telegram_router_routes_message_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message(
@@ -122,6 +124,7 @@ pub fn telegram_router_routes_message_test() {
 }
 
 pub fn telegram_router_runs_tool_loop_until_final_response_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message(
@@ -144,6 +147,7 @@ pub fn telegram_router_runs_tool_loop_until_final_response_test() {
 }
 
 pub fn telegram_router_returns_final_tool_error_response_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message(
@@ -166,6 +170,7 @@ pub fn telegram_router_returns_final_tool_error_response_test() {
 }
 
 pub fn telegram_router_ignores_bot_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message("tg-msg-2", "telegram", "chat-2", "bot-1", "my-bot", "beep", True)
@@ -179,6 +184,7 @@ pub fn telegram_router_ignores_bot_test() {
 }
 
 pub fn discord_router_routes_message_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
   let msg =
     message(
@@ -204,6 +210,7 @@ pub fn discord_router_routes_message_test() {
 }
 
 pub fn discord_router_channel_mismatch_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
   let msg =
     message(
@@ -226,6 +233,7 @@ pub fn discord_router_channel_mismatch_test() {
 }
 
 pub fn telegram_router_model_command_returns_interactive_picker_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message(
@@ -323,6 +331,7 @@ pub fn telegram_router_model_command_returns_interactive_picker_test() {
 }
 
 pub fn telegram_router_model_selection_updates_session_picker_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
 
   let model_selection =
@@ -408,6 +417,7 @@ pub fn telegram_router_model_selection_updates_session_picker_test() {
 }
 
 pub fn telegram_router_invalid_provider_selection_falls_back_to_default_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
 
   let selection =
@@ -454,6 +464,7 @@ pub fn telegram_router_invalid_provider_selection_falls_back_to_default_test() {
 }
 
 pub fn telegram_router_interaction_reply_edits_source_message_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
 
   let selection =
@@ -485,6 +496,7 @@ pub fn telegram_router_interaction_reply_edits_source_message_test() {
 }
 
 pub fn discord_router_provider_interaction_returns_openai_picker_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
 
   let provider_selection =
@@ -538,6 +550,7 @@ pub fn discord_router_provider_interaction_returns_openai_picker_test() {
 }
 
 pub fn discord_router_unknown_interaction_returns_error_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
 
   let unknown =
@@ -559,6 +572,7 @@ pub fn discord_router_unknown_interaction_returns_error_test() {
 }
 
 pub fn telegram_router_start_bootstraps_session_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let start_msg =
     message(
@@ -582,6 +596,7 @@ pub fn telegram_router_start_bootstraps_session_test() {
 }
 
 pub fn telegram_router_status_reports_bootstrap_state_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let status_msg =
     message(
@@ -643,6 +658,7 @@ pub fn telegram_router_status_reports_bootstrap_state_test() {
 }
 
 pub fn telegram_router_help_uses_channel_specific_text_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let help_msg =
     message(
@@ -673,6 +689,7 @@ pub fn telegram_router_help_uses_channel_specific_text_test() {
 }
 
 pub fn discord_router_start_bootstraps_session_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
   let start_msg =
     message(
@@ -696,6 +713,7 @@ pub fn discord_router_start_bootstraps_session_test() {
 }
 
 pub fn discord_router_status_reports_bootstrap_state_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
   let status_msg =
     message(
@@ -757,6 +775,7 @@ pub fn discord_router_status_reports_bootstrap_state_test() {
 }
 
 pub fn discord_router_model_command_returns_interactive_picker_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
   let msg =
     message(
@@ -810,6 +829,7 @@ pub fn discord_router_model_command_returns_interactive_picker_test() {
 }
 
 pub fn telegram_router_records_history_in_supervised_session_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
     telegram_router.start_with_session_supervisor(
@@ -857,6 +877,7 @@ pub fn telegram_router_records_history_in_supervised_session_test() {
 }
 
 pub fn telegram_router_handler_streams_and_records_history_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
     telegram_router.start_with_session_supervisor(
@@ -926,6 +947,7 @@ pub fn telegram_router_handler_streams_and_records_history_test() {
 }
 
 pub fn telegram_router_supervised_first_message_starts_identity_bootstrap_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
     telegram_router.start_with_session_supervisor(
@@ -953,6 +975,7 @@ pub fn telegram_router_supervised_first_message_starts_identity_bootstrap_test()
 }
 
 pub fn telegram_router_supervised_bootstrap_writes_persona_files_test() {
+  use root <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
     telegram_router.start_with_session_supervisor(
@@ -1030,13 +1053,14 @@ pub fn telegram_router_supervised_bootstrap_writes_persona_files_test() {
   string.contains(r5.content, "Pronto! Sou Aurora agora.")
   |> should.equal(True)
 
-  let workspace_path = "workspaces/agent:user-prd-bootstrap-2"
+  let workspace_path = root <> "/agent:user-prd-bootstrap-2"
   let assert Ok(persona) = persona_loader.load(workspace_path)
   string.contains(persona.identity, "**Nome:** Aurora")
   |> should.equal(True)
 }
 
 pub fn telegram_router_reset_identity_restarts_bootstrap_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
     telegram_router.start_with_session_supervisor(
@@ -1070,6 +1094,7 @@ pub fn telegram_router_reset_identity_restarts_bootstrap_test() {
 }
 
 pub fn telegram_router_updates_self_state_after_successful_turn_test() {
+  use root <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
     telegram_router.start_with_session_supervisor(
@@ -1097,7 +1122,7 @@ pub fn telegram_router_updates_self_state_after_successful_turn_test() {
 
   let assert Ok(serialized_state) =
     ffi_read_file(
-      "workspaces/agent:user-prd-self-state/.supernova/SELF_STATE.json",
+      root <> "/agent:user-prd-self-state/.supernova/SELF_STATE.json",
     )
   serialized_state
   |> string.contains("\"mood_cause\":\"turn_success\"")
@@ -1108,6 +1133,7 @@ pub fn telegram_router_updates_self_state_after_successful_turn_test() {
 }
 
 pub fn discord_router_selected_model_survives_router_restart_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
     discord_router.start_with_session_supervisor(
@@ -1162,6 +1188,7 @@ pub fn discord_router_selected_model_survives_router_restart_test() {
 }
 
 pub fn discord_router_help_uses_channel_specific_text_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
   let help_msg =
     message(
@@ -1191,6 +1218,7 @@ pub fn discord_router_help_uses_channel_specific_text_test() {
 }
 
 pub fn discord_router_help_shortcut_alias_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
   let assert Ok(router) = discord_router.start(mock_provider_config())
   let help_msg =
     message(

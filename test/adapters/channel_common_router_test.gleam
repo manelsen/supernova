@@ -9,6 +9,7 @@ import supernova/adapters/channel_common_router as router
 import supernova/channel/port
 import supernova/core/session/supervisor as session_supervisor
 import supernova/llm/provider
+import test_workspace
 
 pub fn main() {
   gleeunit.main()
@@ -77,6 +78,7 @@ pub fn new_interactive_state_starts_empty_test() {
 }
 
 pub fn handle_message_rejects_mismatch_and_accepts_normal_message_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let mismatch =
     router.handle_message(
@@ -102,6 +104,7 @@ pub fn handle_message_rejects_mismatch_and_accepts_normal_message_test() {
 }
 
 pub fn handle_inbound_start_and_status_commands_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
   let #(state1, start_result) =
@@ -140,6 +143,7 @@ pub fn handle_inbound_start_and_status_commands_test() {
 }
 
 pub fn handle_inbound_model_command_supported_and_fallback_channels_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state = router.new_interactive_state()
 
@@ -180,6 +184,7 @@ pub fn handle_inbound_model_command_supported_and_fallback_channels_test() {
 }
 
 pub fn handle_inbound_interaction_provider_selection_paths_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
 
@@ -236,6 +241,7 @@ pub fn handle_inbound_interaction_provider_selection_paths_test() {
 }
 
 pub fn handle_inbound_interaction_model_selection_paths_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
 
@@ -318,6 +324,7 @@ pub fn handle_inbound_interaction_model_selection_paths_test() {
 }
 
 pub fn handle_inbound_interaction_rejects_unsupported_channel_and_action_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state = router.new_interactive_state()
 
@@ -369,6 +376,7 @@ pub fn handle_inbound_interaction_rejects_unsupported_channel_and_action_test() 
 }
 
 pub fn handle_inbound_for_handler_returns_immediate_and_stream_results_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
   let stream_events = process.new_subject()
@@ -400,12 +408,23 @@ pub fn handle_inbound_for_handler_returns_immediate_and_stream_results_test() {
     Ok(port.StreamReply(base_reply)) -> {
       base_reply.typing |> should.equal(True)
       base_reply.content |> should.equal("")
+      drain_stream_until_done(stream_events)
     }
     _ -> should.fail()
   }
 }
 
+fn drain_stream_until_done(events: process.Subject(port.ChannelStreamEvent)) {
+  case process.receive(events, within: 1000) {
+    Ok(port.StreamUpdate(_)) -> drain_stream_until_done(events)
+    Ok(port.StreamComplete(_)) -> process.sleep(20)
+    Ok(port.StreamFailure(_)) -> process.sleep(20)
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn handle_inbound_with_session_supervisor_wrappers_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let assert Ok(supervisor) = session_supervisor.start()
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
@@ -447,6 +466,7 @@ pub fn handle_inbound_with_session_supervisor_wrappers_test() {
 }
 
 pub fn handle_inbound_ignores_bot_and_empty_message_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state = router.new_interactive_state()
 
@@ -472,6 +492,7 @@ pub fn handle_inbound_ignores_bot_and_empty_message_test() {
 }
 
 pub fn handle_inbound_interaction_mismatch_and_bot_filters_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state = router.new_interactive_state()
 
@@ -514,6 +535,7 @@ pub fn handle_inbound_interaction_mismatch_and_bot_filters_test() {
 }
 
 pub fn handle_inbound_bootstrap_progression_with_reset_identity_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let assert Ok(supervisor) = session_supervisor.start()
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
@@ -652,6 +674,7 @@ pub fn handle_inbound_bootstrap_progression_with_reset_identity_test() {
 }
 
 pub fn handle_inbound_can_skip_bootstrap_with_bracket_prefix_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let assert Ok(supervisor) = session_supervisor.start()
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
@@ -697,6 +720,7 @@ pub fn handle_inbound_can_skip_bootstrap_with_bracket_prefix_test() {
 }
 
 pub fn handle_inbound_commands_and_reasoning_shortcuts_toggle_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
 
@@ -768,6 +792,7 @@ pub fn handle_inbound_commands_and_reasoning_shortcuts_toggle_test() {
 }
 
 pub fn handle_inbound_models_alias_returns_interactive_for_slack_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state = router.new_interactive_state()
 
@@ -795,6 +820,7 @@ pub fn handle_inbound_models_alias_returns_interactive_for_slack_test() {
 }
 
 pub fn handle_inbound_interaction_model_selection_without_provider_prefix_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
 
@@ -832,6 +858,7 @@ pub fn handle_inbound_interaction_model_selection_without_provider_prefix_test()
 }
 
 pub fn handle_inbound_interaction_provider_selection_opencode_zen_test() {
+  use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()
   let state0 = router.new_interactive_state()
 
@@ -865,5 +892,19 @@ pub fn handle_inbound_interaction_provider_selection_opencode_zen_test() {
       should.equal(string.length(config.default_model) > 0, True)
     }
     Error(_) -> should.fail()
+  }
+}
+
+pub fn workspace_root_defaults_to_workspaces_and_respects_env_test() {
+  let previous = test_workspace.get_workspace_root()
+  test_workspace.reset_workspace_root()
+  router.workspace_root() |> should.equal("workspaces")
+
+  test_workspace.set_workspace_root("/tmp/custom-workspaces/")
+  router.workspace_root() |> should.equal("/tmp/custom-workspaces")
+
+  case previous {
+    Ok(old) -> test_workspace.set_workspace_root(old)
+    Error(_) -> test_workspace.reset_workspace_root()
   }
 }

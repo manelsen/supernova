@@ -14,6 +14,7 @@ import supernova/channel/registry
 import supernova/config
 import supernova/core/session/supervisor
 import supernova/llm/provider
+import test_workspace
 
 fn enabled_discord_and_telegram_config() -> config.Config {
   let base = config.default_config()
@@ -1160,6 +1161,7 @@ pub fn adapter_send_chunks_telegram_long_reply_test() {
 }
 
 pub fn e2e_discord_help_command_routes_from_adapter_to_reply_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_runtime_registry_with_recorder(
@@ -1192,6 +1194,7 @@ pub fn e2e_discord_help_command_routes_from_adapter_to_reply_test() {
 }
 
 pub fn e2e_telegram_model_selection_updates_ui_and_next_reply_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let assert Ok(callback_update) =
     telegram.parse_update(telegram_fixture_callback_query_update())
@@ -1248,6 +1251,7 @@ pub fn e2e_telegram_model_selection_updates_ui_and_next_reply_test() {
 }
 
 pub fn e2e_discord_stream_error_falls_back_to_non_streaming_reply_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_runtime_registry_with_recorder(
@@ -1291,6 +1295,7 @@ pub fn e2e_discord_stream_error_falls_back_to_non_streaming_reply_test() {
 }
 
 pub fn e2e_telegram_stream_timeout_falls_back_to_non_streaming_reply_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let assert Ok(update) =
     telegram.parse_update(telegram_fixture_update_with_text(
@@ -1330,6 +1335,7 @@ pub fn e2e_telegram_stream_timeout_falls_back_to_non_streaming_reply_test() {
 }
 
 pub fn e2e_discord_invalid_callback_produces_no_outbound_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_runtime_registry_with_recorder(
@@ -1724,6 +1730,7 @@ pub fn slack_inbound_event_dispatched_to_handler_test() {
 }
 
 pub fn e2e_slack_help_command_routes_from_inbound_to_reply_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_slack_runtime_registry_with_recorder(
@@ -1754,6 +1761,7 @@ pub fn e2e_slack_help_command_routes_from_inbound_to_reply_test() {
 }
 
 pub fn e2e_slack_start_command_returns_session_bootstrapped_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_slack_runtime_registry_with_recorder(
@@ -1772,6 +1780,7 @@ pub fn e2e_slack_start_command_returns_session_bootstrapped_test() {
 }
 
 pub fn e2e_slack_model_command_returns_interactive_picker_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_slack_runtime_registry_with_recorder(
@@ -1790,6 +1799,7 @@ pub fn e2e_slack_model_command_returns_interactive_picker_test() {
 }
 
 pub fn e2e_slack_model_selection_persists_for_session_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_slack_runtime_registry_with_recorder(
@@ -1868,6 +1878,7 @@ pub fn matrix_inbound_event_dispatched_to_handler_test() {
 }
 
 pub fn e2e_matrix_help_command_routes_from_inbound_to_reply_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_matrix_runtime_registry_with_recorder(
@@ -1898,6 +1909,7 @@ pub fn e2e_matrix_help_command_routes_from_inbound_to_reply_test() {
 }
 
 pub fn e2e_matrix_start_command_returns_session_bootstrapped_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_matrix_runtime_registry_with_recorder(
@@ -1916,6 +1928,7 @@ pub fn e2e_matrix_start_command_returns_session_bootstrapped_test() {
 }
 
 pub fn e2e_matrix_follow_up_uses_session_history_test() {
+  use _ <- test_workspace.with_isolated_workspace("registry-e2e")
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_matrix_runtime_registry_with_recorder(
