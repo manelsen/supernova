@@ -252,15 +252,17 @@ See [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW
 
 ### Development
 
-For local development with Gleam:
+Toolchain versions are pinned in [.tool-versions](.tool-versions) (Erlang `28.5.0.8`, Gleam `1.19.2`). For local development:
 
 ```sh
-gleam deps download   # install dependencies
-gleam build           # compile
-gleam test            # run tests
-make coverage         # enforce 85% minimum line coverage
-gleam format          # format code
+gleam deps download               # install dependencies
+gleam build --warnings-as-errors  # compile with zero-warning check
+gleam test                        # run offline unit and integration tests
+make coverage                     # run tests and enforce 73% minimum line coverage
+gleam format --check src test     # verify formatting
 ```
+
+Set `SUPERNOVA_BROWSER_TESTS=1` to include live Chromium Playwright tests when Playwright is installed.
 
 ---
 
@@ -392,7 +394,7 @@ The executor runs a loop: LLM → decide → tool or respond → LLM → ... unt
 
 ## Status
 
-Supernova is production-ready for single-instance deployments.
+Current release: **v0.3.0** — core runtime, security hardening, and offline test suite (`1998` tests passing, `74.49%` line coverage, zero compiler warnings) verified in CI, plus Docker `/health/live` boot smoke test. Live PostgreSQL, pgvector, and external provider token integrations are tracked separately (see [STATUS.md](STATUS.md) and [audit/STATUS_2026-11.md](audit/STATUS_2026-11.md)).
 
 Current support:
 
@@ -423,10 +425,10 @@ Gleam gives you Erlang's actor model with a modern, friendly syntax. You get:
 
 ## Next steps
 
-MX:- Read [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for the full onboarding guide
-YR:- Read [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) for what's new
-PP:- Explore `examples/quickstart/supernova.yaml` for a complete annotated config
-HT:- For local development, see [docs/operations/DOCKER.md](docs/operations/DOCKER.md)
+- Read [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for the full onboarding guide
+- Read [RELEASE_NOTES_v0.3.0.md](RELEASE_NOTES_v0.3.0.md) for what's new
+- Read [STATUS.md](STATUS.md) for current verification metrics and component coverage
+- For local development and container smoke tests, see [DEPLOY.md](DEPLOY.md) and [docs/operations/DOCKER.md](docs/operations/DOCKER.md)
 
 ---
 
