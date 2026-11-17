@@ -87,3 +87,25 @@ pub fn build_channel_handler_dispatches_slack_matrix_and_ignores_unknown_test() 
 
   supervisor.stop(session_sup)
 }
+
+@external(erlang, "test_signal_ffi", "send_shutdown_exit")
+fn send_shutdown_exit(pid: process.Pid) -> Nil
+
+pub fn wait_for_shutdown_blocks_until_exit_signal_test() {
+  let ready = process.new_subject()
+  let done = process.new_subject()
+
+  let pid =
+    process.spawn_unlinked(fn() {
+      process.send(ready, Nil)
+      supernova.wait_for_shutdown()
+      process.send(done, Nil)
+    })
+
+  let assert Ok(Nil) = process.receive(ready, within: 500)
+  process.sleep(20)
+  process.receive(done, within: 20) |> should.equal(Error(Nil))
+
+  send_shutdown_exit(pid)
+  process.receive(done, within: 500) |> should.equal(Ok(Nil))
+}

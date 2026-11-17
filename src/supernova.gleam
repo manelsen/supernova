@@ -470,7 +470,7 @@ fn provider_config_to_runtime(
 /// Block until SIGTERM or shutdown signal is received.
 /// Uses Erlang's trap_exit to catch exit signals.
 @external(erlang, "supernova_signal_ffi", "wait_for_shutdown")
-fn wait_for_shutdown() -> Nil
+pub fn wait_for_shutdown() -> Nil
 
 /// Graceful shutdown of all services
 fn shutdown_services(services: Services) -> Nil {
