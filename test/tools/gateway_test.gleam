@@ -47,3 +47,23 @@ pub fn unregistered_agent_denied_test() {
   result
   |> should.equal("denied: Agent not registered: ghost")
 }
+
+pub fn read_file_blocks_absolute_path_and_traversal_test() {
+  let assert Ok(abs_result) =
+    gateway.execute(
+      "{\"action\":\"read_file\",\"agent_id\":\"gateway_tool\",\"path\":\"/etc/passwd\"}",
+    )
+  string.starts_with(abs_result, "denied:") |> should.equal(True)
+
+  let assert Ok(trav_result) =
+    gateway.execute(
+      "{\"action\":\"write_file\",\"agent_id\":\"gateway_tool\",\"path\":\"../escape.txt\",\"content\":\"x\"}",
+    )
+  string.starts_with(trav_result, "denied:") |> should.equal(True)
+
+  let assert Ok(rel_result) =
+    gateway.execute(
+      "{\"action\":\"read_file\",\"agent_id\":\"gateway_tool\",\"path\":\"notes.txt\"}",
+    )
+  rel_result |> should.equal("ok: file_content:path=notes.txt")
+}
