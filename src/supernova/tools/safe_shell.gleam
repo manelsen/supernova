@@ -13,7 +13,9 @@
 //// let result = safe_shell.execute_authorized(policy, "agent_1", "ls -la")
 //// ```
 
+import gleam/list
 import gleam/string
+import supernova/core/workspace_guard
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types.{OpShell}
 import supernova/llm/provider
@@ -114,10 +116,19 @@ fn is_allowed_command(command: String) -> Bool {
 
 /// Extract the base command (first word).
 fn get_base_command(command: String) -> String {
-  case string.split(command, " ") {
+  case split_whitespace_tokens(command) {
     [first, ..] -> first
     [] -> ""
   }
+}
+
+fn split_whitespace_tokens(command: String) -> List(String) {
+  command
+  |> string.replace("\t", " ")
+  |> string.replace("\n", " ")
+  |> string.replace("\r", " ")
+  |> string.split(" ")
+  |> list.filter(fn(part) { string.trim(part) != "" })
 }
 
 /// Whitelisted commands.
@@ -148,19 +159,17 @@ fn list_contains(list: List(String), value: String) -> Bool {
 // Path Argument Validation
 // ============================================================================
 
-/// Commands whose arguments may reference file paths.
+/// Commands whose arguments may reference file or directory paths.
 fn file_reading_commands() -> List(String) {
-  ["cat", "head", "tail", "find"]
+  ["cat", "head", "tail", "find", "ls"]
 }
 
-/// Validate that path arguments in file-reading commands don't
-/// reference absolute paths outside the workspace.
+/// Validate that path arguments in file-reading commands stay confined to the workspace.
 fn validate_path_arguments(command: String) -> Result(Nil, String) {
-  let parts = string.split(command, " ")
-  case parts {
+  case split_whitespace_tokens(command) {
     [base, ..args] -> {
       case list_contains(file_reading_commands(), base) {
-        True -> check_args_for_absolute_paths(args)
+        True -> check_args_with_workspace_guard(args)
         False -> Ok(Nil)
       }
     }
@@ -168,44 +177,37 @@ fn validate_path_arguments(command: String) -> Result(Nil, String) {
   }
 }
 
-/// Reject any argument that looks like an absolute path to a sensitive location.
-fn check_args_for_absolute_paths(args: List(String)) -> Result(Nil, String) {
+/// Reject any non-flag argument that escapes the workspace according to workspace_guard.
+fn check_args_with_workspace_guard(args: List(String)) -> Result(Nil, String) {
   case args {
     [] -> Ok(Nil)
     [arg, ..rest] -> {
-      let trimmed = string.trim(arg)
-      case is_blocked_path(trimmed) {
-        True ->
-          Error("Blocked: absolute path argument not allowed: " <> trimmed)
-        False -> check_args_for_absolute_paths(rest)
+      let cleaned = strip_matching_quotes(string.trim(arg))
+      case string.starts_with(cleaned, "-") || cleaned == "" {
+        True -> check_args_with_workspace_guard(rest)
+        False ->
+          case workspace_guard.validate_path(".", cleaned) {
+            Ok(_) -> check_args_with_workspace_guard(rest)
+            Error(reason) -> Error("Blocked: " <> reason)
+          }
       }
     }
   }
 }
 
-/// Check if a path argument targets sensitive locations.
-fn is_blocked_path(arg: String) -> Bool {
-  // Skip flags (e.g., -la, --name)
-  case string.starts_with(arg, "-") {
-    True -> False
-    False -> {
-      // Block absolute paths to sensitive system directories
-      string.starts_with(arg, "/etc")
-      || string.starts_with(arg, "/proc")
-      || string.starts_with(arg, "/sys")
-      || string.starts_with(arg, "/dev")
-      || string.starts_with(arg, "/var")
-      || string.starts_with(arg, "/tmp")
-      || string.starts_with(arg, "/root")
-      || string.starts_with(arg, "/home")
-      || string.starts_with(arg, "/usr")
-      || string.starts_with(arg, "/bin")
-      || string.starts_with(arg, "/sbin")
-      || string.starts_with(arg, "/opt")
-      || string.starts_with(arg, "/mnt")
-      || string.starts_with(arg, "/run")
-      || arg == "/"
-    }
+fn strip_matching_quotes(value: String) -> String {
+  let unquoted_double = case
+    string.starts_with(value, "\"") && string.ends_with(value, "\"")
+  {
+    True -> value |> string.drop_start(1) |> string.drop_end(1)
+    False -> value
+  }
+  case
+    string.starts_with(unquoted_double, "'")
+    && string.ends_with(unquoted_double, "'")
+  {
+    True -> unquoted_double |> string.drop_start(1) |> string.drop_end(1)
+    False -> unquoted_double
   }
 }
 
