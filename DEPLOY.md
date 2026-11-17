@@ -175,3 +175,17 @@ docker compose exec supernova wget -qO- http://localhost:8080/health/live
 docker compose up postgres
 docker compose exec postgres pg_isready -U supernova
 ```
+
+## Smoke Test
+
+Verify that the container builds, boots, and responds on `/health/live` without external API tokens using [test/fixtures/docker/supernova.yaml](test/fixtures/docker/supernova.yaml):
+
+```bash
+docker build -t supernova:smoke .
+docker run -d --name supernova-smoke -p 127.0.0.1:8080:8080 \
+  -v "$(pwd)/test/fixtures/docker/supernova.yaml:/config/supernova.yaml:ro" \
+  supernova:smoke
+curl -fsS http://127.0.0.1:8080/health/live
+docker rm -f supernova-smoke
+docker rmi supernova:smoke
+```
