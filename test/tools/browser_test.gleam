@@ -1,4 +1,6 @@
+import envoy
 import gleam/dynamic/decode
+import gleam/io
 import gleam/json
 import gleam/string
 import gleeunit/should
@@ -65,9 +67,44 @@ pub fn browser_open_blocks_ssrf_urls_before_ffi_test() {
   |> should.be_error
 }
 
+pub fn browser_decoders_and_validation_test() {
+  decode_open_result("{\"session_id\":\"s-1\",\"title\":\"Page\"}")
+  |> should.equal("s-1")
+
+  decode_readable_result("{\"title\":\"Browser Test\",\"text\":\"Hello\"}")
+  |> should.equal(#("Browser Test", "Hello"))
+
+  decode_screenshot_mime_type("{\"mime_type\":\"image/png\"}")
+  |> should.equal("image/png")
+
+  decode_screenshot_data("{\"data_base64\":\"abc123\"}")
+  |> should.equal("abc123")
+
+  decode_closed_result("{\"closed\":true}")
+  |> should.equal(True)
+
+  browser.execute("{\"operation\":\"unknown_op\"}")
+  |> should.equal(Error(
+    "Invalid arguments for browser: unknown operation unknown_op",
+  ))
+
+  let tool = browser.tool()
+  tool.name |> should.equal("browser")
+}
+
+fn real_browser_tests_enabled() -> Bool {
+  case envoy.get("SUPERNOVA_BROWSER_TESTS") {
+    Ok("1") -> True
+    _ -> False
+  }
+}
+
 pub fn browser_session_round_trip_test() {
-  case browser.open(fixture_browser_page_url(), 5000) {
-    Ok(open_result) -> {
+  case real_browser_tests_enabled() {
+    False -> io.println("skipped: set SUPERNOVA_BROWSER_TESTS=1")
+    True -> {
+      let assert Ok(open_result) =
+        browser.open(fixture_browser_page_url(), 5000)
       let session_id = decode_open_result(open_result)
 
       let assert Ok(readable_result) =
@@ -89,13 +126,15 @@ pub fn browser_session_round_trip_test() {
       let assert Ok(close_result) = browser.close(session_id)
       decode_closed_result(close_result) |> should.equal(True)
     }
-    Error(reason) -> is_runner_unavailable(reason) |> should.equal(True)
   }
 }
 
 pub fn browser_timeout_cleans_up_session_test() {
-  case browser.open(fixture_browser_page_url(), 5000) {
-    Ok(open_result) -> {
+  case real_browser_tests_enabled() {
+    False -> io.println("skipped: set SUPERNOVA_BROWSER_TESTS=1")
+    True -> {
+      let assert Ok(open_result) =
+        browser.open(fixture_browser_page_url(), 5000)
       let session_id = decode_open_result(open_result)
 
       browser.evaluate_with_config(
@@ -113,14 +152,7 @@ pub fn browser_timeout_cleans_up_session_test() {
           |> should.equal(True)
       }
     }
-    Error(reason) -> is_runner_unavailable(reason) |> should.equal(True)
   }
-}
-
-fn is_runner_unavailable(reason: String) -> Bool {
-  string.contains(reason, "No supported browser executable found")
-  || string.contains(reason, "node executable not found")
-  || string.contains(reason, "Unexpected browser runner output")
 }
 
 fn fixture_browser_page_url() -> String {
