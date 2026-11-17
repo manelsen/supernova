@@ -343,7 +343,7 @@ fn register_mcp_servers(
   }
 }
 
-fn build_channel_handler(
+pub fn build_channel_handler(
   cfg: config.Config,
   session_supervisor: supervisor.SessionSupervisor,
 ) -> Result(port.ChannelHandler, String) {
