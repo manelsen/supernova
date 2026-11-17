@@ -269,7 +269,7 @@ fn wait_for_metrics(attempts: Int) -> Result(metrics_global.Metrics, String) {
 
 /// Start infrastructure actors under an OTP supervisor (one_for_one).
 /// Each child re-registers its global reference on (re)start.
-fn start_infrastructure_supervisor(
+pub fn start_infrastructure_supervisor(
   tracer_config: tracing_types.TracerConfig,
   cb_config: cb_actor.CircuitBreakerConfig,
   cd_config: cd_types.FailoverCooldownConfig,

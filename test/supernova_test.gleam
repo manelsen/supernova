@@ -1,6 +1,6 @@
 import gleam/dict
 import gleam/erlang/process
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -8,6 +8,11 @@ import supernova
 import supernova/channel/port
 import supernova/config
 import supernova/core/session/supervisor
+import supernova/llm/circuit_breaker/actor as cb_actor
+import supernova/llm/failover_cooldown/types as cd_types
+import supernova/metrics/actor as metrics_actor
+import supernova/metrics/global as metrics_global
+import supernova/tracing/types as tracing_types
 import test_workspace
 
 pub fn main() -> Nil {
@@ -108,4 +113,73 @@ pub fn wait_for_shutdown_blocks_until_exit_signal_test() {
 
   send_shutdown_exit(pid)
   process.receive(done, within: 500) |> should.equal(Ok(Nil))
+}
+
+@external(erlang, "test_signal_ffi", "kill_pid")
+fn kill_pid(pid: process.Pid) -> Nil
+
+pub fn infrastructure_supervisor_restarts_killed_metrics_actor_test() {
+  let tracer_config =
+    tracing_types.TracerConfig(
+      service_name: "supernova-test",
+      otlp_endpoint: "",
+      sampling_rate: 1.0,
+    )
+  let cb_config =
+    cb_actor.CircuitBreakerConfig(
+      failure_threshold: 5,
+      recovery_timeout_ms: 30_000,
+      half_open_max_calls: 3,
+    )
+  let cd_config =
+    cd_types.FailoverCooldownConfig(
+      initial_cooldown_ms: 30_000,
+      max_cooldown_ms: 300_000,
+    )
+
+  let assert Ok(_sup) =
+    supernova.start_infrastructure_supervisor(
+      tracer_config,
+      cb_config,
+      cd_config,
+    )
+
+  let original_metrics = wait_for_restarted_metrics(None, 20)
+  let assert Ok(original_pid) = process.subject_owner(original_metrics)
+
+  kill_pid(original_pid)
+
+  let restarted_metrics = wait_for_restarted_metrics(Some(original_pid), 40)
+  let assert Ok(restarted_pid) = process.subject_owner(restarted_metrics)
+  restarted_pid |> should.not_equal(original_pid)
+
+  metrics_actor.inc_counter(restarted_metrics, "supervisor_restarts_total", [])
+  let rendered = metrics_actor.get_metrics(restarted_metrics)
+  string.contains(rendered, "supervisor_restarts_total 1")
+  |> should.equal(True)
+}
+
+fn wait_for_restarted_metrics(
+  previous_pid: option.Option(process.Pid),
+  attempts: Int,
+) -> metrics_global.Metrics {
+  case attempts <= 0 {
+    True -> panic as "Timed out waiting for restarted metrics actor"
+    False ->
+      case metrics_global.get_metrics() {
+        Some(subject) ->
+          case process.subject_owner(subject), previous_pid {
+            Ok(pid), Some(old_pid) if pid != old_pid -> subject
+            Ok(_), None -> subject
+            _, _ -> {
+              process.sleep(25)
+              wait_for_restarted_metrics(previous_pid, attempts - 1)
+            }
+          }
+        None -> {
+          process.sleep(25)
+          wait_for_restarted_metrics(previous_pid, attempts - 1)
+        }
+      }
+  }
 }
