@@ -41,7 +41,14 @@ pub fn start(
     do_send(token, base_url, reply)
   }
 
-  Ok(port.ChannelAdapter(name: "lark", send: send_fn, stop: fn() { Nil }))
+  Ok(
+    port.ChannelAdapter(
+      name: "lark",
+      send: send_fn,
+      stop: fn() { Nil },
+      stop_ingress: fn() { Nil },
+    ),
+  )
 }
 
 /// Parse a raw Lark webhook event JSON into a normalized `ChannelMessage`.

@@ -28,6 +28,10 @@ pub fn lane_count() -> Int
 @external(erlang, "supernova_chat_lanes_ffi", "drain")
 pub fn drain(prefix: String, timeout_ms: Int) -> Int
 
+/// Reopen a prefix closed by `drain` (tests and registry restarts).
+@external(erlang, "supernova_chat_lanes_ffi", "undrain")
+pub fn undrain(prefix: String) -> Nil
+
 /// Lane key for an inbound event: one lane per channel conversation.
 pub fn key_for_registry(
   registry_id: String,

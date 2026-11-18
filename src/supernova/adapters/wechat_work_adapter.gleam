@@ -25,7 +25,12 @@ pub fn start(
   }
 
   Ok(
-    port.ChannelAdapter(name: "wechat_work", send: send_fn, stop: fn() { Nil }),
+    port.ChannelAdapter(
+      name: "wechat_work",
+      send: send_fn,
+      stop: fn() { Nil },
+      stop_ingress: fn() { Nil },
+    ),
   )
 }
 

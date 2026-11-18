@@ -53,7 +53,14 @@ pub fn start(
     send_reply(bot_token, reply)
   }
 
-  Ok(port.ChannelAdapter(name: "slack", send: send_fn, stop: fn() { Nil }))
+  Ok(
+    port.ChannelAdapter(
+      name: "slack",
+      send: send_fn,
+      stop: fn() { Nil },
+      stop_ingress: fn() { Nil },
+    ),
+  )
 }
 
 pub fn send_reply(

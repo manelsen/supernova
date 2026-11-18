@@ -43,7 +43,14 @@ pub fn start(
     do_send(homeserver_url, access_token, reply)
   }
 
-  Ok(port.ChannelAdapter(name: "matrix", send: send_fn, stop: fn() { Nil }))
+  Ok(
+    port.ChannelAdapter(
+      name: "matrix",
+      send: send_fn,
+      stop: fn() { Nil },
+      stop_ingress: fn() { Nil },
+    ),
+  )
 }
 
 /// Send a reply to a Matrix room.

@@ -92,7 +92,7 @@ type DiscordBridge {
 }
 
 type TelegramWorker {
-  TelegramWorker(done: process.Subject(Nil))
+  TelegramWorker(done: process.Subject(Nil), ingress_done: process.Subject(Nil))
 }
 
 type StreamSendFn =
@@ -380,6 +380,10 @@ pub fn stop_channels_with_timeout(
   registry: ChannelRegistry,
   drain_timeout_ms: Int,
 ) -> Nil {
+  registry.channels
+  |> dict.values
+  |> list.each(fn(adapter) { adapter.stop_ingress() })
+
   let remaining = chat_lanes.drain(registry.id, drain_timeout_ms)
   case remaining > 0 {
     True ->
@@ -467,12 +471,20 @@ fn start_discord_channel(
       |> list.each(fn(event) { process.send(bridge.events, event) })
 
       Ok(#(
-        port.ChannelAdapter(name: "discord", send: send_fn, stop: fn() {
-          let _ = discord_gateway.unsubscribe(gateway, subscription_id)
-          stop_discord_bridge(bridge)
-          discord_rest.stop(rest_client)
-          discord_gateway.stop(gateway)
-        }),
+        port.ChannelAdapter(
+          name: "discord",
+          send: send_fn,
+          stop_ingress: fn() {
+            let _ = discord_gateway.unsubscribe(gateway, subscription_id)
+            Nil
+          },
+          stop: fn() {
+            let _ = discord_gateway.unsubscribe(gateway, subscription_id)
+            stop_discord_bridge(bridge)
+            discord_rest.stop(rest_client)
+            discord_gateway.stop(gateway)
+          },
+        ),
         stream_send_fn,
       ))
     }
@@ -507,11 +519,19 @@ fn start_telegram_channel(
         )
 
       Ok(#(
-        port.ChannelAdapter(name: "telegram", send: send_fn, stop: fn() {
-          let _ = telegram.stop_polling(poller)
-          stop_telegram_worker(worker, poller_config.polling_timeout)
-          Nil
-        }),
+        port.ChannelAdapter(
+          name: "telegram",
+          send: send_fn,
+          stop_ingress: fn() {
+            let _ = telegram.stop_polling(poller)
+            stop_telegram_ingress(worker, poller_config.polling_timeout)
+          },
+          stop: fn() {
+            let _ = telegram.stop_polling(poller)
+            stop_telegram_worker(worker, poller_config.polling_timeout)
+            Nil
+          },
+        ),
         stream_send_fn,
       ))
     }
@@ -541,7 +561,12 @@ fn start_slack_channel(
       })
 
       Ok(#(
-        port.ChannelAdapter(name: "slack", send: send_fn, stop: fn() { Nil }),
+        port.ChannelAdapter(
+          name: "slack",
+          send: send_fn,
+          stop: fn() { Nil },
+          stop_ingress: fn() { Nil },
+        ),
         stream_send_fn,
       ))
     }
@@ -624,7 +649,12 @@ fn start_matrix_channel(
       })
 
       Ok(#(
-        port.ChannelAdapter(name: "matrix", send: send_fn, stop: fn() { Nil }),
+        port.ChannelAdapter(
+          name: "matrix",
+          send: send_fn,
+          stop: fn() { Nil },
+          stop_ingress: fn() { Nil },
+        ),
         stream_send_fn,
       ))
     }
@@ -730,11 +760,12 @@ fn start_telegram_worker(
   telegram_config: telegram.Config,
 ) -> TelegramWorker {
   let done = process.new_subject()
+  let ingress_done = process.new_subject()
 
   let _ =
     process.spawn_unlinked(fn() {
       case hooks.disable_telegram_polling {
-        True ->
+        True -> {
           hooks.telegram_updates
           |> list.each(fn(update) {
             dispatch_telegram_update(
@@ -748,6 +779,8 @@ fn start_telegram_worker(
               hooks.registry_id,
             )
           })
+          process.send(ingress_done, Nil)
+        }
         False -> {
           hooks.telegram_updates
           |> list.each(fn(update) {
@@ -776,6 +809,7 @@ fn start_telegram_worker(
                 hooks.registry_id,
               )
             })
+          process.send(ingress_done, Nil)
           Nil
         }
       }
@@ -783,7 +817,13 @@ fn start_telegram_worker(
       process.send(done, Nil)
     })
 
-  TelegramWorker(done: done)
+  TelegramWorker(done: done, ingress_done: ingress_done)
+}
+
+fn stop_telegram_ingress(worker: TelegramWorker, polling_timeout: Int) -> Nil {
+  let wait_ms = { polling_timeout + 5 } * 1000
+  let _ = process.receive(worker.ingress_done, within: wait_ms)
+  Nil
 }
 
 fn stop_telegram_worker(worker: TelegramWorker, polling_timeout: Int) -> Nil {

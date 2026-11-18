@@ -462,3 +462,32 @@ pub fn drain_reports_pending_turns_with_short_timeout_test() {
 
   registry.stop_channels_with_timeout(channel_registry, 2000)
 }
+
+pub fn drain_validates_arguments_test() {
+  chat_lanes.drain("", 100) |> should.equal(-1)
+  chat_lanes.drain("drain-invalid", -1) |> should.equal(-1)
+}
+
+pub fn drain_timeout_keeps_prefix_closed_test() {
+  let ready = process.new_subject()
+  let prefix = "drain-timeout-test"
+
+  chat_lanes.submit(prefix <> ":1", fn() {
+    let gate = process.new_subject()
+    process.send(ready, gate)
+    let _ = process.receive(gate, within: 2000)
+    Nil
+  })
+  |> should.be_true()
+
+  let assert Ok(gate) = process.receive(ready, within: 2000)
+  { chat_lanes.drain(prefix, 10) >= 1 } |> should.equal(True)
+
+  chat_lanes.submit(prefix <> ":2", fn() { Nil })
+  |> should.equal(False)
+
+  process.send(gate, Nil)
+  chat_lanes.undrain(prefix)
+  chat_lanes.submit(prefix <> ":3", fn() { Nil })
+  |> should.equal(True)
+}

@@ -39,7 +39,14 @@ pub fn start(
     do_send(bot_token, base_url, reply)
   }
 
-  Ok(port.ChannelAdapter(name: "mattermost", send: send_fn, stop: fn() { Nil }))
+  Ok(
+    port.ChannelAdapter(
+      name: "mattermost",
+      send: send_fn,
+      stop: fn() { Nil },
+      stop_ingress: fn() { Nil },
+    ),
+  )
 }
 
 /// Parse a raw Mattermost webhook/event JSON into a normalized `ChannelMessage`.

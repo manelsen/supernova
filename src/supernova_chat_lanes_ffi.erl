@@ -1,5 +1,5 @@
 -module(supernova_chat_lanes_ffi).
--export([submit/2, submit_with_limits/4, lane_count/0, drain/2]).
+-export([submit/2, submit_with_limits/4, lane_count/0, drain/2, undrain/1]).
 
 %% Per-chat ordered execution lanes.
 %%
@@ -39,6 +39,10 @@ lane_count() ->
 %% Stop accepting jobs whose key starts with Prefix and wait for pending
 %% jobs to finish. Returns the number of pending jobs still alive at the
 %% deadline.
+drain(<<>>, _TimeoutMs) ->
+    -1;
+drain(_Prefix, TimeoutMs) when is_integer(TimeoutMs), TimeoutMs < 0 ->
+    -1;
 drain(Prefix, TimeoutMs) ->
     Ref = make_ref(),
     manager() ! {drain, Prefix, self(), Ref, TimeoutMs},
@@ -46,6 +50,11 @@ drain(Prefix, TimeoutMs) ->
         {Ref, Remaining} -> Remaining
     after TimeoutMs + 1000 -> -1
     end.
+
+%% Reopen a prefix closed by drain (tests and registry restarts).
+undrain(Prefix) ->
+    manager() ! {undrain, Prefix},
+    ok.
 
 manager() ->
     case whereis(?NAME) of
@@ -95,8 +104,6 @@ loop(Lanes, Draining, Waits) ->
             case pending_for_prefix(Prefix, Lanes) of
                 0 ->
                     From ! {Ref, 0},
-                    erlang:send_after(
-                        TimeoutMs, self(), {drain_cleanup, Prefix}),
                     loop(Lanes, [Prefix | Draining], Waits);
                 _ ->
                     Timer = erlang:send_after(
@@ -104,12 +111,11 @@ loop(Lanes, Draining, Waits) ->
                     Waits1 = [{Prefix, From, Ref, Timer} | Waits],
                     loop(Lanes, [Prefix | Draining], Waits1)
             end;
-        {drain_cleanup, Prefix} ->
+        {undrain, Prefix} ->
             loop(Lanes, lists:delete(Prefix, Draining), Waits);
         {drain_timeout, Prefix, From, Ref} ->
             From ! {Ref, pending_for_prefix(Prefix, Lanes)},
-            loop(Lanes,
-                 lists:delete(Prefix, Draining),
+            loop(Lanes, Draining,
                  [W || {P, _, _, _} = W <- Waits, P =/= Prefix]);
         {done, Key, Worker} ->
             case maps:find(Key, Lanes) of
@@ -134,11 +140,19 @@ loop(Lanes, Draining, Waits) ->
     end.
 
 log_rejection(Key, Reason) ->
-    spawn(fun() ->
-        io:format(standard_error,
-                  "warn: chat lane rejected submission key=~ts reason=~p~n",
-                  [Key, Reason])
-    end).
+    Now = erlang:monotonic_time(millisecond),
+    Last = get({lane_rejection_log, Key}),
+    case Last =:= undefined orelse Now - Last >= 10000 of
+        true ->
+            put({lane_rejection_log, Key}, Now),
+            spawn(fun() ->
+                io:format(standard_error,
+                          "warn: chat lane rejected submission key=~ts reason=~p~n",
+                          [Key, Reason])
+            end);
+        false ->
+            ok
+    end.
 
 is_draining(Key, Draining) ->
     lists:any(fun(Prefix) -> starts_with(Key, Prefix) end, Draining).

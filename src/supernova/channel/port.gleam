@@ -229,6 +229,8 @@ pub type ChannelAdapter {
     name: String,
     /// Deliver a reply through this channel.
     send: fn(ChannelReply) -> Result(Nil, ChannelError),
+    /// Stop receiving new inbound events without closing the send path.
+    stop_ingress: fn() -> Nil,
     /// Shut the adapter down and release any associated resources.
     stop: fn() -> Nil,
   )
