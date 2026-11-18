@@ -217,7 +217,12 @@ revisão. Cada linha tem teste automatizado no PR "B1.1".
   - `f980fd9` `fix(router): gate interactions and retry lost ledger writes`
   - `54e1803` `fix(gateway): charge tool calls on claim and refund cancellations`
   - `618634b` `docs: accepted risks and v0.4.0 notes for B1.1`
-  - CI do PR "B1.1" registrado na conversa do PR.
+  - `bf3a25c` `fix: preserve YAML config and fence expired lane submissions`
+  - `7971918` `fix(access): preserve stored overrides across unrelated commands`
+  - `31a206e` `docs: record review round 2 and final hardening notes`
+  - `62bcbc0` `docs: record final B1.1 test and coverage numbers`
+  - CI do PR "B1.1" não dispara porque os workflows só aceitam base
+    `master`; o PR #12 está verde em `test` e `docker`.
 
 ## Decisões sem especificação explícita
 
@@ -241,3 +246,12 @@ revisão. Cada linha tem teste automatizado no PR "B1.1".
 | 1 | PR #12, revisão `5956360197` | 8 | Recheck de autorização antes do retry de saída (`f980fd9`) e cancelamento de claim cobrado (`54e1803`) corrigidos. Migração legada, timeout duro, reserva de saída, TTL de 10 min e fila de retry seguem o desenho explícito do PRD e estão em "Riscos aceitos". Commit antes do push atendido. |
 | 2 | PR #12, revisão `5956755462` | 12 | `bf3a25c`: YAML preservado quando a env do Compose está vazia; submissão de lane expirada não começa; log de recusa fora do receive; DEPLOY corrigido (revogação e volume). `7971918`: overrides armazenados sobrevivem a comandos não relacionados. Aviso de fila cheia, timeout duro e migração v1 seguem o PRD e estão em Riscos aceitos. |
 | 3 | PR "B1.1" | a preencher | a preencher |
+
+## Fechamento
+
+- PR #12 (Fase A): checks `test` e `docker` verdes.
+- PR #13 "B1.1" (Fase B): branch `fix/b1-1-endurecimento`, base
+  `feat/grupo-fechado`, 2201 testes e 75,81% de cobertura.
+- Os workflows de CI só disparam para base `master`; por isso o PR empilhado
+  não tem checks próprios. A validação local e os checks verdes do PR #12
+  cobrem a mesma árvore de código na base.
