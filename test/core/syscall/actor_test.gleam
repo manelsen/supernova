@@ -646,3 +646,25 @@ pub fn completed_tool_cannot_be_refunded_test() {
   actor.stop(gateway)
   budget_actor.stop(budget)
 }
+
+pub fn late_claim_retry_charges_once_test() {
+  let #(gateway, budget) = claim_gateway(1)
+  let assert Ok(reservation_id) =
+    actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+  let assert Ok(_) = actor.claim_tool_call(gateway, reservation_id)
+
+  // The first claim removed the reservation and charged once. A late retry
+  // with the same id must fail instead of charging again.
+  actor.claim_tool_call(gateway, reservation_id)
+  |> should.equal(Error("authorization expired"))
+
+  budget_actor.get_consumption(
+    budget,
+    "agent_1",
+    budget_types.BudgetToolCallsHourly,
+  )
+  |> should.equal(1)
+
+  actor.stop(gateway)
+  budget_actor.stop(budget)
+}
