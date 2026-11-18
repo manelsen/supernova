@@ -74,50 +74,6 @@ pub fn new_interactive_state() -> InteractiveRouterState {
   )
 }
 
-/// Handle a normalized channel message through the shared core flow.
-pub fn handle_message(
-  expected_channel: String,
-  msg: port.ChannelMessage,
-  llm_config: provider.ProviderConfig,
-  resolve_session: ResolveSession,
-) -> Result(port.ChannelReply, port.ChannelError) {
-  case msg.channel != expected_channel {
-    True -> Error(port.Ignored(reason: "channel mismatch: " <> msg.channel))
-    False -> {
-      case msg.is_bot {
-        True -> Error(port.Ignored(reason: "bot message"))
-        False -> {
-          case msg.content {
-            "" -> Error(port.Ignored(reason: "empty content"))
-            _ -> {
-              let session_id = resolve_session(msg)
-              case
-                executor.run(
-                  [provider.user_message(msg.content)],
-                  llm_config,
-                  executor.builtin_tools(),
-                )
-              {
-                Ok(chat_response) ->
-                  Ok(port.reply(
-                    to: msg,
-                    content: default_response(
-                      msg.content,
-                      session_id,
-                      chat_response.content,
-                    ),
-                  ))
-                Error(error) ->
-                  Error(port.SendFailed(reason: error_ux.friendly(error)))
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
 /// Handle inbound messages and interaction callbacks through the shared flow.
 pub fn handle_inbound(
   expected_channel: String,
@@ -279,6 +235,15 @@ fn handle_inbound_internal_for_handler(
 fn closed_group_gate(
   msg: port.ChannelMessage,
 ) -> Option(closed_group_types.GateResult) {
+  closed_group_gate_for(msg.channel, msg.channel_id, msg.user_id, msg.content)
+}
+
+fn closed_group_gate_for(
+  channel: String,
+  channel_id: String,
+  user_id: String,
+  content: String,
+) -> Option(closed_group_types.GateResult) {
   case closed_group_global.get_runtime() {
     None ->
       case closed_group_global.is_enforced() {
@@ -289,10 +254,10 @@ fn closed_group_gate(
     Some(runtime) ->
       Some(closed_group_runtime.gate(
         runtime,
-        msg.channel,
-        msg.channel_id,
-        msg.user_id,
-        msg.content,
+        channel,
+        channel_id,
+        user_id,
+        content,
       ))
   }
 }
@@ -1165,93 +1130,129 @@ fn handle_inbound_interaction(
     False -> {
       case interaction.is_bot {
         True -> #(state, Error(port.Ignored(reason: "bot message")))
-        False -> {
-          let session_id =
-            resolve_session(interaction.channel_id, interaction.user_id)
-          let rich_session = ensure_rich_session(supervisor, session_id)
-          let active_config =
-            session_config_for_session(
-              state,
-              session_id,
-              default_llm_config,
-              rich_session,
+        False ->
+          // Callbacks change session provider/model and persist preferences,
+          // so they pass the same access gate as messages. The content is
+          // empty: no command is dispatched from a button click.
+          case
+            closed_group_gate_for(
+              interaction.channel,
+              interaction.channel_id,
+              interaction.user_id,
+              "",
             )
+          {
+            Some(closed_group_types.Reply(content)) -> #(
+              state,
+              Ok(interaction_reply(interaction, content, None)),
+            )
+            Some(closed_group_types.Ignored(reason)) -> #(
+              state,
+              Error(port.Ignored(reason: reason)),
+            )
+            Some(closed_group_types.Allowed(_)) | None ->
+              handle_allowed_interaction(
+                expected_channel,
+                interaction,
+                default_llm_config,
+                state,
+                resolve_session,
+                supervisor,
+              )
+          }
+      }
+    }
+  }
+}
 
-          case channel_supports_interactions(expected_channel) {
+fn handle_allowed_interaction(
+  expected_channel: String,
+  interaction: port.ChannelInteractionMessage,
+  default_llm_config: provider.ProviderConfig,
+  state: InteractiveRouterState,
+  resolve_session: ResolveSessionFromParticipant,
+  supervisor: Option(session_supervisor.SessionSupervisor),
+) -> #(InteractiveRouterState, Result(port.ChannelReply, port.ChannelError)) {
+  let session_id = resolve_session(interaction.channel_id, interaction.user_id)
+  let rich_session = ensure_rich_session(supervisor, session_id)
+  let active_config =
+    session_config_for_session(
+      state,
+      session_id,
+      default_llm_config,
+      rich_session,
+    )
+
+  case channel_supports_interactions(expected_channel) {
+    False -> #(
+      state,
+      Error(port.UnsupportedInteraction(
+        reason: "Interactive callbacks not supported for channel: "
+        <> expected_channel,
+      )),
+    )
+    True ->
+      case parse_provider_action(interaction.event.action_id) {
+        Some(provider_name) -> {
+          case
+            is_supported_provider(
+              provider_name,
+              active_config.name,
+              default_llm_config.name,
+            )
+          {
+            True -> {
+              let next_config =
+                build_provider_config(provider_name, default_llm_config)
+              persist_session_llm_config(rich_session, next_config)
+              persist_model_preference_for_user(
+                state,
+                session_id,
+                interaction.user_id,
+                next_config.default_model,
+              )
+              let next_state =
+                put_session_config(state, session_id, next_config)
+              let picker = build_model_picker(next_config, default_llm_config)
+              let content =
+                "Provider set to "
+                <> provider_display_name(provider_name)
+                <> ". Select a model."
+
+              #(
+                next_state,
+                Ok(interaction_reply(interaction, content, Some(picker))),
+              )
+            }
             False -> #(
               state,
               Error(port.UnsupportedInteraction(
-                reason: "Interactive callbacks not supported for channel: "
-                <> expected_channel,
+                reason: "Unknown provider selection: " <> provider_name,
               )),
             )
-            True ->
-              case parse_provider_action(interaction.event.action_id) {
-                Some(provider_name) -> {
-                  case
-                    is_supported_provider(
-                      provider_name,
-                      active_config.name,
-                      default_llm_config.name,
-                    )
-                  {
-                    True -> {
-                      let next_config =
-                        build_provider_config(provider_name, default_llm_config)
-                      persist_session_llm_config(rich_session, next_config)
-                      persist_model_preference_for_user(
-                        state,
-                        session_id,
-                        interaction.user_id,
-                        next_config.default_model,
-                      )
-                      let next_state =
-                        put_session_config(state, session_id, next_config)
-                      let picker =
-                        build_model_picker(next_config, default_llm_config)
-                      let content =
-                        "Provider set to "
-                        <> provider_display_name(provider_name)
-                        <> ". Select a model."
-
-                      #(
-                        next_state,
-                        Ok(interaction_reply(interaction, content, Some(picker))),
-                      )
-                    }
-                    False -> #(
-                      state,
-                      Error(port.UnsupportedInteraction(
-                        reason: "Unknown provider selection: " <> provider_name,
-                      )),
-                    )
-                  }
-                }
-                None ->
-                  case interaction.event.action_id == "picker_model_select" {
-                    True -> {
-                      handle_model_selection(
-                        interaction,
-                        default_llm_config,
-                        state,
-                        session_id,
-                        active_config,
-                        rich_session,
-                      )
-                    }
-                    False -> #(
-                      state,
-                      Error(port.UnsupportedInteraction(
-                        reason: "Unsupported interaction action: "
-                        <> interaction.event.action_id,
-                      )),
-                    )
-                  }
-              }
           }
         }
+        None ->
+          case interaction.event.action_id == "picker_model_select" {
+            True -> {
+              handle_model_selection(
+                interaction,
+                default_llm_config,
+                state,
+                session_id,
+                active_config,
+                rich_session,
+              )
+            }
+            False -> #(
+              state,
+              Error(port.UnsupportedInteraction(
+                reason: "Unsupported interaction action: "
+                <> interaction.event.action_id,
+              )),
+            )
+          }
       }
-    }
   }
 }
 
@@ -1362,48 +1363,24 @@ fn start_streamed_message_reply(
   profile: SessionProfile,
   context: Option(closed_group_types.PrincipalContext),
 ) -> port.ChannelHandlerResult {
-  case context {
-    // Gated turns run synchronously: budget, capabilities and ledger checks
-    // must complete before any reply leaves the process.
-    Some(_) -> {
-      let messages =
-        executor_messages_for_turn(rich_session, msg.content, profile)
-      let tools = executor.builtin_tools()
-      case run_executor_for_context(messages, llm_config, tools, context) {
-        Ok(chat_response) -> {
-          let content =
-            default_response(msg.content, session_id, chat_response.content)
-          record_session_turn(rich_session, msg.content, content)
-          apply_success_self_state(profile, session_id, msg.content, content)
-          port.ImmediateReply(port.reply(to: msg, content: content))
-        }
-        Error(error) -> {
-          apply_error_self_state(profile, session_id, msg.content, error)
-          port.ImmediateReply(port.reply(
-            to: msg,
-            content: error_ux.friendly(error),
-          ))
-        }
-      }
-    }
-    None -> {
-      let base_reply =
-        port.reply(to: msg, content: "") |> port.with_typing(True)
-      let _ =
-        process.spawn_unlinked(fn() {
-          run_streamed_message_reply(
-            stream_events,
-            msg,
-            session_id,
-            llm_config,
-            rich_session,
-            profile,
-            context,
-          )
-        })
-      port.StreamReply(base_reply: base_reply)
-    }
-  }
+  // Every turn runs outside the router actor. Gated turns still complete
+  // their budget, capability and ledger checks before any content is sent:
+  // the base reply only carries the typing indicator, and the spawned
+  // worker emits the final content (or the policy refusal) as an event.
+  let base_reply = port.reply(to: msg, content: "") |> port.with_typing(True)
+  let _ =
+    process.spawn_unlinked(fn() {
+      run_streamed_message_reply(
+        stream_events,
+        msg,
+        session_id,
+        llm_config,
+        rich_session,
+        profile,
+        context,
+      )
+    })
+  port.StreamReply(base_reply: base_reply)
 }
 
 fn run_streamed_message_reply(
@@ -1577,11 +1554,15 @@ fn fallback_to_non_streaming_reply(
     }
     Error(error) -> {
       apply_error_self_state(profile, session_id, msg.content, error)
+      // Deliver the friendly text as the final message: a StreamFailure
+      // would leave the channel placeholder hanging and the user would never
+      // see why the turn was refused (budget, instance cap, fail closed).
       process.send(
         events,
-        port.StreamFailure(
-          error: port.SendFailed(reason: error_ux.friendly(error)),
-        ),
+        port.StreamComplete(stream_reply_for_content(
+          msg,
+          error_ux.friendly(error),
+        )),
       )
     }
   }

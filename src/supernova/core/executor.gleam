@@ -179,10 +179,13 @@ pub type RunContext {
 }
 
 /// An empty context: no policy callbacks, tools run locally.
+///
+/// Only used when the closed-group runtime is not enforced (tests and
+/// library use). The role defaults to the least privileged one.
 pub fn empty_run_context() -> RunContext {
   RunContext(
     principal_id: "",
-    role: "admin",
+    role: "member",
     before_llm: None,
     on_llm_usage: None,
     invoke_tool: None,
