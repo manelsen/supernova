@@ -4,8 +4,8 @@
 
 | Métrica | Início | Final |
 |---|---|---|
-| `gleam test` | 2007 passaram, 0 falhas | 2135 passaram, 0 falhas |
-| Cobertura de linhas | 74,56% (gate 73) | 75,07% (10093/13444, gate 75) |
+| `gleam test` | 2007 passaram, 0 falhas | 2158 passaram, 0 falhas |
+| Cobertura de linhas | 74,56% (gate 73) | 75,67% (10208/13491, gate 75) |
 | `gleam build --warnings-as-errors` | verde | verde |
 | `gleam format --check src test` | verde | verde |
 
@@ -42,6 +42,9 @@ Componentes:
 - `core/alerts/{group_pure,group_actor}.gleam`: deduplicação de alertas.
 - `core/instance_budget/`: teto diário ajustável por `/teto liberar`.
 - `config_check.gleam` + `check_config_main.gleam`: validação no boot e CLI.
+- Audit log: `<data_dir>/audit_log/<agent>/.supernova/audit.log`, texto com
+  `timestamp agent operation target result details`; rotação ao passar de
+  10 MB, mantendo cinco backups (`audit.log.1` … `.5`).
 
 ## Padrões de segurança
 
@@ -69,6 +72,14 @@ Componentes:
   adicionar`.
 - O limite de mensagens usa janela deslizante de 60 s; comandos e `/eu` não
   contam.
+- Em servidores Discord, a autorização usa o `guild_id` (`discord:guild:<id>`);
+  o id do canal viaja anotado como `<canal>@guild:<guild>` e é removido antes
+  de chamar a API. Alertas abrem DM via `/users/@me/channels`.
+- Se o ator de acesso estiver indisponível, os alertas usam a lista de admins
+  da configuração como fallback para não silenciar falhas.
+- Prova do teste de isolamento: um `import supernova/core/blackboard` temporário
+  em `src/supernova.gleam` fez `test/architecture/isolation_test` falhar;
+  removido o import, o teste voltou a passar.
 - O teto diário considera o dia no fuso configurado; o arquivo do ledger usa
   dias UTC, e a soma diária é filtrada pelo timestamp no fuso.
 - O custo de uma chamada é estimado com `pricing` e registrado no ledger; a
@@ -81,7 +92,7 @@ Componentes:
 
 ## Cobertura
 
-`make coverage` mediu **75,07%** (10093/13444 linhas). O alvo de 78% não foi
+`make coverage` mediu **75,67%** (10208/13491 linhas). O alvo de 78% não foi
 alcançado sem testes artificiais: os maiores buracos restantes são módulos de
 canais/rede (`channel/registry` 249 linhas, `discord_commands` 169,
 `telegram` 159, `discord_webhooks` 105, `whatsapp_adapter` 92) e o bootstrap
@@ -92,8 +103,8 @@ acima da linha de base de 74,56%.
 ## Branch, commits e CI
 
 - Branch: `feat/grupo-fechado`
-- Commits: 8 commits temáticos (`ci`, `git_inspect`, `config`, `ledger`,
-  `gateway`, `access`, `isolation`, `docs`).
+- Commits: série temática (`ci`, `git_inspect`, `config`, `ledger`, `gateway`,
+  `access`, `isolation`, `docs` e as correções de fechamento).
 - PR: https://github.com/manelsen/supernova/pull/12
 - CI: quality gates rodados localmente; o run do PR está em
   `gh pr checks 12`.

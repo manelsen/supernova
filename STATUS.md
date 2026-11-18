@@ -12,8 +12,8 @@
 |-------|--------|-------|
 | `gleam format --check src test` | Passing | Clean formatting |
 | `gleam build --warnings-as-errors` | Passing | 0 warnings |
-| `gleam test` | See `docs/B1_REPORT.md` | Offline suite (`SUPERNOVA_BROWSER_TESTS=1` opt-in for live Chromium) |
-| `make coverage` | `75.07%` (`10093/13444` lines) | Exceeds `75.00%` CI gate (`--threshold 75`) |
+| `gleam test` | `2158` passed, `0` failed | Offline suite (`SUPERNOVA_BROWSER_TESTS=1` opt-in for live Chromium) |
+| `make coverage` | `75.67%` (`10208/13491` lines) | Exceeds `75.00%` CI gate (`--threshold 75`) |
 | Docker smoke test | Verified (`HTTP 200` on `/health/live`) | Tested with offline `ollama` config (`test/fixtures/docker/supernova.yaml`) |
 | Audit status (`audit/STATUS_2026-11.md`) | `20 RESOLVIDO`, `5 ACEITO`, `0 ABERTO` | Deferred items tracked for PRD B |
 

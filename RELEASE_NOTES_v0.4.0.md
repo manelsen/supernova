@@ -60,7 +60,7 @@ mocked end-to-end tests. The other seven channels are experimental.
 
 ## Known limitations
 
-- Automatic admin alerts use the admin's principal id as the DM target; a
-  Discord DM channel must already exist.
+- Discord admin alerts open a DM channel through the Discord API; the bot must
+  share a guild with the admin.
 - The shared `blackboard` and `memory_federation` remain intentionally
   unwired; an architecture test prevents wiring them before PRD B3.

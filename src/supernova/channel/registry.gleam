@@ -782,6 +782,7 @@ fn maybe_leave_unauthorized_group(
   let chat_key = "telegram:" <> member.chat.id
   case is_group && joined && !closed_group_global.chat_authorized(chat_key) {
     True -> {
+      record_leave_audit(chat_key)
       case leave_group {
         Some(leave) -> leave(member.chat.id)
         None -> {
@@ -789,7 +790,6 @@ fn maybe_leave_unauthorized_group(
           Nil
         }
       }
-      record_leave_audit(chat_key)
     }
     False -> Nil
   }
