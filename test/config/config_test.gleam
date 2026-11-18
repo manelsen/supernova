@@ -11,9 +11,9 @@ import supernova/config.{
   GoogleChatConfig as GoogleChatConfigRecord, InvalidField,
   LarkConfig as LarkConfigRecord, MatrixConfig as MatrixConfigRecord,
   MattermostConfig as MattermostConfigRecord, Minimax, MissingField, Ollama,
-  OpenAI, OpenCodeZen, OpenRouter, SlackConfig as SlackConfigRecord,
-  TelegramConfig as TelegramConfigRecord, TypeMismatch, ValidationError,
-  WechatWorkConfig as WechatWorkConfigRecord,
+  OpenAI, OpenCodeZen, OpenRouter, SimConfig as SimConfigRecord,
+  SlackConfig as SlackConfigRecord, TelegramConfig as TelegramConfigRecord,
+  TypeMismatch, ValidationError, WechatWorkConfig as WechatWorkConfigRecord,
   WhatsAppConfig as WhatsAppConfigRecord, YamlParseError, Zhipu, ZhipuCoding,
   apply_env_overrides, default_budgets_config, default_config,
   default_provider_config, default_tools_config, error_to_string, get_provider,
@@ -393,6 +393,24 @@ pub fn validate_discord_enabled_without_token_test() {
     Error(ValidationError("Discord is enabled but no token is configured")) ->
       Nil
     _ -> panic as "Expected ValidationError for Discord without token"
+  }
+}
+
+pub fn validate_sim_enabled_without_token_test() {
+  let config =
+    ConfigRecord(
+      ..default_config(),
+      sim: SimConfigRecord(
+        enabled: True,
+        bind: "127.0.0.1",
+        port: 8787,
+        token: None,
+      ),
+    )
+
+  case validate(config) {
+    Error(ValidationError("Sim is enabled but no token is configured")) -> Nil
+    _ -> panic as "Expected ValidationError for sim without token"
   }
 }
 
