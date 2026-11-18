@@ -148,6 +148,7 @@ pub fn run_with_checkpoint_budget_exhaustion_saves_pending_tool_test() {
       budget_types.BudgetConfig(
         tokens_per_hour: 100_000,
         tool_calls_per_minute: 0,
+        tool_calls_per_hour: -1,
         max_recursion_depth: 5,
         max_sub_agents: 10,
       ),

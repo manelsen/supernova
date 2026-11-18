@@ -19,6 +19,8 @@ pub type BudgetConfig {
     tokens_per_hour: Int,
     /// Maximum tool calls per minute (-1 = unlimited)
     tool_calls_per_minute: Int,
+    /// Maximum tool calls per hour (-1 = unlimited)
+    tool_calls_per_hour: Int,
     /// Maximum recursion depth for sub-agents
     max_recursion_depth: Int,
     /// Maximum number of concurrent sub-agents
@@ -30,8 +32,10 @@ pub type BudgetConfig {
 pub type BudgetResource {
   /// LLM token consumption (prompt + completion)
   BudgetTokens
-  /// Tool call consumption (any tool)
+  /// Tool call consumption (any tool), per minute legacy window
   BudgetToolCalls
+  /// Tool call consumption (any tool), per hour
+  BudgetToolCallsHourly
   /// Recursion depth for sub-agents
   BudgetRecursionDepth
   /// Number of concurrent sub-agents
@@ -87,6 +91,8 @@ pub type AgentBudgetState {
     token_window: WindowState,
     /// Tool call consumption window (per minute)
     tool_call_window: WindowState,
+    /// Tool call consumption window (per hour)
+    tool_call_hour_window: WindowState,
     /// Current recursion depth
     current_recursion_depth: Int,
     /// Current number of active sub-agents
@@ -117,6 +123,7 @@ pub fn default_budget_config() -> BudgetConfig {
   BudgetConfig(
     tokens_per_hour: 100_000,
     tool_calls_per_minute: 60,
+    tool_calls_per_hour: 3600,
     max_recursion_depth: 5,
     max_sub_agents: 10,
   )
@@ -127,6 +134,7 @@ pub fn unlimited_budget_config() -> BudgetConfig {
   BudgetConfig(
     tokens_per_hour: -1,
     tool_calls_per_minute: -1,
+    tool_calls_per_hour: -1,
     max_recursion_depth: 5,
     max_sub_agents: -1,
   )
