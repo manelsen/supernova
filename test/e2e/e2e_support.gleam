@@ -25,6 +25,8 @@ import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/syscall/actor as syscall_actor
 import supernova/llm/pricing
 import supernova/llm/provider
+import supernova/self/core as self_core
+import supernova/self/sampler
 import test_workspace
 
 pub const now = 1_700_000_000_000
@@ -36,6 +38,16 @@ pub fn mock_config() -> provider.ProviderConfig {
     base_url: None,
     default_model: "mock-model",
   )
+}
+
+/// Seed a born core so closed-group birth does not intercept a test turn.
+pub fn seed_core(root: String, principal: String, prose: String) -> Nil {
+  let sampled = sampler.Sampled(traits: ["temp_0"], seed: 1, attempts: 0)
+  let assert Ok(_) =
+    self_core.save_birth(root, principal, sampled, 1, prose, now)
+  let assert Some(core) = self_core.load(root, principal)
+  let assert Ok(_) = self_core.set_name(root, principal, core, "Lua", now)
+  Nil
 }
 
 pub fn channel_config() -> config.Config {
@@ -56,8 +68,13 @@ pub fn channel_config() -> config.Config {
 }
 
 pub fn with_runtime(cfg: config.Config, body: fn() -> a) -> a {
+  with_runtime_root(cfg, fn(_root) { body() })
+}
+
+pub fn with_runtime_root(cfg: config.Config, body: fn(String) -> a) -> a {
   test_workspace.with_isolated_workspace("e2e-group", fn(root) {
     use <- exception.defer(closed_group_global.clear_runtime)
+    let cfg = config.Config(..cfg, data_dir: root)
     closed_group_global.set_config(cfg)
     closed_group_global.set_clock(fn() { now })
     closed_group_global.set_alert_sender(fn(_, _) { Nil })
@@ -123,7 +140,7 @@ pub fn with_runtime(cfg: config.Config, body: fn() -> a) -> a {
       )
     closed_group_global.set_gateway(gateway)
 
-    body()
+    body(root)
   })
 }
 

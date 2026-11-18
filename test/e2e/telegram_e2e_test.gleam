@@ -37,7 +37,8 @@ fn collect_records(
 }
 
 pub fn authorized_member_receives_reply_test() {
-  support.with_runtime(cfg(["telegram:123"]), fn() {
+  support.with_runtime_root(cfg(["telegram:123"]), fn(root) {
+    support.seed_core(root, "telegram:123", "Núcleo de teste.")
     let recorder = process.new_subject()
     let channel_registry =
       support.telegram_start_registry(
@@ -248,7 +249,8 @@ pub fn member_tools_hide_dangerous_tools_test() {
 }
 
 pub fn long_reply_is_split_test() {
-  support.with_runtime(cfg(["telegram:123"]), fn() {
+  support.with_runtime_root(cfg(["telegram:123"]), fn(root) {
+    support.seed_core(root, "telegram:123", "Núcleo de teste.")
     let recorder = process.new_subject()
     let channel_registry =
       support.telegram_start_registry(
@@ -268,7 +270,8 @@ pub fn long_reply_is_split_test() {
 }
 
 pub fn llm_error_is_friendly_test() {
-  support.with_runtime(cfg(["telegram:123"]), fn() {
+  support.with_runtime_root(cfg(["telegram:123"]), fn(root) {
+    support.seed_core(root, "telegram:123", "Núcleo de teste.")
     let recorder = process.new_subject()
     let broken =
       provider.ProviderConfig(

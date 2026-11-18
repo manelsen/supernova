@@ -34,7 +34,8 @@ fn collect_records(
 }
 
 pub fn authorized_member_receives_reply_test() {
-  support.with_runtime(cfg(["discord:456"]), fn() {
+  support.with_runtime_root(cfg(["discord:456"]), fn(root) {
+    support.seed_core(root, "discord:456", "Núcleo de teste.")
     let recorder = process.new_subject()
     let channel_registry =
       support.discord_start_registry(
@@ -58,7 +59,8 @@ pub fn authorized_guild_receives_reply_test() {
         "discord:guild:guild1",
       ]),
     )
-  support.with_runtime(cfg, fn() {
+  support.with_runtime_root(cfg, fn(root) {
+    support.seed_core(root, "discord:456", "Núcleo de teste.")
     let recorder = process.new_subject()
     let channel_registry =
       support.discord_start_registry(
@@ -126,7 +128,8 @@ pub fn exhausted_budget_reply_test() {
 }
 
 pub fn long_reply_is_split_test() {
-  support.with_runtime(cfg(["discord:456"]), fn() {
+  support.with_runtime_root(cfg(["discord:456"]), fn(root) {
+    support.seed_core(root, "discord:456", "Núcleo de teste.")
     let recorder = process.new_subject()
     let channel_registry =
       support.discord_start_registry(
@@ -145,7 +148,8 @@ pub fn long_reply_is_split_test() {
 }
 
 pub fn llm_error_is_friendly_test() {
-  support.with_runtime(cfg(["discord:456"]), fn() {
+  support.with_runtime_root(cfg(["discord:456"]), fn(root) {
+    support.seed_core(root, "discord:456", "Núcleo de teste.")
     let recorder = process.new_subject()
     let broken =
       provider.ProviderConfig(

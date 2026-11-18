@@ -3,6 +3,7 @@
 //// callbacks pass through the same access gate as messages.
 
 import e2e/e2e_support as support
+import envoy
 import gleam/erlang/process
 import gleam/option.{None}
 import gleam/string
@@ -57,6 +58,17 @@ fn telegram_click(user_id: String, action_id: String) -> port.ChannelInbound {
   ))
 }
 
+fn ensure_born(
+  handler: fn(port.ChannelInbound, process.Subject(port.ChannelStreamEvent)) ->
+    Result(port.ChannelHandlerResult, port.ChannelError),
+  user_id: String,
+) -> Nil {
+  let events = process.new_subject()
+  let _ = handler(telegram_message(user_id, "oi"), events)
+  let _ = handler(telegram_message(user_id, "Lua"), events)
+  Nil
+}
+
 fn await_final_content(
   events: process.Subject(port.ChannelStreamEvent),
 ) -> String {
@@ -89,7 +101,12 @@ fn monotonic_ms() -> Int {
 // so this also covers the gateway accepting the member's role key.
 pub fn gated_turn_is_asynchronous_test() {
   support.with_runtime(cfg(["telegram:123"], 50_000), fn() {
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
     let handler = support.telegram_handler(support.mock_config())
+    ensure_born(handler, "123")
     let events = process.new_subject()
     let started = monotonic_ms()
 
@@ -105,7 +122,12 @@ pub fn gated_turn_is_asynchronous_test() {
 
 pub fn executor_crash_emits_stream_failure_test() {
   support.with_runtime(cfg(["telegram:123"], 50_000), fn() {
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
     let handler = support.telegram_handler(support.mock_config())
+    ensure_born(handler, "123")
     let events = process.new_subject()
 
     let assert Ok(port.StreamReply(_)) =
