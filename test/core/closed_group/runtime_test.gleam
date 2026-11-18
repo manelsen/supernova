@@ -1050,3 +1050,44 @@ pub fn retry_second_attempt_can_be_denied_by_cap_test() {
     |> should.equal(1)
   })
 }
+
+pub fn usage_retry_uses_live_ledger_test() {
+  with_runtime(
+    config_with_access(["telegram:1"], ["telegram:123"], []),
+    fn(runtime) {
+      let stopped_ledger = runtime.ledger
+      closed_group_global.set_ledger(stopped_ledger)
+      ledger_actor.stop(stopped_ledger)
+      let assert Ok(new_ledger) = ledger_actor.start()
+
+      // Initial write goes to the stopped handle; swap the live ledger before
+      // the first retry fires.
+      send_usage(runtime, "telegram:123", "member", 10, 5)
+      closed_group_global.set_ledger(new_ledger)
+
+      let deadline = now + 4000
+      wait_for_ledger_usage(new_ledger, deadline, runtime.clock)
+
+      closed_group_global.set_ledger(stopped_ledger)
+      ledger_actor.stop(new_ledger)
+    },
+  )
+}
+
+fn wait_for_ledger_usage(
+  ledger: ledger_actor.ResourceLedger,
+  deadline: Int,
+  clock: fn() -> Int,
+) -> Nil {
+  case ledger_actor.get_all_usage(ledger) {
+    [] ->
+      case clock() >= deadline {
+        True -> should.fail()
+        False -> {
+          process.sleep(50)
+          wait_for_ledger_usage(ledger, deadline, clock)
+        }
+      }
+    _ -> Nil
+  }
+}

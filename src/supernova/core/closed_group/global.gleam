@@ -109,6 +109,10 @@ pub fn is_enforced() -> Bool {
   }
 }
 
+pub fn get_ledger() -> Option(ledger_actor.ResourceLedger) {
+  get_typed(ledger_key)
+}
+
 pub fn get_budget() -> Option(budget_actor.BudgetPolicy) {
   get_typed(budget_key)
 }

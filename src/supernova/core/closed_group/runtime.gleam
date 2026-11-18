@@ -22,6 +22,7 @@ import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/budget_policy/types as budget_types
+import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure
 import supernova/core/closed_group/types
 import supernova/core/executor
@@ -569,7 +570,7 @@ pub fn run_context(
       )
     }),
     on_llm_failure: Some(fn(call_id) {
-      ledger_actor.release_reservation(runtime.ledger, call_id)
+      ledger_actor.release_reservation(live_ledger(runtime), call_id)
     }),
     invoke_tool: Some(fn(name, args) {
       syscall_actor.invoke_tool(
@@ -670,7 +671,7 @@ fn record_llm_usage(
   let cost = pricing.cost_usd(price, prompt_tokens, completion_tokens)
   case
     ledger_actor.try_record_llm_usage_with_call_id(
-      runtime.ledger,
+      live_ledger(runtime),
       principal_id,
       provider_name,
       model,
@@ -723,7 +724,7 @@ fn record_unconfirmed_llm_usage(
   ledger_actor.release_reservation(runtime.ledger, call_id)
   let result =
     ledger_actor.try_record_llm_usage_with_call_id(
-      runtime.ledger,
+      live_ledger(runtime),
       principal_id,
       provider_name,
       model,
@@ -781,7 +782,7 @@ fn retry_llm_usage(
 ) -> Nil {
   case list.drop(usage_retry_delays, attempt) {
     [] -> {
-      ledger_actor.release_reservation(runtime.ledger, call_id)
+      ledger_actor.release_reservation(live_ledger(runtime), call_id)
       audit_action(
         runtime,
         principal_id,
@@ -798,7 +799,7 @@ fn retry_llm_usage(
           process.sleep(delay)
           case
             ledger_actor.try_record_llm_usage_with_call_id(
-              runtime.ledger,
+              live_ledger(runtime),
               principal_id,
               provider_name,
               model,
@@ -825,6 +826,13 @@ fn retry_llm_usage(
         })
       Nil
     }
+  }
+}
+
+fn live_ledger(runtime: types.Runtime) -> ledger_actor.ResourceLedger {
+  case closed_group_global.get_ledger() {
+    Some(ledger) -> ledger
+    None -> runtime.ledger
   }
 }
 
