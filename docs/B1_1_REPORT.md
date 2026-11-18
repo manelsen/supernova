@@ -27,6 +27,11 @@ depois do merge do PR #12.
 - Admissão que chega após o timeout do chamador expira sozinha em 10 min.
 - Docker/docs/CI não foram o foco; as correções triviais de `workflow_dispatch` e build-only ficaram no PR.
 - Retry 429 do placeholder e corte pelo orçamento restante continuam como estão.
+- Estorno de claim usa buckets de hora de parede; a janela do budget começa no
+  primeiro uso, então um cancelamento na virada pode não estornar.
+- Não há mock HTTP do `getUpdates`; o teste de desligamento cobre a ordem
+  ingress→drain e o prefixo fechado, e o polling só confirma o offset depois de
+  entregar o lote ao callback.
 - Falhas `APIError` 5xx liberam a reserva e não geram uso estimado; a maioria
   dos provedores não cobra 5xx. Falhas de rede são tratadas como possivelmente
   cobradas e viram `:unconfirmed`.
@@ -42,8 +47,9 @@ depois do merge do PR #12.
 ## Gates
 
 - Baseline antes da rodada: 2201 testes, 75,81% de cobertura; Gleam 1.19.2.
-- Final: preencher após `gleam test` e `make coverage`.
-### Commits da rodada 2
+- Final: 2219 testes, 0 falhas; cobertura de linha 75,99% (10659/14027).
+
+## Commits da rodada 2
 
 - `6ccdfd8` R-01
 - `f33f5cf` R-02
