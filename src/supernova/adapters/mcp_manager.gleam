@@ -163,10 +163,35 @@ fn validate_protocol_version(result_json: String) -> Result(Nil, String) {
   }
 }
 
+/// Send a JSON-RPC request and drain lines inside the stdio transport until a
+/// response with matching `id` arrives or the timeout expires. Non-JSON lines
+/// are accepted immediately so the parser reports invalid responses without blocking.
+fn send_request_matching_id(
+  transport: StdioTransport,
+  expected_id: Int,
+  request: String,
+  timeout_ms: Int,
+) -> Result(String, String) {
+  stdio.send_and_receive_matching(transport, request, timeout_ms, fn(line) {
+    matches_expected_id_or_non_json(line, expected_id)
+  })
+}
+
+fn matches_expected_id_or_non_json(line: String, expected_id: Int) -> Bool {
+  case json.parse(line, decode.dynamic) {
+    Error(_) -> True
+    Ok(_) ->
+      case json.parse(line, decode.at(["id"], decode.int)) {
+        Ok(resp_id) -> resp_id == expected_id
+        Error(_) -> False
+      }
+  }
+}
+
 /// Send the initialize handshake to an MCP server.
 fn send_initialize(transport: StdioTransport, id: Int) -> Result(Nil, String) {
   let request = jsonrpc_request(id, "initialize", initialize_params())
-  case stdio.send_and_receive(transport, request, 10_000) {
+  case send_request_matching_id(transport, id, request, 10_000) {
     Ok(response) -> {
       case parse_jsonrpc_result(response) {
         Ok(result_json) -> {
@@ -200,7 +225,7 @@ fn send_tools_list(
   server_name: String,
 ) -> Result(List(MCPTool), String) {
   let request = jsonrpc_request(id, "tools/list", "{}")
-  case stdio.send_and_receive(transport, request, 10_000) {
+  case send_request_matching_id(transport, id, request, 10_000) {
     Ok(response) -> {
       case parse_jsonrpc_result(response) {
         Ok(result_json) -> parse_tools_response(result_json, server_name)
@@ -268,7 +293,7 @@ fn send_tools_call(
     <> "}"
 
   let request = jsonrpc_request(id, "tools/call", params)
-  case stdio.send_and_receive(transport, request, 30_000) {
+  case send_request_matching_id(transport, id, request, 30_000) {
     Ok(response) -> {
       case parse_jsonrpc_result(response) {
         Ok(result_json) -> Ok(result_json)

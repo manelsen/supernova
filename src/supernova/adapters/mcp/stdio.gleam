@@ -35,6 +35,12 @@ fn do_send_and_receive(
   timeout_ms: Int,
 ) -> Result(String, String)
 
+@external(erlang, "supernova_mcp_ffi", "receive_line")
+fn do_receive_line(port: Dynamic, timeout_ms: Int) -> Result(String, String)
+
+@external(erlang, "supernova_mcp_ffi", "monotonic_ms")
+fn do_monotonic_ms() -> Int
+
 @external(erlang, "supernova_mcp_ffi", "send_data")
 fn do_send_data(port: Dynamic, data: String) -> Result(Nil, String)
 
@@ -55,6 +61,13 @@ pub type StdioMessage {
     reply_to: Subject(Result(String, String)),
     data: String,
     timeout_ms: Int,
+  )
+  /// Send a JSON-RPC message and read lines inside the actor until predicate holds
+  SendReceiveMatching(
+    reply_to: Subject(Result(String, String)),
+    data: String,
+    timeout_ms: Int,
+    predicate: fn(String) -> Bool,
   )
   /// Send a JSON-RPC message without waiting (for notifications)
   SendOnly(reply_to: Subject(Result(Nil, String)), data: String)
@@ -90,6 +103,24 @@ fn handle_message(
       case state.port {
         Some(port) -> {
           let result = do_send_and_receive(port, data, timeout_ms)
+          actor.send(reply_to, result)
+          actor.continue(state)
+        }
+        None -> {
+          actor.send(reply_to, Error("Port not open"))
+          actor.continue(state)
+        }
+      }
+    }
+
+    SendReceiveMatching(reply_to, data, timeout_ms, predicate) -> {
+      case state.port {
+        Some(port) -> {
+          let deadline = do_monotonic_ms() + timeout_ms
+          let result = case do_send_and_receive(port, data, timeout_ms) {
+            Ok(line) -> drain_until_matching(port, line, deadline, predicate)
+            Error(e) -> Error(e)
+          }
           actor.send(reply_to, result)
           actor.continue(state)
         }
@@ -176,6 +207,44 @@ pub fn send_and_receive(
     data,
     timeout_ms,
   ))
+}
+
+fn drain_until_matching(
+  port: Dynamic,
+  line: String,
+  deadline: Int,
+  predicate: fn(String) -> Bool,
+) -> Result(String, String) {
+  case predicate(line) {
+    True -> Ok(line)
+    False -> {
+      let remaining = deadline - do_monotonic_ms()
+      case remaining <= 0 {
+        True -> Error("timeout")
+        False ->
+          case do_receive_line(port, remaining) {
+            Ok(next_line) ->
+              drain_until_matching(port, next_line, deadline, predicate)
+            Error(e) -> Error(e)
+          }
+      }
+    }
+  }
+}
+
+/// Send a JSON-RPC message and wait for a line matching `predicate`.
+/// Lines failing `predicate` are discarded inside the actor without yielding.
+pub fn send_and_receive_matching(
+  transport: StdioTransport,
+  data: String,
+  timeout_ms: Int,
+  predicate: fn(String) -> Bool,
+) -> Result(String, String) {
+  actor.call(
+    transport,
+    waiting: timeout_ms + 1000,
+    sending: SendReceiveMatching(_, data, timeout_ms, predicate),
+  )
 }
 
 /// Send a JSON-RPC notification (no response expected).

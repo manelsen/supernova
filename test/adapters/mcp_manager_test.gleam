@@ -503,3 +503,29 @@ pub fn protocol_error_advances_request_id_and_does_not_evict_live_server_test() 
 
   mcp_manager.stop(mgr)
 }
+
+pub fn stale_response_id_is_discarded_test() {
+  let script =
+    "import json, sys\nfor line in sys.stdin:\n  req = json.loads(line)\n  m = req.get('method')\n  i = req.get('id')\n  if m == 'initialize':\n    print(json.dumps({'jsonrpc':'2.0','id':i,'result':{'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'stale-test','version':'1.0'}}}), flush=True)\n  elif m == 'notifications/initialized':\n    pass\n  elif m == 'tools/list':\n    print(json.dumps({'jsonrpc':'2.0','id':i,'result':{'tools':[{'name':'probe','description':'Probe','inputSchema':{'type':'object','properties':{}}}]}}), flush=True)\n  elif m == 'tools/call':\n    print(json.dumps({'jsonrpc':'2.0','id':i-1,'result':{'content':[{'type':'text','text':'stale-reply'}]}}), flush=True)\n    print(json.dumps({'jsonrpc':'2.0','method':'notifications/progress','params':{'progress':1}}), flush=True)\n    print(json.dumps({'jsonrpc':'2.0','id':i,'result':{'content':[{'type':'text','text':'fresh:' + str(i)}]}}), flush=True)\n"
+
+  let assert Ok(mgr) = mcp_manager.start()
+  let config =
+    mcp_manager.ServerConfig(
+      name: "stale-srv",
+      command: "python3",
+      args: ["-u", "-c", script],
+      env: [],
+    )
+  let assert Ok(Nil) = mcp_manager.register(mgr, config)
+
+  let res = mcp_manager.execute_tool(mgr, "stale-srv/probe", "{}")
+  case res {
+    Ok(response) -> {
+      response |> string.contains("fresh:") |> should.equal(True)
+      response |> string.contains("stale-reply") |> should.equal(False)
+    }
+    Error(_) -> should.fail()
+  }
+
+  mcp_manager.stop(mgr)
+}

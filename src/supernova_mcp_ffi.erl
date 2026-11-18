@@ -1,5 +1,5 @@
 -module(supernova_mcp_ffi).
--export([open_port/3, send_and_receive/3, send_data/2, close_port/1, dynamic_to_json/1]).
+-export([open_port/3, send_and_receive/3, receive_line/2, send_data/2, close_port/1, monotonic_ms/0, dynamic_to_json/1]).
 
 %% Open an OS process and return {ok, Port} or {error, Reason}.
 %% Uses Erlang port with {line, 1024} for line-buffered STDIO communication.
@@ -60,6 +60,20 @@ send_and_receive(Port, Data, TimeoutMs) ->
     _:Reason ->
       {error, list_to_binary(io_lib:format("Send/receive failed: ~p", [Reason]))}
   end.
+
+%% Wait for the next complete line from the port without sending new data.
+receive_line(Port, TimeoutMs) ->
+  try
+    erlang:port_connect(Port, self()),
+    wait_for_line(Port, TimeoutMs)
+  catch
+    _:Reason ->
+      {error, list_to_binary(io_lib:format("Receive failed: ~p", [Reason]))}
+  end.
+
+%% Current monotonic clock in milliseconds.
+monotonic_ms() ->
+  erlang:monotonic_time(millisecond).
 
 %% Send data to port without waiting for response (fire-and-forget).
 %% Returns {ok, nil} | {error, Reason}.

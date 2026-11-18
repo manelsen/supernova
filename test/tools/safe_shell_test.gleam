@@ -47,6 +47,8 @@ pub fn safe_shell_blocks_shell_expansions_test() {
     "cat foo?",
     "cat {a,b}",
     "cat \\/etc/passwd",
+    "echo hi\nid",
+    "echo hi\rid",
   ]
   |> list_each_blocked()
 }
@@ -55,8 +57,9 @@ fn list_each_blocked(commands: List(String)) -> Nil {
   case commands {
     [] -> Nil
     [cmd, ..rest] -> {
-      safe_shell.execute(cmd)
-      |> should.be_error
+      let assert Error(reason) = safe_shell.execute(cmd)
+      string.starts_with(reason, "Command contains blocked operators:")
+      |> should.equal(True)
       list_each_blocked(rest)
     }
   }
