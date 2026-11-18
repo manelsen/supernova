@@ -309,6 +309,11 @@ pub fn is_jsonl_file(name: String) -> Bool {
   string.ends_with(name, ".jsonl")
 }
 
+/// Whether an event is still inside the retention window.
+pub fn event_within_retention(event: UsageEvent, now_ms: Int) -> Bool {
+  event_timestamp(event) >= now_ms - { retention_days * milliseconds_per_day }
+}
+
 /// Whether a usage trail file should be deleted at `now_ms`.
 ///
 /// Files are named `YYYY-MM-DD.jsonl`; ISO dates sort lexicographically, so the
@@ -343,6 +348,7 @@ pub fn event_to_json(event: UsageEvent) -> String {
       completion_tokens: completion_tokens,
       cost_usd: cost_usd,
       timestamp: timestamp,
+      call_id: call_id,
     ) ->
       json.object([
         #("type", json.string("llm")),
@@ -353,6 +359,7 @@ pub fn event_to_json(event: UsageEvent) -> String {
         #("completion_tokens", json.int(completion_tokens)),
         #("cost_usd", json.float(cost_usd)),
         #("timestamp", json.int(timestamp)),
+        #("call_id", json.string(call_id)),
       ])
     ToolUsage(
       principal_id: principal_id,
@@ -404,6 +411,7 @@ type RawUsageEvent {
     tool_name: String,
     ok: Bool,
     timestamp: Int,
+    call_id: String,
   )
 }
 
@@ -422,6 +430,7 @@ fn raw_usage_event_decoder() -> decode.Decoder(RawUsageEvent) {
   use tool_name <- decode.optional_field("tool_name", "", decode.string)
   use ok <- decode.optional_field("ok", False, decode.bool)
   use timestamp <- decode.field("timestamp", decode.int)
+  use call_id <- decode.optional_field("call_id", "", decode.string)
 
   decode.success(RawUsageEvent(
     kind: kind,
@@ -434,6 +443,7 @@ fn raw_usage_event_decoder() -> decode.Decoder(RawUsageEvent) {
     tool_name: tool_name,
     ok: ok,
     timestamp: timestamp,
+    call_id: call_id,
   ))
 }
 
@@ -448,6 +458,7 @@ fn raw_to_event(raw: RawUsageEvent) -> Result(UsageEvent, Nil) {
         completion_tokens: raw.completion_tokens,
         cost_usd: raw.cost_usd,
         timestamp: raw.timestamp,
+        call_id: raw.call_id,
       ))
     "tool" ->
       Ok(ToolUsage(

@@ -84,6 +84,7 @@ pub type UsageEvent {
     completion_tokens: Int,
     cost_usd: Float,
     timestamp: Int,
+    call_id: String,
   )
   /// A tool invocation.
   ToolUsage(principal_id: String, tool_name: String, ok: Bool, timestamp: Int)

@@ -91,7 +91,7 @@ pub fn record_usage_per_principal_test() {
 
   case user_1_usage {
     [
-      LLMUsage("user_1", "openai", "gpt-4o", 100, 50, cost, timestamp),
+      LLMUsage("user_1", "openai", "gpt-4o", 100, 50, cost, timestamp, _),
       ToolUsage("user_1", "shell", True, tool_timestamp),
     ] -> {
       assert_close(cost, 0.01)
@@ -180,7 +180,7 @@ pub fn persistence_survives_restart_test() {
   assert_close(actor.get_daily_cost_for(restarted, day, "user_1"), 0.01)
 
   case actor.get_usage(restarted, "user_2") {
-    [LLMUsage("user_2", "anthropic", "claude", 10, 5, cost, timestamp)] -> {
+    [LLMUsage("user_2", "anthropic", "claude", 10, 5, cost, timestamp, _)] -> {
       assert_close(cost, 0.02)
       timestamp
       |> should.equal(now_ms)
@@ -247,4 +247,123 @@ pub fn rotation_uses_utc_day_key_test() {
   let cutoff_ms = late_ms - { 30 * 86_400_000 }
   pricing.day_key(cutoff_ms, "UTC")
   |> should.equal("2024-05-16")
+}
+
+pub fn spend_today_returns_day_and_total_test() {
+  let dir = temp_dir()
+  let assert Ok(ledger) =
+    actor.start_persistent_with_clock_and_day_key(
+      dir,
+      fn() { now_ms },
+      fn(timestamp) { pricing.day_key(timestamp, "UTC") },
+    )
+
+  actor.record_llm_usage(ledger, "user_1", "openai", "gpt-4o", 100, 50, 0.25)
+
+  let assert Ok(#(current_day, total)) = actor.try_spend_today(ledger, now_ms)
+  current_day |> should.equal(day)
+  assert_close(total, 0.25)
+
+  let assert Ok(#(next_day, next_total)) =
+    actor.try_spend_today(ledger, now_ms + 86_400_000)
+  next_day |> should.equal("2024-06-16")
+  assert_close(next_total, 0.0)
+
+  actor.stop(ledger)
+  process.sleep(100)
+  cleanup(dir)
+}
+
+pub fn concurrent_admissions_respect_the_cap_test() {
+  let assert Ok(ledger) = actor.start()
+  let day = "2024-06-15"
+
+  actor.admit_llm_call(ledger, "call-a", day, 1.0, 0.6)
+  |> should.be_ok
+  actor.admit_llm_call(ledger, "call-b", day, 1.0, 0.6)
+  |> should.be_error
+
+  // Releasing an unrecorded reservation restores the credit.
+  actor.admit_llm_call(ledger, "call-c", day, 1.0, 0.4)
+  |> should.be_ok
+  actor.admit_llm_call(ledger, "call-d", day, 1.0, 0.2)
+  |> should.be_error
+  actor.release_reservation(ledger, "call-c")
+  actor.admit_llm_call(ledger, "call-d", day, 1.0, 0.2)
+  |> should.be_ok
+
+  actor.stop(ledger)
+  process.sleep(100)
+}
+
+pub fn duplicate_call_id_records_once_test() {
+  let assert Ok(ledger) = actor.start()
+
+  let _ =
+    actor.try_record_llm_usage_with_call_id(
+      ledger,
+      "user_1",
+      "openai",
+      "gpt-4o",
+      10,
+      5,
+      0.01,
+      "call-once",
+    )
+  actor.try_record_llm_usage_with_call_id(
+    ledger,
+    "user_1",
+    "openai",
+    "gpt-4o",
+    10,
+    5,
+    0.01,
+    "call-once",
+  )
+  |> should.be_ok
+
+  list.length(actor.get_all_usage(ledger)) |> should.equal(1)
+
+  actor.stop(ledger)
+  process.sleep(100)
+}
+
+pub fn usage_retry_is_idempotent_test() {
+  let assert Ok(ledger) = actor.start()
+
+  let assert Ok(Nil) =
+    actor.try_record_llm_usage_with_call_id(
+      ledger,
+      "user_1",
+      "openai",
+      "gpt-4o",
+      100,
+      50,
+      0.01,
+      "call-retry-1",
+    )
+  let assert Ok(Nil) =
+    actor.try_record_llm_usage_with_call_id(
+      ledger,
+      "user_1",
+      "openai",
+      "gpt-4o",
+      100,
+      50,
+      0.01,
+      "call-retry-1",
+    )
+
+  list.length(actor.get_usage(ledger, "user_1")) |> should.equal(1)
+  case actor.get_usage(ledger, "user_1") {
+    [LLMUsage(timestamp: timestamp, ..)] ->
+      assert_close(
+        actor.get_daily_cost(ledger, pricing.day_key(timestamp, "UTC")),
+        0.01,
+      )
+    _ -> should.fail()
+  }
+
+  actor.stop(ledger)
+  process.sleep(100)
 }

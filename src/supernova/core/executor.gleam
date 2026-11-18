@@ -172,7 +172,9 @@ pub type RunContext {
     principal_id: String,
     role: String,
     before_llm: Option(fn() -> Result(Nil, String)),
-    on_llm_usage: Option(fn(String, String, Int, Int) -> Nil),
+    admit_llm: Option(fn(String, Int) -> Result(Nil, String)),
+    on_llm_usage: Option(fn(String, String, String, Int, Int) -> Nil),
+    on_llm_failure: Option(fn(String) -> Nil),
     invoke_tool: Option(fn(String, String) -> Result(String, String)),
     on_tool_result: Option(fn(String, Bool) -> Nil),
   )
@@ -187,7 +189,9 @@ pub fn empty_run_context() -> RunContext {
     principal_id: "",
     role: "member",
     before_llm: None,
+    admit_llm: None,
     on_llm_usage: None,
+    on_llm_failure: None,
     invoke_tool: None,
     on_tool_result: None,
   )
@@ -299,14 +303,14 @@ fn run_loop(
           // Call LLM with metrics
           let start = current_timestamp()
           case
-            retry.with_retry(default_retry_config, fn() {
-              with_llm_span(
-                selected_config.name,
-                selected_config.default_model,
-                depth,
-                fn() { client.chat(messages, selected_config, tools) },
-              )
-            })
+            run_provider_call(
+              context,
+              selected_config,
+              messages,
+              tools,
+              depth,
+              start,
+            )
           {
             Ok(response) -> {
               let elapsed = current_timestamp() - start
@@ -314,13 +318,6 @@ fn run_loop(
                 selected_config.name,
                 selected_config.default_model,
                 elapsed,
-              )
-              record_llm_usage(
-                context,
-                selected_config,
-                messages,
-                response,
-                tools,
               )
               // Classify the outcome
               let outcome = turn_outcome.classify(response)
@@ -356,14 +353,7 @@ fn run_loop(
                   )
               }
             }
-            Error(err) -> {
-              record_llm_error(
-                selected_config.name,
-                selected_config.default_model,
-                error_type_name(err),
-              )
-              Error(LLMError(reason: err))
-            }
+            Error(error) -> Error(error)
           }
         }
       }
@@ -393,14 +383,14 @@ fn run_loop_inner_with_checkpoint(
     Ok(Nil) -> {
       let start = current_timestamp()
       case
-        retry.with_retry(default_retry_config, fn() {
-          with_llm_span(
-            selected_config.name,
-            selected_config.default_model,
-            depth,
-            fn() { client.chat(messages, selected_config, tools) },
-          )
-        })
+        run_provider_call(
+          context,
+          selected_config,
+          messages,
+          tools,
+          depth,
+          start,
+        )
       {
         Ok(response) -> {
           let elapsed = current_timestamp() - start
@@ -409,7 +399,6 @@ fn run_loop_inner_with_checkpoint(
             selected_config.default_model,
             elapsed,
           )
-          record_llm_usage(context, selected_config, messages, response, tools)
           let outcome = turn_outcome.classify(response)
           case outcome {
             turn_outcome.TextResponse -> Ok(response)
@@ -449,14 +438,7 @@ fn run_loop_inner_with_checkpoint(
               )
           }
         }
-        Error(err) -> {
-          record_llm_error(
-            selected_config.name,
-            selected_config.default_model,
-            error_type_name(err),
-          )
-          Error(LLMError(reason: err))
-        }
+        Error(error) -> Error(error)
       }
     }
   }
@@ -559,6 +541,36 @@ fn before_llm(context: RunContext) -> Result(Nil, String) {
   }
 }
 
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
+
+fn next_call_id(depth: Int) -> String {
+  "llm:"
+  <> int.to_string(ffi_current_timestamp())
+  <> ":"
+  <> int.to_string(depth)
+  <> ":"
+  <> int.to_string(unique_integer())
+}
+
+fn admit_llm(
+  context: RunContext,
+  call_id: String,
+  prompt_tokens: Int,
+) -> Result(Nil, String) {
+  case context.admit_llm {
+    None -> Ok(Nil)
+    Some(admit) -> admit(call_id, prompt_tokens)
+  }
+}
+
+fn report_llm_failure(context: RunContext, call_id: String) -> Nil {
+  case context.on_llm_failure {
+    None -> Nil
+    Some(report) -> report(call_id)
+  }
+}
+
 /// Estimate tokens when a provider does not expose usage.
 fn estimate_tokens(text: String) -> Int {
   int.max(1, string.length(text) / 4)
@@ -629,17 +641,58 @@ pub fn estimate_usage_for_test(
   #(prompt_token_estimate(messages, tools), response_token_estimate(response))
 }
 
+fn run_provider_call(
+  context: RunContext,
+  config: provider.ProviderConfig,
+  messages: List(provider.ChatMessage),
+  tools: List(provider.ToolDefinition),
+  depth: Int,
+  start: Int,
+) -> Result(provider.ChatResponse, ExecutorError) {
+  let call_id = next_call_id(depth)
+  let prompt_tokens = prompt_token_estimate(messages, tools)
+  case admit_llm(context, call_id, prompt_tokens) {
+    Error(reason) -> Error(PolicyDenied(message: reason))
+    Ok(Nil) ->
+      case
+        retry.with_retry(default_retry_config, fn() {
+          with_llm_span(config.name, config.default_model, depth, fn() {
+            client.chat(messages, config, tools)
+          })
+        })
+      {
+        Ok(response) -> {
+          let elapsed = current_timestamp() - start
+          record_llm_latency(config.name, config.default_model, elapsed)
+          record_llm_usage(context, config, messages, response, tools, call_id)
+          Ok(response)
+        }
+        Error(err) -> {
+          report_llm_failure(context, call_id)
+          record_llm_error(
+            config.name,
+            config.default_model,
+            error_type_name(err),
+          )
+          Error(LLMError(reason: err))
+        }
+      }
+  }
+}
+
 fn record_llm_usage(
   context: RunContext,
   config: provider.ProviderConfig,
   messages: List(provider.ChatMessage),
   response: provider.ChatResponse,
   tools: List(provider.ToolDefinition),
+  call_id: String,
 ) -> Nil {
   case context.on_llm_usage {
     None -> Nil
     Some(record) ->
       record(
+        call_id,
         config.name,
         config.default_model,
         prompt_token_estimate(messages, tools),

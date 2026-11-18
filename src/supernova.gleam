@@ -50,6 +50,7 @@ import supernova/llm/circuit_breaker/global as cb_global
 import supernova/llm/failover_cooldown/actor as cd_actor
 import supernova/llm/failover_cooldown/global as cd_global
 import supernova/llm/failover_cooldown/types as cd_types
+import supernova/llm/pricing
 import supernova/llm/provider
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
@@ -275,7 +276,11 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
     Ok(reg) -> reg
     Error(reason) -> {
       io.println("Warning: Failed to start some channels: " <> reason)
-      registry.ChannelRegistry(channels: dict.new(), streams: dict.new())
+      registry.ChannelRegistry(
+        id: "registry:none",
+        channels: dict.new(),
+        streams: dict.new(),
+      )
     }
   }
 
@@ -469,7 +474,15 @@ pub fn start_closed_group_supervisor(
     )
     |> static_supervisor.add(
       supervision.worker(fn() {
-        case ledger_actor.start_persistent(cfg.data_dir <> "/ledger") {
+        case
+          ledger_actor.start_persistent_with_clock_and_day_key(
+            cfg.data_dir <> "/ledger",
+            current_timestamp,
+            fn(timestamp) {
+              pricing.day_key(timestamp, cfg.instance_budget.timezone)
+            },
+          )
+        {
           Ok(started) -> {
             closed_group_global.set_ledger(started)
             wrap_started(started)

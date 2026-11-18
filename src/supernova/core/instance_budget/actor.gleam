@@ -10,10 +10,17 @@ import supernova/llm/pricing
 
 const call_timeout_ms = 2000
 
+pub type CheckOutcome {
+  Within(cap_usd: Float)
+  Reached(cap_usd: Float)
+  StaleDay
+}
+
 pub type InstanceBudgetMessage {
   Check(
-    reply_to: Subject(Result(Float, Float)),
+    reply_to: Subject(CheckOutcome),
     daily_usd: Float,
+    day: String,
     spend_usd: Float,
   )
   Raise(reply_to: Subject(Float), daily_usd: Float, usd: Float)
@@ -40,15 +47,23 @@ fn handle_message(
   message: InstanceBudgetMessage,
 ) -> actor.Next(State, InstanceBudgetMessage) {
   case message {
-    Check(reply_to, daily_usd, spend_usd) -> {
-      let day = today(state)
-      let cap = pure.effective_cap(daily_usd, state.cap, day)
-      let reply = case pure.reached(spend_usd, cap) {
-        True -> Error(cap)
-        False -> Ok(cap)
+    Check(reply_to, daily_usd, day, spend_usd) -> {
+      let current_day = today(state)
+      case day == current_day {
+        False -> {
+          actor.send(reply_to, StaleDay)
+          actor.continue(state)
+        }
+        True -> {
+          let cap = pure.effective_cap(daily_usd, state.cap, current_day)
+          let reply = case pure.reached(spend_usd, cap) {
+            True -> Reached(cap)
+            False -> Within(cap)
+          }
+          actor.send(reply_to, reply)
+          actor.continue(state)
+        }
       }
-      actor.send(reply_to, reply)
-      actor.continue(state)
     }
     Raise(reply_to, daily_usd, usd) -> {
       let day = today(state)
@@ -88,15 +103,21 @@ pub fn start_with_clock(
   }
 }
 
-/// Check the cap. On actor failure the cap is treated as reached.
+/// Check the cap for a specific spend day.
+///
+/// `StaleDay` tells the caller to fetch the ledger total again, once, because
+/// midnight may have passed between the read and this check.
 pub fn check(
   budget: InstanceBudget,
   daily_usd: Float,
+  day: String,
   spend_usd: Float,
-) -> Result(Float, Float) {
-  case safe_call.call(budget, call_timeout_ms, Check(_, daily_usd, spend_usd)) {
+) -> CheckOutcome {
+  case
+    safe_call.call(budget, call_timeout_ms, Check(_, daily_usd, day, spend_usd))
+  {
     Ok(result) -> result
-    Error(_) -> Error(0.0)
+    Error(_) -> Reached(0.0)
   }
 }
 
