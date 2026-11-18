@@ -3,6 +3,7 @@
 //// Runs at boot: errors prevent startup, warnings are logged and startup
 //// continues. `bin/supernova check-config` uses the same rules.
 
+import envoy
 import gleam/int
 import gleam/list
 import gleam/string
@@ -202,8 +203,58 @@ fn warnings(config: config.Config) -> List(ConfigIssue) {
     False -> []
   }
 
-  list.flatten([access_warning, channel_warnings, cap_warning])
+  let workspace_root_warning = case config.access.mode {
+    config.Allowlist ->
+      case envoy.get("SUPERNOVA_WORKSPACE_ROOT") {
+        Ok(root) ->
+          case string.trim(root) {
+            "" -> []
+            _ -> [
+              ConfigIssue(
+                level: Warning,
+                message: "SUPERNOVA_WORKSPACE_ROOT is ignored in closed-group mode",
+              ),
+            ]
+          }
+        _ -> []
+      }
+    config.Open -> []
+  }
+
+  let legacy_agents_warning = case config.access.mode {
+    config.Allowlist ->
+      case list_dir(config.data_dir <> "/agents") {
+        Ok(entries) ->
+          case
+            list.filter(entries, fn(entry) {
+              string.starts_with(entry, "agent:")
+            })
+          {
+            [] -> []
+            legacy -> [
+              ConfigIssue(
+                level: Warning,
+                message: "legacy agent directories ignored: "
+                  <> string.join(legacy, ", "),
+              ),
+            ]
+          }
+        _ -> []
+      }
+    config.Open -> []
+  }
+
+  list.flatten([
+    access_warning,
+    channel_warnings,
+    cap_warning,
+    workspace_root_warning,
+    legacy_agents_warning,
+  ])
 }
+
+@external(erlang, "supernova_file_system_ffi", "list_dir")
+fn list_dir(path: String) -> Result(List(String), String)
 
 /// True when no issue has Error level.
 pub fn is_bootable(issues: List(ConfigIssue)) -> Bool {

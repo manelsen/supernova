@@ -408,7 +408,7 @@ pub fn telegram_router_model_selection_updates_session_picker_test() {
       reply.content
       |> should.equal(
         "Session status: not started\n"
-        <> "Agent: agent:user-42\n"
+        <> "Agent: telegram:user-42\n"
         <> "Provider: Mock\n"
         <> "Model: mock-alt-model",
       )
@@ -455,7 +455,7 @@ pub fn telegram_router_invalid_provider_selection_falls_back_to_default_test() {
       reply.content
       |> should.equal(
         "Session status: not started\n"
-        <> "Agent: agent:user-42\n"
+        <> "Agent: telegram:user-42\n"
         <> "Provider: Mock\n"
         <> "Model: mock-model",
       )
@@ -589,7 +589,7 @@ pub fn telegram_router_start_bootstraps_session_test() {
     Ok(reply) ->
       reply.content
       |> should.equal(
-        "Session bootstrapped.\nAgent: agent:user-bootstrap\nModel: mock-model",
+        "Session bootstrapped.\nAgent: telegram:user-bootstrap\nModel: mock-model",
       )
     Error(_) -> should.fail()
   }
@@ -614,7 +614,7 @@ pub fn telegram_router_status_reports_bootstrap_state_test() {
       reply.content
       |> should.equal(
         "Session status: not started\n"
-        <> "Agent: agent:user-status\n"
+        <> "Agent: telegram:user-status\n"
         <> "Provider: Mock\n"
         <> "Model: mock-model",
       )
@@ -649,7 +649,7 @@ pub fn telegram_router_status_reports_bootstrap_state_test() {
       reply.content
       |> should.equal(
         "Session status: ready\n"
-        <> "Agent: agent:user-status\n"
+        <> "Agent: telegram:user-status\n"
         <> "Provider: Mock\n"
         <> "Model: mock-model",
       )
@@ -706,7 +706,7 @@ pub fn discord_router_start_bootstraps_session_test() {
     Ok(reply) ->
       reply.content
       |> should.equal(
-        "Session bootstrapped.\nAgent: agent:user-bootstrap\nModel: mock-model",
+        "Session bootstrapped.\nAgent: discord:user-bootstrap\nModel: mock-model",
       )
     Error(_) -> should.fail()
   }
@@ -731,7 +731,7 @@ pub fn discord_router_status_reports_bootstrap_state_test() {
       reply.content
       |> should.equal(
         "Session status: not started\n"
-        <> "Agent: agent:user-status\n"
+        <> "Agent: discord:user-status\n"
         <> "Provider: Mock\n"
         <> "Model: mock-model",
       )
@@ -766,7 +766,7 @@ pub fn discord_router_status_reports_bootstrap_state_test() {
       reply.content
       |> should.equal(
         "Session status: ready\n"
-        <> "Agent: agent:user-status\n"
+        <> "Agent: discord:user-status\n"
         <> "Provider: Mock\n"
         <> "Model: mock-model",
       )
@@ -861,7 +861,7 @@ pub fn telegram_router_records_history_in_supervised_session_test() {
 
   let assert Ok(_) = telegram_router.route(router, first_msg)
   let assert Ok(_) = telegram_router.route(router, second_msg)
-  let session_id = session.telegram_session_id("chat-history")
+  let session_id = session.telegram_session_id("chat-history", "user-history")
 
   supervisor.list_sessions(session_sup)
   |> should.equal([session_id])
@@ -937,7 +937,7 @@ pub fn telegram_router_handler_streams_and_records_history_test() {
     _ -> should.fail()
   }
 
-  let session_id = session.telegram_session_id("chat-stream")
+  let session_id = session.telegram_session_id("chat-stream", "user-stream")
   let assert Ok(session) = supervisor.get_session(session_sup, session_id)
   server.get_history(session)
   |> should.equal([
@@ -1053,7 +1053,7 @@ pub fn telegram_router_supervised_bootstrap_writes_persona_files_test() {
   string.contains(r5.content, "Pronto! Sou Aurora agora.")
   |> should.equal(True)
 
-  let workspace_path = root <> "/agent:user-prd-bootstrap-2"
+  let workspace_path = root <> "/telegram:user-prd-bootstrap-2"
   let assert Ok(persona) = persona_loader.load(workspace_path)
   string.contains(persona.identity, "**Nome:** Aurora")
   |> should.equal(True)
@@ -1122,7 +1122,7 @@ pub fn telegram_router_updates_self_state_after_successful_turn_test() {
 
   let assert Ok(serialized_state) =
     ffi_read_file(
-      root <> "/agent:user-prd-self-state/.supernova/SELF_STATE.json",
+      root <> "/telegram:user-prd-self-state/.supernova/SELF_STATE.json",
     )
   serialized_state
   |> string.contains("\"mood_cause\":\"turn_success\"")
@@ -1174,7 +1174,7 @@ pub fn discord_router_selected_model_survives_router_restart_test() {
       reply.content
       |> should.equal(
         "Session status: not started\n"
-        <> "Agent: agent:user-persist\n"
+        <> "Agent: discord:user-persist\n"
         <> "Provider: Mock\n"
         <> "Model: mock-alt-model",
       )

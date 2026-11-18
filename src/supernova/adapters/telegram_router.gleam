@@ -184,6 +184,6 @@ pub fn route_inbound_for_handler(
   ))
 }
 
-fn resolve_session(channel_id: String, _user_id: String) -> String {
-  session.telegram_session_id(channel_id)
+fn resolve_session(channel_id: String, user_id: String) -> String {
+  session.telegram_session_id(channel_id, user_id)
 }
