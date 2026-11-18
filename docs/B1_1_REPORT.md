@@ -47,7 +47,7 @@ depois do merge do PR #12.
 ## Gates
 
 - Baseline antes da rodada: 2201 testes, 75,81% de cobertura; Gleam 1.19.2.
-- Final: 2222 testes, 0 falhas; cobertura de linha 76,00% (10664/14032).
+- Final: 2224 testes, 0 falhas; cobertura de linha 76,01% (10666/14033).
 
 ## Commits da rodada 2
 
@@ -79,3 +79,13 @@ depois do merge do PR #12.
   do dia e contador de abuso no callback negado.
 - `aab29e8` cobre o retry tardio de claim sem segunda cobrança.
 - `255e2c8` libera a reserva não confirmada no ledger vivo.
+
+## CodeRabbit — rodada final (1b4672e)
+
+- Achado 1: `GetOpenReservationsTotal` agora purga reservas expiradas antes de
+  somar, como a admissão. Teste `open_reservation_total_excludes_expired_test`.
+- Achado 2: a leitura devolve `Result(Float, Nil)`; indisponibilidade não vira
+  zero. Teste `open_reservation_total_reports_unavailable_test`.
+- Nitpicks: a liquidação na virada confirma $0,50 e zero reservas; o alerta de
+  abuso não aparece na quinta negação e aparece na sexta; o custo da entrada
+  `:unconfirmed` é positivo.
