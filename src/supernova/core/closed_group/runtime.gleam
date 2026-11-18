@@ -723,7 +723,7 @@ fn record_unconfirmed_llm_usage(
   let unconfirmed_id = call_id <> ":unconfirmed"
   // The reservation belongs to the failed attempt id; release it before
   // recording the estimated cost under the unconfirmed id.
-  ledger_actor.release_reservation(runtime.ledger, call_id)
+  ledger_actor.release_reservation(live_ledger(runtime), call_id)
   let result =
     ledger_actor.try_record_llm_usage_with_call_id(
       live_ledger(runtime),
