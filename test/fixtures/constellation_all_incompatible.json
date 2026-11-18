@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "dimensions": [
+    {
+      "id": "d",
+      "pick": 2
+    }
+  ],
+  "traits": [
+    {
+      "id": "a",
+      "dimension": "d",
+      "description": "a"
+    },
+    {
+      "id": "b",
+      "dimension": "d",
+      "description": "b"
+    }
+  ],
+  "affinities": [
+    {
+      "a": "a",
+      "b": "b",
+      "weight": -1.0
+    }
+  ],
+  "coherence_threshold": 0.0,
+  "min_distance": 0.0
+}

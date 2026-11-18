@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "dimensions": [
+    {
+      "id": "temperamento",
+      "pick": 1
+    },
+    {
+      "id": "valores",
+      "pick": 2
+    },
+    {
+      "id": "curiosidades",
+      "pick": 2
+    },
+    {
+      "id": "voz",
+      "pick": 1
+    },
+    {
+      "id": "discordancia",
+      "pick": 1
+    }
+  ],
+  "traits": [
+    {
+      "id": "temp_0",
+      "dimension": "temperamento",
+      "description": "temperamento"
+    },
+    {
+      "id": "temp_1",
+      "dimension": "temperamento",
+      "description": "temperamento"
+    },
+    {
+      "id": "temp_2",
+      "dimension": "temperamento",
+      "description": "temperamento"
+    },
+    {
+      "id": "temp_3",
+      "dimension": "temperamento",
+      "description": "temperamento"
+    },
+    {
+      "id": "valor_0",
+      "dimension": "valores",
+      "description": "valores"
+    },
+    {
+      "id": "valor_1",
+      "dimension": "valores",
+      "description": "valores"
+    },
+    {
+      "id": "valor_2",
+      "dimension": "valores",
+      "description": "valores"
+    },
+    {
+      "id": "valor_3",
+      "dimension": "valores",
+      "description": "valores"
+    },
+    {
+      "id": "valor_4",
+      "dimension": "valores",
+      "description": "valores"
+    },
+    {
+      "id": "valor_5",
+      "dimension": "valores",
+      "description": "valores"
+    },
+    {
+      "id": "curio_0",
+      "dimension": "curiosidades",
+      "description": "curiosidades"
+    },
+    {
+      "id": "curio_1",
+      "dimension": "curiosidades",
+      "description": "curiosidades"
+    },
+    {
+      "id": "curio_2",
+      "dimension": "curiosidades",
+      "description": "curiosidades"
+    },
+    {
+      "id": "curio_3",
+      "dimension": "curiosidades",
+      "description": "curiosidades"
+    },
+    {
+      "id": "curio_4",
+      "dimension": "curiosidades",
+      "description": "curiosidades"
+    },
+    {
+      "id": "voz_0",
+      "dimension": "voz",
+      "description": "voz"
+    },
+    {
+      "id": "voz_1",
+      "dimension": "voz",
+      "description": "voz"
+    },
+    {
+      "id": "voz_2",
+      "dimension": "voz",
+      "description": "voz"
+    },
+    {
+      "id": "voz_3",
+      "dimension": "voz",
+      "description": "voz"
+    },
+    {
+      "id": "disc_0",
+      "dimension": "discordancia",
+      "description": "discordancia"
+    },
+    {
+      "id": "disc_1",
+      "dimension": "discordancia",
+      "description": "discordancia"
+    },
+    {
+      "id": "disc_2",
+      "dimension": "discordancia",
+      "description": "discordancia"
+    },
+    {
+      "id": "disc_3",
+      "dimension": "discordancia",
+      "description": "discordancia"
+    }
+  ],
+  "affinities": [
+    {
+      "a": "temp_0",
+      "b": "voz_0",
+      "weight": 0.8
+    },
+    {
+      "a": "temp_0",
+      "b": "disc_0",
+      "weight": -1.0
+    },
+    {
+      "a": "temp_1",
+      "b": "curio_0",
+      "weight": 0.7
+    },
+    {
+      "a": "valor_0",
+      "b": "valor_1",
+      "weight": -1.0
+    },
+    {
+      "a": "voz_0",
+      "b": "curio_1",
+      "weight": 0.5
+    }
+  ],
+  "coherence_threshold": 0.0,
+  "min_distance": 0.4
+}
