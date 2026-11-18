@@ -253,9 +253,12 @@ revisão. Cada linha tem teste automatizado no PR "B1.1".
 - PR #12 (Fase A): checks `test` e `docker` verdes.
 - PR #13 "B1.1" (Fase B): branch `fix/b1-1-endurecimento`, base
   `feat/grupo-fechado`, 2201 testes e 75,81% de cobertura.
-- Os workflows de CI só disparam para base `master`; por isso o PR empilhado
-  não tem checks próprios. A validação local e os checks verdes do PR #12
-  cobrem a mesma árvore de código na base.
+- O PR empilhado não recebe checks automáticos porque `test.yml` e `docker.yml`
+  só escutam `pull_request` para `master`. Os dois workflows ganharam
+  `workflow_dispatch` e foram executados no commit `b02dcd9`:
+  `test` run 44311559054 e `docker` run 44311564154, ambos verdes. O run de
+  docker é build-only (`push` só em tag), então nenhuma imagem foi publicada.
+  O PR #12 continua verde em `test` e `docker`.
 
 As três rodadas acima foram concluídas. Uma revisão completa adicional foi
 solicitada no PR #12 em 13:05 UTC; ela não bloqueia o fechamento e, quando
