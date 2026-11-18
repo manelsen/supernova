@@ -442,18 +442,32 @@ fn adjust_list(
   added: List(String),
   removed: List(String),
 ) -> #(List(String), List(String)) {
+  let removed =
+    list.fold(difference(next, previous), removed, fn(acc, id) {
+      case list.contains(base, id) {
+        True -> list.filter(acc, fn(existing) { existing != id })
+        False -> acc
+      }
+    })
   let added =
     list.fold(difference(next, previous), added, fn(acc, id) {
       case list.contains(base, id) {
-        True -> list.filter(acc, fn(existing) { existing != id })
+        True -> acc
         False -> insert_unique(acc, id)
+      }
+    })
+  let added =
+    list.fold(difference(previous, next), added, fn(acc, id) {
+      case list.contains(base, id) {
+        True -> acc
+        False -> list.filter(acc, fn(existing) { existing != id })
       }
     })
   let removed =
     list.fold(difference(previous, next), removed, fn(acc, id) {
       case list.contains(base, id) {
         True -> insert_unique(acc, id)
-        False -> list.filter(acc, fn(existing) { existing != id })
+        False -> acc
       }
     })
   #(added, removed)

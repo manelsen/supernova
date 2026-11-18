@@ -150,8 +150,14 @@ pub fn gate_interaction(
       let chat_key = pure.chat_key(channel, chat_id)
       case access_actor.try_check(runtime.access, principal_id) {
         Error(_) -> fail_closed_gate(runtime, principal_id, "access")
-        Ok(access_types.Denied) ->
-          types.Reply(runtime.config.access.denied_reply)
+        Ok(access_types.Denied) -> {
+          audit_denied(runtime, principal_id, "access_denied", channel, now)
+          maybe_abuse_alert(runtime, principal_id, now)
+          case access_actor.take_denied_notice(runtime.access, principal_id) {
+            True -> types.Reply(runtime.config.access.denied_reply)
+            False -> types.Ignored("access denied")
+          }
+        }
         Ok(access_types.Allowed(role)) ->
           case check_chat(runtime, principal_id, chat_key, is_private, now) {
             Error(_) -> types.Ignored("chat denied")

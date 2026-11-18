@@ -433,3 +433,43 @@ pub fn stored_revocation_survives_unrelated_command_and_yaml_gap_test() {
     actor.stop(third)
   })
 }
+
+pub fn command_only_admin_grant_and_revoke_survive_restart_test() {
+  with_temp_dir(fn(dir) {
+    let base = config(["telegram:A"], [], [])
+
+    let assert Ok(first) = actor.start_with_clock(base, dir, fn() { 1000 })
+    first |> actor.add_member("telegram:X", Admin) |> should.be_ok()
+    actor.stop(first)
+
+    let assert Ok(second) = actor.start_with_clock(base, dir, fn() { 2000 })
+    actor.check(second, "telegram:X") |> should.equal(Allowed(Admin))
+    second |> actor.remove_member("telegram:X") |> should.be_ok()
+    actor.stop(second)
+
+    let assert Ok(third) = actor.start_with_clock(base, dir, fn() { 3000 })
+    actor.check(third, "telegram:X") |> should.equal(Denied)
+    actor.stop(third)
+
+    let assert Ok(text) = ffi_read_file(dir <> "/access.json")
+    string.contains(text, "telegram:X") |> should.equal(False)
+  })
+}
+
+pub fn yaml_member_revoke_then_regrant_clears_removed_test() {
+  with_temp_dir(fn(dir) {
+    let base = config([], ["telegram:M"], [])
+
+    let assert Ok(first) = actor.start_with_clock(base, dir, fn() { 1000 })
+    first |> actor.remove_member("telegram:M") |> should.be_ok()
+    first |> actor.add_member("telegram:M", Member) |> should.be_ok()
+    actor.stop(first)
+
+    let assert Ok(second) = actor.start_with_clock(base, dir, fn() { 2000 })
+    actor.check(second, "telegram:M") |> should.equal(Allowed(Member))
+    actor.stop(second)
+
+    let assert Ok(text) = ffi_read_file(dir <> "/access.json")
+    string.contains(text, "telegram:M") |> should.equal(False)
+  })
+}

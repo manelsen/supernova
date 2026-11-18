@@ -1131,3 +1131,15 @@ pub fn alert_is_dropped_when_access_is_unavailable_test() {
     },
   )
 }
+
+pub fn denied_interaction_is_audited_test() {
+  with_runtime(config_with_access(["telegram:1"], [], []), fn(runtime) {
+    case cg_runtime.gate_interaction(runtime, "telegram", "1", "999") {
+      cg_types.Reply(text) -> should.equal(text, "Esta instância é privada.")
+      _ -> should.fail()
+    }
+    audit_actor.get_all(runtime.audit)
+    |> list.any(fn(entry) { entry.operation == "access_denied" })
+    |> should.be_true()
+  })
+}
