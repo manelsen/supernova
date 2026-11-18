@@ -1,5 +1,4 @@
 import envoy
-import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -9,9 +8,6 @@ import supernova/self/birth
 import supernova/self/core
 import supernova/self/sampler
 import test_workspace
-
-@external(erlang, "erlang", "unique_integer")
-fn unique_integer() -> Int
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -23,9 +19,8 @@ fn with_constellation(body: fn(String) -> a) -> a {
     "SUPERNOVA_CONSTELLATION_PATH",
     "test/fixtures/constellation_small.json",
   )
-  let root = "/tmp/supernova_birth_test_" <> int_to_string(unique_integer())
   let result =
-    test_workspace.with_isolated_workspace("birth", fn(_) { body(root) })
+    test_workspace.with_isolated_workspace("birth", fn(root) { body(root) })
   case previous {
     Ok(value) -> envoy.set("SUPERNOVA_CONSTELLATION_PATH", value)
     Error(_) -> envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
@@ -96,7 +91,3 @@ pub fn two_agents_respect_min_distance_test() {
 
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
-
-fn int_to_string(value: Int) -> String {
-  int.to_string(value)
-}
