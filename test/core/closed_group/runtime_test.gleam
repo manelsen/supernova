@@ -1,6 +1,7 @@
 import exception
 import gleam/dict
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -30,6 +31,9 @@ fn ffi_ensure_dir(path: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn ffi_write_file(path: String, content: String) -> Result(Nil, String)
+
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
 
 const now = 1_700_000_000_000
 
@@ -344,6 +348,7 @@ pub fn instance_cap_blocks_even_admin_until_raised_test() {
       instance_budget: config.InstanceBudgetConfig(
         daily_usd: 0.001,
         timezone: "UTC",
+        reserve_output_tokens: 1000,
       ),
     )
   with_runtime(cfg, fn(runtime) {
@@ -671,7 +676,14 @@ fn send_usage(
       cg_types.PrincipalContext(principal_id: principal_id, role: role),
     )
   case context.on_llm_usage {
-    Some(record) -> record("mock", "m", prompt_tokens, completion_tokens)
+    Some(record) ->
+      record(
+        "test-call:" <> int.to_string(unique_integer()),
+        "mock",
+        "m",
+        prompt_tokens,
+        completion_tokens,
+      )
     None -> Nil
   }
 }
@@ -691,6 +703,7 @@ pub fn budget_and_instance_alerts_are_deduplicated_test() {
       instance_budget: config.InstanceBudgetConfig(
         daily_usd: 1.0,
         timezone: "UTC",
+        reserve_output_tokens: 1000,
       ),
     )
   let alert_recorder = process.new_subject()

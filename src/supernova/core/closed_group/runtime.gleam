@@ -5,6 +5,7 @@
 //// budgets and the instance-wide daily cap, then handles admin commands.
 
 import gleam/dict
+import gleam/erlang/process
 import gleam/float
 import gleam/io
 import gleam/list
@@ -124,6 +125,41 @@ pub fn gate(
             }
           }
         }
+      }
+    }
+  }
+}
+
+/// Gate an interaction callback: access and chat only.
+///
+/// Button clicks never consume rate limit or token budget; they also must not
+/// edit a shared picker message when denied.
+pub fn gate_interaction(
+  runtime: types.Runtime,
+  channel: String,
+  chat_id: String,
+  user_id: String,
+) -> types.GateResult {
+  let now = runtime.clock()
+  case principal.from_sender(channel, user_id) {
+    Error(_) -> types.Ignored("missing sender")
+    Ok(speaker) -> {
+      let principal_id = principal.principal_id(speaker)
+      let is_private = pure.is_private_chat(channel, chat_id)
+      let chat_key = pure.chat_key(channel, chat_id)
+      case access_actor.try_check(runtime.access, principal_id) {
+        Error(_) -> fail_closed_gate(runtime, principal_id, "access")
+        Ok(access_types.Denied) ->
+          types.Reply(runtime.config.access.denied_reply)
+        Ok(access_types.Allowed(role)) ->
+          case check_chat(runtime, principal_id, chat_key, is_private, now) {
+            Error(_) -> types.Ignored("chat denied")
+            Ok(Nil) ->
+              types.Allowed(types.PrincipalContext(
+                principal_id: principal_id,
+                role: pure.role_key(role),
+              ))
+          }
       }
     }
   }
@@ -262,34 +298,66 @@ pub fn precheck(
     }
     Ok(Error(_)) -> Error(pure.budget_exhausted_reply(now))
     Ok(Ok(_)) ->
-      case daily_spend(runtime) {
+      case daily_spend_details(runtime) {
         Error(_) -> {
           fail_closed_component(runtime, principal_id, "resource_ledger")
           Error(pure.fail_closed_reply)
         }
-        Ok(spend) ->
+        Ok(#(day, spend)) -> check_instance_cap(runtime, day, spend)
+      }
+  }
+}
+
+fn check_instance_cap(
+  runtime: types.Runtime,
+  day: String,
+  spend: Float,
+) -> Result(Nil, String) {
+  case
+    instance_budget.check(
+      runtime.instance_budget,
+      runtime.config.instance_budget.daily_usd,
+      day,
+      spend,
+    )
+  {
+    instance_budget.Within(_) -> Ok(Nil)
+    instance_budget.Reached(_) -> Error(pure.instance_cap_reply)
+    instance_budget.StaleDay ->
+      // Midnight crossed between the ledger read and the cap check. Fetch the
+      // new day's total exactly once before deciding.
+      case daily_spend_details(runtime) {
+        Error(_) -> Error(pure.fail_closed_reply)
+        Ok(#(fresh_day, fresh_spend)) ->
           case
             instance_budget.check(
               runtime.instance_budget,
               runtime.config.instance_budget.daily_usd,
-              spend,
+              fresh_day,
+              fresh_spend,
             )
           {
-            Error(_) -> Error(pure.instance_cap_reply)
-            Ok(_) -> Ok(Nil)
+            instance_budget.Within(_) -> Ok(Nil)
+            instance_budget.Reached(_) -> Error(pure.instance_cap_reply)
+            instance_budget.StaleDay -> Error(pure.instance_cap_reply)
           }
       }
   }
 }
 
+/// Current day and its total, as kept by the ledger.
+pub fn daily_spend_details(
+  runtime: types.Runtime,
+) -> Result(#(String, Float), Nil) {
+  ledger_actor.try_spend_today(runtime.ledger, runtime.clock())
+}
+
 /// Estimated cost of all LLM calls in the configured local day.
 pub fn daily_spend(runtime: types.Runtime) -> Result(Float, Nil) {
-  let timezone = runtime.config.instance_budget.timezone
-  let today = pricing.day_key(runtime.clock(), timezone)
-  // The sum runs inside the ledger actor: only the total crosses processes.
-  ledger_actor.try_llm_cost_where(runtime.ledger, fn(timestamp) {
-    pricing.day_key(timestamp, timezone) == today
-  })
+  case daily_spend_details(runtime) {
+    Ok(#(_, spend)) -> Ok(spend)
+    Error(_) -> Error(Nil)
+  }
 }
 
 // ============================================================================
@@ -469,15 +537,22 @@ pub fn run_context(
     before_llm: Some(fn() {
       precheck(runtime, context.principal_id, runtime.clock())
     }),
-    on_llm_usage: Some(fn(provider_name, model, prompt, completion) {
+    admit_llm: Some(fn(call_id, prompt_tokens) {
+      admit_llm_call(runtime, context.principal_id, call_id, prompt_tokens)
+    }),
+    on_llm_usage: Some(fn(call_id, provider_name, model, prompt, completion) {
       record_llm_usage(
         runtime,
         context.principal_id,
+        call_id,
         provider_name,
         model,
         prompt,
         completion,
       )
+    }),
+    on_llm_failure: Some(fn(call_id) {
+      ledger_actor.release_reservation(runtime.ledger, call_id)
     }),
     invoke_tool: Some(fn(name, args) {
       syscall_actor.invoke_tool(
@@ -501,6 +576,59 @@ pub fn run_context(
   )
 }
 
+fn model_price(runtime: types.Runtime, model: String) -> pricing.Price {
+  pricing.price_for(
+    model,
+    pricing.Price(
+      input_per_mtok: runtime.config.pricing.default.input_per_mtok,
+      output_per_mtok: runtime.config.pricing.default.output_per_mtok,
+    ),
+    model_prices(runtime.config.pricing.models),
+  )
+}
+
+fn admit_llm_call(
+  runtime: types.Runtime,
+  principal_id: String,
+  call_id: String,
+  prompt_tokens: Int,
+) -> Result(Nil, String) {
+  let timezone = runtime.config.instance_budget.timezone
+  let day = pricing.day_key(runtime.clock(), timezone)
+  let cap =
+    instance_budget.effective_cap(
+      runtime.instance_budget,
+      runtime.config.instance_budget.daily_usd,
+    )
+  let default_model = case dict.values(runtime.config.providers) {
+    [] -> ""
+    [provider_config, ..] -> option.unwrap(provider_config.model, "")
+  }
+  let price = model_price(runtime, default_model)
+  let estimate =
+    pricing.cost_usd(
+      price,
+      prompt_tokens,
+      runtime.config.instance_budget.reserve_output_tokens,
+    )
+  case
+    ledger_actor.admit_llm_call(runtime.ledger, call_id, day, cap, estimate)
+  {
+    Ok(_) -> Ok(Nil)
+    Error(reason) -> {
+      audit_action(
+        runtime,
+        principal_id,
+        "fail_closed",
+        "ledger",
+        audit_types.AuditFailure,
+        "LLM admission failed: " <> reason,
+      )
+      Error(reason)
+    }
+  }
+}
+
 /// Tools visible to the principal's role.
 pub fn tools_for(
   runtime: types.Runtime,
@@ -517,23 +645,16 @@ pub fn tools_for(
 fn record_llm_usage(
   runtime: types.Runtime,
   principal_id: String,
+  call_id: String,
   provider_name: String,
   model: String,
   prompt_tokens: Int,
   completion_tokens: Int,
 ) -> Nil {
-  let price =
-    pricing.price_for(
-      model,
-      pricing.Price(
-        input_per_mtok: runtime.config.pricing.default.input_per_mtok,
-        output_per_mtok: runtime.config.pricing.default.output_per_mtok,
-      ),
-      model_prices(runtime.config.pricing.models),
-    )
+  let price = model_price(runtime, model)
   let cost = pricing.cost_usd(price, prompt_tokens, completion_tokens)
   case
-    ledger_actor.try_record_llm_usage(
+    ledger_actor.try_record_llm_usage_with_call_id(
       runtime.ledger,
       principal_id,
       provider_name,
@@ -541,20 +662,22 @@ fn record_llm_usage(
       prompt_tokens,
       completion_tokens,
       cost,
+      call_id,
     )
   {
     Ok(_) -> Nil
-    Error(_) -> {
-      audit_action(
+    Error(_) ->
+      retry_llm_usage(
         runtime,
         principal_id,
-        "fail_closed",
-        "ledger",
-        audit_types.AuditFailure,
-        "ledger unavailable while recording LLM usage",
+        call_id,
+        provider_name,
+        model,
+        prompt_tokens,
+        completion_tokens,
+        cost,
+        0,
       )
-      fail_closed_alert(runtime, "ledger")
-    }
   }
 
   budget_actor.record_consumption(
@@ -566,6 +689,68 @@ fn record_llm_usage(
   maybe_budget_alert(runtime, principal_id)
   maybe_instance_alert(runtime)
   Nil
+}
+
+const usage_retry_delays = [1000, 5000, 30_000]
+
+fn retry_llm_usage(
+  runtime: types.Runtime,
+  principal_id: String,
+  call_id: String,
+  provider_name: String,
+  model: String,
+  prompt_tokens: Int,
+  completion_tokens: Int,
+  cost: Float,
+  attempt: Int,
+) -> Nil {
+  case list.drop(usage_retry_delays, attempt) {
+    [] -> {
+      ledger_actor.release_reservation(runtime.ledger, call_id)
+      audit_action(
+        runtime,
+        principal_id,
+        "ledger_write_lost",
+        "llm_usage",
+        audit_types.AuditFailure,
+        "cost_usd=" <> float_to_string(cost),
+      )
+      fail_closed_alert(runtime, "ledger")
+    }
+    [delay, ..] -> {
+      let _ =
+        process.spawn_unlinked(fn() {
+          process.sleep(delay)
+          case
+            ledger_actor.try_record_llm_usage_with_call_id(
+              runtime.ledger,
+              principal_id,
+              provider_name,
+              model,
+              prompt_tokens,
+              completion_tokens,
+              cost,
+              call_id,
+            )
+          {
+            Ok(_) -> Nil
+            Error(_) ->
+              retry_llm_usage(
+                runtime,
+                principal_id,
+                call_id,
+                provider_name,
+                model,
+                prompt_tokens,
+                completion_tokens,
+                cost,
+                attempt + 1,
+              )
+          }
+        })
+      Nil
+    }
+  }
 }
 
 fn model_prices(
