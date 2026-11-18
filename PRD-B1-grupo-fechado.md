@@ -26,6 +26,7 @@ Lacunas encontradas no código em 18/11:
 ## 2. Fora de escopo
 
 - O self: constituição, metas próprias, loop de introspecção, auto-modelo calibrado. Isso fica para a **PRD B2**.
+- A convivência entre agentes: mensagens entre agentes, contatos mútuos, contexto filtrado e cobrança cruzada. Isso fica para a **PRD B3**. Nesta PRD, só se garante que nenhuma memória compartilhada seja ligada antes disso (US-010).
 - Novos canais, providers ou ferramentas.
 - Remover os canais experimentais.
 - Deploy em servidor, tags de release, publicação de imagens e merge do PR final.
@@ -174,7 +175,27 @@ Regras:
 - [ ] Atualize `README.md` e `STATUS.md` com a tabela de suporte por canal.
 - [ ] Commit: `test(e2e): cover supported channels end to end; mark others experimental`.
 
-### US-010: Documentação de operação do grupo fechado
+### US-010: Impedir o compartilhamento de memória entre agentes
+
+**Por quê:** cada pessoa terá a sua agente, e as agentes só poderão trocar informações por mensagens mediadas pelo kernel, no limite do necessário (PRD B3). Dois módulos existentes fazem o contrário: `src/supernova/core/blackboard.gleam` é um armazenamento chave-valor compartilhado **sem controle de acesso**, e `src/supernova/core/memory_federation/` **promove fatos locais para o world model global só por relevância**. Em 18/11, nenhum dos dois estava ligado ao fluxo de produção. Esta história garante que continuem assim até a B3 definir o controle de acesso.
+
+**Critérios de aceite:**
+- [ ] Confirme o estado atual: `rg -n "core/blackboard|memory_federation" src --glob '!src/supernova/core/blackboard.gleam' --glob '!src/supernova/core/memory_federation/**'`. Em 18/11 a saída era:
+  - `src/supernova/core/project/actor.gleam` importa `blackboard`. É o orquestrador de projetos: recebe um `Option(Blackboard)` injetado para registrar o andamento das tarefas dos sub-agentes de **um mesmo dono**. Uso legítimo.
+  - `src/supernova/core/kernel_version/pure.gleam` só **cita o nome** `memory_federation` numa lista de capabilities, sem importar o módulo.
+  Se a saída tiver qualquer outro arquivo, **não remova nada**: pare a história, registre no relatório e siga para a próxima.
+- [ ] Confirme que o orquestrador de projetos não é iniciado em produção: `rg -n "core/project/actor" src` deve retornar vazio (fora do próprio módulo). Registre o resultado no commit.
+- [ ] Crie `test/architecture/isolation_test.gleam` com um teste que lê os arquivos `.gleam` de `src/` e **falha** se qualquer arquivo importar `supernova/core/blackboard` ou `supernova/core/memory_federation`, exceto:
+  - os próprios módulos (`src/supernova/core/blackboard.gleam` e `src/supernova/core/memory_federation/**`);
+  - `src/supernova/core/project/actor.gleam`, com o comentário: `"same-owner orchestration: the blackboard is injected per project and must never be shared across principals"`.
+  Cada exceção fica numa lista explícita no teste, com o comentário do motivo. Citar o nome em string, como faz `kernel_version`, não é import e não precisa de exceção.
+- [ ] Um segundo teste no mesmo arquivo falha se algum arquivo de `src/`, fora de `src/supernova/core/project/`, importar `supernova/core/project/actor`. Assim o orquestrador, e com ele o blackboard, não entra em produção sem revisão. Mensagem: `"project orchestrator uses a blackboard; wire it only after PRD B3 defines per-principal isolation"`.
+- [ ] A mensagem de falha do teste explica a regra: `"blackboard/memory_federation share memory across agents without access control; wire them only through the syscall gateway after PRD B3"`.
+- [ ] Acrescente um comentário de módulo no topo de `blackboard.gleam` e de `memory_federation/types.gleam` com a mesma regra, apontando para o teste.
+- [ ] Prove que o teste funciona: adicione temporariamente `import supernova/core/blackboard` em `src/supernova.gleam`, confirme que o teste falha, reverta e cite isso no commit.
+- [ ] Commit: `test(architecture): forbid wiring shared agent memory before access control`.
+
+### US-011: Documentação de operação do grupo fechado
 
 **Critérios de aceite:**
 - [ ] Nova seção em `DEPLOY.md`, "Grupo fechado", explicando: como descobrir o próprio `principal_id` (o bot responde ao comando `/eu` mesmo para quem não está autorizado, sem chamar o LLM e sem contar no limite de 24 h da negação), como cadastrar o primeiro admin por env, como convidar membros e como ajustar orçamento e capabilities.
@@ -213,5 +234,6 @@ Crie `docs/B1_REPORT.md` com:
 - `/uso` funciona para todos e `/uso todos` só para admins.
 - Telegram e Discord têm testes de ponta a ponta com mocks; os outros canais avisam no boot que são experimentais.
 - O GHCR recebe imagem só em tag `v*`.
+- `blackboard` e `memory_federation` não estão ligados em produção, e um teste de arquitetura impede que sejam ligados antes da PRD B3.
 - CI verde; cobertura ≥ linha de base.
 [/PRD]
