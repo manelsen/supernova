@@ -91,8 +91,9 @@ source_file_to_module(Path) ->
   list_to_atom(path_to_module_name(filename:rootname(RelativePath))).
 
 test_modules() ->
+  %% FFI modules are helpers, not EUnit test modules.
   TestFiles =
-    filelib:fold_files("test", ".*\\.(gleam|erl)$", true, fun(File, Acc) -> [File | Acc] end, []),
+    filelib:fold_files("test", ".*\\.gleam$", true, fun(File, Acc) -> [File | Acc] end, []),
   lists:usort(lists:map(fun test_file_to_module/1, TestFiles)).
 
 test_file_to_module(Path) ->
