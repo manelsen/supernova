@@ -156,6 +156,8 @@ pub type LedgerMessage {
   ReleaseReservation(reply_to: Subject(Nil), call_id: String)
   /// Return the current local day and its LLM spend.
   GetSpendToday(reply_to: Subject(#(String, Float)), now: Int)
+  /// Return the sum of all open reservation estimates.
+  GetOpenReservationsTotal(reply_to: Subject(Float))
   /// Record a tool invocation in the usage trail
   RecordToolUsage(
     reply_to: Subject(Nil),
@@ -539,6 +541,11 @@ fn handle_message(
       actor.continue(state)
     }
 
+    GetOpenReservationsTotal(reply_to) -> {
+      actor.send(reply_to, reservations_total(state.reservations))
+      actor.continue(state)
+    }
+
     RecordToolUsage(reply_to, principal_id, tool_name, ok) -> {
       let event =
         ToolUsage(
@@ -913,6 +920,14 @@ pub fn admit_llm_call(
 pub fn release_reservation(ledger: ResourceLedger, call_id: String) -> Nil {
   let _ = safe_call.call(ledger, 1500, ReleaseReservation(_, call_id))
   Nil
+}
+
+/// Sum of estimated spend for all open reservations.
+pub fn get_open_reservations_total(ledger: ResourceLedger) -> Float {
+  case safe_call.call(ledger, 1500, GetOpenReservationsTotal) {
+    Ok(total) -> total
+    Error(_) -> 0.0
+  }
 }
 
 /// Current day and its total LLM spend.

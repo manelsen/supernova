@@ -402,6 +402,46 @@ pub fn open_reservations_count_across_day_boundary_test() {
   cleanup(dir)
 }
 
+pub fn settled_reservation_frees_admission_after_day_boundary_test() {
+  let dir = temp_dir()
+  let assert Ok(_) = ensure_dir(dir)
+  let before_midnight = 1_718_495_970_000
+  let after_midnight = 1_718_496_010_000
+  mock_clock_set(before_midnight)
+  let read_clock = fn() { mock_clock_now() }
+
+  let assert Ok(ledger) =
+    actor.start_persistent_with_clock_and_day_key(
+      dir,
+      read_clock,
+      fn(timestamp) { pricing.day_key(timestamp, "UTC") },
+    )
+
+  actor.admit_llm_call(ledger, "old-reservation", 2.0, 1.0)
+  |> should.be_ok
+  mock_clock_set(after_midnight)
+
+  // Settling the old reservation at half its estimate leaves room for one
+  // more estimate of 1.0 under the 2.0 cap.
+  actor.try_record_llm_usage_with_call_id(
+    ledger,
+    "user_1",
+    "openai",
+    "gpt-4o",
+    10,
+    5,
+    0.5,
+    "old-reservation",
+  )
+  |> should.be_ok
+  actor.admit_llm_call(ledger, "new-reservation", 2.0, 1.0)
+  |> should.be_ok
+
+  actor.stop(ledger)
+  process.sleep(100)
+  cleanup(dir)
+}
+
 @external(erlang, "supernova_mock_ffi", "clock_set")
 fn mock_clock_set(timestamp: Int) -> Nil
 

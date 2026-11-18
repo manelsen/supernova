@@ -23,6 +23,7 @@ import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/principal
 import supernova/core/rate_limit/actor as rate_limiter
 import supernova/core/resource_ledger/actor as ledger_actor
+import supernova/core/resource_ledger/types.{LLMUsage, ToolUsage}
 import supernova/core/syscall/actor as syscall_actor
 import supernova/core/tool_dispatch
 import supernova/llm/pricing
@@ -927,6 +928,56 @@ pub fn admission_uses_routed_model_price_test() {
   })
 }
 
+pub fn admission_reserves_routed_model_estimate_test() {
+  let expensive =
+    config.PricingEntry(input_per_mtok: 1000.0, output_per_mtok: 2000.0)
+  let config =
+    config.Config(
+      ..config_with_access(["telegram:1"], ["telegram:123"], []),
+      providers: dict.from_list([
+        #(
+          "mock",
+          config.ProviderConfig(
+            provider: config.OpenAI,
+            api_key: None,
+            base_url: None,
+            model: Some("expensive-model"),
+            timeout_ms: 1000,
+          ),
+        ),
+      ]),
+      pricing: config.PricingConfig(
+        default: config.PricingEntry(
+          input_per_mtok: 0.01,
+          output_per_mtok: 0.01,
+        ),
+        models: dict.from_list([#("expensive-model", expensive)]),
+      ),
+      instance_budget: config.InstanceBudgetConfig(
+        daily_usd: 3.0,
+        timezone: "UTC",
+        reserve_output_tokens: 1000,
+      ),
+    )
+  with_runtime(config, fn(runtime) {
+    let context =
+      cg_runtime.run_context(
+        runtime,
+        cg_types.PrincipalContext(principal_id: "telegram:123", role: "member"),
+      )
+    let assert Some(admit) = context.admit_llm
+    admit("call-expensive", "mock", "expensive-model", 100)
+    |> should.be_ok()
+
+    ledger_actor.get_open_reservations_total(runtime.ledger)
+    |> should.equal(pricing.cost_usd(
+      pricing.Price(input_per_mtok: 1000.0, output_per_mtok: 2000.0),
+      100,
+      1000,
+    ))
+  })
+}
+
 pub fn network_failure_once_is_unconfirmed_and_retried_test() {
   with_runtime(
     config_with_access(["telegram:1"], ["telegram:123"], []),
@@ -956,9 +1007,27 @@ pub fn network_failure_once_is_unconfirmed_and_retried_test() {
 
       let usage = ledger_actor.get_all_usage(runtime.ledger)
       list.length(usage) |> should.equal(2)
-      let day = pricing.day_key(now, "UTC")
-      { ledger_actor.get_daily_cost(runtime.ledger, day) >. 0.0 }
+      usage
+      |> list.any(fn(event) {
+        case event {
+          LLMUsage(call_id: call_id, ..) ->
+            string.ends_with(call_id, ":unconfirmed")
+          ToolUsage(..) -> False
+        }
+      })
       |> should.be_true()
+      let total =
+        list.fold(usage, 0.0, fn(sum, event) {
+          case event {
+            LLMUsage(cost_usd: cost, ..) -> sum +. cost
+            ToolUsage(..) -> sum
+          }
+        })
+      let day = pricing.day_key(now, "UTC")
+      ledger_actor.get_daily_cost(runtime.ledger, day)
+      |> should.equal(total)
+      ledger_actor.get_open_reservations_total(runtime.ledger)
+      |> should.equal(0.0)
     },
   )
 }
@@ -1001,6 +1070,8 @@ pub fn retry_429_releases_every_reservation_test() {
       |> should.equal(0)
       let day = pricing.day_key(now, "UTC")
       ledger_actor.get_daily_cost(runtime.ledger, day) |> should.equal(0.0)
+      ledger_actor.get_open_reservations_total(runtime.ledger)
+      |> should.equal(0.0)
     },
   )
 }
@@ -1137,13 +1208,25 @@ pub fn alert_is_dropped_when_access_is_unavailable_test() {
 }
 
 pub fn denied_interaction_is_audited_test() {
-  with_runtime(config_with_access(["telegram:1"], [], []), fn(runtime) {
-    case cg_runtime.gate_interaction(runtime, "telegram", "1", "999") {
-      cg_types.Reply(text) -> should.equal(text, "Esta instância é privada.")
-      _ -> should.fail()
-    }
-    audit_actor.get_all(runtime.audit)
-    |> list.any(fn(entry) { entry.operation == "access_denied" })
-    |> should.be_true()
-  })
+  let alert_recorder = process.new_subject()
+  with_runtime_alerts(
+    config_with_access(["telegram:1"], [], []),
+    fn(_admin, text) { process.send(alert_recorder, text) },
+    fn(runtime) {
+      case cg_runtime.gate_interaction(runtime, "telegram", "1", "999") {
+        cg_types.Reply(text) -> should.equal(text, "Esta instância é privada.")
+        _ -> should.fail()
+      }
+      // The first denial is counted; five more cross the abuse threshold.
+      list.repeat(Nil, 5)
+      |> list.each(fn(_) {
+        let _ = cg_runtime.gate_interaction(runtime, "telegram", "1", "999")
+      })
+      let assert Ok(alert) = process.receive(alert_recorder, within: 1000)
+      string.contains(alert, "Mais de 5 tentativas") |> should.equal(True)
+      audit_actor.get_all(runtime.audit)
+      |> list.any(fn(entry) { entry.operation == "access_denied" })
+      |> should.be_true()
+    },
+  )
 }
