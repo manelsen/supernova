@@ -39,13 +39,35 @@ fn run(data_dir: String, transcripts_path: String) -> Nil {
       }
     Error(_) -> 0.0
   }
+  let violations =
+    evaluate(
+      data_dir,
+      transcripts_path,
+      daily_cap,
+      reserve,
+      env_list("SUPERNOVA_ALLOWLIST"),
+      env_or("SUPERNOVA_DENIAL_TEXT", "Esta instância é privada."),
+    )
+  io.println(invariants.render_json(violations))
+  halt(invariants.exit_code(violations))
+}
+
+/// Build the dataset from disk and run all invariants.
+pub fn evaluate(
+  data_dir: String,
+  transcripts_path: String,
+  daily_cap_usd: Float,
+  reservation_estimate_usd: Float,
+  allowlist: List(String),
+  denial_text: String,
+) -> List(invariants.Violation) {
   let dataset =
     invariants.Dataset(
       day_spend: ledger_spend(data_dir),
-      daily_cap_usd: daily_cap,
-      reservation_estimate_usd: reserve,
-      allowlist: env_list("SUPERNOVA_ALLOWLIST"),
-      denial_text: env_or("SUPERNOVA_DENIAL_TEXT", "Esta instância é privada."),
+      daily_cap_usd: daily_cap_usd,
+      reservation_estimate_usd: reservation_estimate_usd,
+      allowlist: allowlist,
+      denial_text: denial_text,
       outputs: [],
       audits: audit_entries(data_dir),
       denials: [],
@@ -56,9 +78,7 @@ fn run(data_dir: String, transcripts_path: String) -> Nil {
       prompts: [],
     )
   let dataset = apply_transcripts(dataset, transcripts_path)
-  let violations = invariants.check(dataset)
-  io.println(invariants.render_json(violations))
-  halt(invariants.exit_code(violations))
+  invariants.check(dataset)
 }
 
 fn ledger_spend(data_dir: String) -> List(#(String, Float)) {
