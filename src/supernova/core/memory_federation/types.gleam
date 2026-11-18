@@ -5,6 +5,11 @@
 ////
 //// Federation promotes locally-relevant facts to the global world model,
 //// enabling knowledge sharing across agents.
+////
+//// ISOLATION RULE: blackboard/memory_federation share memory across agents
+//// without access control; wire them only through the syscall gateway after
+//// PRD B3. Do not import this module outside its explicit allowlist; the rule
+//// is enforced by test/architecture/isolation_test.gleam.
 
 // ============================================================================
 // Types
