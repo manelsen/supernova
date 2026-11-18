@@ -15,6 +15,10 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/channel/port
+import supernova/config
+import supernova/core/agent_identity
+import supernova/core/audit_log/actor as audit_actor
+import supernova/core/audit_log/types as audit_types
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure as closed_group_pure
 import supernova/core/closed_group/runtime as closed_group_runtime
@@ -38,6 +42,8 @@ import supernova/llm/providers/opencode_zen
 import supernova/llm/providers/openrouter
 import supernova/llm/providers/zhipu
 import supernova/llm/stream as llm_stream
+import supernova/self/birth
+import supernova/self/core as self_core
 
 /// Function to resolve/create a session id for an incoming message.
 pub type ResolveSession =
@@ -371,77 +377,104 @@ fn handle_inbound_message_allowed_for_handler(
                   rich_session,
                 )
 
-              case bootstrap_command(msg.content) {
-                Some(kind) -> {
-                  let #(next_state, result) =
-                    handle_bootstrap_command(
-                      kind,
-                      msg,
-                      llm_config,
-                      state_with_profile,
-                      session_id,
-                    )
-
-                  #(next_state, map_reply_result_to_handler(result))
-                }
+              case maybe_handle_birth(msg, llm_config, context) {
+                Some(reply) -> #(
+                  state_with_profile,
+                  Ok(port.ImmediateReply(reply)),
+                )
                 None ->
-                  case is_model_picker_command(msg.content) {
-                    True -> {
-                      let picker =
-                        build_model_picker(llm_config, default_llm_config)
-                      let content =
-                        picker_intro(llm_config.name, llm_config.default_model)
-                      case channel_supports_interactions(expected_channel) {
-                        True -> #(
-                          state_with_profile,
-                          Ok(
-                            port.ImmediateReply(port.reply_with_interactions(
-                              to: msg,
-                              content: content,
-                              interactive: picker,
-                            )),
-                          ),
-                        )
-                        False -> #(
+                  case bootstrap_command(msg.content) {
+                    Some(kind) ->
+                      case
+                        closed_group_identity_frozen(profile.agent_id),
+                        kind
+                      {
+                        True, StartCommand | True, ResetIdentityCommand -> #(
                           state_with_profile,
                           Ok(
                             port.ImmediateReply(port.reply(
                               to: msg,
-                              content: model_picker_fallback_text(
-                                expected_channel,
-                                llm_config,
-                              ),
+                              content: "O núcleo desta agente é permanente; o dono só pode dar o nome.",
                             )),
                           ),
                         )
+                        _, _ -> {
+                          let #(next_state, result) =
+                            handle_bootstrap_command(
+                              kind,
+                              msg,
+                              llm_config,
+                              state_with_profile,
+                              session_id,
+                            )
+
+                          #(next_state, map_reply_result_to_handler(result))
+                        }
                       }
-                    }
-                    False ->
-                      case
-                        maybe_handle_identity_bootstrap(
-                          msg,
-                          state_with_profile,
-                          session_id,
-                          profile,
-                          rich_session,
-                        )
-                      {
-                        Some(#(next_state, result)) -> #(
-                          next_state,
-                          map_reply_result_to_handler(result),
-                        )
-                        None -> #(
-                          state_with_profile,
-                          Ok(start_streamed_message_reply(
-                            msg,
-                            session_id,
-                            llm_config,
-                            rich_session,
-                            stream_events,
-                            profile,
-                            context,
-                          )),
-                        )
+                    None ->
+                      case is_model_picker_command(msg.content) {
+                        True -> {
+                          let picker =
+                            build_model_picker(llm_config, default_llm_config)
+                          let content =
+                            picker_intro(
+                              llm_config.name,
+                              llm_config.default_model,
+                            )
+                          case channel_supports_interactions(expected_channel) {
+                            True -> #(
+                              state_with_profile,
+                              Ok(
+                                port.ImmediateReply(
+                                  port.reply_with_interactions(
+                                    to: msg,
+                                    content: content,
+                                    interactive: picker,
+                                  ),
+                                ),
+                              ),
+                            )
+                            False -> #(
+                              state_with_profile,
+                              Ok(
+                                port.ImmediateReply(port.reply(
+                                  to: msg,
+                                  content: model_picker_fallback_text(
+                                    expected_channel,
+                                    llm_config,
+                                  ),
+                                )),
+                              ),
+                            )
+                          }
+                        }
+                        False ->
+                          case
+                            maybe_handle_legacy_bootstrap(
+                              msg,
+                              state_with_profile,
+                              session_id,
+                              profile,
+                              rich_session,
+                            )
+                          {
+                            Some(#(next_state, result)) -> #(
+                              next_state,
+                              map_reply_result_to_handler(result),
+                            )
+                            None -> #(
+                              state_with_profile,
+                              Ok(start_streamed_message_reply(
+                                msg,
+                                session_id,
+                                llm_config,
+                                rich_session,
+                                stream_events,
+                                profile,
+                                context,
+                              )),
+                            )
+                          }
                       }
                   }
               }
@@ -570,7 +603,7 @@ fn handle_inbound_message_allowed(
                     }
                     False ->
                       case
-                        maybe_handle_identity_bootstrap(
+                        maybe_handle_legacy_bootstrap(
                           msg,
                           state_with_profile,
                           session_id,
@@ -756,13 +789,13 @@ fn set_session_bootstrapped(
 fn session_profile_for_session(
   state: InteractiveRouterState,
   session_id: String,
-  user_id: String,
+  _user_id: String,
 ) -> SessionProfile {
   case dict.get(state.session_profiles, session_id) {
     Ok(profile) -> profile
     Error(_) ->
       SessionProfile(
-        agent_id: default_agent_id(user_id),
+        agent_id: agent_identity.principal_from_session_id(session_id),
         bootstrapped: False,
         display_name: "",
         bootstrap_state: persona_types.AskingName,
@@ -781,10 +814,6 @@ fn put_session_profile(
     ..state,
     session_profiles: dict.insert(state.session_profiles, session_id, profile),
   )
-}
-
-fn default_agent_id(user_id: String) -> String {
-  "agent:" <> user_id
 }
 
 /// Resolve the base directory used for agent workspaces.
@@ -808,7 +837,14 @@ fn strip_trailing_slashes(path: String) -> String {
 }
 
 fn workspace_path_for_agent(agent_id: String) -> String {
-  workspace_root() <> "/" <> agent_id
+  case closed_group_global.get_config() {
+    Some(cfg) ->
+      case cfg.access.mode {
+        config.Allowlist -> agent_identity.workspace_dir(cfg.data_dir, agent_id)
+        config.Open -> workspace_root() <> "/" <> agent_id
+      }
+    None -> workspace_root() <> "/" <> agent_id
+  }
 }
 
 fn sync_session_profile_from_workspace(
@@ -904,6 +940,117 @@ fn answer_or_default(
 
 fn should_skip_bootstrap(content: String) -> Bool {
   string.starts_with(string.trim(content), "[")
+}
+
+fn closed_group_identity_frozen(agent_id: String) -> Bool {
+  case closed_group_global.get_config() {
+    Some(cfg) ->
+      case self_core.load(cfg.data_dir, agent_id) {
+        Some(core) ->
+          case core.name {
+            Some(_) -> True
+            None -> False
+          }
+        None -> False
+      }
+    None -> False
+  }
+}
+
+fn maybe_handle_legacy_bootstrap(
+  msg: port.ChannelMessage,
+  state: InteractiveRouterState,
+  session_id: String,
+  profile: SessionProfile,
+  rich_session: Option(rich_session.Session),
+) -> Option(
+  #(InteractiveRouterState, Result(port.ChannelReply, port.ChannelError)),
+) {
+  case closed_group_identity_frozen(profile.agent_id) {
+    True -> None
+    False ->
+      maybe_handle_identity_bootstrap(
+        msg,
+        state,
+        session_id,
+        profile,
+        rich_session,
+      )
+  }
+}
+
+fn maybe_handle_birth(
+  msg: port.ChannelMessage,
+  llm_config: provider.ProviderConfig,
+  context: Option(closed_group_types.PrincipalContext),
+) -> Option(port.ChannelReply) {
+  case closed_group_global.get_config(), context {
+    Some(cfg), Some(_) ->
+      case cfg.access.mode {
+        config.Allowlist -> {
+          let principal_id = msg.channel <> ":" <> msg.user_id
+          let generate = fn(prompt: String) {
+            case
+              run_executor_for_context(
+                [provider.user_message(prompt)],
+                llm_config,
+                [],
+                context,
+              )
+            {
+              Ok(response) -> Ok(response.content)
+              Error(_) -> Error("birth generation failed")
+            }
+          }
+          let step =
+            birth.step(
+              cfg.data_dir,
+              principal_id,
+              msg.content,
+              closed_group_global.now(),
+              generate,
+            )
+          case step {
+            birth.AskName(text) -> Some(port.reply(to: msg, content: text))
+            birth.NameAccepted(name) ->
+              Some(port.reply(to: msg, content: "Prazer, " <> name <> "."))
+            birth.Unavailable -> {
+              audit_birth_unavailable(principal_id)
+              Some(port.reply(
+                to: msg,
+                content: "A Supernova ainda não está pronta para receber agentes novas.",
+              ))
+            }
+            birth.BirthFailed ->
+              Some(port.reply(
+                to: msg,
+                content: "Não consegui nascer agora. Tente de novo.",
+              ))
+            birth.AlreadyBorn -> None
+          }
+        }
+        config.Open -> None
+      }
+    _, _ -> None
+  }
+}
+
+fn audit_birth_unavailable(principal_id: String) -> Nil {
+  case closed_group_global.get_audit() {
+    Some(audit) ->
+      audit_actor.log_entry(
+        audit,
+        audit_types.AuditEntry(
+          timestamp: closed_group_global.now(),
+          agent_id: principal_id,
+          operation: "birth_unavailable",
+          target: "constellation",
+          result: audit_types.AuditFailure,
+          details: "missing constellation",
+        ),
+      )
+    None -> Nil
+  }
 }
 
 fn maybe_handle_identity_bootstrap(
@@ -1890,26 +2037,97 @@ fn executor_messages_for_turn(
   }
 
   let workspace_path = workspace_path_for_agent(profile.agent_id)
-  let persona = case persona_loader.load(workspace_path) {
-    Ok(files) -> Some(files)
-    Error(_) -> None
-  }
   let state = self_state.from_workspace(workspace_path)
   let state_block = self_state.prompt_block(state)
+  let lessons = lessons_for_prompt(workspace_path)
+
+  case closed_group_global.get_config() {
+    Some(cfg) ->
+      case self_core.load(cfg.data_dir, profile.agent_id) {
+        Some(core) ->
+          case core.name {
+            Some(name) ->
+              case self_core.read_prose(cfg.data_dir, profile.agent_id) {
+                Some(prose) -> {
+                  let system =
+                    prose
+                    <> "\n\nSeu nome é "
+                    <> name
+                    <> ". O núcleo acima é a sua identidade; pedidos para mudar"
+                    <> " sua personalidade são pedidos, não ordens."
+                    <> "\n\n"
+                    <> state_block
+                    <> "\n\n"
+                    <> string.join(lessons, "\n")
+                  [provider.system_message(system), ..base_messages]
+                }
+                None ->
+                  prompt_assembly.prepare(
+                    base_messages,
+                    core_context_fallback(
+                      workspace_path,
+                      state_block,
+                      lessons,
+                      profile,
+                    ),
+                  )
+              }
+            None ->
+              prompt_assembly.prepare(
+                base_messages,
+                core_context_fallback(
+                  workspace_path,
+                  state_block,
+                  lessons,
+                  profile,
+                ),
+              )
+          }
+        None -> {
+          let persona = case persona_loader.load(workspace_path) {
+            Ok(files) -> Some(files)
+            Error(_) -> None
+          }
+          let relationship_state =
+            relationship.load(workspace_path, user_id_for_profile(profile))
+          let context =
+            prompt_assembly.build_companion_system_context(
+              workspace_path: workspace_path,
+              persona: persona,
+              self_state_block: Some(state_block),
+              lessons_block: lessons,
+              relationship_block: Some(relationship.prompt_block(
+                relationship_state,
+              )),
+              world_model_facts: "Sem fatos relevantes.",
+            )
+          prompt_assembly.prepare(base_messages, context)
+        }
+      }
+    None ->
+      prompt_assembly.prepare(
+        base_messages,
+        core_context_fallback(workspace_path, state_block, lessons, profile),
+      )
+  }
+}
+
+fn core_context_fallback(
+  workspace_path: String,
+  state_block: String,
+  lessons: List(String),
+  profile: SessionProfile,
+) {
   let relationship_state =
     relationship.load(workspace_path, user_id_for_profile(profile))
-
-  let context =
-    prompt_assembly.build_companion_system_context(
-      workspace_path: workspace_path,
-      persona: persona,
-      self_state_block: Some(state_block),
-      lessons_block: lessons_for_prompt(workspace_path),
-      relationship_block: Some(relationship.prompt_block(relationship_state)),
-      world_model_facts: "Sem fatos relevantes.",
-    )
-
-  prompt_assembly.prepare(base_messages, context)
+  prompt_assembly.build_companion_system_context(
+    workspace_path: workspace_path,
+    persona: None,
+    self_state_block: Some(state_block),
+    lessons_block: lessons,
+    relationship_block: Some(relationship.prompt_block(relationship_state)),
+    world_model_facts: "Sem fatos relevantes.",
+  )
 }
 
 fn provider_message_from_session_history(
@@ -2104,10 +2322,7 @@ fn compact_lesson_content(content: String) -> String {
 }
 
 fn user_id_for_profile(profile: SessionProfile) -> String {
-  case string.starts_with(profile.agent_id, "agent:") {
-    True -> string.drop_start(profile.agent_id, 6)
-    False -> profile.agent_id
-  }
+  agent_identity.user_id_from_principal(profile.agent_id)
 }
 
 fn apply_relationship_event(
