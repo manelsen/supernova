@@ -20,7 +20,8 @@ submit(Key, Job) ->
 %% Same as submit/2 with explicit limits (tests and diagnostics).
 submit_with_limits(Key, Job, MaxPending, MaxLanes) ->
     Ref = make_ref(),
-    manager() ! {submit, Key, Job, self(), Ref, MaxPending, MaxLanes},
+    Deadline = erlang:monotonic_time(millisecond) + 900,
+    manager() ! {submit, Key, Job, self(), Ref, MaxPending, MaxLanes, Deadline},
     receive
         {Ref, Accepted} -> Accepted
     after 1000 -> false
@@ -68,22 +69,26 @@ init() ->
 
 loop(Lanes, Draining, Waits) ->
     receive
-        {submit, Key, Job, From, Ref, MaxPending, MaxLanes} ->
-            case is_draining(Key, Draining) of
+        {submit, Key, Job, From, Ref, MaxPending, MaxLanes, Deadline} ->
+            case erlang:monotonic_time(millisecond) > Deadline of
                 true ->
                     From ! {Ref, false},
                     loop(Lanes, Draining, Waits);
                 false ->
-                    case accept(Key, Job, Lanes, MaxPending, MaxLanes) of
-                        {ok, NewLanes} ->
-                            From ! {Ref, true},
-                            loop(NewLanes, Draining, Waits);
-                        {reject, Reason} ->
-                            io:format(standard_error,
-                                      "warn: chat lane rejected key=~ts reason=~ts~n",
-                                      [Key, Reason]),
+                    case is_draining(Key, Draining) of
+                        true ->
                             From ! {Ref, false},
-                            loop(Lanes, Draining, Waits)
+                            loop(Lanes, Draining, Waits);
+                        false ->
+                            case accept(Key, Job, Lanes, MaxPending, MaxLanes) of
+                                {ok, NewLanes} ->
+                                    From ! {Ref, true},
+                                    loop(NewLanes, Draining, Waits);
+                                {reject, Reason} ->
+                                    From ! {Ref, false},
+                                    log_rejection(Key, Reason),
+                                    loop(Lanes, Draining, Waits)
+                            end
                     end
             end;
         {drain, Prefix, From, Ref, TimeoutMs} ->
@@ -127,6 +132,13 @@ loop(Lanes, Draining, Waits) ->
         _ ->
             loop(Lanes, Draining, Waits)
     end.
+
+log_rejection(Key, Reason) ->
+    spawn(fun() ->
+        io:format(standard_error,
+                  "warn: chat lane rejected submission key=~ts reason=~p~n",
+                  [Key, Reason])
+    end).
 
 is_draining(Key, Draining) ->
     lists:any(fun(Prefix) -> starts_with(Key, Prefix) end, Draining).

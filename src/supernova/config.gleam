@@ -1216,7 +1216,11 @@ pub fn parse_yaml(yaml_string: String) -> Result(Config, ConfigError) {
 /// Get environment variable value
 fn get_env(key: String) -> Option(String) {
   case envoy.get(key) {
-    Ok(value) -> Some(value)
+    Ok(value) ->
+      case string.trim(value) == "" {
+        True -> None
+        False -> Some(value)
+      }
     Error(_) -> None
   }
 }

@@ -241,9 +241,11 @@ ou `/acesso adicionar discord:456 admin`. Um admin não pode remover a si
 mesmo quando é o último admin.
 
 O YAML é a base e `<data_dir>/access.json` guarda apenas as diferenças feitas
-por comando (`added`/`removed`). Remover alguém do YAML e reiniciar revoga o
-acesso mesmo que a pessoa já tenha recebido uma negação ou tenha sido
-adicionada por comando em outro momento. Não edite `access.json` à mão.
+por comando (`added`/`removed`). Se alguém foi adicionado ou removido por
+comando, essa decisão continua valendo depois de mudanças no YAML. Para
+revogar de vez, rode `/acesso remover <principal>` e só depois remova a
+entrada do YAML; para conceder, rode `/acesso adicionar`. Não edite
+`access.json` à mão.
 
 ### Dados persistentes
 
@@ -253,14 +255,14 @@ No compose, `SUPERNOVA_DATA_DIR=/data` e o volume nomeado
 diretório `data/` existente antes de trocar o contêiner:
 
 ```bash
-docker create --name supernova-data-copy \
-  -v supernova_supernova_data:/data supernova:smoke
-docker cp data/. supernova-data-copy:/data/
-docker rm supernova-data-copy
+docker compose run --rm --no-deps \
+  -v "$PWD/data:/backup:ro" supernova \
+  sh -c 'cp -a /backup/. /data/ && ls -l /data/access.json'
 ```
 
-O nome do volume pode variar com o nome do projeto Compose; confira com
-`docker volume ls | grep supernova_data`.
+O `run` monta o mesmo volume nomeado que o serviço usa, qualquer que seja o
+nome do projeto Compose; o `ls -l` confirma que os arquivos chegaram ao
+destino. Reinicie o serviço depois.
 
 ### Grupos e servidores
 
