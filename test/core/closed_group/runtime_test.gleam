@@ -1,8 +1,11 @@
+import exception
 import gleam/dict
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
+import supernova
 import supernova/config
 import supernova/core/access/actor as access_actor
 import supernova/core/access/types as access_types
@@ -10,6 +13,7 @@ import supernova/core/alerts/group_actor as alerts_actor
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/budget_policy/types as budget_types
+import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure
 import supernova/core/closed_group/runtime as cg_runtime
 import supernova/core/closed_group/types as cg_types
@@ -45,7 +49,11 @@ fn config_with_access(
   )
 }
 
-fn test_runtime(cfg: config.Config, root: String) -> cg_types.Runtime {
+fn test_runtime(
+  cfg: config.Config,
+  root: String,
+  send_alert: fn(String, String) -> Nil,
+) -> cg_types.Runtime {
   let assert Ok(access) =
     access_actor.start_with_clock(pure.access_config(cfg.access), root, fn() {
       now
@@ -87,13 +95,21 @@ fn test_runtime(cfg: config.Config, root: String) -> cg_types.Runtime {
     instance_budget: instance,
     alerts: alerts,
     clock: fn() { now },
-    send_alert: fn(_, _) { Nil },
+    send_alert: send_alert,
   )
 }
 
 fn with_runtime(cfg: config.Config, body: fn(cg_types.Runtime) -> a) -> a {
+  with_runtime_alerts(cfg, fn(_, _) { Nil }, body)
+}
+
+fn with_runtime_alerts(
+  cfg: config.Config,
+  send_alert: fn(String, String) -> Nil,
+  body: fn(cg_types.Runtime) -> a,
+) -> a {
   test_workspace.with_isolated_workspace("closed-group", fn(root) {
-    let runtime = test_runtime(cfg, root)
+    let runtime = test_runtime(cfg, root, send_alert)
     body(runtime)
   })
 }
@@ -320,6 +336,20 @@ pub fn instance_cap_blocks_even_admin_until_raised_test() {
   })
 }
 
+pub fn member_cannot_raise_instance_cap_test() {
+  with_runtime(
+    config_with_access(["telegram:1"], ["telegram:123"], []),
+    fn(runtime) {
+      case
+        cg_runtime.gate(runtime, "telegram", "123", "123", "/teto liberar 20")
+      {
+        cg_types.Reply(text) -> should.equal(text, "Comando restrito a admins.")
+        _ -> should.fail()
+      }
+    },
+  )
+}
+
 pub fn tools_are_filtered_by_role_test() {
   let cfg = config_with_access([], [], [])
   let member_tools =
@@ -359,6 +389,13 @@ pub fn gateway_refuses_denied_capability_test() {
         should.be_true(string.contains(reason, "capability_denied"))
       Ok(_) -> should.fail()
     }
+    audit_actor.get_all(runtime.audit)
+    |> list.any(fn(entry) {
+      entry.operation == "capability_denied"
+      && entry.agent_id == "telegram:1"
+      && entry.target == "safe_shell"
+    })
+    |> should.equal(True)
     case
       syscall_actor.invoke_tool(
         runtime.gateway,
@@ -408,6 +445,9 @@ pub fn access_actor_failure_fails_closed_test() {
         cg_types.Reply(text) -> should.equal(text, pure.fail_closed_reply)
         _ -> should.fail()
       }
+      audit_actor.get_all(runtime.audit)
+      |> list.any(fn(entry) { entry.operation == "fail_closed" })
+      |> should.equal(True)
     },
   )
 }
@@ -494,4 +534,277 @@ pub fn teto_accepts_integer_and_decimal_amounts_test() {
   |> should.equal(Some(pure.RaiseCap(7.5)))
   pure.parse_teto_command("/teto liberar -1")
   |> should.equal(None)
+}
+
+pub fn two_principals_in_authorized_group_are_distinct_test() {
+  let base = config_with_access([], ["telegram:123", "telegram:456"], [])
+  let cfg =
+    config.Config(
+      ..base,
+      access: config.AccessConfig(..base.access, allowed_chats: [
+        "telegram:-1001",
+      ]),
+    )
+  with_runtime(cfg, fn(runtime) {
+    case cg_runtime.gate(runtime, "telegram", "-1001", "123", "oi") {
+      cg_types.Allowed(context) ->
+        context.principal_id |> should.equal("telegram:123")
+      _ -> should.fail()
+    }
+    case cg_runtime.gate(runtime, "telegram", "-1001", "456", "oi") {
+      cg_types.Allowed(context) ->
+        context.principal_id |> should.equal("telegram:456")
+      _ -> should.fail()
+    }
+  })
+}
+
+pub fn eu_reveals_group_chat_id_test() {
+  with_runtime(config_with_access([], [], []), fn(runtime) {
+    case cg_runtime.gate(runtime, "telegram", "-1001", "123", "/eu") {
+      cg_types.Reply(text) ->
+        should.be_true(string.contains(text, "telegram:-1001"))
+      _ -> should.fail()
+    }
+  })
+}
+
+pub fn admin_with_unlimited_budget_is_never_blocked_test() {
+  let base = config_with_access(["telegram:1"], [], [])
+  with_runtime(base, fn(runtime) {
+    budget_actor.record_consumption(
+      runtime.budget,
+      "telegram:1",
+      budget_types.BudgetTokens,
+      1_000_000,
+    )
+    case cg_runtime.gate(runtime, "telegram", "1", "1", "oi") {
+      cg_types.Allowed(context) -> context.role |> should.equal("admin")
+      _ -> should.fail()
+    }
+  })
+}
+
+pub fn audit_entries_never_contain_message_content_test() {
+  with_runtime(config_with_access([], [], []), fn(runtime) {
+    let _ =
+      cg_runtime.gate(
+        runtime,
+        "telegram",
+        "999",
+        "999",
+        "segredo-super-secreto",
+      )
+    audit_actor.get_all(runtime.audit)
+    |> list.each(fn(entry) {
+      string.contains(entry.details, "segredo-super-secreto")
+      |> should.equal(False)
+      string.contains(entry.target, "segredo-super-secreto")
+      |> should.equal(False)
+    })
+  })
+}
+
+pub fn audit_query_respects_maximum_100_test() {
+  with_runtime(config_with_access(["telegram:1"], [], []), fn(runtime) {
+    list.repeat(Nil, 105)
+    |> list.each(fn(_) {
+      let _ = cg_runtime.gate(runtime, "telegram", "999", "999", "no")
+    })
+    case cg_runtime.gate(runtime, "telegram", "1", "1", "/auditoria 1000") {
+      cg_types.Reply(text) ->
+        text
+        |> string.split("\n")
+        |> list.filter(fn(line) { string.contains(line, " | ") })
+        |> list.length
+        |> should.equal(100)
+      _ -> should.fail()
+    }
+  })
+}
+
+fn send_usage(
+  runtime: cg_types.Runtime,
+  principal_id: String,
+  role: String,
+  prompt_tokens: Int,
+  completion_tokens: Int,
+) -> Nil {
+  let context =
+    cg_runtime.run_context(
+      runtime,
+      cg_types.PrincipalContext(principal_id: principal_id, role: role),
+    )
+  case context.on_llm_usage {
+    Some(record) -> record("mock", "m", prompt_tokens, completion_tokens)
+    None -> Nil
+  }
+}
+
+pub fn budget_and_instance_alerts_are_deduplicated_test() {
+  let base = config_with_access(["telegram:1"], [], [])
+  let cfg =
+    config.Config(
+      ..base,
+      role_budgets: config.RoleBudgetsConfig(
+        member: config.RoleBudgetConfig(
+          tokens_per_hour: 10,
+          tool_calls_per_hour: 10,
+        ),
+        admin: base.role_budgets.admin,
+      ),
+      instance_budget: config.InstanceBudgetConfig(
+        daily_usd: 1.0,
+        timezone: "UTC",
+      ),
+    )
+  let alert_recorder = process.new_subject()
+  with_runtime_alerts(
+    cfg,
+    fn(admin, text) { process.send(alert_recorder, #(admin, text)) },
+    fn(runtime) {
+      send_usage(runtime, "telegram:123", "member", 8, 0)
+      send_usage(runtime, "telegram:123", "member", 8, 0)
+      let assert Ok(#(admin, budget_text)) =
+        process.receive(alert_recorder, within: 1000)
+      admin |> should.equal("telegram:1")
+      string.contains(budget_text, "80%") |> should.equal(True)
+
+      send_usage(runtime, "telegram:123", "member", 800_000, 0)
+      let assert Ok(#(_, instance_text)) =
+        process.receive(alert_recorder, within: 1000)
+      string.contains(instance_text, "80%") |> should.equal(True)
+      send_usage(runtime, "telegram:123", "member", 300_000, 0)
+      let assert Ok(#(_, cap_text)) =
+        process.receive(alert_recorder, within: 1000)
+      string.contains(cap_text, "100%") |> should.equal(True)
+      process.receive(alert_recorder, within: 100)
+      |> should.equal(Error(Nil))
+    },
+  )
+}
+
+pub fn abuse_and_fail_closed_alerts_reach_every_admin_test() {
+  let cfg = config_with_access(["telegram:1", "discord:2"], [], [])
+  let alert_recorder = process.new_subject()
+  with_runtime_alerts(
+    cfg,
+    fn(admin, text) { process.send(alert_recorder, #(admin, text)) },
+    fn(runtime) {
+      list.repeat(Nil, 6)
+      |> list.each(fn(_) {
+        let _ = cg_runtime.gate(runtime, "telegram", "999", "999", "no")
+      })
+      let assert Ok(#(first_admin, abuse_text)) =
+        process.receive(alert_recorder, within: 1000)
+      let assert Ok(#(second_admin, _)) =
+        process.receive(alert_recorder, within: 1000)
+      [first_admin, second_admin]
+      |> list.sort(string.compare)
+      |> should.equal(["discord:2", "telegram:1"])
+      string.contains(abuse_text, "Mais de 5 tentativas") |> should.equal(True)
+
+      access_actor.stop(runtime.access)
+      let _ = cg_runtime.gate(runtime, "telegram", "123", "123", "oi")
+      let assert Ok(#(_, failed_text)) =
+        process.receive(alert_recorder, within: 1000)
+      string.contains(failed_text, "Componente indisponível")
+      |> should.equal(True)
+    },
+  )
+}
+
+pub fn commands_and_eu_bypass_rate_limit_test() {
+  let base = config_with_access([], ["telegram:123"], [])
+  let cfg =
+    config.Config(
+      ..base,
+      rate_limit: config.RateLimitConfig(
+        member: config.RoleRateLimitConfig(messages_per_minute: 1),
+        admin: base.rate_limit.admin,
+      ),
+    )
+  with_runtime(cfg, fn(runtime) {
+    case cg_runtime.gate(runtime, "telegram", "123", "123", "oi") {
+      cg_types.Allowed(_) -> Nil
+      _ -> should.fail()
+    }
+    case cg_runtime.gate(runtime, "telegram", "123", "123", "oi") {
+      cg_types.Reply(text) -> should.equal(text, pure.rate_limited_reply)
+      _ -> should.fail()
+    }
+    list.repeat(Nil, 3)
+    |> list.each(fn(_) {
+      case cg_runtime.gate(runtime, "telegram", "123", "123", "/uso") {
+        cg_types.Reply(text) ->
+          should.be_true(string.contains(text, "Última hora"))
+        _ -> should.fail()
+      }
+    })
+    case cg_runtime.gate(runtime, "telegram", "-1001", "123", "/eu") {
+      cg_types.Reply(text) ->
+        should.be_true(string.contains(text, "telegram:-1001"))
+      _ -> should.fail()
+    }
+  })
+}
+
+pub fn supervisor_restarts_policy_actors_test() {
+  test_workspace.with_isolated_workspace("closed-group-sup", fn(root) {
+    use <- exception.defer(closed_group_global.clear_runtime)
+    let base = config_with_access(["telegram:1"], [], [])
+    let cfg = config.Config(..base, data_dir: root)
+    let ready = process.new_subject()
+    let _holder =
+      process.spawn_unlinked(fn() {
+        let result = supernova.start_closed_group_supervisor(cfg)
+        process.send(ready, result)
+        process.sleep(600_000)
+      })
+    let assert Ok(Ok(_supervisor)) = process.receive(ready, within: 5000)
+    let assert Some(runtime) = closed_group_global.get_runtime()
+
+    let assert Ok(access_pid) = process.subject_owner(runtime.access)
+    process.kill(access_pid)
+    process.sleep(1000)
+    let assert Some(after_access) = closed_group_global.get_runtime()
+    case cg_runtime.gate(after_access, "telegram", "1", "1", "oi") {
+      cg_types.Allowed(_) -> Nil
+      _ -> should.fail()
+    }
+
+    let assert Ok(budget_pid) = process.subject_owner(after_access.budget)
+    process.kill(budget_pid)
+    process.sleep(1000)
+    let assert Some(after_budget) = closed_group_global.get_runtime()
+    case cg_runtime.gate(after_budget, "telegram", "1", "1", "oi") {
+      cg_types.Allowed(_) -> Nil
+      _ -> should.fail()
+    }
+
+    let assert Ok(ledger_pid) = process.subject_owner(after_budget.ledger)
+    process.kill(ledger_pid)
+    process.sleep(1000)
+    let assert Some(after_ledger) = closed_group_global.get_runtime()
+    case cg_runtime.gate(after_ledger, "telegram", "1", "1", "oi") {
+      cg_types.Allowed(_) -> Nil
+      _ -> should.fail()
+    }
+  })
+}
+
+pub fn audit_principal_filter_test() {
+  with_runtime(config_with_access(["telegram:1"], [], []), fn(runtime) {
+    let _ = cg_runtime.gate(runtime, "telegram", "999", "999", "no")
+    let _ = cg_runtime.gate(runtime, "telegram", "888", "888", "no")
+    case
+      cg_runtime.gate(runtime, "telegram", "1", "1", "/auditoria telegram:999")
+    {
+      cg_types.Reply(text) -> {
+        should.be_true(string.contains(text, "telegram:999"))
+        should.equal(string.contains(text, "telegram:888"), False)
+      }
+      _ -> should.fail()
+    }
+  })
 }

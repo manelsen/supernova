@@ -117,6 +117,14 @@ pub fn get_audit() -> Option(audit_actor.AuditLog) {
   get_typed(audit_key)
 }
 
+/// Current clock in milliseconds; zero when no policy runtime is published.
+pub fn now() -> Int {
+  case get_typed(clock_key) {
+    Some(clock) -> clock()
+    None -> 0
+  }
+}
+
 fn get_typed(key: String) -> Option(a) {
   case global_has(key) {
     True -> Some(global_get(key))

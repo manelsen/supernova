@@ -207,6 +207,12 @@ fn fail_closed_component(
   principal_id: String,
   component: String,
 ) -> Nil {
+  io.println(
+    "error: fail_closed component="
+    <> component
+    <> " principal="
+    <> principal_id,
+  )
   audit_action(
     runtime,
     principal_id,
@@ -675,7 +681,10 @@ fn dispatch_alert(
   case alerts_actor.take(runtime.alerts, kind, subject, runtime.clock()) {
     False -> Nil
     True -> {
-      let admins = access_actor.list_admins(runtime.access)
+      let admins = case access_actor.list_admins(runtime.access) {
+        [] -> runtime.config.access.admins
+        admins -> admins
+      }
       list.each(admins, fn(admin) { runtime.send_alert(admin, text) })
     }
   }
