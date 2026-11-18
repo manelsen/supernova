@@ -46,6 +46,9 @@ import supernova/core/workspace_policy/types as policy_types
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn ffi_current_timestamp() -> Int
 
+@external(erlang, "supernova_syscall_ffi", "unique_id")
+fn ffi_unique_id() -> Int
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -58,7 +61,7 @@ pub type SyscallMessage {
   /// reply carries the executor: the tool runs in the caller's process, never
   /// inside the gateway, so a slow tool cannot hold other principals.
   AuthorizeTool(
-    reply_to: Subject(Result(#(String, ToolExecutor), String)),
+    reply_to: Subject(Result(String, String)),
     principal_id: String,
     role: String,
     tool_name: String,
@@ -72,6 +75,7 @@ pub type SyscallMessage {
   CancelToolClaim(reply_to: Subject(Nil), reservation_id: String)
   /// Report the outcome of an authorized tool call (audit only).
   ToolCompleted(
+    reservation_id: String,
     principal_id: String,
     tool_name: String,
     result: Result(String, String),
@@ -101,6 +105,10 @@ type ToolReservation {
   ToolReservation(principal_id: String, tool_name: String, expires_at: Int)
 }
 
+type ClaimedTool {
+  ClaimedTool(principal_id: String, charged_at: Int)
+}
+
 const tool_reservation_ttl_ms = 5000
 
 fn active_reservations(
@@ -108,6 +116,17 @@ fn active_reservations(
   now: Int,
 ) -> Dict(String, ToolReservation) {
   dict.filter(reservations, fn(_, reservation) { reservation.expires_at > now })
+}
+
+fn same_hour_bucket(first: Int, second: Int) -> Bool {
+  hour_bucket(first) == hour_bucket(second)
+}
+
+fn hour_bucket(timestamp: Int) -> Int {
+  case int.divide(timestamp, 3_600_000) {
+    Ok(bucket) -> bucket
+    Error(_) -> 0
+  }
 }
 
 fn reserved_for(
@@ -130,7 +149,7 @@ type ActorState {
     capability_manifests: Dict(String, cap_types.CapabilityManifest),
     tool_executor: fn(String, String) -> Result(String, String),
     tool_reservations: Dict(String, ToolReservation),
-    claimed_tools: Dict(String, String),
+    claimed_tools: Dict(String, ClaimedTool),
   )
 }
 
@@ -460,7 +479,7 @@ fn authorize_tool(
   tool_name: String,
   args: String,
   timestamp: Int,
-) -> #(Result(#(String, ToolExecutor), String), ActorState) {
+) -> #(Result(String, String), ActorState) {
   // 1. Capability manifest
   case capability_denied(actor_state.capability_manifests, role, tool_name) {
     True -> {
@@ -530,11 +549,7 @@ fn authorize_tool(
               )
             }
             Ok(_) -> {
-              let reservation_id =
-                "tool:"
-                <> int.to_string(ffi_current_timestamp())
-                <> ":"
-                <> int.to_string(dict.size(reservations))
+              let reservation_id = "tool:" <> int.to_string(ffi_unique_id())
               let reservation =
                 ToolReservation(
                   principal_id: principal_id,
@@ -544,7 +559,7 @@ fn authorize_tool(
               // Execution is charged only when the caller claims the
               // reservation. Unclaimed authorizations expire for free.
               #(
-                Ok(#(reservation_id, actor_state.tool_executor)),
+                Ok(reservation_id),
                 ActorState(
                   ..actor_state,
                   tool_reservations: dict.insert(
@@ -598,28 +613,53 @@ fn handle_message(
           )
         }
         Ok(reservation) -> {
-          case actor_state.budget_policy {
+          let charge = case actor_state.budget_policy {
             Some(policy) ->
-              budget_actor.record_consumption(
+              budget_actor.try_record_consumption(
                 policy,
                 reservation.principal_id,
                 budget_types.BudgetToolCallsHourly,
                 1,
               )
-            None -> Nil
+            None -> Ok(Nil)
           }
-          actor.send(reply_to, Ok(actor_state.tool_executor))
-          actor.continue(
-            ActorState(
-              ..actor_state,
-              tool_reservations: dict.delete(reservations, reservation_id),
-              claimed_tools: dict.insert(
-                actor_state.claimed_tools,
-                reservation_id,
+          case charge {
+            Ok(_) -> {
+              actor.send(reply_to, Ok(actor_state.tool_executor))
+              actor.continue(
+                ActorState(
+                  ..actor_state,
+                  tool_reservations: dict.delete(reservations, reservation_id),
+                  claimed_tools: dict.insert(
+                    actor_state.claimed_tools,
+                    reservation_id,
+                    ClaimedTool(
+                      principal_id: reservation.principal_id,
+                      charged_at: timestamp,
+                    ),
+                  ),
+                ),
+              )
+            }
+            Error(_) -> {
+              audit_syscall(
+                actor_state.audit_log,
                 reservation.principal_id,
-              ),
-            ),
-          )
+                "tool_claim",
+                reservation.tool_name,
+                audit_types.AuditDenied,
+                "budget unavailable",
+                timestamp,
+              )
+              actor.send(
+                reply_to,
+                Error("budget unavailable; tool call refused"),
+              )
+              actor.continue(
+                ActorState(..actor_state, tool_reservations: reservations),
+              )
+            }
+          }
         }
       }
     }
@@ -638,16 +678,19 @@ fn handle_message(
           )
         Error(_) ->
           case dict.get(actor_state.claimed_tools, reservation_id) {
-            Ok(principal_id) -> {
-              case actor_state.budget_policy {
-                Some(policy) ->
+            Ok(ClaimedTool(principal_id, charged_at)) -> {
+              case
+                actor_state.budget_policy,
+                same_hour_bucket(charged_at, ffi_current_timestamp())
+              {
+                Some(policy), True ->
                   budget_actor.record_consumption(
                     policy,
                     principal_id,
                     budget_types.BudgetToolCallsHourly,
                     -1,
                   )
-                None -> Nil
+                _, _ -> Nil
               }
               ActorState(
                 ..actor_state,
@@ -664,7 +707,7 @@ fn handle_message(
       actor.continue(next_state)
     }
 
-    ToolCompleted(principal_id, tool_name, result, timestamp) -> {
+    ToolCompleted(reservation_id, principal_id, tool_name, result, timestamp) -> {
       let #(audit_result, details) = case result {
         Ok(_) -> #(audit_types.AuditSuccess, "ok")
         Error(reason) -> #(audit_types.AuditFailure, reason)
@@ -678,7 +721,12 @@ fn handle_message(
         details,
         timestamp,
       )
-      actor.continue(actor_state)
+      actor.continue(
+        ActorState(
+          ..actor_state,
+          claimed_tools: dict.delete(actor_state.claimed_tools, reservation_id),
+        ),
+      )
     }
 
     PurgeExpiredReservations(reply_to, now) -> {
@@ -839,13 +887,14 @@ pub fn invoke_tool(
   {
     Error(_) -> Error("kernel unavailable; tool call refused")
     Ok(Error(reason)) -> Error(reason)
-    Ok(Ok(#(reservation_id, _))) ->
+    Ok(Ok(reservation_id)) ->
       case safe_call.call(gw, 2000, ClaimTool(_, reservation_id)) {
         Ok(Ok(execute)) -> {
           let result = execute(tool_name, args)
           process.send(
             gw,
             ToolCompleted(
+              reservation_id,
               principal_id,
               tool_name,
               result,
@@ -877,7 +926,7 @@ pub fn authorize_tool_call(
   role: String,
   tool_name: String,
   args: String,
-) -> Result(#(String, ToolExecutor), String) {
+) -> Result(String, String) {
   case
     safe_call.call(gw, 2000, AuthorizeTool(
       _,

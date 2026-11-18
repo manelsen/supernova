@@ -5,6 +5,7 @@
 
 import gleam/dict
 import gleam/erlang/process
+import gleam/list
 import gleam/option
 import gleeunit
 import gleeunit/should
@@ -108,7 +109,7 @@ fn claim_gateway(
 
 pub fn unclaimed_tool_authorization_does_not_charge_test() {
   let #(gateway, budget) = claim_gateway(1)
-  let assert Ok(#(reservation_id, _execute)) =
+  let assert Ok(reservation_id) =
     actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
 
   budget_actor.get_consumption(
@@ -135,7 +136,7 @@ pub fn unclaimed_tool_authorization_does_not_charge_test() {
 pub fn parallel_authorizations_share_one_credit_test() {
   let #(gateway, budget) = claim_gateway(1)
 
-  let assert Ok(#(reservation_id, _)) =
+  let assert Ok(reservation_id) =
     actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
   actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
   |> should.be_error()
@@ -151,7 +152,7 @@ pub fn parallel_authorizations_share_one_credit_test() {
 
 pub fn expired_tool_authorization_does_not_charge_test() {
   let #(gateway, budget) = claim_gateway(1)
-  let assert Ok(#(reservation_id, _)) =
+  let assert Ok(reservation_id) =
     actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
 
   actor.expire_tool_reservations_for_test(gateway, 9_999_999_999_999)
@@ -555,7 +556,7 @@ pub fn multiple_syscalls_increment_count_test() {
 
 pub fn cancelled_claim_refunds_budget_test() {
   let #(gateway, budget) = claim_gateway(1)
-  let assert Ok(#(reservation_id, _)) =
+  let assert Ok(reservation_id) =
     actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
 
   let assert Ok(_) = actor.claim_tool_call(gateway, reservation_id)
@@ -575,6 +576,72 @@ pub fn cancelled_claim_refunds_budget_test() {
   |> should.equal(0)
 
   actor.claim_tool_call(gateway, reservation_id) |> should.be_error()
+
+  actor.stop(gateway)
+  budget_actor.stop(budget)
+}
+
+pub fn thousand_tool_reservations_have_unique_ids_test() {
+  let #(gateway, budget) = claim_gateway(-1)
+  let first =
+    list.repeat(Nil, 500)
+    |> list.map(fn(_) {
+      let assert Ok(reservation_id) =
+        actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+      reservation_id
+    })
+  list.take(first, 20)
+  |> list.each(fn(reservation_id) {
+    let assert Ok(_) = actor.claim_tool_call(gateway, reservation_id)
+  })
+  actor.expire_tool_reservations_for_test(gateway, 9_999_999_999_999)
+  let second =
+    list.repeat(Nil, 500)
+    |> list.map(fn(_) {
+      let assert Ok(reservation_id) =
+        actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+      reservation_id
+    })
+  let ids = list.append(first, second)
+  let unique = dict.from_list(list.map(ids, fn(id) { #(id, True) }))
+  dict.size(unique) |> should.equal(1000)
+
+  actor.stop(gateway)
+  budget_actor.stop(budget)
+}
+
+pub fn claim_is_refused_when_budget_is_unavailable_test() {
+  let #(gateway, budget) = claim_gateway(1)
+  let assert Ok(reservation_id) =
+    actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+
+  budget_actor.stop(budget)
+  process.sleep(20)
+
+  actor.claim_tool_call(gateway, reservation_id)
+  |> should.equal(Error("budget unavailable; tool call refused"))
+
+  actor.stop(gateway)
+}
+
+pub fn completed_tool_cannot_be_refunded_test() {
+  let #(gateway, budget) = claim_gateway(1)
+  let assert Ok(reservation_id) =
+    actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+  let assert Ok(_) = actor.claim_tool_call(gateway, reservation_id)
+
+  process.send(
+    gateway,
+    actor.ToolCompleted(reservation_id, "agent_1", "web", Ok("ran"), 1),
+  )
+  actor.cancel_tool_claim(gateway, reservation_id)
+
+  budget_actor.get_consumption(
+    budget,
+    "agent_1",
+    budget_types.BudgetToolCallsHourly,
+  )
+  |> should.equal(1)
 
   actor.stop(gateway)
   budget_actor.stop(budget)
