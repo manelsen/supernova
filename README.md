@@ -12,7 +12,7 @@ Imagine you have a team of AI assistants. Each one can:
 - Run shell commands
 - Call external APIs (GitHub, your database, web search)
 - Browse the internet
-- Talk to users on Discord, Telegram, Slack, or any of 9 messaging platforms
+- Talk to users on Discord, Telegram, Slack, or any of 9 messaging platforms (Telegram and Discord are the supported closed-group channels; the rest are experimental)
 
 Now imagine running **100 users simultaneously**, each with their own AI assistant, all sharing the same machine — but one user cannot read another user's files, and each assistant has a monthly budget so a buggy prompt can't drain your API account.
 
@@ -435,3 +435,11 @@ Gleam gives you Erlang's actor model with a modern, friendly syntax. You get:
 ## License
 
 MIT
+
+
+## Closed group and supported channels
+
+Supernova v0.4.0 runs as a **closed group**. A new instance denies everyone
+until `access.admins` / `access.members` are configured. Telegram and Discord
+are supported end to end; the other seven channels are experimental and warn
+at boot. See [DEPLOY.md](DEPLOY.md#grupo-fechado).

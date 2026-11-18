@@ -1,7 +1,7 @@
 # Supernova Implementation Status
 
-**Last updated:** 2026-11-17
-**Version:** `0.3.0` (`gleam.toml`)
+**Last updated:** 2026-11-18
+**Version:** `0.4.0` (`gleam.toml`)
 **Toolchain:** Erlang `28.5.0.8` / Gleam `1.19.2` (`.tool-versions`)
 
 ---
@@ -12,8 +12,8 @@
 |-------|--------|-------|
 | `gleam format --check src test` | Passing | Clean formatting |
 | `gleam build --warnings-as-errors` | Passing | 0 warnings |
-| `gleam test` | `1998` passed, `0` failed | Offline suite (`SUPERNOVA_BROWSER_TESTS=1` opt-in for live Chromium) |
-| `make coverage` | `74.49%` (`8929/11987` lines) | Exceeds `73.00%` CI gate (`--threshold 73`) |
+| `gleam test` | See `docs/B1_REPORT.md` | Offline suite (`SUPERNOVA_BROWSER_TESTS=1` opt-in for live Chromium) |
+| `make coverage` | `75.07%` (`10093/13444` lines) | Exceeds `75.00%` CI gate (`--threshold 75`) |
 | Docker smoke test | Verified (`HTTP 200` on `/health/live`) | Tested with offline `ollama` config (`test/fixtures/docker/supernova.yaml`) |
 | Audit status (`audit/STATUS_2026-11.md`) | `20 RESOLVIDO`, `5 ACEITO`, `0 ABERTO` | Deferred items tracked for PRD B |
 
@@ -55,3 +55,18 @@ The following items are accepted (`ACEITO`) in [audit/STATUS_2026-11.md](audit/S
 2. **Real Chromium / Playwright browser E2E suite** (`3.4`, `SUPERNOVA_BROWSER_TESTS=1`) — automated CI stage with Playwright + Chromium installed
 3. **Live external provider & messaging API smoke tests** (`2.1`, `2.2`) — real token E2E validation beyond offline mocked/loopback HTTP tests
 4. **Coverage expansion toward 85%** — raising coverage on low-hit network/provider modules (`minimax`, `pgvector`, `channel/registry`, adapters) once live harnesses exist in PRD B
+
+
+## Closed-Group Channel Support (v0.4.0)
+
+| Channel | Support | Notes |
+|---|---|---|
+| Telegram | Supported | Access, budget, capabilities, rate limit, `/eu`, `/uso`, `/acesso`, `/teto`, `/auditoria`, `/eu` chat discovery, leave unauthorized groups |
+| Discord | Supported | Same closed-group pipeline for DMs and servers; `/eu` chat discovery |
+| Slack | Experimental | Not covered by closed-group end-to-end tests |
+| Matrix | Experimental | Not covered by closed-group end-to-end tests |
+| Lark | Experimental | Not covered by closed-group end-to-end tests |
+| Google Chat | Experimental | Not covered by closed-group end-to-end tests |
+| Mattermost | Experimental | Not covered by closed-group end-to-end tests |
+| WeChat Work | Experimental | Not covered by closed-group end-to-end tests |
+| WhatsApp | Experimental | Not covered by closed-group end-to-end tests |
