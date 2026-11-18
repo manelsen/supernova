@@ -243,8 +243,9 @@ revisão. Cada linha tem teste automatizado no PR "B1.1".
 
 | Rodada | Onde | Achados | Resolução |
 |---|---|---|---|
-| 1 | PR #12, revisão `5956360197` | 8 | Recheck de autorização antes do retry de saída (`f980fd9`) e cancelamento de claim cobrado (`54e1803`) corrigidos. Migração legada, timeout duro, reserva de saída, TTL de 10 min e fila de retry seguem o desenho explícito do PRD e estão em "Riscos aceitos". Commit antes do push atendido. |
-| 2 | PR #12, revisão `5956755462` | 12 | `bf3a25c`: YAML preservado quando a env do Compose está vazia; submissão de lane expirada não começa; log de recusa fora do receive; DEPLOY corrigido (revogação e volume). `7971918`: overrides armazenados sobrevivem a comandos não relacionados. Aviso de fila cheia, timeout duro e migração v1 seguem o PRD e estão em Riscos aceitos. |
+| 1 | PR #12, revisão `5955771071` | 18 | Revisão anterior ao commit final da Fase A; os achados de acesso, gateway, entrega e concorrência foram cobertos por A-01…A-10 e por `b71e09d`. |
+| 2 | PR #12, revisão `5956360197` | 8 | Recheck de autorização antes do retry de saída (`f980fd9`) e cancelamento de claim cobrado (`54e1803`) corrigidos. Migração legada, timeout duro, reserva de saída, TTL de 10 min e fila de retry seguem o desenho explícito do PRD e estão em "Riscos aceitos". Commit antes do push atendido. |
+| 3 | PR #12, revisão `5956755462` | 12 | `bf3a25c`: YAML preservado quando a env do Compose está vazia; submissão de lane expirada não começa; log de recusa fora do receive; DEPLOY corrigido (revogação e volume). `7971918`: overrides armazenados sobrevivem a comandos não relacionados. Aviso de fila cheia, timeout duro e migração v1 seguem o PRD e estão em Riscos aceitos. |
 | 3 | PR "B1.1" | a preencher | a preencher |
 
 ## Fechamento
@@ -255,3 +256,7 @@ revisão. Cada linha tem teste automatizado no PR "B1.1".
 - Os workflows de CI só disparam para base `master`; por isso o PR empilhado
   não tem checks próprios. A validação local e os checks verdes do PR #12
   cobrem a mesma árvore de código na base.
+
+As três rodadas acima foram concluídas. Uma revisão completa adicional foi
+solicitada no PR #12 em 13:05 UTC; ela não bloqueia o fechamento e, quando
+chegar, deve ser tratada como rodada 4.
