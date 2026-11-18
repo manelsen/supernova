@@ -1,3 +1,4 @@
+import gleam/dict
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
@@ -2673,4 +2674,28 @@ pub fn hard_turn_timeout_releases_the_next_turn_test() {
   process.receive(started, within: 50) |> should.equal(Error(Nil))
   let assert Ok(_) = process.receive(started, within: 1000)
   registry.stop_channels_with_timeout(channel_registry, 1000)
+}
+
+pub fn stop_channels_stops_ingress_before_adapters_test() {
+  let order = process.new_subject()
+  let adapter =
+    port.ChannelAdapter(
+      name: "test",
+      send: fn(_) { Ok(Nil) },
+      stop_ingress: fn() { process.send(order, "ingress") },
+      stop: fn() { process.send(order, "stop") },
+    )
+  let registry =
+    registry.ChannelRegistry(
+      id: "stop-order-test",
+      channels: dict.from_list([#("test", adapter)]),
+      streams: dict.new(),
+    )
+
+  registry.stop_channels_with_timeout(registry, 10)
+
+  let assert Ok(first) = process.receive(order, within: 1000)
+  let assert Ok(second) = process.receive(order, within: 1000)
+  first |> should.equal("ingress")
+  second |> should.equal("stop")
 }

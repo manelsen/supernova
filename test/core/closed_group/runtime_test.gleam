@@ -78,6 +78,7 @@ fn test_runtime(
     )
   let assert Ok(ledger) =
     ledger_actor.start_persistent_with_clock(root <> "/ledger", fn() { now })
+  closed_group_global.set_ledger(ledger)
   let assert Ok(rate) = rate_limiter.start_with_clock(fn() { now })
   let assert Ok(audit) = audit_actor.start(root <> "/audit")
   let assert Ok(instance) =
@@ -757,10 +758,13 @@ pub fn abuse_and_fail_closed_alerts_reach_every_admin_test() {
 
       access_actor.stop(runtime.access)
       let _ = cg_runtime.gate(runtime, "telegram", "123", "123", "oi")
-      let assert Ok(#(_, failed_text)) =
-        process.receive(alert_recorder, within: 1000)
-      string.contains(failed_text, "Componente indisponível")
-      |> should.equal(True)
+      // With access unavailable there is no effective recipient list: the
+      // alert is dropped and audited, never sent to YAML admins.
+      process.receive(alert_recorder, within: 500)
+      |> should.equal(Error(Nil))
+      audit_actor.get_all(runtime.audit)
+      |> list.any(fn(entry) { entry.operation == "alert_dropped" })
+      |> should.be_true()
     },
   )
 }
@@ -944,7 +948,7 @@ pub fn network_failure_once_is_unconfirmed_and_retried_test() {
         )
       let assert Ok(_) =
         executor.run_with_context(
-          [provider.user_message("simulate [mock-network-fail-once]")],
+          [provider.user_message("simulate [mock-network-fail-once][cap]")],
           config,
           [],
           context,
@@ -1034,7 +1038,7 @@ pub fn retry_second_attempt_can_be_denied_by_cap_test() {
       )
     case
       executor.run_with_context(
-        [provider.user_message("simulate [mock-network-fail-once]")],
+        [provider.user_message("simulate [mock-network-fail-once][cap]")],
         config,
         [],
         context,
@@ -1068,7 +1072,7 @@ pub fn usage_retry_uses_live_ledger_test() {
       let deadline = now + 4000
       wait_for_ledger_usage(new_ledger, deadline, runtime.clock)
 
-      closed_group_global.set_ledger(stopped_ledger)
+      closed_group_global.clear_runtime()
       ledger_actor.stop(new_ledger)
     },
   )
