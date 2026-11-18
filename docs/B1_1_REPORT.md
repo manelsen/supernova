@@ -7,10 +7,10 @@ depois do merge do PR #12.
 
 | # | Defeito | Correção | Teste |
 |---|---|---|---|
-| R-01 | Reserva usava o preço do primeiro provider de `dict.values` | `admit_llm` recebe provider/modelo e usa `model_price` do modelo roteado | `admission_uses_routed_model_price_test` |
+| R-01 | Reserva usava o preço do primeiro provider de `dict.values` | `admit_llm` recebe provider/modelo e usa `model_price` do modelo roteado | `admission_uses_routed_model_price_test`, `admission_reserves_routed_model_estimate_test` |
 | R-02 | Uma reserva cobria até três tentativas; falha de rede liberava custo | Cada tentativa tem `:aN` e admissão própria; `NetworkError` vira uso estimado `:unconfirmed`; 4xx/5xx liberam | `network_failure_once_is_unconfirmed_and_retried_test`, `retry_429_releases_every_reservation_test`, `retry_second_attempt_can_be_denied_by_cap_test` |
 | R-03 | Retries usavam o handle de ledger capturado | `get_ledger` no global é resolvido em cada tentativa e no release final | `usage_retry_uses_live_ledger_test` |
-| R-04 | Admissão contava só reservas do dia informado | Ledger calcula o dia e conta todas as reservas abertas | `open_reservations_count_across_day_boundary_test` |
+| R-04 | Admissão contava só reservas do dia informado | Ledger calcula o dia e conta todas as reservas abertas | `open_reservations_count_across_day_boundary_test`, `settled_reservation_frees_admission_after_day_boundary_test` |
 | R-05 | Falha de `list_admins` caía para os admins do YAML | `try_list_admins`; `Ok([])` avisa, `Error` audita `alert_dropped` e não envia | `alerts_only_reach_effective_admins_test`, `alert_is_dropped_when_access_is_unavailable_test` |
 | R-06 | ID de reserva repetia; executor vinha antes da cobrança; claimed_tools crescia | `unique_integer` no ID; claim só após `try_record_consumption`; `ToolCompleted` retira o claim; estorno só na mesma janela horária | `thousand_tool_reservations_have_unique_ids_test`, `claim_is_refused_when_budget_is_unavailable_test`, `completed_tool_cannot_be_refunded_test`, `late_claim_retry_charges_once_test` |
 | R-07 | Drain começava com polling ativo e reabria após timeout | `stop_ingress` em cada adaptador antes do drain; Telegram espera o lote atual; prefixo continua fechado após timeout; `undrain` explícito; validação de argumentos | `drain_validates_arguments_test`, `drain_timeout_keeps_prefix_closed_test`, `stop_channels_stops_ingress_before_adapters_test` |
@@ -47,7 +47,7 @@ depois do merge do PR #12.
 ## Gates
 
 - Baseline antes da rodada: 2201 testes, 75,81% de cobertura; Gleam 1.19.2.
-- Final: 2220 testes, 0 falhas; cobertura de linha 75,99% (10659/14027).
+- Final: 2222 testes, 0 falhas; cobertura de linha 76,00% (10664/14032).
 
 ## Commits da rodada 2
 
@@ -71,3 +71,11 @@ depois do merge do PR #12.
   não cobra de novo. O caso de valores do teste de admissão era sobre o texto
   do PRD; o teste implementado usa valores que passam.
 - Review solicitado no head final; threads não foram respondidas nem resolvidas.
+
+## Fechamento pós-auditoria
+
+- `042eb0f` fecha lacunas de aceite: estimativa exata do modelo roteado,
+  soma diária com `:unconfirmed`, zero reservas após 429, liquidação na virada
+  do dia e contador de abuso no callback negado.
+- `aab29e8` cobre o retry tardio de claim sem segunda cobrança.
+- `255e2c8` libera a reserva não confirmada no ledger vivo.
