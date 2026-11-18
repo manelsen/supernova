@@ -172,7 +172,7 @@ pub type RunContext {
     principal_id: String,
     role: String,
     before_llm: Option(fn() -> Result(Nil, String)),
-    admit_llm: Option(fn(String, Int) -> Result(Nil, String)),
+    admit_llm: Option(fn(String, String, String, Int) -> Result(Nil, String)),
     on_llm_usage: Option(fn(String, String, String, Int, Int) -> Nil),
     on_llm_failure: Option(fn(String) -> Nil),
     invoke_tool: Option(fn(String, String) -> Result(String, String)),
@@ -556,11 +556,13 @@ fn next_call_id(depth: Int) -> String {
 fn admit_llm(
   context: RunContext,
   call_id: String,
+  provider_name: String,
+  model: String,
   prompt_tokens: Int,
 ) -> Result(Nil, String) {
   case context.admit_llm {
     None -> Ok(Nil)
-    Some(admit) -> admit(call_id, prompt_tokens)
+    Some(admit) -> admit(call_id, provider_name, model, prompt_tokens)
   }
 }
 
@@ -651,7 +653,15 @@ fn run_provider_call(
 ) -> Result(provider.ChatResponse, ExecutorError) {
   let call_id = next_call_id(depth)
   let prompt_tokens = prompt_token_estimate(messages, tools)
-  case admit_llm(context, call_id, prompt_tokens) {
+  case
+    admit_llm(
+      context,
+      call_id,
+      config.name,
+      config.default_model,
+      prompt_tokens,
+    )
+  {
     Error(reason) -> Error(PolicyDenied(message: reason))
     Ok(Nil) ->
       case

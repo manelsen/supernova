@@ -537,8 +537,15 @@ pub fn run_context(
     before_llm: Some(fn() {
       precheck(runtime, context.principal_id, runtime.clock())
     }),
-    admit_llm: Some(fn(call_id, prompt_tokens) {
-      admit_llm_call(runtime, context.principal_id, call_id, prompt_tokens)
+    admit_llm: Some(fn(call_id, provider_name, model, prompt_tokens) {
+      admit_llm_call(
+        runtime,
+        context.principal_id,
+        call_id,
+        provider_name,
+        model,
+        prompt_tokens,
+      )
     }),
     on_llm_usage: Some(fn(call_id, provider_name, model, prompt, completion) {
       record_llm_usage(
@@ -591,6 +598,8 @@ fn admit_llm_call(
   runtime: types.Runtime,
   principal_id: String,
   call_id: String,
+  provider_name: String,
+  model: String,
   prompt_tokens: Int,
 ) -> Result(Nil, String) {
   let timezone = runtime.config.instance_budget.timezone
@@ -600,11 +609,7 @@ fn admit_llm_call(
       runtime.instance_budget,
       runtime.config.instance_budget.daily_usd,
     )
-  let default_model = case dict.values(runtime.config.providers) {
-    [] -> ""
-    [provider_config, ..] -> option.unwrap(provider_config.model, "")
-  }
-  let price = model_price(runtime, default_model)
+  let price = model_price(runtime, model)
   let estimate =
     pricing.cost_usd(
       price,
@@ -622,7 +627,7 @@ fn admit_llm_call(
         "fail_closed",
         "ledger",
         audit_types.AuditFailure,
-        "LLM admission failed: " <> reason,
+        "provider=" <> provider_name <> "; LLM admission failed: " <> reason,
       )
       Error(reason)
     }

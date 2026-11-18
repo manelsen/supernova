@@ -874,3 +874,48 @@ pub fn audit_principal_filter_test() {
     }
   })
 }
+
+pub fn admission_uses_routed_model_price_test() {
+  let base = config_with_access(["telegram:1"], ["telegram:123"], [])
+  let cheap = config.PricingEntry(input_per_mtok: 0.01, output_per_mtok: 0.01)
+  let expensive =
+    config.PricingEntry(input_per_mtok: 1000.0, output_per_mtok: 2000.0)
+  let provider = fn(model: String) {
+    config.ProviderConfig(
+      provider: config.OpenAI,
+      api_key: None,
+      base_url: None,
+      model: Some(model),
+      timeout_ms: 1000,
+    )
+  }
+  let cfg =
+    config.Config(
+      ..base,
+      providers: dict.from_list([
+        #("cheap", provider("cheap-model")),
+        #("mock", provider("expensive-model")),
+      ]),
+      pricing: config.PricingConfig(
+        default: cheap,
+        models: dict.from_list([#("expensive-model", expensive)]),
+      ),
+      instance_budget: config.InstanceBudgetConfig(
+        daily_usd: 0.05,
+        timezone: "UTC",
+        reserve_output_tokens: 1000,
+      ),
+    )
+  with_runtime(cfg, fn(runtime) {
+    let context =
+      cg_runtime.run_context(
+        runtime,
+        cg_types.PrincipalContext(principal_id: "telegram:123", role: "member"),
+      )
+    let assert Some(admit) = context.admit_llm
+    admit("call-cheap", "mock", "cheap-model", 100)
+    |> should.be_ok()
+    admit("call-expensive", "mock", "expensive-model", 100)
+    |> should.be_error()
+  })
+}
