@@ -315,7 +315,13 @@ fn run_loop(
                 selected_config.default_model,
                 elapsed,
               )
-              record_llm_usage(context, selected_config, messages, response)
+              record_llm_usage(
+                context,
+                selected_config,
+                messages,
+                response,
+                tools,
+              )
               // Classify the outcome
               let outcome = turn_outcome.classify(response)
 
@@ -403,7 +409,7 @@ fn run_loop_inner_with_checkpoint(
             selected_config.default_model,
             elapsed,
           )
-          record_llm_usage(context, selected_config, messages, response)
+          record_llm_usage(context, selected_config, messages, response, tools)
           let outcome = turn_outcome.classify(response)
           case outcome {
             turn_outcome.TextResponse -> Ok(response)
@@ -558,10 +564,69 @@ fn estimate_tokens(text: String) -> Int {
   int.max(1, string.length(text) / 4)
 }
 
-fn prompt_token_estimate(messages: List(provider.ChatMessage)) -> Int {
-  messages
-  |> list.map(fn(message) { estimate_tokens(message.content) })
-  |> list.fold(0, fn(acc, value) { acc + value })
+fn prompt_token_estimate(
+  messages: List(provider.ChatMessage),
+  tools: List(provider.ToolDefinition),
+) -> Int {
+  let message_tokens =
+    messages
+    |> list.map(message_token_estimate)
+    |> list.fold(0, fn(acc, value) { acc + value })
+
+  let tool_tokens =
+    tools
+    |> list.map(tool_definition_tokens)
+    |> list.fold(0, fn(acc, value) { acc + value })
+
+  message_tokens + tool_tokens
+}
+
+fn message_token_estimate(message: provider.ChatMessage) -> Int {
+  let content = estimate_tokens(message.content)
+  let tool_calls = case message.tool_calls {
+    None -> 0
+    Some(calls) ->
+      calls
+      |> list.map(fn(call) {
+        estimate_tokens(call.name) + estimate_tokens(call.arguments)
+      })
+      |> list.fold(0, fn(acc, value) { acc + value })
+  }
+  content + tool_calls
+}
+
+fn tool_definition_tokens(tool: provider.ToolDefinition) -> Int {
+  let parameters =
+    tool.parameters
+    |> list.map(fn(parameter) {
+      estimate_tokens(parameter.param_type)
+      + estimate_tokens(parameter.name)
+      + estimate_tokens(parameter.description)
+    })
+    |> list.fold(0, fn(acc, value) { acc + value })
+  estimate_tokens(tool.name) + estimate_tokens(tool.description) + parameters
+}
+
+fn response_token_estimate(response: provider.ChatResponse) -> Int {
+  let tool_calls = case response.tool_calls {
+    None -> 0
+    Some(calls) ->
+      calls
+      |> list.map(fn(call) {
+        estimate_tokens(call.name) + estimate_tokens(call.arguments)
+      })
+      |> list.fold(0, fn(acc, value) { acc + value })
+  }
+  estimate_tokens(response.content) + tool_calls
+}
+
+/// Token estimates used by the usage callback (tests and diagnostics).
+pub fn estimate_usage_for_test(
+  messages: List(provider.ChatMessage),
+  response: provider.ChatResponse,
+  tools: List(provider.ToolDefinition),
+) -> #(Int, Int) {
+  #(prompt_token_estimate(messages, tools), response_token_estimate(response))
 }
 
 fn record_llm_usage(
@@ -569,6 +634,7 @@ fn record_llm_usage(
   config: provider.ProviderConfig,
   messages: List(provider.ChatMessage),
   response: provider.ChatResponse,
+  tools: List(provider.ToolDefinition),
 ) -> Nil {
   case context.on_llm_usage {
     None -> Nil
@@ -576,8 +642,8 @@ fn record_llm_usage(
       record(
         config.name,
         config.default_model,
-        prompt_token_estimate(messages),
-        estimate_tokens(response.content),
+        prompt_token_estimate(messages, tools),
+        response_token_estimate(response),
       )
   }
 }
