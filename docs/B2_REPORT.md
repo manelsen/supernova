@@ -100,3 +100,9 @@ Riscos aceitos e documentados:
 - `is_group` é aceito no payload do `sim`, mas o `port.ChannelMessage` não carrega esse campo; na prática todo chat `sim` passa pela checagem de `allowed_chats`, inclusive conversas privadas. O verificador recebe a allowlist efetiva por `SUPERNOVA_ALLOWLIST`.
 - O verificador lê `core.json`/`core.md` apenas para o teste de hash; nenhuma ferramenta recebe acesso a `self/`.
 - `priv/constellation/constellation.json` não foi criado: o conteúdo real é responsabilidade do mantenedor.
+
+## CI
+
+- Fase A: run `44386776428` (`Test Suite`), verde.
+- Fase B: run `44386882405` (`Test Suite`, `workflow_dispatch`), verde.
+- O workflow de CI só dispara automaticamente em PRs com base `master`; a Fase B foi verificada por dispatch manual no branch `feat/b2-fase-b`.
