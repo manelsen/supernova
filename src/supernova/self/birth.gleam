@@ -53,9 +53,9 @@ fn birth_from_constellation(
   now: Int,
   generate: fn(String) -> Result(String, String),
 ) -> Step {
-  case constellation.load(core.constellation_path()) {
-    Error(_) -> Unavailable
-    Ok(loaded) -> {
+  case constellation.load(core.constellation_path()), read_birth_template() {
+    Error(_), _ | _, Error(_) -> Unavailable
+    Ok(loaded), Ok(template) -> {
       let existing =
         core.existing_traits(data_dir)
         |> list.map(fn(ids) {
@@ -73,7 +73,7 @@ fn birth_from_constellation(
       case sampler.sample(loaded, now + phash(principal, 1_000_003), existing) {
         Error(_) -> BirthFailed
         Ok(sampled) -> {
-          let prompt = birth_prompt(loaded, sampled)
+          let prompt = birth_prompt(template, loaded, sampled)
           case generate(prompt) {
             Error(_) -> BirthFailed
             Ok(prose) ->
@@ -101,18 +101,23 @@ pub fn question() -> String {
   "Como você quer me chamar?"
 }
 
-fn birth_prompt(
-  loaded: constellation.Constellation,
-  sampled: sampler.Sampled,
-) -> String {
-  let template = case envoy.get("SUPERNOVA_BIRTH_PROMPT_PATH") {
+/// The birth prompt template. Without it there is no birth: a silent
+/// fallback would give agents a self shaped by a placeholder.
+fn read_birth_template() -> Result(String, String) {
+  let path = case envoy.get("SUPERNOVA_BIRTH_PROMPT_PATH") {
     Ok(path) -> path
     Error(_) -> "priv/constellation/birth_prompt.md"
   }
-  let base = case read_file(template) {
-    Ok(text) -> text
-    Error(_) -> provisional_prompt()
-  }
+  read_file(path)
+}
+
+/// Fill `{{traits}}` with the sampled traits; templates without the
+/// placeholder get the list appended.
+fn birth_prompt(
+  template: String,
+  loaded: constellation.Constellation,
+  sampled: sampler.Sampled,
+) -> String {
   let traits =
     sampled.traits
     |> list.map(fn(id) {
@@ -122,11 +127,10 @@ fn birth_prompt(
       }
     })
     |> string.join("\n")
-  base <> "\n\nTraços sorteados:\n" <> traits
-}
-
-fn provisional_prompt() -> String {
-  "PROVISÓRIO: escreva, em 2 a 4 frases, o núcleo em prosa desta agente, em primeira pessoa, a partir dos traços abaixo. Não escolha um nome."
+  case string.contains(template, "{{traits}}") {
+    True -> string.replace(template, "{{traits}}", traits)
+    False -> template <> "\n\nTraços sorteados:\n" <> traits
+  }
 }
 
 @external(erlang, "erlang", "phash2")

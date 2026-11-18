@@ -109,3 +109,46 @@ fn read_file(path: String) -> Result(String, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_test_file(path: String, content: String) -> Result(Nil, String)
+
+fn with_birth_prompt(path: String, body: fn() -> a) -> a {
+  let previous = envoy.get("SUPERNOVA_BIRTH_PROMPT_PATH")
+  use <- exception.defer(fn() {
+    case previous {
+      Ok(value) -> envoy.set("SUPERNOVA_BIRTH_PROMPT_PATH", value)
+      Error(_) -> envoy.unset("SUPERNOVA_BIRTH_PROMPT_PATH")
+    }
+  })
+  envoy.set("SUPERNOVA_BIRTH_PROMPT_PATH", path)
+  body()
+}
+
+// The generator echoes the prompt as the prose, so core.md shows what the
+// model received.
+pub fn birth_prompt_fills_traits_placeholder_test() {
+  with_constellation(fn(root) {
+    let template = root <> "/birth_prompt.md"
+    let assert Ok(_) =
+      write_test_file(template, "Antes.\n\n{{traits}}\n\nResponda apenas.")
+    with_birth_prompt(template, fn() {
+      let _ = birth.step(root, "sim:p", "oi", 1000, fn(prompt) { Ok(prompt) })
+      let assert Some(prompt) = core.read_prose(root, "sim:p")
+      string.contains(prompt, "{{traits}}") |> should.be_false()
+      string.starts_with(prompt, "Antes.\n\n- ") |> should.be_true()
+      string.ends_with(prompt, "\n\nResponda apenas.") |> should.be_true()
+      string.contains(prompt, "Traços sorteados") |> should.be_false()
+    })
+  })
+}
+
+pub fn birth_without_prompt_file_is_unavailable_test() {
+  with_constellation(fn(root) {
+    with_birth_prompt(root <> "/missing_birth_prompt.md", fn() {
+      birth.step(root, "sim:q", "oi", 1000, fn(_) { Ok("nunca") })
+      |> should.equal(birth.Unavailable)
+      core.exists(root, "sim:q") |> should.be_false()
+    })
+  })
+}
