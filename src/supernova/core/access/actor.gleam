@@ -317,12 +317,7 @@ fn commit_config(
   reply_to: Subject(Result(Nil, String)),
 ) -> actor.Next(State, AccessMessage) {
   let persisted =
-    pure.diff_persisted(
-      state.base,
-      new_config,
-      state.persisted.denied_notices,
-      state.persisted.chat_denied_notices,
-    )
+    pure.update_persisted(state.base, state.config, new_config, state.persisted)
   let new_state = State(..state, config: new_config, persisted: persisted)
   case persist_state(new_state) {
     Ok(_) -> {

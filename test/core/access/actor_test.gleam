@@ -410,3 +410,26 @@ pub fn chat_denial_notice_at_most_once_per_day_test() {
     actor.stop(second)
   })
 }
+
+pub fn stored_revocation_survives_unrelated_command_and_yaml_gap_test() {
+  with_temp_dir(fn(dir) {
+    let base = config([], ["telegram:A", "telegram:C"], [])
+
+    let assert Ok(first) = actor.start_with_clock(base, dir, fn() { 1000 })
+    first |> actor.remove_member("telegram:A") |> should.be_ok()
+    actor.stop(first)
+
+    // Operator temporarily removes A from YAML; the actor is restarted.
+    let assert Ok(second) =
+      actor.start_with_clock(config([], ["telegram:C"], []), dir, fn() { 2000 })
+    actor.check(second, "telegram:A") |> should.equal(Denied)
+    second |> actor.add_chat("telegram:-100") |> should.be_ok()
+    actor.stop(second)
+
+    // YAML restores A; the stored revocation must still win.
+    let assert Ok(third) = actor.start_with_clock(base, dir, fn() { 3000 })
+    actor.check(third, "telegram:A") |> should.equal(Denied)
+    actor.check(third, "telegram:C") |> should.equal(Allowed(Member))
+    actor.stop(third)
+  })
+}

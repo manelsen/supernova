@@ -383,6 +383,82 @@ pub fn diff_persisted(
   )
 }
 
+/// Update only the overrides touched by a command.
+///
+/// Recomputing every delta from the current effective config drops a stored
+/// revocation when the member is temporarily absent from both YAML and the
+/// effective list. This function adjusts `added`/`removed` from the previous
+/// and next effective lists, so unrelated overrides survive.
+pub fn update_persisted(
+  base: AccessConfig,
+  previous: AccessConfig,
+  next: AccessConfig,
+  persisted: PersistedState,
+) -> PersistedState {
+  let #(admins_added, admins_removed) =
+    adjust_list(
+      base.admins,
+      previous.admins,
+      next.admins,
+      persisted.added.admins,
+      persisted.removed.admins,
+    )
+  let #(members_added, members_removed) =
+    adjust_list(
+      base.members,
+      previous.members,
+      next.members,
+      persisted.added.members,
+      persisted.removed.members,
+    )
+  let #(chats_added, chats_removed) =
+    adjust_list(
+      base.allowed_chats,
+      previous.allowed_chats,
+      next.allowed_chats,
+      persisted.added.allowed_chats,
+      persisted.removed.allowed_chats,
+    )
+  PersistedState(
+    added: PersistedLists(
+      admins: admins_added,
+      members: members_added,
+      allowed_chats: chats_added,
+    ),
+    removed: PersistedLists(
+      admins: admins_removed,
+      members: members_removed,
+      allowed_chats: chats_removed,
+    ),
+    denied_notices: persisted.denied_notices,
+    chat_denied_notices: persisted.chat_denied_notices,
+  )
+}
+
+fn adjust_list(
+  base: List(String),
+  previous: List(String),
+  next: List(String),
+  added: List(String),
+  removed: List(String),
+) -> #(List(String), List(String)) {
+  let added =
+    list.fold(difference(next, previous), added, fn(acc, id) {
+      case list.contains(base, id) {
+        True -> list.filter(acc, fn(existing) { existing != id })
+        False -> insert_unique(acc, id)
+      }
+    })
+  let removed =
+    list.fold(difference(previous, next), removed, fn(acc, id) {
+      case list.contains(base, id) {
+        True -> insert_unique(acc, id)
+        False -> list.filter(acc, fn(existing) { existing != id })
+      }
+    })
+  #(added, removed)
+}
+
 fn new_persisted_decoder() -> decode.Decoder(PersistedState) {
   use added <- decode.field("added", persisted_lists_decoder())
   use removed <- decode.field("removed", persisted_lists_decoder())

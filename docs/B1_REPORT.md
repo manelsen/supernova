@@ -239,5 +239,5 @@ revisão. Cada linha tem teste automatizado no PR "B1.1".
 | Rodada | Onde | Achados | Resolução |
 |---|---|---|---|
 | 1 | PR #12, revisão `5956360197` | 8 | Recheck de autorização antes do retry de saída (`f980fd9`) e cancelamento de claim cobrado (`54e1803`) corrigidos. Migração legada, timeout duro, reserva de saída, TTL de 10 min e fila de retry seguem o desenho explícito do PRD e estão em "Riscos aceitos". Commit antes do push atendido. |
-| 2 | PR "B1.1" | a preencher | a preencher |
+| 2 | PR #12, revisão `5956755462` | 12 | `bf3a25c`: YAML preservado quando a env do Compose está vazia; submissão de lane expirada não começa; log de recusa fora do receive; DEPLOY corrigido (revogação e volume). Aviso de fila cheia, timeout duro e revisão da migração v1 seguem o PRD e estão em Riscos aceitos. |
 | 3 | PR "B1.1" | a preencher | a preencher |
