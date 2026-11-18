@@ -2625,3 +2625,52 @@ pub fn oversized_stream_update_is_ignored_test() {
 
   registry.stop_channels(channel_registry)
 }
+
+fn test_hooks_with_timeouts(
+  telegram_updates: List(telegram.Update),
+  recorder: process.Subject(registry.OutboundRecord),
+  stream_timeout_ms: Int,
+  turn_hard_timeout_ms: Int,
+) -> registry.StartHooks {
+  registry.StartHooks(
+    discord_events: [],
+    telegram_updates: telegram_updates,
+    slack_inbound_events: [],
+    matrix_inbound_events: [],
+    disable_telegram_polling: True,
+    typing_keepalive_ms: 4000,
+    stream_timeout_ms: stream_timeout_ms,
+    turn_hard_timeout_ms: turn_hard_timeout_ms,
+    registry_id: "",
+    outbound_records: Some(recorder),
+    leave_group: None,
+    leave_retry_ms: [5000, 30_000, 120_000],
+  )
+}
+
+pub fn hard_turn_timeout_releases_the_next_turn_test() {
+  let recorder = process.new_subject()
+  let started = process.new_subject()
+  let handler = fn(inbound, _events) {
+    case inbound {
+      port.InboundMessage(msg) -> {
+        process.send(started, msg.channel_id)
+        Ok(port.StreamReply(base_reply: port.reply(to: msg, content: "")))
+      }
+      port.InboundInteraction(_) -> Error(port.Ignored("no interactions"))
+    }
+  }
+  let assert Ok(update) = telegram.parse_update(telegram_fixture_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      handler,
+      test_hooks_with_timeouts([update, update], recorder, 20, 200),
+    )
+  let assert Ok(_) = process.receive(started, within: 1000)
+  // The first lane is stuck without a terminal event until the hard timeout.
+  // A second inbound update must not start before it.
+  process.receive(started, within: 50) |> should.equal(Error(Nil))
+  let assert Ok(_) = process.receive(started, within: 1000)
+  registry.stop_channels_with_timeout(channel_registry, 1000)
+}

@@ -132,7 +132,7 @@ pub fn no_start_hooks() -> StartHooks {
     disable_telegram_polling: False,
     typing_keepalive_ms: default_typing_keepalive_ms,
     stream_timeout_ms: 60_000,
-    turn_hard_timeout_ms: 300_000,
+    turn_hard_timeout_ms: turn_hard_timeout_ms,
     registry_id: "",
     outbound_records: None,
     leave_group: None,
@@ -463,6 +463,7 @@ fn start_discord_channel(
         send_fn,
         stream_send_fn,
         hooks.registry_id,
+        hooks.turn_hard_timeout_ms,
       ))
 
       let subscription_id = discord_gateway.subscribe(gateway, bridge.events)
@@ -557,6 +558,7 @@ fn start_slack_channel(
           stream_send_fn,
           inbound,
           hooks.registry_id,
+          hooks.turn_hard_timeout_ms,
         )
       })
 
@@ -645,6 +647,7 @@ fn start_matrix_channel(
           stream_send_fn,
           inbound,
           hooks.registry_id,
+          hooks.turn_hard_timeout_ms,
         )
       })
 
@@ -672,6 +675,7 @@ fn start_discord_bridge(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   registry_id: String,
+  turn_hard_timeout_ms: Int,
 ) -> Result(DiscordBridge, String) {
   let ready = process.new_subject()
   let done = process.new_subject()
@@ -689,6 +693,7 @@ fn start_discord_bridge(
         control,
         done,
         registry_id,
+        turn_hard_timeout_ms,
       )
     })
 
@@ -707,6 +712,7 @@ fn discord_bridge_loop(
   control: process.Subject(DiscordBridgeControl),
   done: process.Subject(Nil),
   registry_id: String,
+  turn_hard_timeout_ms: Int,
 ) -> Nil {
   case process.receive(control, within: 0) {
     Ok(StopDiscordBridge) -> process.send(done, Nil)
@@ -719,6 +725,7 @@ fn discord_bridge_loop(
             stream_send_fn,
             event,
             registry_id,
+            turn_hard_timeout_ms,
           )
           discord_bridge_loop(
             handler,
@@ -728,6 +735,7 @@ fn discord_bridge_loop(
             control,
             done,
             registry_id,
+            turn_hard_timeout_ms,
           )
         }
         Error(_) ->
@@ -739,6 +747,7 @@ fn discord_bridge_loop(
             control,
             done,
             registry_id,
+            turn_hard_timeout_ms,
           )
       }
     }
@@ -777,6 +786,7 @@ fn start_telegram_worker(
               hooks.leave_group,
               hooks.leave_retry_ms,
               hooks.registry_id,
+              hooks.turn_hard_timeout_ms,
             )
           })
           process.send(ingress_done, Nil)
@@ -793,6 +803,7 @@ fn start_telegram_worker(
               hooks.leave_group,
               hooks.leave_retry_ms,
               hooks.registry_id,
+              hooks.turn_hard_timeout_ms,
             )
           })
 
@@ -807,6 +818,7 @@ fn start_telegram_worker(
                 hooks.leave_group,
                 hooks.leave_retry_ms,
                 hooks.registry_id,
+                hooks.turn_hard_timeout_ms,
               )
             })
           process.send(ingress_done, Nil)
@@ -838,6 +850,7 @@ fn dispatch_discord_event(
   stream_send_fn: StreamSendFn,
   event: discord_gateway.DiscordEvent,
   registry_id: String,
+  turn_hard_timeout_ms: Int,
 ) -> Nil {
   case event {
     discord_gateway.MessageCreate(data) ->
@@ -849,6 +862,7 @@ fn dispatch_discord_event(
             stream_send_fn,
             port.inbound_message(discord_message_to_port(message)),
             registry_id,
+            turn_hard_timeout_ms,
           )
         _ -> Nil
       }
@@ -863,6 +877,7 @@ fn dispatch_discord_event(
                 stream_send_fn,
                 inbound,
                 registry_id,
+                turn_hard_timeout_ms,
               )
             Error(_) -> Nil
           }
@@ -881,6 +896,7 @@ fn dispatch_telegram_update(
   leave_group: Option(fn(String) -> Bool),
   leave_retry_ms: List(Int),
   registry_id: String,
+  turn_hard_timeout_ms: Int,
 ) -> Nil {
   case update.my_chat_member {
     Some(member) ->
@@ -894,7 +910,14 @@ fn dispatch_telegram_update(
   }
   case telegram_update_to_inbound(update) {
     Ok(inbound) ->
-      dispatch_inbound(handler, send_fn, stream_send_fn, inbound, registry_id)
+      dispatch_inbound(
+        handler,
+        send_fn,
+        stream_send_fn,
+        inbound,
+        registry_id,
+        turn_hard_timeout_ms,
+      )
     Error(_) -> Nil
   }
 }
@@ -1141,11 +1164,19 @@ fn dispatch_inbound(
   stream_send_fn: StreamSendFn,
   inbound: port.ChannelInbound,
   registry_id: String,
+  turn_hard_timeout_ms: Int,
 ) -> Nil {
   let key = chat_lanes.key_for_registry(registry_id, inbound)
   let _ =
     chat_lanes.submit(key, fn() {
-      run_inbound_turn(handler, send_fn, stream_send_fn, inbound, key)
+      run_inbound_turn(
+        handler,
+        send_fn,
+        stream_send_fn,
+        inbound,
+        key,
+        turn_hard_timeout_ms,
+      )
     })
   Nil
 }
@@ -1156,6 +1187,7 @@ fn run_inbound_turn(
   stream_send_fn: StreamSendFn,
   inbound: port.ChannelInbound,
   chat_key: String,
+  turn_hard_timeout_ms: Int,
 ) -> Nil {
   let stream_events = process.new_subject()
 
