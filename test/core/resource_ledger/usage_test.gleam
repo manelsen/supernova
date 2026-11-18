@@ -434,12 +434,42 @@ pub fn settled_reservation_frees_admission_after_day_boundary_test() {
     "old-reservation",
   )
   |> should.be_ok
+  let day = pricing.day_key(after_midnight, "UTC")
+  actor.get_daily_cost(ledger, day) |> should.equal(0.5)
+  actor.try_get_open_reservations_total(ledger) |> should.equal(Ok(0.0))
   actor.admit_llm_call(ledger, "new-reservation", 2.0, 1.0)
   |> should.be_ok
 
   actor.stop(ledger)
   process.sleep(100)
   cleanup(dir)
+}
+
+pub fn open_reservation_total_excludes_expired_test() {
+  let dir = temp_dir()
+  let assert Ok(_) = ensure_dir(dir)
+  let start = 1_718_495_970_000
+  mock_clock_set(start)
+  let assert Ok(ledger) =
+    actor.start_persistent_with_clock(dir, fn() { mock_clock_now() })
+
+  actor.admit_llm_call(ledger, "expiring", 10.0, 1.0) |> should.be_ok
+  mock_clock_set(start + 600_001)
+
+  actor.try_get_open_reservations_total(ledger)
+  |> should.equal(Ok(0.0))
+
+  actor.stop(ledger)
+  process.sleep(100)
+  cleanup(dir)
+}
+
+pub fn open_reservation_total_reports_unavailable_test() {
+  let assert Ok(ledger) = actor.start()
+  actor.stop(ledger)
+
+  actor.try_get_open_reservations_total(ledger)
+  |> should.equal(Error(Nil))
 }
 
 @external(erlang, "supernova_mock_ffi", "clock_set")

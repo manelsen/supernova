@@ -969,12 +969,14 @@ pub fn admission_reserves_routed_model_estimate_test() {
     admit("call-expensive", "mock", "expensive-model", 100)
     |> should.be_ok()
 
-    ledger_actor.get_open_reservations_total(runtime.ledger)
-    |> should.equal(pricing.cost_usd(
-      pricing.Price(input_per_mtok: 1000.0, output_per_mtok: 2000.0),
-      100,
-      1000,
-    ))
+    ledger_actor.try_get_open_reservations_total(runtime.ledger)
+    |> should.equal(
+      Ok(pricing.cost_usd(
+        pricing.Price(input_per_mtok: 1000.0, output_per_mtok: 2000.0),
+        100,
+        1000,
+      )),
+    )
   })
 }
 
@@ -1010,8 +1012,8 @@ pub fn network_failure_once_is_unconfirmed_and_retried_test() {
       usage
       |> list.any(fn(event) {
         case event {
-          LLMUsage(call_id: call_id, ..) ->
-            string.ends_with(call_id, ":unconfirmed")
+          LLMUsage(call_id: call_id, cost_usd: cost, ..) ->
+            string.ends_with(call_id, ":unconfirmed") && cost >. 0.0
           ToolUsage(..) -> False
         }
       })
@@ -1026,8 +1028,8 @@ pub fn network_failure_once_is_unconfirmed_and_retried_test() {
       let day = pricing.day_key(now, "UTC")
       ledger_actor.get_daily_cost(runtime.ledger, day)
       |> should.equal(total)
-      ledger_actor.get_open_reservations_total(runtime.ledger)
-      |> should.equal(0.0)
+      ledger_actor.try_get_open_reservations_total(runtime.ledger)
+      |> should.equal(Ok(0.0))
     },
   )
 }
@@ -1070,8 +1072,8 @@ pub fn retry_429_releases_every_reservation_test() {
       |> should.equal(0)
       let day = pricing.day_key(now, "UTC")
       ledger_actor.get_daily_cost(runtime.ledger, day) |> should.equal(0.0)
-      ledger_actor.get_open_reservations_total(runtime.ledger)
-      |> should.equal(0.0)
+      ledger_actor.try_get_open_reservations_total(runtime.ledger)
+      |> should.equal(Ok(0.0))
     },
   )
 }
@@ -1217,11 +1219,14 @@ pub fn denied_interaction_is_audited_test() {
         cg_types.Reply(text) -> should.equal(text, "Esta instância é privada.")
         _ -> should.fail()
       }
-      // The first denial is counted; five more cross the abuse threshold.
-      list.repeat(Nil, 5)
+      // The first denial is counted; four more stay below the threshold.
+      list.repeat(Nil, 4)
       |> list.each(fn(_) {
         let _ = cg_runtime.gate_interaction(runtime, "telegram", "1", "999")
       })
+      process.receive(alert_recorder, within: 50) |> should.equal(Error(Nil))
+      // The sixth denial crosses it.
+      let _ = cg_runtime.gate_interaction(runtime, "telegram", "1", "999")
       let assert Ok(alert) = process.receive(alert_recorder, within: 1000)
       string.contains(alert, "Mais de 5 tentativas") |> should.equal(True)
       audit_actor.get_all(runtime.audit)
