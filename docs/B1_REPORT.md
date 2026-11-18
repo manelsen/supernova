@@ -92,9 +92,11 @@ acima da linha de base de 74,56%.
 ## Branch, commits e CI
 
 - Branch: `feat/grupo-fechado`
-- Commits: ver `git log --oneline master..feat/grupo-fechado`
-- PR: não criado nesta execução (o mantenedor fará a revisão).
-- CI: não executado localmente; os quality gates foram rodados no worktree.
+- Commits: 8 commits temáticos (`ci`, `git_inspect`, `config`, `ledger`,
+  `gateway`, `access`, `isolation`, `docs`).
+- PR: https://github.com/manelsen/supernova/pull/12
+- CI: quality gates rodados localmente; o run do PR está em
+  `gh pr checks 12`.
 
 ## Observações
 
