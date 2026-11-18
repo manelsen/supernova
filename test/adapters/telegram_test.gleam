@@ -1,4 +1,5 @@
 import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/int
 import gleam/json
 import gleam/list
@@ -1333,4 +1334,32 @@ pub fn sent_message_type_test() -> Nil {
       text: Some("Hello"),
     )
   msg.message_id |> should.equal(123)
+}
+
+@external(erlang, "erlang", "suspend_process")
+fn suspend_process(pid: process.Pid) -> Bool
+
+@external(erlang, "erlang", "resume_process")
+fn resume_process(pid: process.Pid) -> Bool
+
+// During a long poll the poller actor is busy for up to `polling_timeout`
+// seconds. Shutdown asks it to stop and must return at once: a synchronous
+// call would time out after one second and crash the shutdown process before
+// the chat lanes are drained. A suspended poller stands in for a busy one.
+pub fn request_stop_does_not_wait_for_a_busy_poller_test() -> Nil {
+  let config = telegram.new_config("test_token")
+  let assert Ok(poller) = telegram.start_poller(config)
+  let assert Ok(pid) = process.subject_owner(poller)
+  suspend_process(pid)
+
+  let returned = process.new_subject()
+  process.spawn_unlinked(fn() {
+    telegram.request_stop(poller)
+    process.send(returned, Nil)
+  })
+  let result = process.receive(returned, within: 500)
+  resume_process(pid)
+
+  result |> should.equal(Ok(Nil))
+  telegram.get_poller_state(poller).is_running |> should.equal(False)
 }

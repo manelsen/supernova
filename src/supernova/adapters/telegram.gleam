@@ -1115,8 +1115,23 @@ fn polling_loop(poller: Poller, callback: fn(Update) -> Nil) -> Nil {
 }
 
 /// Stop the polling loop
+///
+/// Synchronous: it waits up to one second and crashes the caller on timeout.
+/// While a long poll is in flight the poller cannot answer, so shutdown code
+/// must use `request_stop` instead.
 pub fn stop_polling(poller: Poller) -> Result(Nil, TelegramError) {
   actor.call(poller, waiting: 1000, sending: StopPolling)
+}
+
+/// Ask the polling loop to stop without waiting for the poller.
+///
+/// Each `getUpdates` long poll runs inside the poller actor for up to
+/// `polling_timeout` seconds. The request is queued behind it; the loop sees
+/// the flag right after the current fetch, dispatches what it fetched and
+/// exits. Fetched offsets are only confirmed by the next `getUpdates`, so
+/// nothing fetched is lost.
+pub fn request_stop(poller: Poller) -> Nil {
+  process.send(poller, StopPolling(process.new_subject()))
 }
 
 /// Get current polling state

@@ -524,11 +524,11 @@ fn start_telegram_channel(
           name: "telegram",
           send: send_fn,
           stop_ingress: fn() {
-            let _ = telegram.stop_polling(poller)
+            telegram.request_stop(poller)
             stop_telegram_ingress(worker, poller_config.polling_timeout)
           },
           stop: fn() {
-            let _ = telegram.stop_polling(poller)
+            telegram.request_stop(poller)
             stop_telegram_worker(worker, poller_config.polling_timeout)
             Nil
           },
