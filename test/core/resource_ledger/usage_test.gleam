@@ -276,20 +276,19 @@ pub fn spend_today_returns_day_and_total_test() {
 
 pub fn concurrent_admissions_respect_the_cap_test() {
   let assert Ok(ledger) = actor.start()
-  let day = "2024-06-15"
 
-  actor.admit_llm_call(ledger, "call-a", day, 1.0, 0.6)
+  actor.admit_llm_call(ledger, "call-a", 1.0, 0.6)
   |> should.be_ok
-  actor.admit_llm_call(ledger, "call-b", day, 1.0, 0.6)
+  actor.admit_llm_call(ledger, "call-b", 1.0, 0.6)
   |> should.be_error
 
   // Releasing an unrecorded reservation restores the credit.
-  actor.admit_llm_call(ledger, "call-c", day, 1.0, 0.4)
+  actor.admit_llm_call(ledger, "call-c", 1.0, 0.4)
   |> should.be_ok
-  actor.admit_llm_call(ledger, "call-d", day, 1.0, 0.2)
+  actor.admit_llm_call(ledger, "call-d", 1.0, 0.2)
   |> should.be_error
   actor.release_reservation(ledger, "call-c")
-  actor.admit_llm_call(ledger, "call-d", day, 1.0, 0.2)
+  actor.admit_llm_call(ledger, "call-d", 1.0, 0.2)
   |> should.be_ok
 
   actor.stop(ledger)
@@ -367,3 +366,44 @@ pub fn usage_retry_is_idempotent_test() {
   actor.stop(ledger)
   process.sleep(100)
 }
+
+pub fn open_reservations_count_across_day_boundary_test() {
+  let dir = temp_dir()
+  let assert Ok(_) = ensure_dir(dir)
+  // 2024-06-15T23:59:30Z and 2024-06-16T00:00:10Z.
+  let before_midnight = 1_718_495_970_000
+  let after_midnight = 1_718_496_010_000
+  mock_clock_set(before_midnight)
+  let read_clock = fn() { mock_clock_now() }
+
+  let assert Ok(ledger) =
+    actor.start_persistent_with_clock_and_day_key(
+      dir,
+      read_clock,
+      fn(timestamp) { pricing.day_key(timestamp, "UTC") },
+    )
+
+  actor.admit_llm_call(ledger, "old-reservation", 2.0, 1.0)
+  |> should.be_ok
+
+  mock_clock_set(after_midnight)
+  actor.record_llm_usage(ledger, "user_1", "openai", "gpt-4o", 10, 5, 1.0)
+
+  // The old reservation is still open and may settle today, so it counts.
+  actor.admit_llm_call(ledger, "new-reservation", 2.0, 1.0)
+  |> should.be_error
+
+  actor.release_reservation(ledger, "old-reservation")
+  actor.admit_llm_call(ledger, "new-reservation", 2.0, 1.0)
+  |> should.be_ok
+
+  actor.stop(ledger)
+  process.sleep(100)
+  cleanup(dir)
+}
+
+@external(erlang, "supernova_mock_ffi", "clock_set")
+fn mock_clock_set(timestamp: Int) -> Nil
+
+@external(erlang, "supernova_mock_ffi", "clock_now")
+fn mock_clock_now() -> Int

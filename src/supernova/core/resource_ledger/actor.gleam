@@ -149,7 +149,6 @@ pub type LedgerMessage {
   AdmitLLMCall(
     reply_to: Subject(Result(Nil, String)),
     call_id: String,
-    day: String,
     cap_usd: Float,
     estimate_usd: Float,
   )
@@ -184,7 +183,7 @@ pub type ResourceLedger =
 
 /// Internal actor state: aggregate counters plus the usage trail.
 type Reservation {
-  Reservation(day: String, estimate_usd: Float, expires_at: Int)
+  Reservation(estimate_usd: Float, expires_at: Int)
 }
 
 type ActorState {
@@ -206,13 +205,9 @@ fn total_for_day(totals: Dict(String, Float), day: String) -> Float {
   dict.get(totals, day) |> result.unwrap(0.0)
 }
 
-fn reservations_for_day(
-  reservations: Dict(String, Reservation),
-  day: String,
-) -> Float {
+fn reservations_total(reservations: Dict(String, Reservation)) -> Float {
   reservations
   |> dict.values
-  |> list.filter(fn(reservation) { reservation.day == day })
   |> list.fold(0.0, fn(total, reservation) { total +. reservation.estimate_usd })
 }
 
@@ -492,10 +487,11 @@ fn handle_message(
       }
     }
 
-    AdmitLLMCall(reply_to, call_id, day, cap_usd, estimate_usd) -> {
+    AdmitLLMCall(reply_to, call_id, cap_usd, estimate_usd) -> {
       let now = state.now()
       let state = purge_expired(state, now)
-      let open = reservations_for_day(state.reservations, day)
+      let day = state.day_key(now)
+      let open = reservations_total(state.reservations)
       let total = total_for_day(state.day_totals, day)
       let exceeds = case cap_usd <. 0.0 {
         True -> False
@@ -509,7 +505,6 @@ fn handle_message(
         False -> {
           let reservation =
             Reservation(
-              day: day,
               estimate_usd: estimate_usd,
               expires_at: now + reservation_ttl_ms,
             )
@@ -902,18 +897,11 @@ pub fn try_record_llm_usage_with_call_id(
 pub fn admit_llm_call(
   ledger: ResourceLedger,
   call_id: String,
-  day: String,
   cap_usd: Float,
   estimate_usd: Float,
 ) -> Result(Nil, String) {
   case
-    safe_call.call(ledger, 1500, AdmitLLMCall(
-      _,
-      call_id,
-      day,
-      cap_usd,
-      estimate_usd,
-    ))
+    safe_call.call(ledger, 1500, AdmitLLMCall(_, call_id, cap_usd, estimate_usd))
   {
     Ok(Ok(Nil)) -> Ok(Nil)
     Ok(Error(reason)) -> Error(reason)

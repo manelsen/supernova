@@ -613,8 +613,6 @@ fn admit_llm_call(
   model: String,
   prompt_tokens: Int,
 ) -> Result(Nil, String) {
-  let timezone = runtime.config.instance_budget.timezone
-  let day = pricing.day_key(runtime.clock(), timezone)
   let cap =
     instance_budget.effective_cap(
       runtime.instance_budget,
@@ -627,9 +625,7 @@ fn admit_llm_call(
       prompt_tokens,
       runtime.config.instance_budget.reserve_output_tokens,
     )
-  case
-    ledger_actor.admit_llm_call(runtime.ledger, call_id, day, cap, estimate)
-  {
+  case ledger_actor.admit_llm_call(runtime.ledger, call_id, cap, estimate) {
     Ok(_) -> Ok(Nil)
     Error(reason) -> {
       audit_action(
