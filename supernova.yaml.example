@@ -132,3 +132,59 @@ budgets:
 #     # could run arbitrary JS in visited pages. Keep false unless required.
 #     # Env override: SUPERNOVA_BROWSER_ALLOW_EVALUATE=true
 #     allow_evaluate: false
+
+# Closed group (PRD B1)
+# New instances deny everyone until configured. Copy a real id from `/eu`.
+access:
+  mode: allowlist
+  admins: []                 # e.g. ["telegram:123"]
+  members: []                # e.g. ["discord:456"]
+  denied_reply: "Esta instância é privada."
+  allowed_chats: []          # e.g. ["telegram:-100123", "discord:guild:789"]
+  # Env overrides (comma-separated): SUPERNOVA_ACCESS_ADMINS,
+  # SUPERNOVA_ACCESS_MEMBERS, SUPERNOVA_ACCESS_ALLOWED_CHATS,
+  # SUPERNOVA_ACCESS_MODE.
+
+# Per-principal budgets (-1 = unlimited)
+budget:
+  member:
+    tokens_per_hour: 50000
+    tool_calls_per_hour: 60
+  admin:
+    tokens_per_hour: -1
+    tool_calls_per_hour: -1
+
+# Tools available to each role
+capabilities:
+  member:
+    allowed: ["web", "web_fetch", "file_system", "canvas", "github"]
+    denied: ["safe_shell", "process", "browser", "gateway"]
+  admin:
+    allowed: ["*"]
+    denied: []
+
+# Anti-flood limits
+rate_limit:
+  member:
+    messages_per_minute: 10
+  admin:
+    messages_per_minute: -1
+
+# USD per million tokens used to estimate spend
+pricing:
+  default:
+    input_per_mtok: 1.0
+    output_per_mtok: 4.0
+  models: {}
+  # models:
+  #   "openrouter/some-model":
+  #     input_per_mtok: 0.5
+  #     output_per_mtok: 1.5
+
+# Instance-wide daily cap (-1 = no cap)
+instance_budget:
+  daily_usd: 5.0
+  timezone: "America/Sao_Paulo"
+
+# Writable directory for access.json and the ledger
+data_dir: "data"

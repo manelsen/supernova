@@ -212,6 +212,85 @@ pub type BudgetsConfig {
   )
 }
 
+/// Access policy mode for the closed group.
+pub type AccessMode {
+  /// Only principals explicitly listed as admins or members may use the bot.
+  Allowlist
+  /// Anyone may use the bot (still subject to budgets and capabilities).
+  Open
+}
+
+/// Closed-group access configuration.
+pub type AccessConfig {
+  AccessConfig(
+    /// Allowlist (default) or open.
+    mode: AccessMode,
+    /// Admin principals in `<channel>:<user_id>` form.
+    admins: List(String),
+    /// Member principals in `<channel>:<user_id>` form.
+    members: List(String),
+    /// Reply sent at most once per day to denied principals.
+    denied_reply: String,
+    /// Authorized group chats / guilds in `<channel>:<id>` form.
+    /// Private conversations with authorized principals are always allowed.
+    allowed_chats: List(String),
+  )
+}
+
+/// Per-role budget limits. `-1` means unlimited.
+pub type RoleBudgetConfig {
+  RoleBudgetConfig(tokens_per_hour: Int, tool_calls_per_hour: Int)
+}
+
+/// Budget section grouped by role.
+pub type RoleBudgetsConfig {
+  RoleBudgetsConfig(member: RoleBudgetConfig, admin: RoleBudgetConfig)
+}
+
+/// Per-role capability (tool) manifest configuration.
+pub type RoleCapabilitiesConfig {
+  RoleCapabilitiesConfig(allowed: List(String), denied: List(String))
+}
+
+/// Capabilities section grouped by role.
+pub type CapabilitiesConfig {
+  CapabilitiesConfig(
+    member: RoleCapabilitiesConfig,
+    admin: RoleCapabilitiesConfig,
+  )
+}
+
+/// Per-role message rate limit. `-1` means unlimited.
+pub type RoleRateLimitConfig {
+  RoleRateLimitConfig(messages_per_minute: Int)
+}
+
+/// Anti-flood configuration grouped by role.
+pub type RateLimitConfig {
+  RateLimitConfig(member: RoleRateLimitConfig, admin: RoleRateLimitConfig)
+}
+
+/// USD price per one million tokens for a model.
+pub type PricingEntry {
+  PricingEntry(input_per_mtok: Float, output_per_mtok: Float)
+}
+
+/// Model pricing table used to estimate LLM spend.
+pub type PricingConfig {
+  PricingConfig(default: PricingEntry, models: Dict(String, PricingEntry))
+}
+
+/// Instance-wide daily spend cap.
+pub type InstanceBudgetConfig {
+  InstanceBudgetConfig(daily_usd: Float, timezone: String)
+}
+
+/// Support level for a channel adapter.
+pub type ChannelSupport {
+  Supported
+  Experimental
+}
+
 /// Browser tool configuration
 pub type BrowserToolsConfig {
   BrowserToolsConfig(
@@ -261,6 +340,20 @@ pub type Config {
     database: DatabaseConfig,
     /// Budget configuration
     budgets: BudgetsConfig,
+    /// Closed-group access policy
+    access: AccessConfig,
+    /// Per-role budget limits (tokens and tool calls per hour)
+    role_budgets: RoleBudgetsConfig,
+    /// Per-role tool capabilities
+    capabilities: CapabilitiesConfig,
+    /// Per-role anti-flood limits
+    rate_limit: RateLimitConfig,
+    /// Model pricing used for cost estimates
+    pricing: PricingConfig,
+    /// Instance-wide daily spend cap
+    instance_budget: InstanceBudgetConfig,
+    /// Writable directory for runtime state (access.json, ledger/)
+    data_dir: String,
     /// Tools configuration
     tools: ToolsConfig,
   )
@@ -317,8 +410,61 @@ pub fn default_config() -> Config {
       pool_size: 10,
     ),
     budgets: default_budgets_config(),
+    access: default_access_config(),
+    role_budgets: default_role_budgets_config(),
+    capabilities: default_capabilities_config(),
+    rate_limit: default_rate_limit_config(),
+    pricing: default_pricing_config(),
+    instance_budget: default_instance_budget_config(),
+    data_dir: "data",
     tools: default_tools_config(),
   )
+}
+
+/// Closed-group defaults: deny everyone until explicitly configured.
+pub fn default_access_config() -> AccessConfig {
+  AccessConfig(
+    mode: Allowlist,
+    admins: [],
+    members: [],
+    denied_reply: "Esta instância é privada.",
+    allowed_chats: [],
+  )
+}
+
+pub fn default_role_budgets_config() -> RoleBudgetsConfig {
+  RoleBudgetsConfig(
+    member: RoleBudgetConfig(tokens_per_hour: 50_000, tool_calls_per_hour: 60),
+    admin: RoleBudgetConfig(tokens_per_hour: -1, tool_calls_per_hour: -1),
+  )
+}
+
+pub fn default_capabilities_config() -> CapabilitiesConfig {
+  CapabilitiesConfig(
+    member: RoleCapabilitiesConfig(
+      allowed: ["web", "web_fetch", "file_system", "canvas", "github"],
+      denied: ["safe_shell", "process", "browser", "gateway"],
+    ),
+    admin: RoleCapabilitiesConfig(allowed: ["*"], denied: []),
+  )
+}
+
+pub fn default_rate_limit_config() -> RateLimitConfig {
+  RateLimitConfig(
+    member: RoleRateLimitConfig(messages_per_minute: 10),
+    admin: RoleRateLimitConfig(messages_per_minute: -1),
+  )
+}
+
+pub fn default_pricing_config() -> PricingConfig {
+  PricingConfig(
+    default: PricingEntry(input_per_mtok: 1.0, output_per_mtok: 4.0),
+    models: dict.new(),
+  )
+}
+
+pub fn default_instance_budget_config() -> InstanceBudgetConfig {
+  InstanceBudgetConfig(daily_usd: 5.0, timezone: "America/Sao_Paulo")
 }
 
 /// Create a default tools configuration
@@ -491,7 +637,9 @@ fn extract_provider_name(
     Error(yay.KeyMissing(_, _)) ->
       case yay.extract_string(node, "type") {
         Ok(value) -> Ok(value)
-        Error(yay.KeyMissing(_, _)) -> Error(MissingField("provider", context))
+        // Provider names are also provider identifiers in the example
+        // configuration (`openai:`, `anthropic:`, ...).
+        Error(yay.KeyMissing(_, _)) -> Ok(name)
         Error(e) -> Error(to_config_error(e, context))
       }
     Error(e) -> Error(to_config_error(e, context))
@@ -732,6 +880,191 @@ fn decode_budgets(root: yay.Node) -> BudgetsConfig {
   }
 }
 
+fn get_float_or(node: yay.Node, key: String, default: Float) -> Float {
+  case yay.extract_float_or(node, key, default) {
+    Ok(value) -> value
+    Error(_) -> default
+  }
+}
+
+fn get_string_list(node: yay.Node, key: String) -> List(String) {
+  case yay.extract_string_list(node, key) {
+    Ok(values) -> values
+    Error(_) -> []
+  }
+}
+
+fn decode_access(root: yay.Node) -> AccessConfig {
+  let default = default_access_config()
+  case yay.select_sugar(root, "access") {
+    Ok(node) -> {
+      let mode = case
+        string.lowercase(get_string_or(node, "mode", "allowlist"))
+      {
+        "open" -> Open
+        _ -> Allowlist
+      }
+      AccessConfig(
+        mode: mode,
+        admins: get_string_list(node, "admins"),
+        members: get_string_list(node, "members"),
+        denied_reply: get_string_or(node, "denied_reply", default.denied_reply),
+        allowed_chats: get_string_list(node, "allowed_chats"),
+      )
+    }
+    Error(_) -> default
+  }
+}
+
+fn decode_role_budget(
+  node: yay.Node,
+  default: RoleBudgetConfig,
+) -> RoleBudgetConfig {
+  RoleBudgetConfig(
+    tokens_per_hour: get_int_or(
+      node,
+      "tokens_per_hour",
+      default.tokens_per_hour,
+    ),
+    tool_calls_per_hour: get_int_or(
+      node,
+      "tool_calls_per_hour",
+      default.tool_calls_per_hour,
+    ),
+  )
+}
+
+fn decode_role_budgets(root: yay.Node) -> RoleBudgetsConfig {
+  let default = default_role_budgets_config()
+  case yay.select_sugar(root, "budget") {
+    Ok(node) -> {
+      let member = case yay.select_sugar(node, "member") {
+        Ok(member_node) -> decode_role_budget(member_node, default.member)
+        Error(_) -> default.member
+      }
+      let admin = case yay.select_sugar(node, "admin") {
+        Ok(admin_node) -> decode_role_budget(admin_node, default.admin)
+        Error(_) -> default.admin
+      }
+      RoleBudgetsConfig(member: member, admin: admin)
+    }
+    Error(_) -> default
+  }
+}
+
+fn decode_role_capabilities(
+  node: yay.Node,
+  default: RoleCapabilitiesConfig,
+) -> RoleCapabilitiesConfig {
+  RoleCapabilitiesConfig(
+    allowed: case yay.extract_string_list(node, "allowed") {
+      Ok(values) -> values
+      Error(_) -> default.allowed
+    },
+    denied: case yay.extract_string_list(node, "denied") {
+      Ok(values) -> values
+      Error(_) -> default.denied
+    },
+  )
+}
+
+fn decode_capabilities(root: yay.Node) -> CapabilitiesConfig {
+  let default = default_capabilities_config()
+  case yay.select_sugar(root, "capabilities") {
+    Ok(node) -> {
+      let member = case yay.select_sugar(node, "member") {
+        Ok(member_node) -> decode_role_capabilities(member_node, default.member)
+        Error(_) -> default.member
+      }
+      let admin = case yay.select_sugar(node, "admin") {
+        Ok(admin_node) -> decode_role_capabilities(admin_node, default.admin)
+        Error(_) -> default.admin
+      }
+      CapabilitiesConfig(member: member, admin: admin)
+    }
+    Error(_) -> default
+  }
+}
+
+fn decode_rate_limit(root: yay.Node) -> RateLimitConfig {
+  let default = default_rate_limit_config()
+  case yay.select_sugar(root, "rate_limit") {
+    Ok(node) -> {
+      let member = case yay.select_sugar(node, "member") {
+        Ok(member_node) ->
+          RoleRateLimitConfig(messages_per_minute: get_int_or(
+            member_node,
+            "messages_per_minute",
+            default.member.messages_per_minute,
+          ))
+        Error(_) -> default.member
+      }
+      let admin = case yay.select_sugar(node, "admin") {
+        Ok(admin_node) ->
+          RoleRateLimitConfig(messages_per_minute: get_int_or(
+            admin_node,
+            "messages_per_minute",
+            default.admin.messages_per_minute,
+          ))
+        Error(_) -> default.admin
+      }
+      RateLimitConfig(member: member, admin: admin)
+    }
+    Error(_) -> default
+  }
+}
+
+fn decode_pricing_entry(node: yay.Node, default: PricingEntry) -> PricingEntry {
+  PricingEntry(
+    input_per_mtok: get_float_or(node, "input_per_mtok", default.input_per_mtok),
+    output_per_mtok: get_float_or(
+      node,
+      "output_per_mtok",
+      default.output_per_mtok,
+    ),
+  )
+}
+
+fn decode_pricing(root: yay.Node) -> PricingConfig {
+  let default = default_pricing_config()
+  case yay.select_sugar(root, "pricing") {
+    Ok(node) -> {
+      let default_entry = case yay.select_sugar(node, "default") {
+        Ok(default_node) -> decode_pricing_entry(default_node, default.default)
+        Error(_) -> default.default
+      }
+      let models = case yay.select_sugar(node, "models") {
+        Ok(yay.NodeMap(pairs)) ->
+          pairs
+          |> list.filter_map(fn(pair) {
+            let #(key_node, value_node) = pair
+            case node_to_string_key(key_node) {
+              Some(name) ->
+                Ok(#(name, decode_pricing_entry(value_node, default_entry)))
+              None -> Error(Nil)
+            }
+          })
+          |> dict.from_list
+        _ -> dict.new()
+      }
+      PricingConfig(default: default_entry, models: models)
+    }
+    Error(_) -> default
+  }
+}
+
+fn decode_instance_budget(root: yay.Node) -> InstanceBudgetConfig {
+  let default = default_instance_budget_config()
+  case yay.select_sugar(root, "instance_budget") {
+    Ok(node) ->
+      InstanceBudgetConfig(
+        daily_usd: get_float_or(node, "daily_usd", default.daily_usd),
+        timezone: get_string_or(node, "timezone", default.timezone),
+      )
+    Error(_) -> default
+  }
+}
+
 /// Decode full configuration from YAML root node
 fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
   // Parse app_name (optional, defaults to "supernova")
@@ -768,6 +1101,13 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
 
   // Parse budgets
   let budgets = decode_budgets(root)
+  let access = decode_access(root)
+  let role_budgets = decode_role_budgets(root)
+  let capabilities = decode_capabilities(root)
+  let rate_limit = decode_rate_limit(root)
+  let pricing = decode_pricing(root)
+  let instance_budget = decode_instance_budget(root)
+  let data_dir = get_string_or(root, "data_dir", "data")
 
   // Parse tools
   let tools = decode_tools(root)
@@ -788,6 +1128,13 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     whatsapp: whatsapp,
     database: database,
     budgets: budgets,
+    access: access,
+    role_budgets: role_budgets,
+    capabilities: capabilities,
+    rate_limit: rate_limit,
+    pricing: pricing,
+    instance_budget: instance_budget,
+    data_dir: data_dir,
     tools: tools,
   ))
 }
@@ -1017,6 +1364,29 @@ pub fn apply_env_overrides(config: Config) -> Config {
     None -> config.tools.browser.allow_evaluate
   }
 
+  // Closed-group access overrides
+  let access_mode = case
+    get_env("SUPERNOVA_ACCESS_MODE")
+    |> option.map(string.lowercase)
+  {
+    Some("open") -> Open
+    Some("allowlist") -> Allowlist
+    _ -> config.access.mode
+  }
+  let admins = case get_env("SUPERNOVA_ACCESS_ADMINS") {
+    Some(value) -> parse_csv(value)
+    None -> config.access.admins
+  }
+  let members = case get_env("SUPERNOVA_ACCESS_MEMBERS") {
+    Some(value) -> parse_csv(value)
+    None -> config.access.members
+  }
+  let allowed_chats = case get_env("SUPERNOVA_ACCESS_ALLOWED_CHATS") {
+    Some(value) -> parse_csv(value)
+    None -> config.access.allowed_chats
+  }
+  let data_dir = option.unwrap(get_env("SUPERNOVA_DATA_DIR"), config.data_dir)
+
   Config(
     app_name: app_name,
     environment: environment,
@@ -1068,10 +1438,30 @@ pub fn apply_env_overrides(config: Config) -> Config {
       pool_size: db_pool_size,
     ),
     budgets: config.budgets,
+    access: AccessConfig(
+      ..config.access,
+      mode: access_mode,
+      admins: admins,
+      members: members,
+      allowed_chats: allowed_chats,
+    ),
+    role_budgets: config.role_budgets,
+    capabilities: config.capabilities,
+    rate_limit: config.rate_limit,
+    pricing: config.pricing,
+    instance_budget: config.instance_budget,
+    data_dir: data_dir,
     tools: ToolsConfig(browser: BrowserToolsConfig(
       allow_evaluate: browser_allow_evaluate,
     )),
   )
+}
+
+fn parse_csv(value: String) -> List(String) {
+  value
+  |> string.split(",")
+  |> list.map(string.trim)
+  |> list.filter(fn(entry) { entry != "" })
 }
 
 /// Apply environment variable overrides to provider configurations
@@ -1531,4 +1921,46 @@ pub fn is_wechat_work_enabled(config: Config) -> Bool {
 /// Check if WhatsApp is configured and enabled
 pub fn is_whatsapp_enabled(config: Config) -> Bool {
   config.whatsapp.enabled && config.whatsapp.bridge_url != None
+}
+
+/// Support level for a channel adapter.
+///
+/// Telegram and Discord are covered end to end. The remaining channels are
+/// experimental and warn at boot.
+pub fn channel_support(channel: String) -> ChannelSupport {
+  case channel {
+    "telegram" | "discord" -> Supported
+    _ -> Experimental
+  }
+}
+
+/// All channel names known to the registry, in stable order.
+pub fn channel_names() -> List(String) {
+  [
+    "discord",
+    "telegram",
+    "matrix",
+    "lark",
+    "google_chat",
+    "slack",
+    "mattermost",
+    "wechat_work",
+    "whatsapp",
+  ]
+}
+
+/// Whether a channel is enabled in configuration.
+pub fn is_channel_enabled(config: Config, channel: String) -> Bool {
+  case channel {
+    "discord" -> is_discord_enabled(config)
+    "telegram" -> is_telegram_enabled(config)
+    "matrix" -> is_matrix_enabled(config)
+    "lark" -> is_lark_enabled(config)
+    "google_chat" -> is_google_chat_enabled(config)
+    "slack" -> is_slack_enabled(config)
+    "mattermost" -> is_mattermost_enabled(config)
+    "wechat_work" -> is_wechat_work_enabled(config)
+    "whatsapp" -> is_whatsapp_enabled(config)
+    _ -> False
+  }
 }
