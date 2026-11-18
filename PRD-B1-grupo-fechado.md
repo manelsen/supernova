@@ -2,6 +2,8 @@
 # PRD B1: Grupo fechado e kernel ligado
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar. Execute as histórias **na ordem**. Cada história termina com os quality gates verdes e um commit próprio.
+>
+> **Dimensionamento:** 19 histórias, cerca de 7 horas de execução. Se a sessão for interrompida, retome pela primeira história sem commit, conferindo `git log --oneline` contra os títulos de commit de cada história.
 
 ## 1. Contexto
 
@@ -195,10 +197,117 @@ Regras:
 - [ ] Prove que o teste funciona: adicione temporariamente `import supernova/core/blackboard` em `src/supernova.gleam`, confirme que o teste falha, reverta e cite isso no commit.
 - [ ] Commit: `test(architecture): forbid wiring shared agent memory before access control`.
 
-### US-011: Documentação de operação do grupo fechado
+### US-011: Falhar fechado
+
+**Por quê:** se o ator de acesso, de orçamento ou do ledger cair, o comportamento seguro é **negar**, não liberar.
 
 **Critérios de aceite:**
-- [ ] Nova seção em `DEPLOY.md`, "Grupo fechado", explicando: como descobrir o próprio `principal_id` (o bot responde ao comando `/eu` mesmo para quem não está autorizado, sem chamar o LLM e sem contar no limite de 24 h da negação), como cadastrar o primeiro admin por env, como convidar membros e como ajustar orçamento e capabilities.
+- [ ] Os atores `access`, `budget_policy` e `resource_ledger` ficam sob o supervisor de infraestrutura (`OneForOne`), com reinício automático.
+- [ ] Toda chamada a esses atores a partir do router ou do executor usa timeout explícito (no máximo 2 s). Em timeout, ator morto ou erro, a decisão é **negar**: acesso negado, orçamento considerado esgotado, ou chamada ao LLM ou à ferramenta recusada se o ledger não puder registrar.
+- [ ] A pessoa recebe, em português: `"Estou com um problema interno e não posso responder agora. Tente de novo em alguns minutos."` Nenhum detalhe técnico vai para ela.
+- [ ] Cada recusa por falha gera um log `error` e um registro no audit log com `action: "fail_closed"` e o nome do componente.
+- [ ] Testes: matar cada um dos três atores durante uma conversa mock leva à recusa sem chamada ao LLM; depois do reinício pelo supervisor, a conversa seguinte funciona; o timeout é respeitado (use um ator falso que não responde).
+- [ ] Commit: `feat(kernel): fail closed when access, budget or ledger are unavailable`.
+
+### US-012: Teto global diário da instância
+
+**Por quê:** os orçamentos individuais somados ainda podem esgotar a conta do mantenedor. É preciso um disjuntor para a instância inteira.
+
+**Critérios de aceite:**
+- [ ] Crie `src/supernova/llm/pricing.gleam` (puro) com uma tabela de preços por modelo (USD por 1 milhão de tokens de entrada e de saída), configurável no YAML:
+  ```yaml
+  pricing:
+    default: { input_per_mtok: 1.0, output_per_mtok: 4.0 }
+    models:
+      "openrouter/some-model": { input_per_mtok: 0.5, output_per_mtok: 1.5 }
+  instance_budget:
+    daily_usd: 5.0          # -1 = sem teto
+    timezone: "America/Sao_Paulo"
+  ```
+  Modelos sem preço usam `default`. Não invente preços reais de providers no código: o padrão é só o `default` acima, e o mantenedor preenche os demais.
+- [ ] O ledger passa a registrar o custo estimado de cada chamada ao LLM.
+- [ ] Antes de cada chamada ao LLM, o kernel soma o custo estimado do dia (no fuso configurado). Se `daily_usd` foi atingido, **ninguém** chama o LLM, nem os admins, até a virada do dia. A resposta é: `"O limite diário desta instância foi atingido. Volto amanhã."`
+- [ ] Um admin pode liberar o teto até o fim do dia com `/teto liberar <usd>`, que eleva o teto do dia corrente. O comando fica registrado no audit log.
+- [ ] `/uso` passa a mostrar o custo estimado da pessoa; `/uso todos` mostra também o total do dia e o teto.
+- [ ] Testes: o cálculo de custo com e sem preço do modelo; o bloqueio ao atingir o teto; a virada do dia no fuso configurado (injete o relógio, sem depender da hora real); `/teto liberar` só para admin.
+- [ ] Commit: `feat(budget): instance-wide daily spend cap with cost estimates`.
+
+### US-013: Limite de mensagens por minuto (anti-flood)
+
+**Critérios de aceite:**
+- [ ] Configuração: `rate_limit: { member: { messages_per_minute: 10 }, admin: { messages_per_minute: -1 } }`.
+- [ ] Implementação pura de janela deslizante em `src/supernova/core/rate_limit/pure.gleam`, com estado num ator (ou dentro do ator de acesso, se for mais simples), por `principal_id`.
+- [ ] Mensagens acima do limite são descartadas **antes** do LLM. A pessoa recebe no máximo **um** aviso por minuto: `"Muitas mensagens seguidas. Espere um pouco."`
+- [ ] Comandos de admin e `/eu` não contam para o limite.
+- [ ] Testes com relógio injetado: o limite é aplicado; a janela desliza; o aviso é único por minuto; admin com `-1` não é limitado.
+- [ ] Commit: `feat(access): per-principal message rate limit`.
+
+### US-014: Chats e servidores autorizados
+
+**Por quê:** alguém de fora pode adicionar o bot ao próprio grupo do Telegram ou servidor do Discord e provocar respostas e custos.
+
+**Critérios de aceite:**
+- [ ] Configuração: `access.allowed_chats: ["telegram:-100123", "discord:guild:789"]`. Conversas privadas com membros autorizados são sempre permitidas. Grupos e servidores só são permitidos se estiverem na lista. **O padrão é a lista vazia**, ou seja, só conversas privadas.
+- [ ] Em grupo ou servidor não autorizado, o bot não responde a ninguém, nem a membros, e registra no audit log `action: "chat_denied"` uma vez a cada 24 h por chat.
+- [ ] No Telegram, ao ser adicionado a um grupo não autorizado (update `my_chat_member`), o bot sai do grupo com `leaveChat` e registra no audit log. No Discord, só ignora; não sai de servidores automaticamente.
+- [ ] Comandos de admin: `/acesso chat adicionar <id>`, `/acesso chat remover <id>`, `/acesso chat listar`, persistidos em `access.json`. Um admin pode usar `/eu` dentro de um grupo para descobrir o id do chat.
+- [ ] Testes com HTTP mock: conversa privada com membro passa; grupo não autorizado é ignorado mesmo com membro falando; o bot sai do grupo do Telegram não autorizado; os comandos alteram e persistem a lista.
+- [ ] Commit: `feat(access): restrict group chats and servers to an allowlist`.
+
+### US-015: Alertas para os admins
+
+**Critérios de aceite:**
+- [ ] Use o módulo existente `src/supernova/core/alerts/` para gerar alertas nestes eventos:
+  - um membro atinge 80% do orçamento da hora;
+  - o custo do dia da instância atinge 80% do teto global, e depois 100%;
+  - mais de 5 tentativas negadas (`access_denied` ou `chat_denied`) em 10 minutos;
+  - qualquer `fail_closed`.
+- [ ] Os alertas são enviados em mensagem privada a todos os admins pelo canal em que cada admin está cadastrado (Telegram ou Discord), no máximo **um alerta por tipo e por sujeito a cada hora** (deduplicação pura e testada).
+- [ ] O texto é curto e em português, por exemplo: `"⚠️ telegram:123 usou 80% do limite da hora."`
+- [ ] Testes com relógio injetado e HTTP mock: cada gatilho gera o alerta; a deduplicação funciona; admins de canais diferentes recebem pelo próprio canal.
+- [ ] Commit: `feat(alerts): notify admins of budget, abuse and fail-closed events`.
+
+### US-016: Auditoria consultável
+
+**Critérios de aceite:**
+- [ ] Confirme como `src/supernova/core/audit_log/actor.gleam` grava o arquivo com rotação (local e formato) e registre isso no commit.
+- [ ] Todos os eventos novos desta PRD (`access_denied`, `chat_denied`, `capability_denied`, `fail_closed`, comandos `/acesso` e `/teto`) vão para esse audit log com `principal_id`, horário e detalhe.
+- [ ] Comando `/auditoria [n]` (só admin): mostra os últimos `n` eventos (padrão 20, máximo 100) em formato compacto, mais recentes primeiro.
+- [ ] Comando `/auditoria <principal>` (só admin): filtra os eventos de um principal.
+- [ ] Nenhum conteúdo de mensagem de usuário é gravado no audit log, só o tipo do evento e os metadados. Teste que confirma isso.
+- [ ] Testes: os eventos aparecem; o filtro funciona; um membro recebe recusa; o limite de 100 é respeitado.
+- [ ] Commit: `feat(audit): admin audit queries`.
+
+### US-017: Validar a configuração no boot
+
+**Critérios de aceite:**
+- [ ] Crie `src/supernova/config_check.gleam` (puro), com `check(config) -> List(ConfigIssue)` e `ConfigIssue(level: Error | Warning, message: String)`, cobrindo pelo menos:
+  - `Error`: um `principal_id` mal formado em `admins`, `members` ou `allowed_chats` (formato `<canal>:<id>`, com canal `telegram` ou `discord`);
+  - `Error`: um nome de ferramenta em `capabilities` que não existe no `tool_registry`;
+  - `Error`: um valor negativo diferente de `-1` em orçamento, teto ou rate limit;
+  - `Warning`: `allowlist` com `admins` vazio;
+  - `Warning`: um canal experimental habilitado;
+  - `Warning`: `instance_budget.daily_usd = -1`.
+- [ ] Na inicialização, qualquer `Error` impede o boot, com uma mensagem clara listando todos os problemas; cada `Warning` vira um log `warn`.
+- [ ] Novo subcomando `bin/supernova check-config [caminho]` (e o alvo `make check-config`), que imprime os problemas e sai com código 1 se houver `Error`.
+- [ ] Testes para cada regra e para o código de saída.
+- [ ] Commit: `feat(config): validate access, budget and capability config at boot`.
+
+### US-018: Cobertura de volta ao caminho dos 85%
+
+**Critérios de aceite:**
+- [ ] Rode `make coverage` e pegue os 15 módulos com menor cobertura listados pelo escript, ignorando FFI de canais experimentais e módulos que exigem rede real.
+- [ ] Escreva testes para esses módulos até a cobertura total chegar a **pelo menos 78%**. Os testes devem verificar comportamento, não só executar linhas.
+- [ ] Suba o `--threshold` no `Makefile` para 78.
+- [ ] Se 78% não for alcançável sem testes artificiais, pare no maior valor honesto alcançado, fixe o threshold nesse valor arredondado para baixo e registre o motivo.
+- [ ] Commit: `test: raise line coverage toward 85%`.
+
+### US-019: Documentação de operação do grupo fechado
+
+**Critérios de aceite:**
+- [ ] Nova seção em `DEPLOY.md`, "Grupo fechado", explicando: como descobrir o próprio `principal_id` (o bot responde ao comando `/eu` mesmo para quem não está autorizado, sem chamar o LLM e sem contar no limite de 24 h da negação), como cadastrar o primeiro admin por env, como convidar membros, como autorizar grupos e servidores, e como ajustar orçamento, teto diário, preços, rate limit e capabilities.
+- [ ] Uma tabela de referência de todos os comandos desta PRD (`/eu`, `/uso`, `/uso todos`, `/acesso …`, `/acesso chat …`, `/teto liberar`, `/auditoria …`), com quem pode usar cada um.
+- [ ] Um `supernova.yaml.example` completo e comentado com todas as seções novas, que passe em `bin/supernova check-config`. Um teste garante isso.
 - [ ] Implemente `/eu` conforme descrito acima, com teste.
 - [ ] `gleam.toml`: `version = "0.4.0"`. Crie `RELEASE_NOTES_v0.4.0.md` e atualize `STATUS.md`.
 - [ ] Commit: `docs: closed-group operations and v0.4.0 notes`.
@@ -235,5 +344,11 @@ Crie `docs/B1_REPORT.md` com:
 - Telegram e Discord têm testes de ponta a ponta com mocks; os outros canais avisam no boot que são experimentais.
 - O GHCR recebe imagem só em tag `v*`.
 - `blackboard` e `memory_federation` não estão ligados em produção, e um teste de arquitetura impede que sejam ligados antes da PRD B3.
+- Se acesso, orçamento ou ledger estiverem indisponíveis, nada é liberado (falha fechado).
+- A instância nunca passa do teto diário em USD sem a liberação explícita de um admin.
+- O bot não responde em grupos ou servidores não autorizados, e sai de grupos do Telegram não autorizados.
+- Os admins recebem alertas de orçamento, abuso e falhas, sem duplicação dentro de uma hora.
+- Uma configuração inválida impede o boot; `check-config` aponta os problemas.
+- Cobertura ≥ 78% (ou o máximo honesto registrado), com o threshold atualizado.
 - CI verde; cobertura ≥ linha de base.
 [/PRD]
