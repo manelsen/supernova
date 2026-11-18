@@ -76,6 +76,9 @@ pub fn chat(
 // Mock Provider (for testing)
 // ============================================================================
 
+@external(erlang, "supernova_mock_ffi", "network_fail_once")
+fn mock_network_fail_once(key: String) -> Bool
+
 /// Mock chat completion — returns a canned response.
 fn mock_chat(
   messages: List(provider.ChatMessage),
@@ -83,13 +86,25 @@ fn mock_chat(
   tools: List(provider.ToolDefinition),
 ) -> Result(provider.ChatResponse, provider.LLMError) {
   case latest_user_content(messages) {
-    Some(content) ->
+    Some(content) -> {
       case string.contains(content, "[mock-crash]") {
         True -> panic as "simulated executor crash"
         False -> Nil
       }
-    None -> Nil
+      case mock_forced_error(content) {
+        Some(error) -> Error(error)
+        None -> mock_chat_success(messages, config, tools)
+      }
+    }
+    None -> mock_chat_success(messages, config, tools)
   }
+}
+
+fn mock_chat_success(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+  tools: List(provider.ToolDefinition),
+) -> Result(provider.ChatResponse, provider.LLMError) {
   case special_mock_response(messages, config) {
     Some(content) ->
       Ok(provider.ChatResponse(
@@ -99,6 +114,26 @@ fn mock_chat(
         reasoning_content: None,
       ))
     None -> mock_chat_default(messages, config, tools)
+  }
+}
+
+fn mock_forced_error(content: String) -> Option(provider.LLMError) {
+  case string.contains(content, "[mock-network-fail-once]") {
+    True ->
+      case mock_network_fail_once(content) {
+        True -> Some(provider.NetworkError("mock network failure"))
+        False -> None
+      }
+    False ->
+      case string.contains(content, "[mock-429]") {
+        True -> Some(provider.APIError(status: 429, message: "mock rate limit"))
+        False ->
+          case string.contains(content, "[mock-400]") {
+            True ->
+              Some(provider.APIError(status: 400, message: "mock bad request"))
+            False -> None
+          }
+      }
   }
 }
 

@@ -299,14 +299,29 @@ pub fn record_consumption(
   resource: BudgetResource,
   amount: Int,
 ) -> Nil {
-  let _ =
+  let _ = try_record_consumption(policy, agent_id, resource, amount)
+  Nil
+}
+
+/// Record consumption with an explicit failure, for callers that must not
+/// proceed without an acknowledged charge.
+pub fn try_record_consumption(
+  policy: BudgetPolicy,
+  agent_id: String,
+  resource: BudgetResource,
+  amount: Int,
+) -> Result(Nil, Nil) {
+  case
     safe_call.call(policy, 2000, RecordConsumption(
       _,
       agent_id,
       resource,
       amount,
     ))
-  Nil
+  {
+    Ok(_) -> Ok(Nil)
+    Error(_) -> Error(Nil)
+  }
 }
 
 /// Set parent agent for budget inheritance.

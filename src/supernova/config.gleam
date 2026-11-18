@@ -282,7 +282,11 @@ pub type PricingConfig {
 
 /// Instance-wide daily spend cap.
 pub type InstanceBudgetConfig {
-  InstanceBudgetConfig(daily_usd: Float, timezone: String)
+  InstanceBudgetConfig(
+    daily_usd: Float,
+    timezone: String,
+    reserve_output_tokens: Int,
+  )
 }
 
 /// Support level for a channel adapter.
@@ -464,7 +468,11 @@ pub fn default_pricing_config() -> PricingConfig {
 }
 
 pub fn default_instance_budget_config() -> InstanceBudgetConfig {
-  InstanceBudgetConfig(daily_usd: 5.0, timezone: "America/Sao_Paulo")
+  InstanceBudgetConfig(
+    daily_usd: 5.0,
+    timezone: "America/Sao_Paulo",
+    reserve_output_tokens: 1000,
+  )
 }
 
 /// Create a default tools configuration
@@ -1060,6 +1068,11 @@ fn decode_instance_budget(root: yay.Node) -> InstanceBudgetConfig {
       InstanceBudgetConfig(
         daily_usd: get_float_or(node, "daily_usd", default.daily_usd),
         timezone: get_string_or(node, "timezone", default.timezone),
+        reserve_output_tokens: get_int_or(
+          node,
+          "reserve_output_tokens",
+          default.reserve_output_tokens,
+        ),
       )
     Error(_) -> default
   }
@@ -1203,7 +1216,11 @@ pub fn parse_yaml(yaml_string: String) -> Result(Config, ConfigError) {
 /// Get environment variable value
 fn get_env(key: String) -> Option(String) {
   case envoy.get(key) {
-    Ok(value) -> Some(value)
+    Ok(value) ->
+      case string.trim(value) == "" {
+        True -> None
+        False -> Some(value)
+      }
     Error(_) -> None
   }
 }

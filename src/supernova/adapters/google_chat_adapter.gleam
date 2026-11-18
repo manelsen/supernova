@@ -34,7 +34,12 @@ pub fn start(
     do_send(webhook_url, reply)
   }
   Ok(
-    port.ChannelAdapter(name: "google_chat", send: send_fn, stop: fn() { Nil }),
+    port.ChannelAdapter(
+      name: "google_chat",
+      send: send_fn,
+      stop: fn() { Nil },
+      stop_ingress: fn() { Nil },
+    ),
   )
 }
 

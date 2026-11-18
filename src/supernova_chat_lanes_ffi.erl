@@ -1,5 +1,5 @@
 -module(supernova_chat_lanes_ffi).
--export([submit/2, submit_with_limits/4, lane_count/0]).
+-export([submit/2, submit_with_limits/4, lane_count/0, drain/2, undrain/1]).
 
 %% Per-chat ordered execution lanes.
 %%
@@ -20,7 +20,8 @@ submit(Key, Job) ->
 %% Same as submit/2 with explicit limits (tests and diagnostics).
 submit_with_limits(Key, Job, MaxPending, MaxLanes) ->
     Ref = make_ref(),
-    manager() ! {submit, Key, Job, self(), Ref, MaxPending, MaxLanes},
+    Deadline = erlang:monotonic_time(millisecond) + 900,
+    manager() ! {submit, Key, Job, self(), Ref, MaxPending, MaxLanes, Deadline},
     receive
         {Ref, Accepted} -> Accepted
     after 1000 -> false
@@ -34,6 +35,26 @@ lane_count() ->
         {Ref, N} -> N
     after 1000 -> -1
     end.
+
+%% Stop accepting jobs whose key starts with Prefix and wait for pending
+%% jobs to finish. Returns the number of pending jobs still alive at the
+%% deadline.
+drain(<<>>, _TimeoutMs) ->
+    -1;
+drain(_Prefix, TimeoutMs) when is_integer(TimeoutMs), TimeoutMs < 0 ->
+    -1;
+drain(Prefix, TimeoutMs) ->
+    Ref = make_ref(),
+    manager() ! {drain, Prefix, self(), Ref, TimeoutMs},
+    receive
+        {Ref, Remaining} -> Remaining
+    after TimeoutMs + 1000 -> -1
+    end.
+
+%% Reopen a prefix closed by drain (tests and registry restarts).
+undrain(Prefix) ->
+    manager() ! {undrain, Prefix},
+    ok.
 
 manager() ->
     case whereis(?NAME) of
@@ -53,45 +74,117 @@ manager() ->
 
 init() ->
     process_flag(trap_exit, true),
-    loop(#{}).
+    loop(#{}, [], []).
 
-loop(Lanes) ->
+loop(Lanes, Draining, Waits) ->
     receive
-        {submit, Key, Job, From, Ref, MaxPending, MaxLanes} ->
-            case accept(Key, Job, Lanes, MaxPending, MaxLanes) of
-                {ok, NewLanes} ->
-                    From ! {Ref, true},
-                    loop(NewLanes);
-                {reject, Reason} ->
-                    io:format(standard_error,
-                              "warn: chat lane rejected key=~ts reason=~ts~n",
-                              [Key, Reason]),
+        {submit, Key, Job, From, Ref, MaxPending, MaxLanes, Deadline} ->
+            case erlang:monotonic_time(millisecond) > Deadline of
+                true ->
                     From ! {Ref, false},
-                    loop(Lanes)
+                    loop(Lanes, Draining, Waits);
+                false ->
+                    case is_draining(Key, Draining) of
+                        true ->
+                            From ! {Ref, false},
+                            loop(Lanes, Draining, Waits);
+                        false ->
+                            case accept(Key, Job, Lanes, MaxPending, MaxLanes) of
+                                {ok, NewLanes} ->
+                                    From ! {Ref, true},
+                                    loop(NewLanes, Draining, Waits);
+                                {reject, Reason} ->
+                                    From ! {Ref, false},
+                                    log_rejection(Key, Reason),
+                                    loop(Lanes, Draining, Waits)
+                            end
+                    end
             end;
+        {drain, Prefix, From, Ref, TimeoutMs} ->
+            case pending_for_prefix(Prefix, Lanes) of
+                0 ->
+                    From ! {Ref, 0},
+                    loop(Lanes, [Prefix | Draining], Waits);
+                _ ->
+                    Timer = erlang:send_after(
+                        TimeoutMs, self(), {drain_timeout, Prefix, From, Ref}),
+                    Waits1 = [{Prefix, From, Ref, Timer} | Waits],
+                    loop(Lanes, [Prefix | Draining], Waits1)
+            end;
+        {undrain, Prefix} ->
+            loop(Lanes, lists:delete(Prefix, Draining), Waits);
+        {drain_timeout, Prefix, From, Ref} ->
+            From ! {Ref, pending_for_prefix(Prefix, Lanes)},
+            loop(Lanes, Draining,
+                 [W || {P, _, _, _} = W <- Waits, P =/= Prefix]);
         {done, Key, Worker} ->
             case maps:find(Key, Lanes) of
                 {ok, {Worker, 1}} ->
                     Worker ! stop,
-                    loop(maps:remove(Key, Lanes));
+                    Lanes1 = maps:remove(Key, Lanes),
+                    loop(Lanes1, Draining, notify_drains(Draining, Waits, Lanes1));
                 {ok, {Worker, Pending}} ->
-                    loop(Lanes#{Key => {Worker, Pending - 1}});
+                    loop(Lanes#{Key => {Worker, Pending - 1}}, Draining, Waits);
                 _ ->
-                    loop(Lanes)
+                    loop(Lanes, Draining, Waits)
             end;
         {count, From, Ref} ->
             From ! {Ref, maps:size(Lanes)},
-            loop(Lanes);
+            loop(Lanes, Draining, Waits);
         {'EXIT', Pid, _Reason} ->
             %% A worker was killed: drop its lane so the next job starts fresh.
-            loop(maps:filter(fun(_, {W, _}) -> W =/= Pid end, Lanes));
+            Lanes1 = maps:filter(fun(_, {W, _}) -> W =/= Pid end, Lanes),
+            loop(Lanes1, Draining, notify_drains(Draining, Waits, Lanes1));
         _ ->
-            loop(Lanes)
+            loop(Lanes, Draining, Waits)
     end.
+
+log_rejection(Key, Reason) ->
+    Now = erlang:monotonic_time(millisecond),
+    Last = get({lane_rejection_log, Key}),
+    case Last =:= undefined orelse Now - Last >= 10000 of
+        true ->
+            put({lane_rejection_log, Key}, Now),
+            spawn(fun() ->
+                io:format(standard_error,
+                          "warn: chat lane rejected submission key=~ts reason=~p~n",
+                          [Key, Reason])
+            end);
+        false ->
+            ok
+    end.
+
+is_draining(Key, Draining) ->
+    lists:any(fun(Prefix) -> starts_with(Key, Prefix) end, Draining).
+
+starts_with(Bin, Prefix) ->
+    case binary:match(Bin, Prefix) of
+        {0, _} -> true;
+        _ -> false
+    end.
+
+pending_for_prefix(Prefix, Lanes) ->
+    maps:fold(fun(Key, {_Worker, Pending}, Acc) ->
+        case starts_with(Key, Prefix) of
+            true -> Acc + Pending;
+            false -> Acc
+        end
+    end, 0, Lanes).
+
+notify_drains(_Draining, Waits, Lanes) ->
+    lists:flatmap(fun({Prefix, From, Ref, Timer} = Wait) ->
+        case pending_for_prefix(Prefix, Lanes) of
+            0 ->
+                erlang:cancel_timer(Timer),
+                From ! {Ref, 0},
+                [];
+            _ -> [Wait]
+        end
+    end, Waits).
 
 accept(Key, Job, Lanes, MaxPending, MaxLanes) ->
     case maps:find(Key, Lanes) of
-        {ok, {Worker, Pending}} when Pending >= MaxPending ->
+        {ok, {_Worker, Pending}} when Pending >= MaxPending ->
             {reject, pending_limit};
         {ok, {Worker, Pending}} ->
             Worker ! {job, Job},

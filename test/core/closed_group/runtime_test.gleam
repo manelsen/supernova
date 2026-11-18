@@ -1,6 +1,7 @@
 import exception
 import gleam/dict
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -17,12 +18,16 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure
 import supernova/core/closed_group/runtime as cg_runtime
 import supernova/core/closed_group/types as cg_types
+import supernova/core/executor
 import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/principal
 import supernova/core/rate_limit/actor as rate_limiter
 import supernova/core/resource_ledger/actor as ledger_actor
+import supernova/core/resource_ledger/types.{LLMUsage, ToolUsage}
 import supernova/core/syscall/actor as syscall_actor
 import supernova/core/tool_dispatch
+import supernova/llm/pricing
+import supernova/llm/provider
 import test_workspace
 
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
@@ -30,6 +35,9 @@ fn ffi_ensure_dir(path: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn ffi_write_file(path: String, content: String) -> Result(Nil, String)
+
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
 
 const now = 1_700_000_000_000
 
@@ -71,6 +79,7 @@ fn test_runtime(
     )
   let assert Ok(ledger) =
     ledger_actor.start_persistent_with_clock(root <> "/ledger", fn() { now })
+  closed_group_global.set_ledger(ledger)
   let assert Ok(rate) = rate_limiter.start_with_clock(fn() { now })
   let assert Ok(audit) = audit_actor.start(root <> "/audit")
   let assert Ok(instance) =
@@ -344,6 +353,7 @@ pub fn instance_cap_blocks_even_admin_until_raised_test() {
       instance_budget: config.InstanceBudgetConfig(
         daily_usd: 0.001,
         timezone: "UTC",
+        reserve_output_tokens: 1000,
       ),
     )
   with_runtime(cfg, fn(runtime) {
@@ -671,7 +681,14 @@ fn send_usage(
       cg_types.PrincipalContext(principal_id: principal_id, role: role),
     )
   case context.on_llm_usage {
-    Some(record) -> record("mock", "m", prompt_tokens, completion_tokens)
+    Some(record) ->
+      record(
+        "test-call:" <> int.to_string(unique_integer()),
+        "mock",
+        "m",
+        prompt_tokens,
+        completion_tokens,
+      )
     None -> Nil
   }
 }
@@ -691,6 +708,7 @@ pub fn budget_and_instance_alerts_are_deduplicated_test() {
       instance_budget: config.InstanceBudgetConfig(
         daily_usd: 1.0,
         timezone: "UTC",
+        reserve_output_tokens: 1000,
       ),
     )
   let alert_recorder = process.new_subject()
@@ -741,10 +759,13 @@ pub fn abuse_and_fail_closed_alerts_reach_every_admin_test() {
 
       access_actor.stop(runtime.access)
       let _ = cg_runtime.gate(runtime, "telegram", "123", "123", "oi")
-      let assert Ok(#(_, failed_text)) =
-        process.receive(alert_recorder, within: 1000)
-      string.contains(failed_text, "Componente indisponível")
-      |> should.equal(True)
+      // With access unavailable there is no effective recipient list: the
+      // alert is dropped and audited, never sent to YAML admins.
+      process.receive(alert_recorder, within: 500)
+      |> should.equal(Error(Nil))
+      audit_actor.get_all(runtime.audit)
+      |> list.any(fn(entry) { entry.operation == "alert_dropped" })
+      |> should.be_true()
     },
   )
 }
@@ -860,4 +881,357 @@ pub fn audit_principal_filter_test() {
       _ -> should.fail()
     }
   })
+}
+
+pub fn admission_uses_routed_model_price_test() {
+  let base = config_with_access(["telegram:1"], ["telegram:123"], [])
+  let cheap = config.PricingEntry(input_per_mtok: 0.01, output_per_mtok: 0.01)
+  let expensive =
+    config.PricingEntry(input_per_mtok: 1000.0, output_per_mtok: 2000.0)
+  let provider = fn(model: String) {
+    config.ProviderConfig(
+      provider: config.OpenAI,
+      api_key: None,
+      base_url: None,
+      model: Some(model),
+      timeout_ms: 1000,
+    )
+  }
+  let cfg =
+    config.Config(
+      ..base,
+      providers: dict.from_list([
+        #("cheap", provider("cheap-model")),
+        #("mock", provider("expensive-model")),
+      ]),
+      pricing: config.PricingConfig(
+        default: cheap,
+        models: dict.from_list([#("expensive-model", expensive)]),
+      ),
+      instance_budget: config.InstanceBudgetConfig(
+        daily_usd: 0.05,
+        timezone: "UTC",
+        reserve_output_tokens: 1000,
+      ),
+    )
+  with_runtime(cfg, fn(runtime) {
+    let context =
+      cg_runtime.run_context(
+        runtime,
+        cg_types.PrincipalContext(principal_id: "telegram:123", role: "member"),
+      )
+    let assert Some(admit) = context.admit_llm
+    admit("call-cheap", "mock", "cheap-model", 100)
+    |> should.be_ok()
+    admit("call-expensive", "mock", "expensive-model", 100)
+    |> should.be_error()
+  })
+}
+
+pub fn admission_reserves_routed_model_estimate_test() {
+  let expensive =
+    config.PricingEntry(input_per_mtok: 1000.0, output_per_mtok: 2000.0)
+  let config =
+    config.Config(
+      ..config_with_access(["telegram:1"], ["telegram:123"], []),
+      providers: dict.from_list([
+        #(
+          "mock",
+          config.ProviderConfig(
+            provider: config.OpenAI,
+            api_key: None,
+            base_url: None,
+            model: Some("expensive-model"),
+            timeout_ms: 1000,
+          ),
+        ),
+      ]),
+      pricing: config.PricingConfig(
+        default: config.PricingEntry(
+          input_per_mtok: 0.01,
+          output_per_mtok: 0.01,
+        ),
+        models: dict.from_list([#("expensive-model", expensive)]),
+      ),
+      instance_budget: config.InstanceBudgetConfig(
+        daily_usd: 3.0,
+        timezone: "UTC",
+        reserve_output_tokens: 1000,
+      ),
+    )
+  with_runtime(config, fn(runtime) {
+    let context =
+      cg_runtime.run_context(
+        runtime,
+        cg_types.PrincipalContext(principal_id: "telegram:123", role: "member"),
+      )
+    let assert Some(admit) = context.admit_llm
+    admit("call-expensive", "mock", "expensive-model", 100)
+    |> should.be_ok()
+
+    ledger_actor.try_get_open_reservations_total(runtime.ledger)
+    |> should.equal(
+      Ok(pricing.cost_usd(
+        pricing.Price(input_per_mtok: 1000.0, output_per_mtok: 2000.0),
+        100,
+        1000,
+      )),
+    )
+  })
+}
+
+pub fn network_failure_once_is_unconfirmed_and_retried_test() {
+  with_runtime(
+    config_with_access(["telegram:1"], ["telegram:123"], []),
+    fn(runtime) {
+      let context =
+        cg_runtime.run_context(
+          runtime,
+          cg_types.PrincipalContext(
+            principal_id: "telegram:123",
+            role: "member",
+          ),
+        )
+      let config =
+        provider.ProviderConfig(
+          name: "mock",
+          api_key: None,
+          base_url: None,
+          default_model: "mock-model",
+        )
+      let assert Ok(_) =
+        executor.run_with_context(
+          [provider.user_message("simulate [mock-network-fail-once]")],
+          config,
+          [],
+          context,
+        )
+
+      let usage = ledger_actor.get_all_usage(runtime.ledger)
+      list.length(usage) |> should.equal(2)
+      usage
+      |> list.any(fn(event) {
+        case event {
+          LLMUsage(call_id: call_id, cost_usd: cost, ..) ->
+            string.ends_with(call_id, ":unconfirmed") && cost >. 0.0
+          ToolUsage(..) -> False
+        }
+      })
+      |> should.be_true()
+      let total =
+        list.fold(usage, 0.0, fn(sum, event) {
+          case event {
+            LLMUsage(cost_usd: cost, ..) -> sum +. cost
+            ToolUsage(..) -> sum
+          }
+        })
+      let day = pricing.day_key(now, "UTC")
+      ledger_actor.get_daily_cost(runtime.ledger, day)
+      |> should.equal(total)
+      ledger_actor.try_get_open_reservations_total(runtime.ledger)
+      |> should.equal(Ok(0.0))
+    },
+  )
+}
+
+pub fn retry_429_releases_every_reservation_test() {
+  with_runtime(
+    config_with_access(["telegram:1"], ["telegram:123"], []),
+    fn(runtime) {
+      let context =
+        cg_runtime.run_context(
+          runtime,
+          cg_types.PrincipalContext(
+            principal_id: "telegram:123",
+            role: "member",
+          ),
+        )
+      let config =
+        provider.ProviderConfig(
+          name: "mock",
+          api_key: None,
+          base_url: None,
+          default_model: "mock-model",
+        )
+      case
+        executor.run_with_context(
+          [provider.user_message("simulate [mock-429]")],
+          config,
+          [],
+          context,
+        )
+      {
+        Error(executor.LLMError(reason: provider.APIError(status: 429, ..))) ->
+          Nil
+        other -> {
+          let _ = other
+          should.fail()
+        }
+      }
+      list.length(ledger_actor.get_all_usage(runtime.ledger))
+      |> should.equal(0)
+      let day = pricing.day_key(now, "UTC")
+      ledger_actor.get_daily_cost(runtime.ledger, day) |> should.equal(0.0)
+      ledger_actor.try_get_open_reservations_total(runtime.ledger)
+      |> should.equal(Ok(0.0))
+    },
+  )
+}
+
+pub fn retry_second_attempt_can_be_denied_by_cap_test() {
+  let base = config_with_access(["telegram:1"], ["telegram:123"], [])
+  let cfg =
+    config.Config(
+      ..base,
+      pricing: config.PricingConfig(
+        default: config.PricingEntry(
+          input_per_mtok: 0.01,
+          output_per_mtok: 0.01,
+        ),
+        models: dict.new(),
+      ),
+      instance_budget: config.InstanceBudgetConfig(
+        daily_usd: 0.00002,
+        timezone: "UTC",
+        reserve_output_tokens: 1000,
+      ),
+    )
+  with_runtime(cfg, fn(runtime) {
+    let context =
+      cg_runtime.run_context(
+        runtime,
+        cg_types.PrincipalContext(principal_id: "telegram:123", role: "member"),
+      )
+    let config =
+      provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      )
+    case
+      executor.run_with_context(
+        [provider.user_message("simulate [mock-network-fail-once][cap]")],
+        config,
+        [],
+        context,
+      )
+    {
+      Error(executor.PolicyDenied(_)) -> Nil
+      other -> {
+        let _ = other
+        should.fail()
+      }
+    }
+    list.length(ledger_actor.get_all_usage(runtime.ledger))
+    |> should.equal(1)
+  })
+}
+
+pub fn usage_retry_uses_live_ledger_test() {
+  with_runtime(
+    config_with_access(["telegram:1"], ["telegram:123"], []),
+    fn(runtime) {
+      let stopped_ledger = runtime.ledger
+      closed_group_global.set_ledger(stopped_ledger)
+      ledger_actor.stop(stopped_ledger)
+      let assert Ok(new_ledger) = ledger_actor.start()
+
+      // Initial write goes to the stopped handle; swap the live ledger before
+      // the first retry fires.
+      send_usage(runtime, "telegram:123", "member", 10, 5)
+      closed_group_global.set_ledger(new_ledger)
+
+      let deadline = now + 4000
+      wait_for_ledger_usage(new_ledger, deadline, runtime.clock)
+
+      closed_group_global.clear_runtime()
+      ledger_actor.stop(new_ledger)
+    },
+  )
+}
+
+fn wait_for_ledger_usage(
+  ledger: ledger_actor.ResourceLedger,
+  deadline: Int,
+  clock: fn() -> Int,
+) -> Nil {
+  case ledger_actor.get_all_usage(ledger) {
+    [] ->
+      case clock() >= deadline {
+        True -> should.fail()
+        False -> {
+          process.sleep(50)
+          wait_for_ledger_usage(ledger, deadline, clock)
+        }
+      }
+    _ -> Nil
+  }
+}
+
+pub fn alerts_only_reach_effective_admins_test() {
+  let cfg = config_with_access(["telegram:1", "telegram:2"], [], [])
+  let recorder = process.new_subject()
+  with_runtime_alerts(
+    cfg,
+    fn(admin, text) { process.send(recorder, #(admin, text)) },
+    fn(runtime) {
+      runtime.access
+      |> access_actor.remove_member("telegram:2")
+      |> should.be_ok()
+
+      cg_runtime.fail_closed_alert(runtime, "ledger")
+
+      let assert Ok(#(admin, _)) = process.receive(recorder, within: 1000)
+      admin |> should.equal("telegram:1")
+      process.receive(recorder, within: 100)
+      |> should.equal(Error(Nil))
+    },
+  )
+}
+
+pub fn alert_is_dropped_when_access_is_unavailable_test() {
+  let cfg = config_with_access(["telegram:1"], [], [])
+  let recorder = process.new_subject()
+  with_runtime_alerts(
+    cfg,
+    fn(admin, text) { process.send(recorder, #(admin, text)) },
+    fn(runtime) {
+      access_actor.stop(runtime.access)
+      cg_runtime.fail_closed_alert(runtime, "ledger")
+
+      process.receive(recorder, within: 2500)
+      |> should.equal(Error(Nil))
+      audit_actor.get_all(runtime.audit)
+      |> list.any(fn(entry) { entry.operation == "alert_dropped" })
+      |> should.be_true()
+    },
+  )
+}
+
+pub fn denied_interaction_is_audited_test() {
+  let alert_recorder = process.new_subject()
+  with_runtime_alerts(
+    config_with_access(["telegram:1"], [], []),
+    fn(_admin, text) { process.send(alert_recorder, text) },
+    fn(runtime) {
+      case cg_runtime.gate_interaction(runtime, "telegram", "1", "999") {
+        cg_types.Reply(text) -> should.equal(text, "Esta instância é privada.")
+        _ -> should.fail()
+      }
+      // The first denial is counted; four more stay below the threshold.
+      list.repeat(Nil, 4)
+      |> list.each(fn(_) {
+        let _ = cg_runtime.gate_interaction(runtime, "telegram", "1", "999")
+      })
+      process.receive(alert_recorder, within: 50) |> should.equal(Error(Nil))
+      // The sixth denial crosses it.
+      let _ = cg_runtime.gate_interaction(runtime, "telegram", "1", "999")
+      let assert Ok(alert) = process.receive(alert_recorder, within: 1000)
+      string.contains(alert, "Mais de 5 tentativas") |> should.equal(True)
+      audit_actor.get_all(runtime.audit)
+      |> list.any(fn(entry) { entry.operation == "access_denied" })
+      |> should.be_true()
+    },
+  )
 }

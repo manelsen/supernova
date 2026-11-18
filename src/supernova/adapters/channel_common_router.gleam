@@ -1115,6 +1115,42 @@ fn bootstrap_command(content: String) -> Option(BootstrapCommand) {
   }
 }
 
+fn closed_group_gate_interaction(
+  interaction: port.ChannelInteractionMessage,
+) -> Option(closed_group_types.GateResult) {
+  case closed_group_global.get_runtime() {
+    None ->
+      case closed_group_global.is_enforced() {
+        True ->
+          Some(closed_group_types.Reply(closed_group_pure.fail_closed_reply))
+        False -> None
+      }
+    Some(runtime) ->
+      Some(closed_group_runtime.gate_interaction(
+        runtime,
+        interaction.channel,
+        interaction.channel_id,
+        interaction.user_id,
+      ))
+  }
+}
+
+fn interaction_denial_reply(
+  interaction: port.ChannelInteractionMessage,
+  content: String,
+) -> port.ChannelReply {
+  port.ChannelReply(
+    channel_id: interaction.channel_id,
+    content: content,
+    reply_to_id: interaction.event.source_message_id,
+    thread_id: None,
+    typing: False,
+    edit_message_id: None,
+    interactive: None,
+    media: [],
+  )
+}
+
 fn handle_inbound_interaction(
   expected_channel: String,
   interaction: port.ChannelInteractionMessage,
@@ -1135,17 +1171,10 @@ fn handle_inbound_interaction(
           // Callbacks change session provider/model and persist preferences,
           // so they pass the same access gate as messages. The content is
           // empty: no command is dispatched from a button click.
-          case
-            closed_group_gate_for(
-              interaction.channel,
-              interaction.channel_id,
-              interaction.user_id,
-              "",
-            )
-          {
+          case closed_group_gate_interaction(interaction) {
             Some(closed_group_types.Reply(content)) -> #(
               state,
-              Ok(interaction_reply(interaction, content, None)),
+              Ok(interaction_denial_reply(interaction, content)),
             )
             Some(closed_group_types.Ignored(reason)) -> #(
               state,

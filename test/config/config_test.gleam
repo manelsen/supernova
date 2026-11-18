@@ -6,8 +6,8 @@ import gleam/dict
 import gleam/option.{None, Some}
 import gleeunit
 import supernova/config.{
-  Anthropic, Config as ConfigRecord, DatabaseConfig as DatabaseConfigRecord,
-  DiscordConfig as DiscordConfigRecord,
+  AccessConfig as AccessConfigRecord, Anthropic, Config as ConfigRecord,
+  DatabaseConfig as DatabaseConfigRecord, DiscordConfig as DiscordConfigRecord,
   GoogleChatConfig as GoogleChatConfigRecord, InvalidField,
   LarkConfig as LarkConfigRecord, MatrixConfig as MatrixConfigRecord,
   MattermostConfig as MattermostConfigRecord, Minimax, MissingField, Ollama,
@@ -653,6 +653,36 @@ discord:
 // ============================================================================
 // Environment Variable Override Tests
 // ============================================================================
+
+pub fn empty_env_value_does_not_override_yaml_test() {
+  let base = default_config()
+  let yaml_config =
+    ConfigRecord(
+      ..base,
+      telegram: TelegramConfigRecord(
+        ..base.telegram,
+        token: Some("yaml-telegram-token"),
+      ),
+      access: AccessConfigRecord(
+        ..base.access,
+        admins: ["telegram:1"],
+        members: ["telegram:2"],
+      ),
+    )
+
+  envoy.set("SUPERNOVA_TELEGRAM_TOKEN", "")
+  envoy.set("SUPERNOVA_ACCESS_ADMINS", "")
+  envoy.set("SUPERNOVA_ACCESS_MEMBERS", "")
+
+  let overridden = apply_env_overrides(yaml_config)
+  overridden.telegram.token |> should_equal(Some("yaml-telegram-token"))
+  overridden.access.admins |> should_equal(["telegram:1"])
+  overridden.access.members |> should_equal(["telegram:2"])
+
+  envoy.unset("SUPERNOVA_TELEGRAM_TOKEN")
+  envoy.unset("SUPERNOVA_ACCESS_ADMINS")
+  envoy.unset("SUPERNOVA_ACCESS_MEMBERS")
+}
 
 pub fn apply_env_overrides_app_name_test() {
   // Set env var

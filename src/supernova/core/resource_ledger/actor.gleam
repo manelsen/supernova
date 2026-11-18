@@ -23,9 +23,11 @@
 
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/result
 import gleam/string
 import supernova/core/resource_ledger/pure
 import supernova/core/resource_ledger/types.{
@@ -34,6 +36,7 @@ import supernova/core/resource_ledger/types.{
   ToolUsage, WriteAudit,
 }
 import supernova/core/safe_call
+import supernova/llm/pricing
 
 // ============================================================================
 // FFI — Timestamp, Audit, File System (Erlang)
@@ -42,6 +45,9 @@ import supernova/core/safe_call
 /// Get current timestamp in milliseconds (Erlang FFI).
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn ffi_current_timestamp() -> Int
+
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
 
 /// Write audit log entry (Erlang FFI).
 @external(erlang, "supernova_ledger_ffi", "write_audit")
@@ -137,7 +143,21 @@ pub type LedgerMessage {
     prompt_tokens: Int,
     completion_tokens: Int,
     cost_usd: Float,
+    call_id: String,
   )
+  /// Reserve estimated spend for one LLM call before it is admitted.
+  AdmitLLMCall(
+    reply_to: Subject(Result(Nil, String)),
+    call_id: String,
+    cap_usd: Float,
+    estimate_usd: Float,
+  )
+  /// Drop an unrecorded reservation (failed call or shutdown).
+  ReleaseReservation(reply_to: Subject(Nil), call_id: String)
+  /// Return the current local day and its LLM spend.
+  GetSpendToday(reply_to: Subject(#(String, Float)), now: Int)
+  /// Return the sum of all open reservation estimates.
+  GetOpenReservationsTotal(reply_to: Subject(Result(Float, Nil)))
   /// Record a tool invocation in the usage trail
   RecordToolUsage(
     reply_to: Subject(Nil),
@@ -149,9 +169,6 @@ pub type LedgerMessage {
   GetUsage(reply_to: Subject(List(UsageEvent)), principal_id: String)
   /// Get the full usage trail
   GetAllUsage(reply_to: Subject(List(UsageEvent)))
-  /// Sum the LLM cost of events whose timestamp satisfies `keep`. Computed
-  /// inside the actor so callers never copy the whole usage trail.
-  GetLLMCostWhere(reply_to: Subject(Float), keep: fn(Int) -> Bool)
   /// Get the total LLM cost for a UTC day
   GetDailyCost(reply_to: Subject(Float), day: String)
   /// Get the LLM cost for a UTC day for one principal
@@ -167,13 +184,70 @@ pub type ResourceLedger =
   Subject(LedgerMessage)
 
 /// Internal actor state: aggregate counters plus the usage trail.
+type Reservation {
+  Reservation(estimate_usd: Float, expires_at: Int)
+}
+
 type ActorState {
   ActorState(
     counters: Dict(String, ResourceCounters),
     events: List(UsageEvent),
     directory: Option(String),
     now: fn() -> Int,
+    day_key: fn(Int) -> String,
+    day_totals: Dict(String, Float),
+    reservations: Dict(String, Reservation),
+    recorded_calls: Dict(String, Bool),
   )
+}
+
+const reservation_ttl_ms = 600_000
+
+fn total_for_day(totals: Dict(String, Float), day: String) -> Float {
+  dict.get(totals, day) |> result.unwrap(0.0)
+}
+
+fn reservations_total(reservations: Dict(String, Reservation)) -> Float {
+  reservations
+  |> dict.values
+  |> list.fold(0.0, fn(total, reservation) { total +. reservation.estimate_usd })
+}
+
+fn purge_expired(state: ActorState, now: Int) -> ActorState {
+  let reservations =
+    dict.filter(state.reservations, fn(_, reservation) {
+      reservation.expires_at > now
+    })
+  ActorState(..state, reservations: reservations)
+}
+
+fn recompute_totals(
+  events: List(UsageEvent),
+  day_key: fn(Int) -> String,
+) -> Dict(String, Float) {
+  list.fold(events, dict.new(), fn(totals, event) {
+    case event {
+      LLMUsage(timestamp: timestamp, cost_usd: cost, ..) -> {
+        let day = day_key(timestamp)
+        let total = total_for_day(totals, day)
+        dict.insert(totals, day, total +. cost)
+      }
+      ToolUsage(..) -> totals
+    }
+  })
+}
+
+fn recorded_call_ids(events: List(UsageEvent)) -> Dict(String, Bool) {
+  list.fold(events, dict.new(), fn(ids, event) {
+    case event {
+      LLMUsage(call_id: call_id, ..) ->
+        case call_id == "" {
+          True -> ids
+          False -> dict.insert(ids, call_id, True)
+        }
+      ToolUsage(..) -> ids
+    }
+  })
 }
 
 // ============================================================================
@@ -370,23 +444,107 @@ fn handle_message(
       prompt_tokens,
       completion_tokens,
       cost_usd,
+      call_id,
     ) -> {
-      let event =
-        LLMUsage(
-          principal_id: principal_id,
-          provider: provider,
-          model: model,
-          prompt_tokens: prompt_tokens,
-          completion_tokens: completion_tokens,
-          cost_usd: cost_usd,
-          timestamp: state.now(),
-        )
-      persist_event(state, event)
+      case call_id != "" && dict.has_key(state.recorded_calls, call_id) {
+        True -> {
+          actor.send(reply_to, Nil)
+          actor.continue(state)
+        }
+        False -> {
+          let timestamp = state.now()
+          let event =
+            LLMUsage(
+              principal_id: principal_id,
+              provider: provider,
+              model: model,
+              prompt_tokens: prompt_tokens,
+              completion_tokens: completion_tokens,
+              cost_usd: cost_usd,
+              timestamp: timestamp,
+              call_id: call_id,
+            )
+          persist_event(state, event)
+          let day = state.day_key(timestamp)
+          let totals =
+            dict.insert(
+              state.day_totals,
+              day,
+              total_for_day(state.day_totals, day) +. cost_usd,
+            )
+          actor.send(reply_to, Nil)
+          actor.continue(
+            ActorState(
+              ..state,
+              events: pure.add_usage_event(state.events, event),
+              day_totals: totals,
+              reservations: dict.delete(state.reservations, call_id),
+              recorded_calls: case call_id {
+                "" -> state.recorded_calls
+                _ -> dict.insert(state.recorded_calls, call_id, True)
+              },
+            ),
+          )
+        }
+      }
+    }
 
+    AdmitLLMCall(reply_to, call_id, cap_usd, estimate_usd) -> {
+      let now = state.now()
+      let state = purge_expired(state, now)
+      let day = state.day_key(now)
+      let open = reservations_total(state.reservations)
+      let total = total_for_day(state.day_totals, day)
+      let exceeds = case cap_usd <. 0.0 {
+        True -> False
+        False -> total +. open +. estimate_usd >. cap_usd
+      }
+      case exceeds {
+        True -> {
+          actor.send(reply_to, Error("instance cap would be exceeded"))
+          actor.continue(state)
+        }
+        False -> {
+          let reservation =
+            Reservation(
+              estimate_usd: estimate_usd,
+              expires_at: now + reservation_ttl_ms,
+            )
+          actor.send(reply_to, Ok(Nil))
+          actor.continue(
+            ActorState(
+              ..state,
+              reservations: dict.insert(
+                state.reservations,
+                call_id,
+                reservation,
+              ),
+            ),
+          )
+        }
+      }
+    }
+
+    ReleaseReservation(reply_to, call_id) -> {
       actor.send(reply_to, Nil)
       actor.continue(
-        ActorState(..state, events: pure.add_usage_event(state.events, event)),
+        ActorState(
+          ..state,
+          reservations: dict.delete(state.reservations, call_id),
+        ),
       )
+    }
+
+    GetSpendToday(reply_to, now) -> {
+      let day = state.day_key(now)
+      actor.send(reply_to, #(day, total_for_day(state.day_totals, day)))
+      actor.continue(state)
+    }
+
+    GetOpenReservationsTotal(reply_to) -> {
+      let state = purge_expired(state, state.now())
+      actor.send(reply_to, Ok(reservations_total(state.reservations)))
+      actor.continue(state)
     }
 
     RecordToolUsage(reply_to, principal_id, tool_name, ok) -> {
@@ -415,24 +573,8 @@ fn handle_message(
       actor.continue(state)
     }
 
-    GetLLMCostWhere(reply_to, keep) -> {
-      let total =
-        list.fold(state.events, 0.0, fn(acc, event) {
-          case event {
-            LLMUsage(timestamp: timestamp, cost_usd: cost, ..) ->
-              case keep(timestamp) {
-                True -> acc +. cost
-                False -> acc
-              }
-            ToolUsage(..) -> acc
-          }
-        })
-      actor.send(reply_to, total)
-      actor.continue(state)
-    }
-
     GetDailyCost(reply_to, day) -> {
-      actor.send(reply_to, pure.daily_cost(state.events, day))
+      actor.send(reply_to, total_for_day(state.day_totals, day))
       actor.continue(state)
     }
 
@@ -443,8 +585,21 @@ fn handle_message(
 
     RotateOldFiles(reply_to, now) -> {
       rotate_directory(state.directory, now)
+      let events =
+        list.filter(state.events, fn(event) {
+          pure.event_within_retention(event, now)
+        })
       actor.send(reply_to, Nil)
-      actor.continue(state)
+      actor.continue(
+        ActorState(
+          ..state,
+          events: events,
+          day_totals: recompute_totals(events, state.day_key),
+          reservations: dict.filter(state.reservations, fn(_, reservation) {
+            reservation.expires_at > now
+          }),
+        ),
+      )
     }
 
     Stop(reply_to) -> {
@@ -507,6 +662,28 @@ fn rotate_directory(directory: Option(String), now: Int) -> Nil {
   }
 }
 
+fn initial_state(
+  events: List(UsageEvent),
+  directory: Option(String),
+  now: fn() -> Int,
+  day_key: fn(Int) -> String,
+) -> ActorState {
+  ActorState(
+    counters: dict.new(),
+    events: events,
+    directory: directory,
+    now: now,
+    day_key: day_key,
+    day_totals: recompute_totals(events, day_key),
+    reservations: dict.new(),
+    recorded_calls: recorded_call_ids(events),
+  )
+}
+
+fn utc_day_key(timestamp: Int) -> String {
+  pricing.day_key(timestamp, "UTC")
+}
+
 fn start_actor(
   initial_state: ActorState,
 ) -> Result(ResourceLedger, actor.StartError) {
@@ -526,12 +703,7 @@ fn start_actor(
 
 /// Start the resource ledger actor without persistence.
 pub fn start() -> Result(ResourceLedger, actor.StartError) {
-  start_actor(ActorState(
-    counters: dict.new(),
-    events: [],
-    directory: None,
-    now: ffi_current_timestamp,
-  ))
+  start_actor(initial_state([], None, ffi_current_timestamp, utc_day_key))
 }
 
 /// Start the resource ledger actor, persisting the usage trail to `directory`.
@@ -552,12 +724,19 @@ pub fn start_persistent_with_clock(
   let _ = ffi_ensure_dir(directory)
   rotate_directory(Some(directory), now())
 
-  start_actor(ActorState(
-    counters: dict.new(),
-    events: load_events(directory),
-    directory: Some(directory),
-    now: now,
-  ))
+  start_persistent_with_clock_and_day_key(directory, now, utc_day_key)
+}
+
+/// Start the persistent ledger with an injectable clock and day-key function.
+pub fn start_persistent_with_clock_and_day_key(
+  directory: String,
+  now: fn() -> Int,
+  day_key: fn(Int) -> String,
+) -> Result(ResourceLedger, actor.StartError) {
+  let _ = ffi_ensure_dir(directory)
+  rotate_directory(Some(directory), now())
+  let events = load_events(directory)
+  start_actor(initial_state(events, Some(directory), now, day_key))
 }
 
 /// Charge LLM tokens for an agent.
@@ -682,6 +861,29 @@ pub fn try_record_llm_usage(
   completion_tokens: Int,
   cost_usd: Float,
 ) -> Result(Nil, String) {
+  try_record_llm_usage_with_call_id(
+    ledger,
+    principal_id,
+    provider,
+    model,
+    prompt_tokens,
+    completion_tokens,
+    cost_usd,
+    "legacy:" <> int.to_string(unique_integer()),
+  )
+}
+
+/// Record an LLM call with the id shared by admission and settlement.
+pub fn try_record_llm_usage_with_call_id(
+  ledger: ResourceLedger,
+  principal_id: String,
+  provider: String,
+  model: String,
+  prompt_tokens: Int,
+  completion_tokens: Int,
+  cost_usd: Float,
+  call_id: String,
+) -> Result(Nil, String) {
   case
     safe_call.call(ledger, 1500, RecordLLMUsage(
       _,
@@ -691,10 +893,54 @@ pub fn try_record_llm_usage(
       prompt_tokens,
       completion_tokens,
       cost_usd,
+      call_id,
     ))
   {
     Ok(_) -> Ok(Nil)
     Error(_) -> Error("ledger unavailable")
+  }
+}
+
+/// Reserve estimated spend before an LLM call.
+pub fn admit_llm_call(
+  ledger: ResourceLedger,
+  call_id: String,
+  cap_usd: Float,
+  estimate_usd: Float,
+) -> Result(Nil, String) {
+  case
+    safe_call.call(ledger, 1500, AdmitLLMCall(_, call_id, cap_usd, estimate_usd))
+  {
+    Ok(Ok(Nil)) -> Ok(Nil)
+    Ok(Error(reason)) -> Error(reason)
+    Error(_) -> Error("ledger unavailable")
+  }
+}
+
+/// Release an unrecorded reservation.
+pub fn release_reservation(ledger: ResourceLedger, call_id: String) -> Nil {
+  let _ = safe_call.call(ledger, 1500, ReleaseReservation(_, call_id))
+  Nil
+}
+
+/// Sum of estimated spend for all open reservations.
+pub fn try_get_open_reservations_total(
+  ledger: ResourceLedger,
+) -> Result(Float, Nil) {
+  case safe_call.call(ledger, 1500, GetOpenReservationsTotal) {
+    Ok(result) -> result
+    Error(_) -> Error(Nil)
+  }
+}
+
+/// Current day and its total LLM spend.
+pub fn try_spend_today(
+  ledger: ResourceLedger,
+  now: Int,
+) -> Result(#(String, Float), Nil) {
+  case safe_call.call(ledger, 1500, GetSpendToday(_, now)) {
+    Ok(result) -> Ok(result)
+    Error(_) -> Error(Nil)
   }
 }
 
@@ -732,18 +978,6 @@ pub fn get_usage(
   case safe_call.call(ledger, 1500, GetUsage(_, principal_id)) {
     Ok(events) -> events
     Error(_) -> []
-  }
-}
-
-/// Sum the LLM cost of events whose timestamp satisfies `keep`, failing
-/// explicitly when the ledger is unavailable.
-pub fn try_llm_cost_where(
-  ledger: ResourceLedger,
-  keep: fn(Int) -> Bool,
-) -> Result(Float, Nil) {
-  case safe_call.call(ledger, 1500, GetLLMCostWhere(_, keep)) {
-    Ok(total) -> Ok(total)
-    Error(_) -> Error(Nil)
   }
 }
 

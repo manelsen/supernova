@@ -110,6 +110,18 @@ pub fn with_retry(
   with_retry_loop(config, 1, work)
 }
 
+/// Sleep before a retry attempt, using the same capped exponential delay and
+/// telemetry as `with_retry`. Callers that need per-attempt admission and
+/// settlement own the retry loop and call this between attempts.
+pub fn wait_before_retry(config: RetryConfig, failed_attempt: Int) -> Nil {
+  let delay = jittered_delay(config.initial_delay_ms, failed_attempt, config)
+  let ts = current_timestamp()
+  let _ =
+    log_retry_event("retry.attempt", failed_attempt, ts, int.to_string(delay))
+  let _ = sleep_ms(delay)
+  Nil
+}
+
 fn with_retry_loop(
   config: RetryConfig,
   attempt: Int,

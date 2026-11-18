@@ -91,7 +91,7 @@ pub fn record_usage_per_principal_test() {
 
   case user_1_usage {
     [
-      LLMUsage("user_1", "openai", "gpt-4o", 100, 50, cost, timestamp),
+      LLMUsage("user_1", "openai", "gpt-4o", 100, 50, cost, timestamp, _),
       ToolUsage("user_1", "shell", True, tool_timestamp),
     ] -> {
       assert_close(cost, 0.01)
@@ -180,7 +180,7 @@ pub fn persistence_survives_restart_test() {
   assert_close(actor.get_daily_cost_for(restarted, day, "user_1"), 0.01)
 
   case actor.get_usage(restarted, "user_2") {
-    [LLMUsage("user_2", "anthropic", "claude", 10, 5, cost, timestamp)] -> {
+    [LLMUsage("user_2", "anthropic", "claude", 10, 5, cost, timestamp, _)] -> {
       assert_close(cost, 0.02)
       timestamp
       |> should.equal(now_ms)
@@ -248,3 +248,232 @@ pub fn rotation_uses_utc_day_key_test() {
   pricing.day_key(cutoff_ms, "UTC")
   |> should.equal("2024-05-16")
 }
+
+pub fn spend_today_returns_day_and_total_test() {
+  let dir = temp_dir()
+  let assert Ok(ledger) =
+    actor.start_persistent_with_clock_and_day_key(
+      dir,
+      fn() { now_ms },
+      fn(timestamp) { pricing.day_key(timestamp, "UTC") },
+    )
+
+  actor.record_llm_usage(ledger, "user_1", "openai", "gpt-4o", 100, 50, 0.25)
+
+  let assert Ok(#(current_day, total)) = actor.try_spend_today(ledger, now_ms)
+  current_day |> should.equal(day)
+  assert_close(total, 0.25)
+
+  let assert Ok(#(next_day, next_total)) =
+    actor.try_spend_today(ledger, now_ms + 86_400_000)
+  next_day |> should.equal("2024-06-16")
+  assert_close(next_total, 0.0)
+
+  actor.stop(ledger)
+  process.sleep(100)
+  cleanup(dir)
+}
+
+pub fn concurrent_admissions_respect_the_cap_test() {
+  let assert Ok(ledger) = actor.start()
+
+  actor.admit_llm_call(ledger, "call-a", 1.0, 0.6)
+  |> should.be_ok
+  actor.admit_llm_call(ledger, "call-b", 1.0, 0.6)
+  |> should.be_error
+
+  // Releasing an unrecorded reservation restores the credit.
+  actor.admit_llm_call(ledger, "call-c", 1.0, 0.4)
+  |> should.be_ok
+  actor.admit_llm_call(ledger, "call-d", 1.0, 0.2)
+  |> should.be_error
+  actor.release_reservation(ledger, "call-c")
+  actor.admit_llm_call(ledger, "call-d", 1.0, 0.2)
+  |> should.be_ok
+
+  actor.stop(ledger)
+  process.sleep(100)
+}
+
+pub fn duplicate_call_id_records_once_test() {
+  let assert Ok(ledger) = actor.start()
+
+  let _ =
+    actor.try_record_llm_usage_with_call_id(
+      ledger,
+      "user_1",
+      "openai",
+      "gpt-4o",
+      10,
+      5,
+      0.01,
+      "call-once",
+    )
+  actor.try_record_llm_usage_with_call_id(
+    ledger,
+    "user_1",
+    "openai",
+    "gpt-4o",
+    10,
+    5,
+    0.01,
+    "call-once",
+  )
+  |> should.be_ok
+
+  list.length(actor.get_all_usage(ledger)) |> should.equal(1)
+
+  actor.stop(ledger)
+  process.sleep(100)
+}
+
+pub fn usage_retry_is_idempotent_test() {
+  let assert Ok(ledger) = actor.start()
+
+  let assert Ok(Nil) =
+    actor.try_record_llm_usage_with_call_id(
+      ledger,
+      "user_1",
+      "openai",
+      "gpt-4o",
+      100,
+      50,
+      0.01,
+      "call-retry-1",
+    )
+  let assert Ok(Nil) =
+    actor.try_record_llm_usage_with_call_id(
+      ledger,
+      "user_1",
+      "openai",
+      "gpt-4o",
+      100,
+      50,
+      0.01,
+      "call-retry-1",
+    )
+
+  list.length(actor.get_usage(ledger, "user_1")) |> should.equal(1)
+  case actor.get_usage(ledger, "user_1") {
+    [LLMUsage(timestamp: timestamp, ..)] ->
+      assert_close(
+        actor.get_daily_cost(ledger, pricing.day_key(timestamp, "UTC")),
+        0.01,
+      )
+    _ -> should.fail()
+  }
+
+  actor.stop(ledger)
+  process.sleep(100)
+}
+
+pub fn open_reservations_count_across_day_boundary_test() {
+  let dir = temp_dir()
+  let assert Ok(_) = ensure_dir(dir)
+  // 2024-06-15T23:59:30Z and 2024-06-16T00:00:10Z.
+  let before_midnight = 1_718_495_970_000
+  let after_midnight = 1_718_496_010_000
+  mock_clock_set(before_midnight)
+  let read_clock = fn() { mock_clock_now() }
+
+  let assert Ok(ledger) =
+    actor.start_persistent_with_clock_and_day_key(
+      dir,
+      read_clock,
+      fn(timestamp) { pricing.day_key(timestamp, "UTC") },
+    )
+
+  actor.admit_llm_call(ledger, "old-reservation", 2.0, 1.0)
+  |> should.be_ok
+
+  mock_clock_set(after_midnight)
+  actor.record_llm_usage(ledger, "user_1", "openai", "gpt-4o", 10, 5, 1.0)
+
+  // The old reservation is still open and may settle today, so it counts.
+  actor.admit_llm_call(ledger, "new-reservation", 2.0, 1.0)
+  |> should.be_error
+
+  actor.release_reservation(ledger, "old-reservation")
+  actor.admit_llm_call(ledger, "new-reservation", 2.0, 1.0)
+  |> should.be_ok
+
+  actor.stop(ledger)
+  process.sleep(100)
+  cleanup(dir)
+}
+
+pub fn settled_reservation_frees_admission_after_day_boundary_test() {
+  let dir = temp_dir()
+  let assert Ok(_) = ensure_dir(dir)
+  let before_midnight = 1_718_495_970_000
+  let after_midnight = 1_718_496_010_000
+  mock_clock_set(before_midnight)
+  let read_clock = fn() { mock_clock_now() }
+
+  let assert Ok(ledger) =
+    actor.start_persistent_with_clock_and_day_key(
+      dir,
+      read_clock,
+      fn(timestamp) { pricing.day_key(timestamp, "UTC") },
+    )
+
+  actor.admit_llm_call(ledger, "old-reservation", 2.0, 1.0)
+  |> should.be_ok
+  mock_clock_set(after_midnight)
+
+  // Settling the old reservation at half its estimate leaves room for one
+  // more estimate of 1.0 under the 2.0 cap.
+  actor.try_record_llm_usage_with_call_id(
+    ledger,
+    "user_1",
+    "openai",
+    "gpt-4o",
+    10,
+    5,
+    0.5,
+    "old-reservation",
+  )
+  |> should.be_ok
+  let day = pricing.day_key(after_midnight, "UTC")
+  actor.get_daily_cost(ledger, day) |> should.equal(0.5)
+  actor.try_get_open_reservations_total(ledger) |> should.equal(Ok(0.0))
+  actor.admit_llm_call(ledger, "new-reservation", 2.0, 1.0)
+  |> should.be_ok
+
+  actor.stop(ledger)
+  process.sleep(100)
+  cleanup(dir)
+}
+
+pub fn open_reservation_total_excludes_expired_test() {
+  let dir = temp_dir()
+  let assert Ok(_) = ensure_dir(dir)
+  let start = 1_718_495_970_000
+  mock_clock_set(start)
+  let assert Ok(ledger) =
+    actor.start_persistent_with_clock(dir, fn() { mock_clock_now() })
+
+  actor.admit_llm_call(ledger, "expiring", 10.0, 1.0) |> should.be_ok
+  mock_clock_set(start + 600_001)
+
+  actor.try_get_open_reservations_total(ledger)
+  |> should.equal(Ok(0.0))
+
+  actor.stop(ledger)
+  process.sleep(100)
+  cleanup(dir)
+}
+
+pub fn open_reservation_total_reports_unavailable_test() {
+  let assert Ok(ledger) = actor.start()
+  actor.stop(ledger)
+
+  actor.try_get_open_reservations_total(ledger)
+  |> should.equal(Error(Nil))
+}
+
+@external(erlang, "supernova_mock_ffi", "clock_set")
+fn mock_clock_set(timestamp: Int) -> Nil
+
+@external(erlang, "supernova_mock_ffi", "clock_now")
+fn mock_clock_now() -> Int

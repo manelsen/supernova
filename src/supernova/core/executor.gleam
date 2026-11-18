@@ -172,7 +172,10 @@ pub type RunContext {
     principal_id: String,
     role: String,
     before_llm: Option(fn() -> Result(Nil, String)),
-    on_llm_usage: Option(fn(String, String, Int, Int) -> Nil),
+    admit_llm: Option(fn(String, String, String, Int) -> Result(Nil, String)),
+    on_llm_usage: Option(fn(String, String, String, Int, Int) -> Nil),
+    on_llm_unconfirmed: Option(fn(String, String, String, Int) -> Nil),
+    on_llm_failure: Option(fn(String) -> Nil),
     invoke_tool: Option(fn(String, String) -> Result(String, String)),
     on_tool_result: Option(fn(String, Bool) -> Nil),
   )
@@ -187,7 +190,10 @@ pub fn empty_run_context() -> RunContext {
     principal_id: "",
     role: "member",
     before_llm: None,
+    admit_llm: None,
     on_llm_usage: None,
+    on_llm_unconfirmed: None,
+    on_llm_failure: None,
     invoke_tool: None,
     on_tool_result: None,
   )
@@ -299,14 +305,14 @@ fn run_loop(
           // Call LLM with metrics
           let start = current_timestamp()
           case
-            retry.with_retry(default_retry_config, fn() {
-              with_llm_span(
-                selected_config.name,
-                selected_config.default_model,
-                depth,
-                fn() { client.chat(messages, selected_config, tools) },
-              )
-            })
+            run_provider_call(
+              context,
+              selected_config,
+              messages,
+              tools,
+              depth,
+              start,
+            )
           {
             Ok(response) -> {
               let elapsed = current_timestamp() - start
@@ -315,7 +321,6 @@ fn run_loop(
                 selected_config.default_model,
                 elapsed,
               )
-              record_llm_usage(context, selected_config, messages, response)
               // Classify the outcome
               let outcome = turn_outcome.classify(response)
 
@@ -350,14 +355,7 @@ fn run_loop(
                   )
               }
             }
-            Error(err) -> {
-              record_llm_error(
-                selected_config.name,
-                selected_config.default_model,
-                error_type_name(err),
-              )
-              Error(LLMError(reason: err))
-            }
+            Error(error) -> Error(error)
           }
         }
       }
@@ -387,14 +385,14 @@ fn run_loop_inner_with_checkpoint(
     Ok(Nil) -> {
       let start = current_timestamp()
       case
-        retry.with_retry(default_retry_config, fn() {
-          with_llm_span(
-            selected_config.name,
-            selected_config.default_model,
-            depth,
-            fn() { client.chat(messages, selected_config, tools) },
-          )
-        })
+        run_provider_call(
+          context,
+          selected_config,
+          messages,
+          tools,
+          depth,
+          start,
+        )
       {
         Ok(response) -> {
           let elapsed = current_timestamp() - start
@@ -403,7 +401,6 @@ fn run_loop_inner_with_checkpoint(
             selected_config.default_model,
             elapsed,
           )
-          record_llm_usage(context, selected_config, messages, response)
           let outcome = turn_outcome.classify(response)
           case outcome {
             turn_outcome.TextResponse -> Ok(response)
@@ -443,14 +440,7 @@ fn run_loop_inner_with_checkpoint(
               )
           }
         }
-        Error(err) -> {
-          record_llm_error(
-            selected_config.name,
-            selected_config.default_model,
-            error_type_name(err),
-          )
-          Error(LLMError(reason: err))
-        }
+        Error(error) -> Error(error)
       }
     }
   }
@@ -553,15 +543,216 @@ fn before_llm(context: RunContext) -> Result(Nil, String) {
   }
 }
 
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
+
+fn next_call_id(depth: Int) -> String {
+  "llm:"
+  <> int.to_string(ffi_current_timestamp())
+  <> ":"
+  <> int.to_string(depth)
+  <> ":"
+  <> int.to_string(unique_integer())
+}
+
+fn admit_llm(
+  context: RunContext,
+  call_id: String,
+  provider_name: String,
+  model: String,
+  prompt_tokens: Int,
+) -> Result(Nil, String) {
+  case context.admit_llm {
+    None -> Ok(Nil)
+    Some(admit) -> admit(call_id, provider_name, model, prompt_tokens)
+  }
+}
+
+fn report_llm_failure(context: RunContext, call_id: String) -> Nil {
+  case context.on_llm_failure {
+    None -> Nil
+    Some(report) -> report(call_id)
+  }
+}
+
 /// Estimate tokens when a provider does not expose usage.
 fn estimate_tokens(text: String) -> Int {
   int.max(1, string.length(text) / 4)
 }
 
-fn prompt_token_estimate(messages: List(provider.ChatMessage)) -> Int {
-  messages
-  |> list.map(fn(message) { estimate_tokens(message.content) })
-  |> list.fold(0, fn(acc, value) { acc + value })
+fn prompt_token_estimate(
+  messages: List(provider.ChatMessage),
+  tools: List(provider.ToolDefinition),
+) -> Int {
+  let message_tokens =
+    messages
+    |> list.map(message_token_estimate)
+    |> list.fold(0, fn(acc, value) { acc + value })
+
+  let tool_tokens =
+    tools
+    |> list.map(tool_definition_tokens)
+    |> list.fold(0, fn(acc, value) { acc + value })
+
+  message_tokens + tool_tokens
+}
+
+fn message_token_estimate(message: provider.ChatMessage) -> Int {
+  let content = estimate_tokens(message.content)
+  let tool_calls = case message.tool_calls {
+    None -> 0
+    Some(calls) ->
+      calls
+      |> list.map(fn(call) {
+        estimate_tokens(call.name) + estimate_tokens(call.arguments)
+      })
+      |> list.fold(0, fn(acc, value) { acc + value })
+  }
+  content + tool_calls
+}
+
+fn tool_definition_tokens(tool: provider.ToolDefinition) -> Int {
+  let parameters =
+    tool.parameters
+    |> list.map(fn(parameter) {
+      estimate_tokens(parameter.param_type)
+      + estimate_tokens(parameter.name)
+      + estimate_tokens(parameter.description)
+    })
+    |> list.fold(0, fn(acc, value) { acc + value })
+  estimate_tokens(tool.name) + estimate_tokens(tool.description) + parameters
+}
+
+fn response_token_estimate(response: provider.ChatResponse) -> Int {
+  let tool_calls = case response.tool_calls {
+    None -> 0
+    Some(calls) ->
+      calls
+      |> list.map(fn(call) {
+        estimate_tokens(call.name) + estimate_tokens(call.arguments)
+      })
+      |> list.fold(0, fn(acc, value) { acc + value })
+  }
+  estimate_tokens(response.content) + tool_calls
+}
+
+/// Token estimates used by the usage callback (tests and diagnostics).
+pub fn estimate_usage_for_test(
+  messages: List(provider.ChatMessage),
+  response: provider.ChatResponse,
+  tools: List(provider.ToolDefinition),
+) -> #(Int, Int) {
+  #(prompt_token_estimate(messages, tools), response_token_estimate(response))
+}
+
+fn run_provider_call(
+  context: RunContext,
+  config: provider.ProviderConfig,
+  messages: List(provider.ChatMessage),
+  tools: List(provider.ToolDefinition),
+  depth: Int,
+  start: Int,
+) -> Result(provider.ChatResponse, ExecutorError) {
+  let prompt_tokens = prompt_token_estimate(messages, tools)
+  let base_call_id = next_call_id(depth)
+  run_provider_attempt(
+    context,
+    config,
+    messages,
+    tools,
+    depth,
+    start,
+    prompt_tokens,
+    base_call_id,
+    1,
+  )
+}
+
+fn run_provider_attempt(
+  context: RunContext,
+  config: provider.ProviderConfig,
+  messages: List(provider.ChatMessage),
+  tools: List(provider.ToolDefinition),
+  depth: Int,
+  start: Int,
+  prompt_tokens: Int,
+  base_call_id: String,
+  attempt: Int,
+) -> Result(provider.ChatResponse, ExecutorError) {
+  let call_id = base_call_id <> ":a" <> int.to_string(attempt)
+  case
+    admit_llm(
+      context,
+      call_id,
+      config.name,
+      config.default_model,
+      prompt_tokens,
+    )
+  {
+    Error(reason) -> Error(PolicyDenied(message: reason))
+    Ok(Nil) ->
+      case
+        with_llm_span(config.name, config.default_model, depth, fn() {
+          client.chat(messages, config, tools)
+        })
+      {
+        Ok(response) -> {
+          let elapsed = current_timestamp() - start
+          record_llm_latency(config.name, config.default_model, elapsed)
+          record_llm_usage(context, config, messages, response, tools, call_id)
+          Ok(response)
+        }
+        Error(err) -> {
+          settle_failed_attempt(context, call_id, config, prompt_tokens, err)
+          record_llm_error(
+            config.name,
+            config.default_model,
+            error_type_name(err),
+          )
+          case attempt < default_retry_config.max_attempts {
+            True ->
+              case retry.is_retryable(err) {
+                retry.ShouldRetry -> {
+                  retry.wait_before_retry(default_retry_config, attempt)
+                  run_provider_attempt(
+                    context,
+                    config,
+                    messages,
+                    tools,
+                    depth,
+                    start,
+                    prompt_tokens,
+                    base_call_id,
+                    attempt + 1,
+                  )
+                }
+                retry.DoNotRetry(_) -> Error(LLMError(reason: err))
+              }
+            False -> Error(LLMError(reason: err))
+          }
+        }
+      }
+  }
+}
+
+/// A network failure may already have been billed by the provider. Record the
+/// reserved estimate as unconfirmed usage; other failures release the reserve.
+fn settle_failed_attempt(
+  context: RunContext,
+  call_id: String,
+  config: provider.ProviderConfig,
+  prompt_tokens: Int,
+  err: provider.LLMError,
+) -> Nil {
+  case err {
+    provider.NetworkError(_) ->
+      case context.on_llm_unconfirmed {
+        Some(record) ->
+          record(call_id, config.name, config.default_model, prompt_tokens)
+        None -> Nil
+      }
+    _ -> report_llm_failure(context, call_id)
+  }
 }
 
 fn record_llm_usage(
@@ -569,15 +760,18 @@ fn record_llm_usage(
   config: provider.ProviderConfig,
   messages: List(provider.ChatMessage),
   response: provider.ChatResponse,
+  tools: List(provider.ToolDefinition),
+  call_id: String,
 ) -> Nil {
   case context.on_llm_usage {
     None -> Nil
     Some(record) ->
       record(
+        call_id,
         config.name,
         config.default_model,
-        prompt_token_estimate(messages),
-        estimate_tokens(response.content),
+        prompt_token_estimate(messages, tools),
+        response_token_estimate(response),
       )
   }
 }

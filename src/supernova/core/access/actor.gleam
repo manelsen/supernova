@@ -317,12 +317,7 @@ fn commit_config(
   reply_to: Subject(Result(Nil, String)),
 ) -> actor.Next(State, AccessMessage) {
   let persisted =
-    pure.diff_persisted(
-      state.base,
-      new_config,
-      state.persisted.denied_notices,
-      state.persisted.chat_denied_notices,
-    )
+    pure.update_persisted(state.base, state.config, new_config, state.persisted)
   let new_state = State(..state, config: new_config, persisted: persisted)
   case persist_state(new_state) {
     Ok(_) -> {
@@ -459,6 +454,14 @@ pub fn list_chats(access: AccessActor) -> List(String) {
 pub fn try_list_chats(access: AccessActor) -> Result(List(String), Nil) {
   case safe_call.call(access, call_timeout_ms, ListChats) {
     Ok(chats) -> Ok(chats)
+    Error(_) -> Error(Nil)
+  }
+}
+
+/// List admins with an explicit failure.
+pub fn try_list_admins(access: AccessActor) -> Result(List(String), Nil) {
+  case safe_call.call(access, call_timeout_ms, ListAdmins) {
+    Ok(admins) -> Ok(admins)
     Error(_) -> Error(Nil)
   }
 }

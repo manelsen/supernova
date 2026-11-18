@@ -145,11 +145,12 @@ pub fn interaction_from_non_member_is_gated_test() {
     let assert Ok(port.ImmediateReply(reply)) =
       handler(telegram_click("999", "picker_provider:mock"), events)
     reply.content |> should.equal("Esta instância é privada.")
+    reply.edit_message_id |> should.equal(None)
   })
 }
 
 pub fn interaction_from_member_still_works_test() {
-  support.with_runtime(cfg(["telegram:123"], 50_000), fn() {
+  support.with_runtime(cfg(["telegram:123"], 0), fn() {
     let handler = support.telegram_handler(support.mock_config())
     let events = process.new_subject()
 

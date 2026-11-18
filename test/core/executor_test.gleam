@@ -4,7 +4,7 @@
 
 import gleam/erlang/process
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
 import supernova/core/executor
@@ -445,4 +445,43 @@ pub fn run_stream_mock_stream_timeout_marker_emits_no_chunks_test() {
     Error(_) -> Nil
     Ok(_) -> should.fail()
   }
+}
+
+pub fn tool_definitions_and_calls_are_counted_in_estimates_test() {
+  let messages = [provider.user_message("hello")]
+  let response =
+    provider.ChatResponse(
+      role: "assistant",
+      content: "",
+      tool_calls: Some([
+        provider.ToolCall(
+          id: "call-1",
+          name: "file_system",
+          arguments: "{\"path\":\"src/main.gleam\"}",
+        ),
+      ]),
+      reasoning_content: None,
+    )
+  let tools = [
+    provider.new_tool("file_system", "Read and write workspace files", [
+      provider.string_param("path", "File path", True),
+    ]),
+  ]
+
+  let #(empty_prompt, _) =
+    executor.estimate_usage_for_test(messages, response, [])
+  let #(tool_prompt, tool_output) =
+    executor.estimate_usage_for_test(messages, response, tools)
+  let text_response =
+    provider.ChatResponse(
+      role: "assistant",
+      content: "",
+      tool_calls: None,
+      reasoning_content: None,
+    )
+  let #(_, text_output) =
+    executor.estimate_usage_for_test(messages, text_response, [])
+
+  { tool_prompt > empty_prompt } |> should.equal(True)
+  { tool_output > text_output } |> should.equal(True)
 }

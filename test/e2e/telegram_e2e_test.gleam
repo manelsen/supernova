@@ -95,6 +95,26 @@ pub fn leaves_unauthorized_group_and_audits_test() {
   })
 }
 
+pub fn failed_group_leave_is_retried_and_audited_test() {
+  support.with_runtime(cfg(["telegram:123"]), fn() {
+    let recorder = process.new_subject()
+    let channel_registry =
+      support.telegram_start_registry_with_leave_result(
+        support.channel_config(),
+        support.telegram_handler(support.mock_config()),
+        [support.telegram_chat_member_update("-1002", "member")],
+        recorder,
+        False,
+        [5, 5, 5],
+      )
+
+    let assert Some(audit) = closed_group_global.get_audit()
+    wait_for_audit_entry(audit, "leave_failed", "telegram:-1002", 2000)
+
+    registry.stop_channels(channel_registry)
+  })
+}
+
 pub fn access_lookup_failure_does_not_leave_group_test() {
   support.with_runtime(cfg(["telegram:123"]), fn() {
     // A live subject owned by this test never replies, so the access call

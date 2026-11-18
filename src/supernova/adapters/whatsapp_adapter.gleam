@@ -59,7 +59,14 @@ pub fn start(
     do_send(bridge_url, device_id, reply)
   }
 
-  Ok(port.ChannelAdapter(name: "whatsapp", send: send_fn, stop: fn() { Nil }))
+  Ok(
+    port.ChannelAdapter(
+      name: "whatsapp",
+      send: send_fn,
+      stop: fn() { Nil },
+      stop_ingress: fn() { Nil },
+    ),
+  )
 }
 
 pub fn parse_event(
