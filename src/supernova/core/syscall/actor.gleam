@@ -54,13 +54,22 @@ fn ffi_current_timestamp() -> Int
 pub type SyscallMessage {
   /// Invoke a syscall on behalf of agent_id
   Invoke(reply_to: Subject(SyscallResult), agent_id: String, op: SyscallOp)
-  /// Invoke a concrete tool on behalf of a principal through the kernel.
-  InvokeTool(
-    reply_to: Subject(Result(String, String)),
+  /// Authorize a concrete tool call on behalf of a principal. On success the
+  /// reply carries the executor: the tool runs in the caller's process, never
+  /// inside the gateway, so a slow tool cannot hold other principals.
+  AuthorizeTool(
+    reply_to: Subject(Result(ToolExecutor, String)),
     principal_id: String,
     role: String,
     tool_name: String,
     args: String,
+  )
+  /// Report the outcome of an authorized tool call (audit only).
+  ToolCompleted(
+    principal_id: String,
+    tool_name: String,
+    result: Result(String, String),
+    timestamp: Int,
   )
   /// Register an agent to make syscalls
   RegisterAgent(reply_to: Subject(Nil), agent_id: String)
@@ -77,6 +86,10 @@ pub type SyscallMessage {
 /// A handle to the running syscall gateway actor.
 pub type SyscallGateway =
   Subject(SyscallMessage)
+
+/// Executes an authorized tool call: `fn(tool_name, args_json)`.
+pub type ToolExecutor =
+  fn(String, String) -> Result(String, String)
 
 /// Internal actor state: pure syscall state + optional policy/audit handles.
 type ActorState {
@@ -396,14 +409,14 @@ fn check_tool_budget(
   }
 }
 
-fn run_tool(
+fn authorize_tool(
   actor_state: ActorState,
   principal_id: String,
   role: String,
   tool_name: String,
   args: String,
   timestamp: Int,
-) -> Result(String, String) {
+) -> Result(ToolExecutor, String) {
   // 1. Capability manifest
   case capability_denied(actor_state.capability_manifests, role, tool_name) {
     True -> {
@@ -449,10 +462,8 @@ fn run_tool(
               Error(reason)
             }
             Ok(_) -> {
-              // 4. Execute
-              let result = actor_state.tool_executor(tool_name, args)
-
-              // 5. Ledger
+              // 4. Charge the tool call now, before it runs, so parallel
+              //    calls of the same principal cannot overshoot the budget.
               case actor_state.budget_policy {
                 Some(policy) ->
                   budget_actor.record_consumption(
@@ -463,22 +474,9 @@ fn run_tool(
                   )
                 None -> Nil
               }
-
-              // 6. Audit log
-              let #(audit_result, details) = case result {
-                Ok(_) -> #(audit_types.AuditSuccess, "ok")
-                Error(reason) -> #(audit_types.AuditFailure, reason)
-              }
-              audit_syscall(
-                actor_state.audit_log,
-                principal_id,
-                "tool_call",
-                tool_name,
-                audit_result,
-                details,
-                timestamp,
-              )
-              result
+              // 5. Execution happens in the caller; the outcome comes back
+              //    as ToolCompleted for the audit log.
+              Ok(actor_state.tool_executor)
             }
           }
         }
@@ -496,11 +494,35 @@ fn handle_message(
   message: SyscallMessage,
 ) -> actor.Next(ActorState, SyscallMessage) {
   case message {
-    InvokeTool(reply_to, principal_id, role, tool_name, args) -> {
+    AuthorizeTool(reply_to, principal_id, role, tool_name, args) -> {
       let timestamp = ffi_current_timestamp()
       let result =
-        run_tool(actor_state, principal_id, role, tool_name, args, timestamp)
+        authorize_tool(
+          actor_state,
+          principal_id,
+          role,
+          tool_name,
+          args,
+          timestamp,
+        )
       actor.send(reply_to, result)
+      actor.continue(actor_state)
+    }
+
+    ToolCompleted(principal_id, tool_name, result, timestamp) -> {
+      let #(audit_result, details) = case result {
+        Ok(_) -> #(audit_types.AuditSuccess, "ok")
+        Error(reason) -> #(audit_types.AuditFailure, reason)
+      }
+      audit_syscall(
+        actor_state.audit_log,
+        principal_id,
+        "tool_call",
+        tool_name,
+        audit_result,
+        details,
+        timestamp,
+      )
       actor.continue(actor_state)
     }
 
@@ -635,10 +657,25 @@ pub fn invoke_tool(
   args: String,
 ) -> Result(String, String) {
   case
-    safe_call.call(gw, 2000, InvokeTool(_, principal_id, role, tool_name, args))
+    safe_call.call(gw, 2000, AuthorizeTool(
+      _,
+      principal_id,
+      role,
+      tool_name,
+      args,
+    ))
   {
-    Ok(result) -> result
     Error(_) -> Error("kernel unavailable; tool call refused")
+    Ok(Error(reason)) -> Error(reason)
+    Ok(Ok(execute)) -> {
+      // Run in the caller's process: the gateway only decides.
+      let result = execute(tool_name, args)
+      process.send(
+        gw,
+        ToolCompleted(principal_id, tool_name, result, ffi_current_timestamp()),
+      )
+      result
+    }
   }
 }
 
