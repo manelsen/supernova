@@ -948,7 +948,7 @@ pub fn network_failure_once_is_unconfirmed_and_retried_test() {
         )
       let assert Ok(_) =
         executor.run_with_context(
-          [provider.user_message("simulate [mock-network-fail-once][cap]")],
+          [provider.user_message("simulate [mock-network-fail-once]")],
           config,
           [],
           context,
