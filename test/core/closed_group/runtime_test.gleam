@@ -18,12 +18,15 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure
 import supernova/core/closed_group/runtime as cg_runtime
 import supernova/core/closed_group/types as cg_types
+import supernova/core/executor
 import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/principal
 import supernova/core/rate_limit/actor as rate_limiter
 import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/syscall/actor as syscall_actor
 import supernova/core/tool_dispatch
+import supernova/llm/pricing
+import supernova/llm/provider
 import test_workspace
 
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
@@ -917,5 +920,133 @@ pub fn admission_uses_routed_model_price_test() {
     |> should.be_ok()
     admit("call-expensive", "mock", "expensive-model", 100)
     |> should.be_error()
+  })
+}
+
+pub fn network_failure_once_is_unconfirmed_and_retried_test() {
+  with_runtime(
+    config_with_access(["telegram:1"], ["telegram:123"], []),
+    fn(runtime) {
+      let context =
+        cg_runtime.run_context(
+          runtime,
+          cg_types.PrincipalContext(
+            principal_id: "telegram:123",
+            role: "member",
+          ),
+        )
+      let config =
+        provider.ProviderConfig(
+          name: "mock",
+          api_key: None,
+          base_url: None,
+          default_model: "mock-model",
+        )
+      let assert Ok(_) =
+        executor.run_with_context(
+          [provider.user_message("simulate [mock-network-fail-once]")],
+          config,
+          [],
+          context,
+        )
+
+      let usage = ledger_actor.get_all_usage(runtime.ledger)
+      list.length(usage) |> should.equal(2)
+      let day = pricing.day_key(now, "UTC")
+      { ledger_actor.get_daily_cost(runtime.ledger, day) >. 0.0 }
+      |> should.be_true()
+    },
+  )
+}
+
+pub fn retry_429_releases_every_reservation_test() {
+  with_runtime(
+    config_with_access(["telegram:1"], ["telegram:123"], []),
+    fn(runtime) {
+      let context =
+        cg_runtime.run_context(
+          runtime,
+          cg_types.PrincipalContext(
+            principal_id: "telegram:123",
+            role: "member",
+          ),
+        )
+      let config =
+        provider.ProviderConfig(
+          name: "mock",
+          api_key: None,
+          base_url: None,
+          default_model: "mock-model",
+        )
+      case
+        executor.run_with_context(
+          [provider.user_message("simulate [mock-429]")],
+          config,
+          [],
+          context,
+        )
+      {
+        Error(executor.LLMError(reason: provider.APIError(status: 429, ..))) ->
+          Nil
+        other -> {
+          let _ = other
+          should.fail()
+        }
+      }
+      list.length(ledger_actor.get_all_usage(runtime.ledger))
+      |> should.equal(0)
+      let day = pricing.day_key(now, "UTC")
+      ledger_actor.get_daily_cost(runtime.ledger, day) |> should.equal(0.0)
+    },
+  )
+}
+
+pub fn retry_second_attempt_can_be_denied_by_cap_test() {
+  let base = config_with_access(["telegram:1"], ["telegram:123"], [])
+  let cfg =
+    config.Config(
+      ..base,
+      pricing: config.PricingConfig(
+        default: config.PricingEntry(
+          input_per_mtok: 0.01,
+          output_per_mtok: 0.01,
+        ),
+        models: dict.new(),
+      ),
+      instance_budget: config.InstanceBudgetConfig(
+        daily_usd: 0.00002,
+        timezone: "UTC",
+        reserve_output_tokens: 1000,
+      ),
+    )
+  with_runtime(cfg, fn(runtime) {
+    let context =
+      cg_runtime.run_context(
+        runtime,
+        cg_types.PrincipalContext(principal_id: "telegram:123", role: "member"),
+      )
+    let config =
+      provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      )
+    case
+      executor.run_with_context(
+        [provider.user_message("simulate [mock-network-fail-once]")],
+        config,
+        [],
+        context,
+      )
+    {
+      Error(executor.PolicyDenied(_)) -> Nil
+      other -> {
+        let _ = other
+        should.fail()
+      }
+    }
+    list.length(ledger_actor.get_all_usage(runtime.ledger))
+    |> should.equal(1)
   })
 }

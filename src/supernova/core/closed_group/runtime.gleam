@@ -558,6 +558,16 @@ pub fn run_context(
         completion,
       )
     }),
+    on_llm_unconfirmed: Some(fn(call_id, provider_name, model, prompt_tokens) {
+      record_unconfirmed_llm_usage(
+        runtime,
+        context.principal_id,
+        call_id,
+        provider_name,
+        model,
+        prompt_tokens,
+      )
+    }),
     on_llm_failure: Some(fn(call_id) {
       ledger_actor.release_reservation(runtime.ledger, call_id)
     }),
@@ -694,6 +704,66 @@ fn record_llm_usage(
   maybe_budget_alert(runtime, principal_id)
   maybe_instance_alert(runtime)
   Nil
+}
+
+fn record_unconfirmed_llm_usage(
+  runtime: types.Runtime,
+  principal_id: String,
+  call_id: String,
+  provider_name: String,
+  model: String,
+  prompt_tokens: Int,
+) -> Nil {
+  let completion_tokens = runtime.config.instance_budget.reserve_output_tokens
+  let price = model_price(runtime, model)
+  let cost = pricing.cost_usd(price, prompt_tokens, completion_tokens)
+  let unconfirmed_id = call_id <> ":unconfirmed"
+  // The reservation belongs to the failed attempt id; release it before
+  // recording the estimated cost under the unconfirmed id.
+  ledger_actor.release_reservation(runtime.ledger, call_id)
+  let result =
+    ledger_actor.try_record_llm_usage_with_call_id(
+      runtime.ledger,
+      principal_id,
+      provider_name,
+      model,
+      prompt_tokens,
+      completion_tokens,
+      cost,
+      unconfirmed_id,
+    )
+  case result {
+    Ok(_) ->
+      audit_action(
+        runtime,
+        principal_id,
+        "llm_usage_unconfirmed",
+        "llm_usage",
+        audit_types.AuditSuccess,
+        "estimated cost_usd=" <> float_to_string(cost),
+      )
+    Error(_) -> {
+      audit_action(
+        runtime,
+        principal_id,
+        "llm_usage_unconfirmed",
+        "llm_usage",
+        audit_types.AuditFailure,
+        "estimated cost_usd=" <> float_to_string(cost),
+      )
+      retry_llm_usage(
+        runtime,
+        principal_id,
+        unconfirmed_id,
+        provider_name,
+        model,
+        prompt_tokens,
+        completion_tokens,
+        cost,
+        0,
+      )
+    }
+  }
 }
 
 const usage_retry_delays = [1000, 5000, 30_000]

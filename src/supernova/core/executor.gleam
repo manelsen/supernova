@@ -174,6 +174,7 @@ pub type RunContext {
     before_llm: Option(fn() -> Result(Nil, String)),
     admit_llm: Option(fn(String, String, String, Int) -> Result(Nil, String)),
     on_llm_usage: Option(fn(String, String, String, Int, Int) -> Nil),
+    on_llm_unconfirmed: Option(fn(String, String, String, Int) -> Nil),
     on_llm_failure: Option(fn(String) -> Nil),
     invoke_tool: Option(fn(String, String) -> Result(String, String)),
     on_tool_result: Option(fn(String, Bool) -> Nil),
@@ -191,6 +192,7 @@ pub fn empty_run_context() -> RunContext {
     before_llm: None,
     admit_llm: None,
     on_llm_usage: None,
+    on_llm_unconfirmed: None,
     on_llm_failure: None,
     invoke_tool: None,
     on_tool_result: None,
@@ -651,8 +653,33 @@ fn run_provider_call(
   depth: Int,
   start: Int,
 ) -> Result(provider.ChatResponse, ExecutorError) {
-  let call_id = next_call_id(depth)
   let prompt_tokens = prompt_token_estimate(messages, tools)
+  let base_call_id = next_call_id(depth)
+  run_provider_attempt(
+    context,
+    config,
+    messages,
+    tools,
+    depth,
+    start,
+    prompt_tokens,
+    base_call_id,
+    1,
+  )
+}
+
+fn run_provider_attempt(
+  context: RunContext,
+  config: provider.ProviderConfig,
+  messages: List(provider.ChatMessage),
+  tools: List(provider.ToolDefinition),
+  depth: Int,
+  start: Int,
+  prompt_tokens: Int,
+  base_call_id: String,
+  attempt: Int,
+) -> Result(provider.ChatResponse, ExecutorError) {
+  let call_id = base_call_id <> ":a" <> int.to_string(attempt)
   case
     admit_llm(
       context,
@@ -665,10 +692,8 @@ fn run_provider_call(
     Error(reason) -> Error(PolicyDenied(message: reason))
     Ok(Nil) ->
       case
-        retry.with_retry(default_retry_config, fn() {
-          with_llm_span(config.name, config.default_model, depth, fn() {
-            client.chat(messages, config, tools)
-          })
+        with_llm_span(config.name, config.default_model, depth, fn() {
+          client.chat(messages, config, tools)
         })
       {
         Ok(response) -> {
@@ -678,15 +703,55 @@ fn run_provider_call(
           Ok(response)
         }
         Error(err) -> {
-          report_llm_failure(context, call_id)
+          settle_failed_attempt(context, call_id, config, prompt_tokens, err)
           record_llm_error(
             config.name,
             config.default_model,
             error_type_name(err),
           )
-          Error(LLMError(reason: err))
+          case attempt < default_retry_config.max_attempts {
+            True ->
+              case retry.is_retryable(err) {
+                retry.ShouldRetry -> {
+                  retry.wait_before_retry(default_retry_config, attempt)
+                  run_provider_attempt(
+                    context,
+                    config,
+                    messages,
+                    tools,
+                    depth,
+                    start,
+                    prompt_tokens,
+                    base_call_id,
+                    attempt + 1,
+                  )
+                }
+                retry.DoNotRetry(_) -> Error(LLMError(reason: err))
+              }
+            False -> Error(LLMError(reason: err))
+          }
         }
       }
+  }
+}
+
+/// A network failure may already have been billed by the provider. Record the
+/// reserved estimate as unconfirmed usage; other failures release the reserve.
+fn settle_failed_attempt(
+  context: RunContext,
+  call_id: String,
+  config: provider.ProviderConfig,
+  prompt_tokens: Int,
+  err: provider.LLMError,
+) -> Nil {
+  case err {
+    provider.NetworkError(_) ->
+      case context.on_llm_unconfirmed {
+        Some(record) ->
+          record(call_id, config.name, config.default_model, prompt_tokens)
+        None -> Nil
+      }
+    _ -> report_llm_failure(context, call_id)
   }
 }
 
