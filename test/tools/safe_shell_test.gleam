@@ -63,3 +63,59 @@ fn list_each_blocked(commands: List(String)) -> Nil {
     }
   }
 }
+
+// Validation-only checks: these commands must NEVER be executed by a test,
+// because a missing guard would run them for real in the project root.
+fn assert_rejected(command: String, expected: String) -> Nil {
+  let assert Error(reason) = safe_shell.validate(command)
+  string.contains(reason, expected) |> should.equal(True)
+}
+
+// A single `&` used to pass validation and run a second command through
+// /bin/sh (`open_port({spawn, ...})`).
+pub fn safe_shell_rejects_background_operator_test() {
+  assert_rejected("echo hi & id", "blocked operators")
+  assert_rejected("echo hi&id", "blocked operators")
+  assert_rejected("ls (id)", "blocked operators")
+}
+
+// `find` actions that delete, execute or write files are flags, so they skip
+// the workspace path check; they must be rejected explicitly.
+pub fn safe_shell_rejects_find_side_effect_actions_test() {
+  [
+    "find . -delete", "find . -exec id", "find . -execdir id", "find . -ok id",
+    "find . -okdir id", "find . -fprint out", "find . -fprint0 out",
+    "find . -fprintf out x", "find . -fls out",
+  ]
+  |> list_each_rejected("find action not allowed")
+}
+
+fn list_each_rejected(commands: List(String), expected: String) -> Nil {
+  case commands {
+    [] -> Nil
+    [cmd, ..rest] -> {
+      assert_rejected(cmd, expected)
+      list_each_rejected(rest, expected)
+    }
+  }
+}
+
+pub fn safe_shell_validate_returns_argv_test() {
+  safe_shell.validate("ls -la src")
+  |> should.equal(Ok(["ls", "-la", "src"]))
+}
+
+// The executor must never hand the command line to a shell: arguments are
+// passed as argv, so metacharacters inside an argument stay literal.
+pub fn safe_shell_runs_without_a_shell_test() {
+  run_argv(["echo", "a & echo INJECTED"])
+  |> should.equal(Ok("a & echo INJECTED"))
+}
+
+pub fn safe_shell_reports_unknown_executable_test() {
+  let assert Error(reason) = run_argv(["supernova-no-such-binary"])
+  string.contains(reason, "not found") |> should.equal(True)
+}
+
+@external(erlang, "supernova_safe_shell_ffi", "run_command")
+fn run_argv(argv: List(String)) -> Result(String, String)

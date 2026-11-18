@@ -35,7 +35,7 @@ All `16` findings (§2–3) and `9` requirements (§7) from `audit/RELATORIO_AUD
 | Status | Count | Scope |
 |---|---:|---|
 | `RESOLVIDO` | `20` | Fixed or verified with automated tests (`file_system` path containment, `web`/`browser` SSRF guards, `browser` `evaluate` disabled by default via `tools.browser.allow_evaluate`, `safe_shell` validation via `workspace_guard.validate_path`, `gateway` `WorkspacePolicy` enforcement, Slack/Matrix handler dispatch, POSIX signal graceful shutdown, infrastructure supervisor restart, real `/health` & `/health/ready` JSON, test workspace isolation) |
-| `ACEITO` | `5` | Explicitly accepted/deferred to **PRD B**: live API keys & messaging tokens (`2.1`, `2.2`), live PostgreSQL migration test (`2.11` / `REQ-PROD-05`), live `pgvector` test (`2.12`), and live Chromium Playwright E2E execution (`3.4`, gated via `SUPERNOVA_BROWSER_TESTS=1`) |
+| `ACEITO` | `5` | Accepted or deferred to **PRD B**: live PostgreSQL migration validation (`2.11`, `REQ-PROD-05`), deterministic internal session IDs (`2.12`, accepted risk), MCP STDIO command from local config (`3.2`, out of network scope), and live Chromium resolution (`3.4`, gated via `SUPERNOVA_BROWSER_TESTS=1`) |
 | `ABERTO` | `0` | None remaining |
 
 ---
@@ -73,7 +73,7 @@ All `16` findings (§2–3) and `9` requirements (§7) from `audit/RELATORIO_AUD
 3. **CI branch trigger (`chore/retomada`):** Added `chore/retomada` alongside `master` in `.github/workflows/test.yml` `on.push.branches` so CI could be verified on push prior to opening a Pull Request.
 4. **Config file reading in `src/supernova/config.gleam`:** Removing the unreachable `_` arm in `convert_yaml_error` exposed that `yay.parse_file` returns a non-matching `{yaml_error, ...}` Erlang tuple when a file is missing. Switched `load_from_file` to read files with `supernova_file_system_ffi:read_file/1` before calling `parse_yaml`, returning `FileError` cleanly.
 5. **Typing keepalive test margins (`test/channel/registry_test.gleam`):** Increased `(first_update_delay_ms, keepalive_ms)` from `(15, 10)` to `(90, 60)` in both Discord and Telegram typing keepalive tests to eliminate scheduling races under Erlang `cover` instrumentation.
-6. **Pull Request creation deferred:** Held back `gh pr create --base master` until user approval of the proposed PR title and body.
+6. **Pull Request:** opened after the maintainer approved the title and body; merged as PR #10.
 
 ---
 
@@ -111,4 +111,20 @@ All `16` findings (§2–3) and `9` requirements (§7) from `audit/RELATORIO_AUD
 ## 9. Links
 
 - **Initial CI run (`test` workflow on `991f919`):** https://github.com/manelsen/supernova/actions/runs/44196515669 (completed `success`)
-- **Final CI run & PR:** Updated upon final push and PR approval.
+- **PR:** https://github.com/manelsen/supernova/pull/10 (merged 2026-11-18)
+- **CI on `master` after merge:** Test Suite run 44223669798 and Build and Push Container Image run 44223669772, both `success`.
+
+---
+
+## 10. Post-report changes
+
+Commits added to `chore/retomada` after this report was first written (CodeRabbit review fixes):
+
+| Commit | Description |
+|---|---|
+| `0f4b45a` | `fix: apply CodeRabbit auto-fixes` |
+| `deb9ac2` | `fix: block newline shell bypass and match MCP response IDs` |
+| `2473da8` | `fix: escape MCP JSON keys, type stdio errors, and strengthen shell assertions` |
+| `8c07e42` | `fix: bound MCP fragment deadline and stop evicted transports` |
+
+Follow-up after merge (branch `fix/safe-shell-no-shell`): finding `3.1` was reopened because `safe_shell` still ran commands through `/bin/sh` and a single `&` passed validation. It now spawns argv directly and rejects `&`, `(`, `)` and side-effecting `find` actions; see `audit/STATUS_2026-11.md`. The `chore/retomada` push trigger was removed from `.github/workflows/test.yml`.
