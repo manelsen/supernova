@@ -23,7 +23,19 @@ pub fn submit_with_limits(
 @external(erlang, "supernova_chat_lanes_ffi", "lane_count")
 pub fn lane_count() -> Int
 
+/// Stop accepting keys with `prefix` and wait for their jobs. Returns the
+/// number of pending jobs still alive when the timeout expires.
+@external(erlang, "supernova_chat_lanes_ffi", "drain")
+pub fn drain(prefix: String, timeout_ms: Int) -> Int
+
 /// Lane key for an inbound event: one lane per channel conversation.
+pub fn key_for_registry(
+  registry_id: String,
+  inbound: port.ChannelInbound,
+) -> String {
+  registry_id <> ":" <> key_for(inbound)
+}
+
 pub fn key_for(inbound: port.ChannelInbound) -> String {
   case inbound {
     port.InboundMessage(msg) -> msg.channel <> ":" <> msg.channel_id

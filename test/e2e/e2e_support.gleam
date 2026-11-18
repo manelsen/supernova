@@ -23,6 +23,7 @@ import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/rate_limit/actor as rate_limiter
 import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/syscall/actor as syscall_actor
+import supernova/llm/pricing
 import supernova/llm/provider
 import test_workspace
 
@@ -77,7 +78,13 @@ pub fn with_runtime(cfg: config.Config, body: fn() -> a) -> a {
     closed_group_global.set_budget(budget)
 
     let assert Ok(ledger) =
-      ledger_actor.start_persistent_with_clock(root <> "/ledger", fn() { now })
+      ledger_actor.start_persistent_with_clock_and_day_key(
+        root <> "/ledger",
+        fn() { now },
+        fn(timestamp) {
+          pricing.day_key(timestamp, cfg.instance_budget.timezone)
+        },
+      )
     closed_group_global.set_ledger(ledger)
 
     let assert Ok(rate) = rate_limiter.start_with_clock(fn() { now })
@@ -174,8 +181,10 @@ pub fn telegram_start_registry(
         typing_keepalive_ms: 4000,
         stream_timeout_ms: 60_000,
         turn_hard_timeout_ms: 300_000,
+        registry_id: "",
         outbound_records: Some(recorder),
         leave_group: None,
+        leave_retry_ms: [5000, 30_000, 120_000],
       ),
     )
   channel_registry
@@ -215,8 +224,13 @@ pub fn telegram_start_registry_with_leave(
         typing_keepalive_ms: 4000,
         stream_timeout_ms: 60_000,
         turn_hard_timeout_ms: 300_000,
+        registry_id: "",
         outbound_records: Some(recorder),
-        leave_group: Some(fn(chat_id) { process.send(leave_recorder, chat_id) }),
+        leave_group: Some(fn(chat_id) {
+          process.send(leave_recorder, chat_id)
+          True
+        }),
+        leave_retry_ms: [5000, 30_000, 120_000],
       ),
     )
   channel_registry
@@ -270,8 +284,10 @@ pub fn discord_start_registry(
         typing_keepalive_ms: 4000,
         stream_timeout_ms: 60_000,
         turn_hard_timeout_ms: 300_000,
+        registry_id: "",
         outbound_records: Some(recorder),
         leave_group: None,
+        leave_retry_ms: [5000, 30_000, 120_000],
       ),
     )
   channel_registry
@@ -339,4 +355,34 @@ fn await_content_loop(
       }
     }
   }
+}
+
+pub fn telegram_start_registry_with_leave_result(
+  cfg: config.Config,
+  handler: port.ChannelHandler,
+  updates: List(telegram.Update),
+  recorder: process.Subject(registry.OutboundRecord),
+  leave_result: Bool,
+  retry_ms: List(Int),
+) -> registry.ChannelRegistry {
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      cfg,
+      handler,
+      registry.StartHooks(
+        discord_events: [],
+        telegram_updates: updates,
+        slack_inbound_events: [],
+        matrix_inbound_events: [],
+        disable_telegram_polling: True,
+        typing_keepalive_ms: 4000,
+        stream_timeout_ms: 60_000,
+        turn_hard_timeout_ms: 300_000,
+        registry_id: "",
+        outbound_records: Some(recorder),
+        leave_group: Some(fn(_chat_id) { leave_result }),
+        leave_retry_ms: retry_ms,
+      ),
+    )
+  channel_registry
 }

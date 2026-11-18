@@ -1,6 +1,7 @@
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
 import gleeunit/should
 import supernova/adapters/discord_gateway
@@ -263,8 +264,10 @@ fn test_hooks(
     typing_keepalive_ms: 4000,
     stream_timeout_ms: 60_000,
     turn_hard_timeout_ms: 300_000,
+    registry_id: "",
     outbound_records: None,
     leave_group: None,
+    leave_retry_ms: [5000, 30_000, 120_000],
   )
 }
 
@@ -281,8 +284,10 @@ fn test_hooks_with_slack_inbound(
     typing_keepalive_ms: 4000,
     stream_timeout_ms: 60_000,
     turn_hard_timeout_ms: 300_000,
+    registry_id: "",
     outbound_records: Some(recorder),
     leave_group: None,
+    leave_retry_ms: [5000, 30_000, 120_000],
   )
 }
 
@@ -299,8 +304,10 @@ fn test_hooks_with_matrix_inbound(
     typing_keepalive_ms: 4000,
     stream_timeout_ms: 60_000,
     turn_hard_timeout_ms: 300_000,
+    registry_id: "",
     outbound_records: Some(recorder),
     leave_group: None,
+    leave_retry_ms: [5000, 30_000, 120_000],
   )
 }
 
@@ -332,8 +339,10 @@ fn test_hooks_with_recorder_and_keepalive(
     typing_keepalive_ms: typing_keepalive_ms,
     stream_timeout_ms: 60_000,
     turn_hard_timeout_ms: 300_000,
+    registry_id: "",
     outbound_records: Some(recorder),
     leave_group: None,
+    leave_retry_ms: [5000, 30_000, 120_000],
   )
 }
 
@@ -1706,8 +1715,10 @@ pub fn slack_inbound_event_dispatched_to_handler_test() {
         typing_keepalive_ms: 4000,
         stream_timeout_ms: 60_000,
         turn_hard_timeout_ms: 300_000,
+        registry_id: "",
         outbound_records: None,
         leave_group: None,
+        leave_retry_ms: [5000, 30_000, 120_000],
       ),
     )
 
@@ -1857,8 +1868,10 @@ pub fn matrix_inbound_event_dispatched_to_handler_test() {
         typing_keepalive_ms: 4000,
         stream_timeout_ms: 60_000,
         turn_hard_timeout_ms: 300_000,
+        registry_id: "",
         outbound_records: None,
         leave_group: None,
+        leave_retry_ms: [5000, 30_000, 120_000],
       ),
     )
 
@@ -2476,4 +2489,139 @@ fn collect_registry_records(
     Ok(record) -> collect_registry_records(recorder, [record, ..acc])
     Error(_) -> list.reverse(acc)
   }
+}
+
+fn stream_test_reply(content: String) -> port.ChannelReply {
+  port.ChannelReply(
+    channel_id: "999",
+    content: content,
+    reply_to_id: None,
+    thread_id: None,
+    typing: False,
+    edit_message_id: None,
+    interactive: None,
+    media: [],
+  )
+}
+
+pub fn split_delivery_treats_not_modified_as_success_test() {
+  let delivered = process.new_subject()
+  let result =
+    registry.finish_stream_in_parts_for_test(
+      stream_test_reply(string.repeat("a", 500)),
+      "placeholder",
+      200,
+      fn(part) {
+        process.send(delivered, part.content)
+        case part.edit_message_id {
+          Some(_) ->
+            Error(port.SendFailed("Bad Request: message is not modified"))
+          None -> Ok(Nil)
+        }
+      },
+    )
+
+  result |> should.be_ok()
+  process.receive(delivered, within: 100) |> should.be_ok()
+  process.receive(delivered, within: 100) |> should.be_ok()
+  process.receive(delivered, within: 100) |> should.be_ok()
+}
+
+pub fn split_delivery_retries_rate_limited_parts_test() {
+  let decisions = process.new_subject()
+  let delivered = process.new_subject()
+  process.send(decisions, Ok(Nil))
+  process.send(decisions, Error(port.RateLimited(retry_after_seconds: 0)))
+  process.send(decisions, Ok(Nil))
+  process.send(decisions, Ok(Nil))
+
+  let result =
+    registry.finish_stream_in_parts_for_test(
+      stream_test_reply(string.repeat("a", 500)),
+      "placeholder",
+      200,
+      fn(part) {
+        process.send(delivered, part.content)
+        process.receive(decisions, within: 100)
+        |> result.unwrap(Error(port.SendFailed("missing decision")))
+      },
+    )
+
+  result |> should.be_ok()
+}
+
+pub fn split_delivery_sends_fallback_after_rate_limit_exhaustion_test() {
+  let decisions = process.new_subject()
+  let delivered = process.new_subject()
+  let fallback_seen = process.new_subject()
+  process.send(decisions, Ok(Nil))
+  list.repeat(Nil, 10)
+  |> list.each(fn(_) {
+    process.send(decisions, Error(port.RateLimited(retry_after_seconds: 0)))
+  })
+
+  let result =
+    registry.finish_stream_in_parts_for_test(
+      stream_test_reply(string.repeat("a", 500)),
+      "placeholder",
+      200,
+      fn(part) {
+        process.send(delivered, part.content)
+        case part.content == "(Não consegui enviar o restante da resposta.)" {
+          True -> {
+            process.send(fallback_seen, part.content)
+            Ok(Nil)
+          }
+          False ->
+            process.receive(decisions, within: 100)
+            |> result.unwrap(Error(port.SendFailed("missing decision")))
+        }
+      },
+    )
+
+  result |> should.be_ok()
+  process.receive(fallback_seen, within: 1000)
+  |> should.equal(Ok("(Não consegui enviar o restante da resposta.)"))
+}
+
+pub fn oversized_stream_update_is_ignored_test() {
+  let recorder = process.new_subject()
+  let handler = fn(inbound, events) {
+    case inbound {
+      port.InboundMessage(msg) -> {
+        let base_reply =
+          port.reply(to: msg, content: "") |> port.with_typing(True)
+        process.send(
+          events,
+          port.StreamUpdate(port.reply(
+            to: msg,
+            content: string.repeat("X", 5000),
+          )),
+        )
+        process.send(
+          events,
+          port.StreamComplete(port.reply(to: msg, content: "ok")),
+        )
+        Ok(port.StreamReply(base_reply: base_reply))
+      }
+      port.InboundInteraction(_) -> Error(port.Ignored("no interactions"))
+    }
+  }
+  let assert Ok(update) = telegram.parse_update(telegram_fixture_update())
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      handler,
+      test_hooks_with_recorder([], [update], recorder),
+    )
+
+  let records = collect_registry_records(recorder, [])
+  list.any(records, fn(entry: registry.OutboundRecord) {
+    entry.content == string.repeat("X", 5000)
+  })
+  |> should.equal(False)
+  list.any(records, fn(entry) { entry.content == "ok" })
+  |> should.equal(True)
+
+  registry.stop_channels(channel_registry)
 }

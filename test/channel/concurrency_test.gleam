@@ -14,6 +14,7 @@ import supernova/config
 import supernova/core/access/types as access_types
 import supernova/core/closed_group/pure as cg_pure
 import supernova/core/resource_ledger/actor as ledger_actor
+import supernova/core/resource_ledger/types as ledger_types
 import supernova/core/syscall/actor as syscall_actor
 
 @external(erlang, "erlang", "monotonic_time")
@@ -342,8 +343,10 @@ pub fn late_terminal_keeps_lane_until_content_is_delivered_test() {
       typing_keepalive_ms: 4000,
       stream_timeout_ms: 120,
       turn_hard_timeout_ms: 300_000,
+      registry_id: "",
       outbound_records: Some(recorder),
       leave_group: None,
+      leave_retry_ms: [5000, 30_000, 120_000],
     )
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
@@ -424,8 +427,38 @@ pub fn ledger_sums_cost_inside_the_actor_test() {
       0.5,
     )
 
-  ledger_actor.try_llm_cost_where(ledger, fn(_) { True })
-  |> should.equal(Ok(0.75))
-  ledger_actor.try_llm_cost_where(ledger, fn(_) { False })
-  |> should.equal(Ok(0.0))
+  let assert [ledger_types.LLMUsage(timestamp: timestamp, ..), ..] =
+    ledger_actor.get_all_usage(ledger)
+  let assert Ok(#(_, total)) = ledger_actor.try_spend_today(ledger, timestamp)
+  total |> should.equal(0.75)
+  let assert Ok(#(_, next_total)) =
+    ledger_actor.try_spend_today(ledger, timestamp + 86_400_000)
+  next_total |> should.equal(0.0)
+}
+
+pub fn drain_reports_pending_turns_with_short_timeout_test() {
+  let recorder = process.new_subject()
+  let ready = process.new_subject()
+  let channel_registry =
+    support.telegram_start_registry(
+      support.channel_config(),
+      slow_for_chat("888", ready),
+      [
+        support.telegram_update("888", "888", "primeiro"),
+        support.telegram_update("888", "888", "segundo"),
+      ],
+      recorder,
+    )
+
+  let assert Ok(gate) = process.receive(ready, within: 2000)
+  let remaining = chat_lanes.drain(channel_registry.id, 50)
+  { remaining >= 1 } |> should.equal(True)
+
+  process.send(gate, Nil)
+  let assert Ok(second_gate) = process.receive(ready, within: 2000)
+  process.send(second_gate, Nil)
+  let assert Ok(_) = process.receive(recorder, within: 2000)
+  let assert Ok(_) = process.receive(recorder, within: 2000)
+
+  registry.stop_channels_with_timeout(channel_registry, 2000)
 }

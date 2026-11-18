@@ -26,6 +26,7 @@ import supernova/channel/chat_lanes
 import supernova/channel/chunking
 import supernova/channel/port
 import supernova/config
+import supernova/core/access/actor as access_actor
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/closed_group/global as closed_group_global
@@ -37,6 +38,7 @@ import supernova/core/closed_group/global as closed_group_global
 /// A registry of all channel adapters, keyed by channel name.
 pub type ChannelRegistry {
   ChannelRegistry(
+    id: String,
     channels: Dict(String, port.ChannelAdapter),
     streams: Dict(String, StreamSendFn),
   )
@@ -53,8 +55,10 @@ pub type StartHooks {
     typing_keepalive_ms: Int,
     stream_timeout_ms: Int,
     turn_hard_timeout_ms: Int,
+    registry_id: String,
     outbound_records: Option(process.Subject(OutboundRecord)),
-    leave_group: Option(fn(String) -> Nil),
+    leave_group: Option(fn(String) -> Bool),
+    leave_retry_ms: List(Int),
   )
 }
 
@@ -97,6 +101,16 @@ type StreamSendFn =
 
 const default_typing_keepalive_ms = 4000
 
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
+
+fn new_registry_id() -> String {
+  "registry:"
+  <> int.to_string(unique_integer())
+  <> ":"
+  <> int.to_string(current_timestamp())
+}
+
 const stream_timeout_ms = 60_000
 
 const turn_hard_timeout_ms = 300_000
@@ -119,8 +133,10 @@ pub fn no_start_hooks() -> StartHooks {
     typing_keepalive_ms: default_typing_keepalive_ms,
     stream_timeout_ms: 60_000,
     turn_hard_timeout_ms: 300_000,
+    registry_id: "",
     outbound_records: None,
     leave_group: None,
+    leave_retry_ms: [5000, 30_000, 120_000],
   )
 }
 
@@ -148,6 +164,8 @@ pub fn start_channels_with_handler_and_hooks(
   handler: port.ChannelHandler,
   hooks: StartHooks,
 ) -> Result(ChannelRegistry, String) {
+  let registry_id = new_registry_id()
+  let hooks = StartHooks(..hooks, registry_id: registry_id)
   let channels = dict.new()
   let streams = dict.new()
 
@@ -298,7 +316,7 @@ pub fn start_channels_with_handler_and_hooks(
   let total = dict.size(channels)
   io.println("Started " <> int.to_string(total) <> " channel adapter(s)")
 
-  Ok(ChannelRegistry(channels: channels, streams: streams))
+  Ok(ChannelRegistry(id: registry_id, channels: channels, streams: streams))
 }
 
 /// Send a reply through a specific channel.
@@ -354,6 +372,25 @@ pub fn list_channels(registry: ChannelRegistry) -> List(String) {
 
 /// Stop all channels in the registry.
 pub fn stop_channels(registry: ChannelRegistry) -> Nil {
+  stop_channels_with_timeout(registry, 25_000)
+}
+
+/// Stop adapters after draining this registry's lane prefix.
+pub fn stop_channels_with_timeout(
+  registry: ChannelRegistry,
+  drain_timeout_ms: Int,
+) -> Nil {
+  let remaining = chat_lanes.drain(registry.id, drain_timeout_ms)
+  case remaining > 0 {
+    True ->
+      io.println(
+        "warn: "
+        <> int.to_string(remaining)
+        <> " chat lane job(s) remained after drain",
+      )
+    False -> Nil
+  }
+
   registry.channels
   |> dict.values
   |> list.each(fn(adapter) { adapter.stop() })
@@ -421,6 +458,7 @@ fn start_discord_channel(
         handler,
         send_fn,
         stream_send_fn,
+        hooks.registry_id,
       ))
 
       let subscription_id = discord_gateway.subscribe(gateway, bridge.events)
@@ -493,7 +531,13 @@ fn start_slack_channel(
 
       hooks.slack_inbound_events
       |> list.each(fn(inbound) {
-        dispatch_inbound(handler, send_fn, stream_send_fn, inbound)
+        dispatch_inbound(
+          handler,
+          send_fn,
+          stream_send_fn,
+          inbound,
+          hooks.registry_id,
+        )
       })
 
       Ok(#(
@@ -570,7 +614,13 @@ fn start_matrix_channel(
 
       hooks.matrix_inbound_events
       |> list.each(fn(inbound) {
-        dispatch_inbound(handler, send_fn, stream_send_fn, inbound)
+        dispatch_inbound(
+          handler,
+          send_fn,
+          stream_send_fn,
+          inbound,
+          hooks.registry_id,
+        )
       })
 
       Ok(#(
@@ -591,6 +641,7 @@ fn start_discord_bridge(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
+  registry_id: String,
 ) -> Result(DiscordBridge, String) {
   let ready = process.new_subject()
   let done = process.new_subject()
@@ -607,6 +658,7 @@ fn start_discord_bridge(
         events,
         control,
         done,
+        registry_id,
       )
     })
 
@@ -624,13 +676,20 @@ fn discord_bridge_loop(
   events: process.Subject(discord_gateway.DiscordEvent),
   control: process.Subject(DiscordBridgeControl),
   done: process.Subject(Nil),
+  registry_id: String,
 ) -> Nil {
   case process.receive(control, within: 0) {
     Ok(StopDiscordBridge) -> process.send(done, Nil)
     Error(_) -> {
       case process.receive(events, within: 100) {
         Ok(event) -> {
-          dispatch_discord_event(handler, send_fn, stream_send_fn, event)
+          dispatch_discord_event(
+            handler,
+            send_fn,
+            stream_send_fn,
+            event,
+            registry_id,
+          )
           discord_bridge_loop(
             handler,
             send_fn,
@@ -638,6 +697,7 @@ fn discord_bridge_loop(
             events,
             control,
             done,
+            registry_id,
           )
         }
         Error(_) ->
@@ -648,6 +708,7 @@ fn discord_bridge_loop(
             events,
             control,
             done,
+            registry_id,
           )
       }
     }
@@ -683,6 +744,8 @@ fn start_telegram_worker(
               update,
               telegram_config,
               hooks.leave_group,
+              hooks.leave_retry_ms,
+              hooks.registry_id,
             )
           })
         False -> {
@@ -695,6 +758,8 @@ fn start_telegram_worker(
               update,
               telegram_config,
               hooks.leave_group,
+              hooks.leave_retry_ms,
+              hooks.registry_id,
             )
           })
 
@@ -707,6 +772,8 @@ fn start_telegram_worker(
                 update,
                 telegram_config,
                 hooks.leave_group,
+                hooks.leave_retry_ms,
+                hooks.registry_id,
               )
             })
           Nil
@@ -730,6 +797,7 @@ fn dispatch_discord_event(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   event: discord_gateway.DiscordEvent,
+  registry_id: String,
 ) -> Nil {
   case event {
     discord_gateway.MessageCreate(data) ->
@@ -740,6 +808,7 @@ fn dispatch_discord_event(
             send_fn,
             stream_send_fn,
             port.inbound_message(discord_message_to_port(message)),
+            registry_id,
           )
         _ -> Nil
       }
@@ -748,7 +817,13 @@ fn dispatch_discord_event(
         discord_events.EventInteractionCreate(interaction) ->
           case discord_interaction_to_inbound(interaction) {
             Ok(inbound) ->
-              dispatch_inbound(handler, send_fn, stream_send_fn, inbound)
+              dispatch_inbound(
+                handler,
+                send_fn,
+                stream_send_fn,
+                inbound,
+                registry_id,
+              )
             Error(_) -> Nil
           }
         _ -> Nil
@@ -763,15 +838,23 @@ fn dispatch_telegram_update(
   stream_send_fn: StreamSendFn,
   update: telegram.Update,
   telegram_config: telegram.Config,
-  leave_group: Option(fn(String) -> Nil),
+  leave_group: Option(fn(String) -> Bool),
+  leave_retry_ms: List(Int),
+  registry_id: String,
 ) -> Nil {
   case update.my_chat_member {
     Some(member) ->
-      maybe_leave_unauthorized_group(telegram_config, member, leave_group)
+      maybe_leave_unauthorized_group(
+        telegram_config,
+        member,
+        leave_group,
+        leave_retry_ms,
+      )
     None -> Nil
   }
   case telegram_update_to_inbound(update) {
-    Ok(inbound) -> dispatch_inbound(handler, send_fn, stream_send_fn, inbound)
+    Ok(inbound) ->
+      dispatch_inbound(handler, send_fn, stream_send_fn, inbound, registry_id)
     Error(_) -> Nil
   }
 }
@@ -779,7 +862,8 @@ fn dispatch_telegram_update(
 fn maybe_leave_unauthorized_group(
   telegram_config: telegram.Config,
   member: telegram.ChatMemberUpdated,
-  leave_group: Option(fn(String) -> Nil),
+  leave_group: Option(fn(String) -> Bool),
+  leave_retry_ms: List(Int),
 ) -> Nil {
   let is_group = case member.chat.chat_type {
     telegram.GroupChat | telegram.SupergroupChat -> True
@@ -794,36 +878,101 @@ fn maybe_leave_unauthorized_group(
     True ->
       case closed_group_global.chat_authorized_result(chat_key) {
         Ok(True) -> Nil
-        Ok(False) -> {
-          record_leave_audit(chat_key)
-          case leave_group {
-            Some(leave) -> leave(member.chat.id)
-            None -> {
-              let _ = telegram.leave_chat(telegram_config, member.chat.id)
-              Nil
-            }
-          }
-        }
+        Ok(False) ->
+          leave_confirmed(
+            telegram_config,
+            member.chat.id,
+            chat_key,
+            leave_group,
+            leave_retry_ms,
+          )
         Error(_) -> {
           io.println(
             "warn: access lookup failed while checking chat " <> chat_key,
           )
           record_chat_check_failed(chat_key)
-          schedule_leave_recheck(telegram_config, member, leave_group)
+          schedule_leave_recheck(
+            telegram_config,
+            member,
+            leave_group,
+            leave_retry_ms,
+          )
         }
       }
     False -> Nil
   }
 }
 
+fn leave_confirmed(
+  telegram_config: telegram.Config,
+  chat_id: String,
+  chat_key: String,
+  leave_group: Option(fn(String) -> Bool),
+  retry_delays: List(Int),
+) -> Nil {
+  case leave_group {
+    Some(leave) ->
+      case leave(chat_id) {
+        True -> record_leave_audit(chat_key)
+        False ->
+          schedule_leave_retry(
+            telegram_config,
+            chat_id,
+            chat_key,
+            leave_group,
+            retry_delays,
+          )
+      }
+    None ->
+      case telegram.leave_chat(telegram_config, chat_id) {
+        Ok(_) -> record_leave_audit(chat_key)
+        Error(_) ->
+          schedule_leave_retry(
+            telegram_config,
+            chat_id,
+            chat_key,
+            leave_group,
+            retry_delays,
+          )
+      }
+  }
+}
+
+fn schedule_leave_retry(
+  telegram_config: telegram.Config,
+  chat_id: String,
+  chat_key: String,
+  leave_group: Option(fn(String) -> Bool),
+  retry_delays: List(Int),
+) -> Nil {
+  case retry_delays {
+    [] -> {
+      record_leave_failed(chat_key)
+      alert_admins(
+        "Não consegui sair do grupo não autorizado " <> chat_key <> ".",
+      )
+      Nil
+    }
+    [delay, ..rest] -> {
+      let _ =
+        process.spawn_unlinked(fn() {
+          process.sleep(delay)
+          leave_confirmed(telegram_config, chat_id, chat_key, leave_group, rest)
+        })
+      Nil
+    }
+  }
+}
+
 fn schedule_leave_recheck(
   telegram_config: telegram.Config,
   member: telegram.ChatMemberUpdated,
-  leave_group: Option(fn(String) -> Nil),
+  leave_group: Option(fn(String) -> Bool),
+  retry_delays: List(Int),
 ) -> Nil {
   process.spawn_unlinked(fn() {
     process.sleep(30_000)
-    recheck_leave(telegram_config, member, leave_group)
+    recheck_leave(telegram_config, member, leave_group, retry_delays)
   })
   Nil
 }
@@ -831,26 +980,55 @@ fn schedule_leave_recheck(
 fn recheck_leave(
   telegram_config: telegram.Config,
   member: telegram.ChatMemberUpdated,
-  leave_group: Option(fn(String) -> Nil),
+  leave_group: Option(fn(String) -> Bool),
+  retry_delays: List(Int),
 ) -> Nil {
   let chat_key = "telegram:" <> member.chat.id
   case closed_group_global.chat_authorized_result(chat_key) {
     Ok(True) -> Nil
-    Ok(False) -> {
-      record_leave_audit(chat_key)
-      case leave_group {
-        Some(leave) -> leave(member.chat.id)
-        None -> {
-          let _ = telegram.leave_chat(telegram_config, member.chat.id)
-          Nil
-        }
-      }
-    }
+    Ok(False) ->
+      leave_confirmed(
+        telegram_config,
+        member.chat.id,
+        chat_key,
+        leave_group,
+        retry_delays,
+      )
     Error(_) -> {
       io.println(
         "warn: access lookup failed again while checking chat " <> chat_key,
       )
       record_chat_check_failed(chat_key)
+    }
+  }
+}
+
+fn record_leave_failed(chat_key: String) -> Nil {
+  case closed_group_global.get_audit() {
+    None -> Nil
+    Some(audit) ->
+      audit_actor.log_entry(
+        audit,
+        audit_types.denied_entry(
+          closed_group_global.now(),
+          "telegram",
+          "leave_failed",
+          chat_key,
+          "Telegram did not confirm the leave",
+        ),
+      )
+  }
+}
+
+fn alert_admins(text: String) -> Nil {
+  case closed_group_global.get_runtime() {
+    None -> Nil
+    Some(runtime) -> {
+      let admins = case access_actor.list_admins(runtime.access) {
+        [] -> runtime.config.access.admins
+        admins -> admins
+      }
+      list.each(admins, fn(admin) { runtime.send_alert(admin, text) })
     }
   }
 }
@@ -899,8 +1077,9 @@ fn dispatch_inbound(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   inbound: port.ChannelInbound,
+  registry_id: String,
 ) -> Nil {
-  let key = chat_lanes.key_for(inbound)
+  let key = chat_lanes.key_for_registry(registry_id, inbound)
   let _ =
     chat_lanes.submit(key, fn() {
       run_inbound_turn(handler, send_fn, stream_send_fn, inbound, key)
@@ -1728,24 +1907,37 @@ fn consume_discord_stream_events(
   let wait_ms = stream_wait_ms(remaining_ms, keepalive_ms)
 
   case process.receive(events, within: wait_ms) {
-    Ok(port.StreamUpdate(reply)) -> {
-      let next_reply =
-        port.ChannelReply(..reply, edit_message_id: Some(message_id))
-      use _ <- result.try(discord_edit_message(
-        rest_client,
-        next_reply,
-        message_id,
-      ))
-      consume_discord_stream_events(
-        rest_client,
-        base_reply,
-        events,
-        message_id,
-        reply.content,
-        remaining_ms,
-        keepalive_ms,
-      )
-    }
+    Ok(port.StreamUpdate(reply)) ->
+      case stream_update_fits("discord", reply.content) {
+        True -> {
+          let next_reply =
+            port.ChannelReply(..reply, edit_message_id: Some(message_id))
+          use _ <- result.try(discord_edit_message(
+            rest_client,
+            next_reply,
+            message_id,
+          ))
+          consume_discord_stream_events(
+            rest_client,
+            base_reply,
+            events,
+            message_id,
+            reply.content,
+            remaining_ms,
+            keepalive_ms,
+          )
+        }
+        False ->
+          consume_discord_stream_events(
+            rest_client,
+            base_reply,
+            events,
+            message_id,
+            last_content,
+            remaining_ms,
+            keepalive_ms,
+          )
+      }
     Ok(port.StreamComplete(reply)) ->
       case reply.content == last_content {
         True -> Ok(Nil)
@@ -1808,17 +2000,117 @@ fn finish_stream_in_parts(
   case chunking.split_reply(reply, max_length) {
     [] -> Ok(Nil)
     [first, ..rest] -> {
-      use _ <- result.try(deliver(
-        port.ChannelReply(..first, edit_message_id: Some(placeholder_id)),
-      ))
-      send_chunked_replies(
-        list.map(rest, fn(part) {
-          port.ChannelReply(..part, edit_message_id: None)
-        }),
-        deliver,
-      )
+      let first_result =
+        deliver(
+          port.ChannelReply(..first, edit_message_id: Some(placeholder_id)),
+        )
+      case first_result {
+        Ok(_) -> send_remaining_parts(rest, deliver, reply)
+        Error(error) ->
+          case is_message_not_modified(error) {
+            True -> send_remaining_parts(rest, deliver, reply)
+            False -> Error(error)
+          }
+      }
     }
   }
+}
+
+fn send_remaining_parts(
+  parts: List(port.ChannelReply),
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  base_reply: port.ChannelReply,
+) -> Result(Nil, port.ChannelError) {
+  case parts {
+    [] -> Ok(Nil)
+    [part, ..rest] ->
+      case deliver(part) {
+        Ok(_) -> send_remaining_parts(rest, deliver, base_reply)
+        Error(port.RateLimited(retry_after_seconds)) ->
+          deliver_rate_limited_part(
+            part,
+            rest,
+            deliver,
+            base_reply,
+            retry_after_seconds,
+            1,
+            0,
+          )
+        Error(error) -> Error(error)
+      }
+  }
+}
+
+fn deliver_rate_limited_part(
+  part: port.ChannelReply,
+  rest: List(port.ChannelReply),
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  base_reply: port.ChannelReply,
+  retry_after_seconds: Int,
+  attempts: Int,
+  waited_ms: Int,
+) -> Result(Nil, port.ChannelError) {
+  let wait_ms =
+    int.min(int.min(retry_after_seconds * 1000, 10_000 - waited_ms), 10_000)
+  case wait_ms > 0 {
+    True -> process.sleep(wait_ms)
+    False -> Nil
+  }
+  let waited_ms = waited_ms + int.max(wait_ms, 0)
+  case deliver(part) {
+    Ok(_) -> send_remaining_parts(rest, deliver, base_reply)
+    Error(port.RateLimited(next_retry)) ->
+      case attempts < 3 {
+        True ->
+          deliver_rate_limited_part(
+            part,
+            rest,
+            deliver,
+            base_reply,
+            next_retry,
+            attempts + 1,
+            waited_ms,
+          )
+        False -> send_stream_fallback(base_reply, deliver)
+      }
+    Error(error) -> Error(error)
+  }
+}
+
+fn send_stream_fallback(
+  base_reply: port.ChannelReply,
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  deliver(
+    port.ChannelReply(
+      ..base_reply,
+      content: "(Não consegui enviar o restante da resposta.)",
+      edit_message_id: None,
+      typing: False,
+    ),
+  )
+}
+
+fn is_message_not_modified(error: port.ChannelError) -> Bool {
+  case error {
+    port.SendFailed(reason) ->
+      string.contains(string.lowercase(reason), "message is not modified")
+    _ -> False
+  }
+}
+
+fn stream_update_fits(channel: String, content: String) -> Bool {
+  string.length(content) <= stream_max_length(channel)
+}
+
+/// Test seam for split-delivery edge cases.
+pub fn finish_stream_in_parts_for_test(
+  reply: port.ChannelReply,
+  placeholder_id: String,
+  max_length: Int,
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  finish_stream_in_parts(reply, placeholder_id, max_length, deliver)
 }
 
 fn stream_max_length(channel: String) -> Int {
@@ -1867,23 +2159,36 @@ fn consume_telegram_stream_events(
   let wait_ms = stream_wait_ms(remaining_ms, keepalive_ms)
 
   case process.receive(events, within: wait_ms) {
-    Ok(port.StreamUpdate(reply)) -> {
-      let next_reply =
-        port.ChannelReply(
-          ..reply,
-          edit_message_id: Some(int.to_string(message_id)),
-        )
-      use _ <- result.try(telegram_send_message(telegram_config, next_reply))
-      consume_telegram_stream_events(
-        telegram_config,
-        base_reply,
-        events,
-        message_id,
-        reply.content,
-        remaining_ms,
-        keepalive_ms,
-      )
-    }
+    Ok(port.StreamUpdate(reply)) ->
+      case stream_update_fits("telegram", reply.content) {
+        True -> {
+          let next_reply =
+            port.ChannelReply(
+              ..reply,
+              edit_message_id: Some(int.to_string(message_id)),
+            )
+          use _ <- result.try(telegram_send_message(telegram_config, next_reply))
+          consume_telegram_stream_events(
+            telegram_config,
+            base_reply,
+            events,
+            message_id,
+            reply.content,
+            remaining_ms,
+            keepalive_ms,
+          )
+        }
+        False ->
+          consume_telegram_stream_events(
+            telegram_config,
+            base_reply,
+            events,
+            message_id,
+            last_content,
+            remaining_ms,
+            keepalive_ms,
+          )
+      }
     Ok(port.StreamComplete(reply)) ->
       case reply.content == last_content {
         True -> Ok(Nil)
@@ -2021,10 +2326,14 @@ fn consume_matrix_stream_events(
 ) -> Result(Nil, port.ChannelError) {
   case process.receive(events, within: remaining_ms) {
     Ok(port.StreamUpdate(reply)) -> {
-      let edit_reply =
-        port.ChannelReply(..reply, edit_message_id: Some(event_id))
-      let _ =
-        matrix_adapter.send_reply(homeserver_url, access_token, edit_reply)
+      let _ = case stream_update_fits("matrix", reply.content) {
+        True -> {
+          let edit_reply =
+            port.ChannelReply(..reply, edit_message_id: Some(event_id))
+          matrix_adapter.send_reply(homeserver_url, access_token, edit_reply)
+        }
+        False -> Ok(Nil)
+      }
       consume_matrix_stream_events(
         homeserver_url,
         access_token,
@@ -2198,27 +2507,41 @@ fn consume_recorded_stream_events(
   let wait_ms = stream_wait_ms(remaining_ms, keepalive_ms)
 
   case process.receive(events, within: wait_ms) {
-    Ok(port.StreamUpdate(reply)) -> {
-      process.send(
-        recorder,
-        OutboundRecord(
-          channel: channel,
-          action: "edit",
-          content: reply.content,
-          message_id: Some(message_id),
-        ),
-      )
-      consume_recorded_stream_events(
-        recorder,
-        channel,
-        events,
-        message_id,
-        reply.content,
-        typing,
-        remaining_ms,
-        keepalive_ms,
-      )
-    }
+    Ok(port.StreamUpdate(reply)) ->
+      case stream_update_fits(channel, reply.content) {
+        True -> {
+          process.send(
+            recorder,
+            OutboundRecord(
+              channel: channel,
+              action: "edit",
+              content: reply.content,
+              message_id: Some(message_id),
+            ),
+          )
+          consume_recorded_stream_events(
+            recorder,
+            channel,
+            events,
+            message_id,
+            reply.content,
+            typing,
+            remaining_ms,
+            keepalive_ms,
+          )
+        }
+        False ->
+          consume_recorded_stream_events(
+            recorder,
+            channel,
+            events,
+            message_id,
+            last_content,
+            typing,
+            remaining_ms,
+            keepalive_ms,
+          )
+      }
     Ok(port.StreamComplete(reply)) -> {
       case reply.content == last_content {
         True -> Ok(Nil)
