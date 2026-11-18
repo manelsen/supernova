@@ -159,7 +159,11 @@ fn special_mock_response(
             False ->
               case string.contains(content, "[echo-model]") {
                 True -> Some("Mock response via " <> config.default_model)
-                False -> None
+                False ->
+                  case string.contains(content, "[long-response]") {
+                    True -> Some(string.repeat("A", 9000))
+                    False -> None
+                  }
               }
           }
       }

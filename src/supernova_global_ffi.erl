@@ -1,5 +1,5 @@
 -module(supernova_global_ffi).
--export([global_put/2, global_get/1, global_has/1, safe_is_process_alive/1]).
+-export([global_put/2, global_get/1, global_has/1, global_erase/1, safe_is_process_alive/1]).
 
 %% Shared global storage using persistent_term.
 %% Unlike process dictionary, these are accessible from ALL processes.
@@ -21,6 +21,10 @@ global_has(Key) ->
     catch
         error:badarg -> false
     end.
+
+global_erase(Key) ->
+    persistent_term:erase(Key),
+    nil.
 
 safe_is_process_alive(Pid) ->
     try erlang:is_process_alive(Pid) of

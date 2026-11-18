@@ -9,11 +9,12 @@
 //// 6. Graceful shutdown: channels → sessions → MCP servers
 
 import gleam/dict
-import gleam/erlang/process.{sleep}
+import gleam/erlang/process.{type Subject, sleep}
 import gleam/int
 import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/actor as otp_actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
@@ -27,7 +28,22 @@ import supernova/adapters/telegram_router
 import supernova/channel/port
 import supernova/channel/registry
 import supernova/config
+import supernova/config_check
+import supernova/core/access/actor as access_actor
+import supernova/core/access/types as access_types
+import supernova/core/alerts/group_actor as alerts_actor
+import supernova/core/audit_log/actor as audit_actor
+import supernova/core/budget_policy/actor as budget_actor
+import supernova/core/closed_group/global as closed_group_global
+import supernova/core/closed_group/pure as closed_group_pure
+import supernova/core/instance_budget/actor as instance_budget
+import supernova/core/principal
+import supernova/core/rate_limit/actor as rate_limiter
+import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/session/supervisor
+import supernova/core/syscall/actor as syscall_actor
+import supernova/core/tool_dispatch
+import supernova/core/workspace_policy/actor as workspace_policy_actor
 import supernova/health/server as health_server
 import supernova/llm/circuit_breaker/actor as cb_actor
 import supernova/llm/circuit_breaker/global as cb_global
@@ -41,6 +57,9 @@ import supernova/tools/browser
 import supernova/tracing/actor as tracing_actor
 import supernova/tracing/global as tracing_global
 import supernova/tracing/types as tracing_types
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn current_timestamp() -> Int
 
 /// Starts Supernova, boots core services, and waits for shutdown.
 pub fn main() -> Nil {
@@ -60,40 +79,52 @@ pub fn main() -> Nil {
       io.println("  Log level: " <> cfg.log_level)
       print_enabled_channels(cfg)
 
-      // Start core services
-      case start_services(cfg) {
-        Ok(services) -> {
-          io.println("✓ All services started")
-          io.println("✓ Supernova is running...")
-          io.println("")
-          io.println("Press Ctrl+C to shutdown")
-
-          // Block until SIGTERM / shutdown signal
-          wait_for_shutdown()
-
-          // Graceful shutdown
-          shutdown_services(services)
+      let issues = config_check.check(cfg)
+      case config_check.is_bootable(issues) {
+        False -> {
+          io.println("❌ Configuration rejected:")
+          io.println(config_check.format_issues(issues))
         }
-        Error(reason) -> {
-          io.println("❌ Failed to start services: " <> reason)
-          case string.contains(reason, "no LLM providers") {
-            True -> {
+        True -> {
+          io.println(config_check.format_issues(issues))
+          // Start core services
+          case start_services(cfg) {
+            Ok(services) -> {
+              io.println("✓ All services started")
+              io.println("✓ Supernova is running...")
               io.println("")
-              io.println("Add this to your supernova.yaml providers section:")
-              io.println("")
-              io.println("  providers:")
-              io.println("    openai:")
-              io.println("      api_key: \"${SUPERNOVA_OPENAI_API_KEY}\"")
-              io.println("      model: \"gpt-4o-mini\"")
-              io.println("")
-              io.println(
-                "Then set the env var: SUPERNOVA_OPENAI_API_KEY=sk-...",
-              )
-              io.println(
-                "Or run the wizard for guided setup: gleam run -m supernova/wizard_main",
-              )
+              io.println("Press Ctrl+C to shutdown")
+
+              // Block until SIGTERM / shutdown signal
+              wait_for_shutdown()
+
+              // Graceful shutdown
+              shutdown_services(services)
             }
-            False -> Nil
+            Error(reason) -> {
+              io.println("❌ Failed to start services: " <> reason)
+              case string.contains(reason, "no LLM providers") {
+                True -> {
+                  io.println("")
+                  io.println(
+                    "Add this to your supernova.yaml providers section:",
+                  )
+                  io.println("")
+                  io.println("  providers:")
+                  io.println("    openai:")
+                  io.println("      api_key: \"${SUPERNOVA_OPENAI_API_KEY}\"")
+                  io.println("      model: \"gpt-4o-mini\"")
+                  io.println("")
+                  io.println(
+                    "Then set the env var: SUPERNOVA_OPENAI_API_KEY=sk-...",
+                  )
+                  io.println(
+                    "Or run the wizard for guided setup: gleam run -m supernova/wizard_main",
+                  )
+                }
+                False -> Nil
+              }
+            }
           }
         }
       }
@@ -224,6 +255,14 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
 
   use channel_handler <- result.try(build_channel_handler(cfg, session_sup))
 
+  use _closed_group_sup <- result.try(
+    start_closed_group_supervisor(cfg)
+    |> result.map_error(fn(reason) {
+      "Failed to start closed-group supervisor: " <> reason
+    }),
+  )
+  io.println("✓ Closed-group policy actors started")
+
   // Start channel adapters based on config
   io.println("")
   io.println("Starting channel adapters...")
@@ -236,6 +275,27 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
       registry.ChannelRegistry(channels: dict.new(), streams: dict.new())
     }
   }
+
+  closed_group_global.set_alert_sender(fn(principal_id, text) {
+    case principal.parse(principal_id) {
+      Ok(speaker) -> {
+        let reply =
+          port.ChannelReply(
+            channel_id: speaker.user_id,
+            content: text,
+            reply_to_id: None,
+            thread_id: None,
+            typing: False,
+            edit_message_id: None,
+            interactive: None,
+            media: [],
+          )
+        let _ = registry.send(channel_reg, speaker.channel, reply)
+        Nil
+      }
+      Error(_) -> Nil
+    }
+  })
 
   // Start health server with real channel state callback
   let get_ready_channels = fn() { dict.keys(channel_reg.channels) }
@@ -324,6 +384,173 @@ pub fn start_infrastructure_supervisor(
 
   case static_supervisor.start(builder) {
     Ok(started) -> Ok(started.data)
+    Error(e) -> Error(string.inspect(e))
+  }
+}
+
+/// Start access, budget, ledger, rate, audit, instance-cap, alerts and tool
+fn wrap_started(
+  handle: Subject(a),
+) -> Result(otp_actor.Started(Subject(a)), otp_actor.StartError) {
+  case process.subject_owner(handle) {
+    Ok(pid) -> Ok(otp_actor.Started(pid: pid, data: handle))
+    Error(_) -> Error(otp_actor.InitFailed("actor has no owner"))
+  }
+}
+
+/// Start access, budget, ledger, rate, audit, instance-cap, alerts and tool
+/// gateway under one_for_one supervision. Each worker republishes its handle
+/// globally so a restart is picked up without restarting the whole app.
+pub fn start_closed_group_supervisor(
+  cfg: config.Config,
+) -> Result(static_supervisor.Supervisor, String) {
+  closed_group_global.set_config(cfg)
+  closed_group_global.set_clock(current_timestamp)
+
+  let builder =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.restart_tolerance(intensity: 5, period: 60)
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case audit_actor.start(cfg.data_dir <> "/audit_log") {
+          Ok(started) -> {
+            closed_group_global.set_audit(started)
+            wrap_started(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case
+          access_actor.start(
+            closed_group_pure.access_config(cfg.access),
+            cfg.data_dir,
+          )
+        {
+          Ok(started) -> {
+            closed_group_global.set_access(started)
+            wrap_started(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case
+          budget_actor.start_with_config(
+            closed_group_pure.budget_config(cfg.role_budgets.member),
+            20,
+          )
+        {
+          Ok(started) -> {
+            closed_group_global.set_budget(started)
+            wrap_started(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case ledger_actor.start_persistent(cfg.data_dir <> "/ledger") {
+          Ok(started) -> {
+            closed_group_global.set_ledger(started)
+            wrap_started(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case rate_limiter.start() {
+          Ok(started) -> {
+            closed_group_global.set_rate(started)
+            wrap_started(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case instance_budget.start(cfg.instance_budget.timezone) {
+          Ok(started) -> {
+            closed_group_global.set_instance_budget(started)
+            wrap_started(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case alerts_actor.start() {
+          Ok(started) -> {
+            closed_group_global.set_alerts(started)
+            wrap_started(started)
+          }
+          Error(e) -> Error(e)
+        }
+      }),
+    )
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        case closed_group_global.get_budget(), closed_group_global.get_audit() {
+          Some(budget), Some(audit) -> {
+            let manifests =
+              dict.from_list([
+                #(
+                  "member",
+                  closed_group_pure.manifest_for(
+                    cfg.capabilities,
+                    access_types.Member,
+                  ),
+                ),
+                #(
+                  "admin",
+                  closed_group_pure.manifest_for(
+                    cfg.capabilities,
+                    access_types.Admin,
+                  ),
+                ),
+              ])
+            let policy = case
+              workspace_policy_actor.start(cfg.data_dir <> "/workspace")
+            {
+              Ok(policy) -> Some(policy)
+              Error(_) -> None
+            }
+            case
+              syscall_actor.start_with_capabilities(
+                policy,
+                Some(budget),
+                Some(audit),
+                manifests,
+                tool_dispatch.execute,
+              )
+            {
+              Ok(started) -> {
+                closed_group_global.set_gateway(started)
+                wrap_started(started)
+              }
+              Error(e) -> Error(e)
+            }
+          }
+          _, _ ->
+            Error(otp_actor.InitFailed("closed-group handles unavailable"))
+        }
+      }),
+    )
+
+  case static_supervisor.start(builder) {
+    Ok(started) -> {
+      closed_group_global.set_enforced(True)
+      Ok(started.data)
+    }
     Error(e) -> Error(string.inspect(e))
   }
 }
@@ -508,6 +735,18 @@ fn print_enabled_channels(cfg: config.Config) -> Nil {
   print_channel_status("mattermost", config.is_mattermost_enabled(cfg))
   print_channel_status("wechat_work", config.is_wechat_work_enabled(cfg))
   print_channel_status("whatsapp", config.is_whatsapp_enabled(cfg))
+  config.channel_names()
+  |> list.filter(fn(channel) {
+    config.channel_support(channel) == config.Experimental
+    && config.is_channel_enabled(cfg, channel)
+  })
+  |> list.each(fn(channel) {
+    io.println(
+      "warn: channel "
+      <> channel
+      <> " is experimental: not covered by end-to-end tests",
+    )
+  })
 }
 
 fn print_channel_status(name: String, enabled: Bool) -> Nil {

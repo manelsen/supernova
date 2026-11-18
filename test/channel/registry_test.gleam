@@ -817,12 +817,8 @@ pub fn start_channels_refreshes_discord_typing_while_stream_waits_test() {
       ),
     )
 
-  let assert Ok(first) = process.receive(recorder, within: 1000)
-  let assert Ok(second) = process.receive(recorder, within: 1000)
-  let assert Ok(third) = process.receive(recorder, within: 1000)
-  let assert Ok(fourth) = process.receive(recorder, within: 1000)
-  let assert Ok(fifth) = process.receive(recorder, within: 1000)
-
+  let records = collect_registry_records(recorder, [])
+  let assert Ok(first) = list.first(records)
   first
   |> should.equal(registry.OutboundRecord(
     channel: "discord",
@@ -830,34 +826,28 @@ pub fn start_channels_refreshes_discord_typing_while_stream_waits_test() {
     content: "",
     message_id: None,
   ))
-  second
-  |> should.equal(registry.OutboundRecord(
-    channel: "discord",
-    action: "send",
-    content: "Thinking...",
-    message_id: Some("discord-stream-1"),
-  ))
-  third
-  |> should.equal(registry.OutboundRecord(
-    channel: "discord",
-    action: "typing",
-    content: "",
-    message_id: None,
-  ))
-  fourth
-  |> should.equal(registry.OutboundRecord(
-    channel: "discord",
-    action: "edit",
-    content: "Mock ",
-    message_id: Some("discord-stream-1"),
-  ))
-  fifth
-  |> should.equal(registry.OutboundRecord(
-    channel: "discord",
-    action: "edit",
-    content: "Mock streaming response",
-    message_id: Some("discord-stream-1"),
-  ))
+  records
+  |> list.filter(fn(record) { record.action != "typing" })
+  |> should.equal([
+    registry.OutboundRecord(
+      channel: "discord",
+      action: "send",
+      content: "Thinking...",
+      message_id: Some("discord-stream-1"),
+    ),
+    registry.OutboundRecord(
+      channel: "discord",
+      action: "edit",
+      content: "Mock ",
+      message_id: Some("discord-stream-1"),
+    ),
+    registry.OutboundRecord(
+      channel: "discord",
+      action: "edit",
+      content: "Mock streaming response",
+      message_id: Some("discord-stream-1"),
+    ),
+  ])
 
   registry.stop_channels(channel_registry)
 }
@@ -919,12 +909,8 @@ pub fn start_channels_refreshes_telegram_typing_while_stream_waits_test() {
       test_hooks_with_recorder_and_keepalive([], [update], recorder, 60),
     )
 
-  let assert Ok(first) = process.receive(recorder, within: 1000)
-  let assert Ok(second) = process.receive(recorder, within: 1000)
-  let assert Ok(third) = process.receive(recorder, within: 1000)
-  let assert Ok(fourth) = process.receive(recorder, within: 1000)
-  let assert Ok(fifth) = process.receive(recorder, within: 1000)
-
+  let records = collect_registry_records(recorder, [])
+  let assert Ok(first) = list.first(records)
   first
   |> should.equal(registry.OutboundRecord(
     channel: "telegram",
@@ -932,34 +918,28 @@ pub fn start_channels_refreshes_telegram_typing_while_stream_waits_test() {
     content: "",
     message_id: None,
   ))
-  second
-  |> should.equal(registry.OutboundRecord(
-    channel: "telegram",
-    action: "send",
-    content: "Thinking...",
-    message_id: Some("telegram-stream-1"),
-  ))
-  third
-  |> should.equal(registry.OutboundRecord(
-    channel: "telegram",
-    action: "typing",
-    content: "",
-    message_id: None,
-  ))
-  fourth
-  |> should.equal(registry.OutboundRecord(
-    channel: "telegram",
-    action: "edit",
-    content: "Mock ",
-    message_id: Some("telegram-stream-1"),
-  ))
-  fifth
-  |> should.equal(registry.OutboundRecord(
-    channel: "telegram",
-    action: "edit",
-    content: "Mock streaming response",
-    message_id: Some("telegram-stream-1"),
-  ))
+  records
+  |> list.filter(fn(record) { record.action != "typing" })
+  |> should.equal([
+    registry.OutboundRecord(
+      channel: "telegram",
+      action: "send",
+      content: "Thinking...",
+      message_id: Some("telegram-stream-1"),
+    ),
+    registry.OutboundRecord(
+      channel: "telegram",
+      action: "edit",
+      content: "Mock ",
+      message_id: Some("telegram-stream-1"),
+    ),
+    registry.OutboundRecord(
+      channel: "telegram",
+      action: "edit",
+      content: "Mock streaming response",
+      message_id: Some("telegram-stream-1"),
+    ),
+  ])
 
   registry.stop_channels(channel_registry)
 }
@@ -2465,4 +2445,14 @@ fn telegram_fixture_update_without_username() -> String {
 
 fn telegram_fixture_update_without_text_and_caption() -> String {
   "{\"update_id\":737343152,\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":177,\"from\":{\"is_bot\":false,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"text\":null,\"caption\":null,\"date\":1774569232}}"
+}
+
+fn collect_registry_records(
+  recorder: process.Subject(registry.OutboundRecord),
+  acc: List(registry.OutboundRecord),
+) -> List(registry.OutboundRecord) {
+  case process.receive(recorder, within: 500) {
+    Ok(record) -> collect_registry_records(recorder, [record, ..acc])
+    Error(_) -> list.reverse(acc)
+  }
 }

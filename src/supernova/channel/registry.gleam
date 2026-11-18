@@ -25,6 +25,7 @@ import supernova/adapters/whatsapp_adapter
 import supernova/channel/chunking
 import supernova/channel/port
 import supernova/config
+import supernova/core/closed_group/global as closed_group_global
 
 // ============================================================================
 // Types
@@ -444,7 +445,14 @@ fn start_telegram_channel(
       )
 
       let worker =
-        start_telegram_worker(poller, handler, send_fn, stream_send_fn, hooks)
+        start_telegram_worker(
+          poller,
+          handler,
+          send_fn,
+          stream_send_fn,
+          hooks,
+          poller_config,
+        )
 
       Ok(#(
         port.ChannelAdapter(name: "telegram", send: send_fn, stop: fn() {
@@ -644,6 +652,7 @@ fn start_telegram_worker(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   hooks: StartHooks,
+  telegram_config: telegram.Config,
 ) -> TelegramWorker {
   let done = process.new_subject()
 
@@ -653,17 +662,35 @@ fn start_telegram_worker(
         True ->
           hooks.telegram_updates
           |> list.each(fn(update) {
-            dispatch_telegram_update(handler, send_fn, stream_send_fn, update)
+            dispatch_telegram_update(
+              handler,
+              send_fn,
+              stream_send_fn,
+              update,
+              telegram_config,
+            )
           })
         False -> {
           hooks.telegram_updates
           |> list.each(fn(update) {
-            dispatch_telegram_update(handler, send_fn, stream_send_fn, update)
+            dispatch_telegram_update(
+              handler,
+              send_fn,
+              stream_send_fn,
+              update,
+              telegram_config,
+            )
           })
 
           let _ =
             telegram.start_polling_loop(poller, fn(update) {
-              dispatch_telegram_update(handler, send_fn, stream_send_fn, update)
+              dispatch_telegram_update(
+                handler,
+                send_fn,
+                stream_send_fn,
+                update,
+                telegram_config,
+              )
             })
           Nil
         }
@@ -718,10 +745,37 @@ fn dispatch_telegram_update(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   update: telegram.Update,
+  telegram_config: telegram.Config,
 ) -> Nil {
+  case update.my_chat_member {
+    Some(member) -> maybe_leave_unauthorized_group(telegram_config, member)
+    None -> Nil
+  }
   case telegram_update_to_inbound(update) {
     Ok(inbound) -> dispatch_inbound(handler, send_fn, stream_send_fn, inbound)
     Error(_) -> Nil
+  }
+}
+
+fn maybe_leave_unauthorized_group(
+  telegram_config: telegram.Config,
+  member: telegram.ChatMemberUpdated,
+) -> Nil {
+  let is_group = case member.chat.chat_type {
+    telegram.GroupChat | telegram.SupergroupChat -> True
+    _ -> False
+  }
+  let joined = case member.new_status {
+    "member" | "administrator" -> True
+    _ -> False
+  }
+  let chat_key = "telegram:" <> member.chat.id
+  case is_group && joined && !closed_group_global.chat_authorized(chat_key) {
+    True -> {
+      let _ = telegram.leave_chat(telegram_config, member.chat.id)
+      Nil
+    }
+    False -> Nil
   }
 }
 
@@ -752,13 +806,20 @@ fn discord_message_to_port(
   port.ChannelMessage(
     id: message.id,
     channel: "discord",
-    channel_id: message.channel_id,
+    channel_id: discord_chat_id(message.channel_id, message.guild_id),
     user_id: message.author.id,
     username: message.author.username,
     content: message.content,
     is_bot: discord_is_bot(message.author.bot),
     reply_to_id: discord_reply_to_id(message.message_reference),
   )
+}
+
+fn discord_chat_id(channel_id: String, guild_id: Option(String)) -> String {
+  case guild_id {
+    Some(_) -> channel_id
+    None -> "dm:" <> channel_id
+  }
 }
 
 fn discord_is_bot(bot: Option(Bool)) -> Bool {
@@ -771,9 +832,10 @@ fn discord_is_bot(bot: Option(Bool)) -> Bool {
 fn discord_interaction_to_inbound(
   interaction: discord_events.Interaction,
 ) -> Result(port.ChannelInbound, port.ChannelError) {
-  use channel_id <- result.try(require_discord_channel_id(
+  use raw_channel_id <- result.try(require_discord_channel_id(
     interaction.channel_id,
   ))
+  let channel_id = discord_chat_id(raw_channel_id, interaction.guild_id)
   let #(user_id, username, is_bot) = discord_interaction_sender(interaction)
 
   case interaction.interaction_type, interaction.data {
@@ -1316,7 +1378,11 @@ fn discord_options_for_reply(
 fn discord_target_channel(reply: port.ChannelReply) -> String {
   case reply.thread_id {
     Some(thread_id) -> thread_id
-    None -> reply.channel_id
+    None ->
+      case string.starts_with(reply.channel_id, "dm:") {
+        True -> string.drop_start(reply.channel_id, 3)
+        False -> reply.channel_id
+      }
   }
 }
 

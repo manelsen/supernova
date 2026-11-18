@@ -163,7 +163,17 @@ pub type Update {
     callback_query: Option(CallbackQuery),
     poll_answer: Option(PollAnswer),
     message_reaction: Option(MessageReaction),
+    my_chat_member: Option(ChatMemberUpdated),
   )
+}
+
+/// A change to the bot's membership in a chat.
+pub type ChatMemberUpdated {
+  ChatMemberUpdated(chat: Chat, new_status: String)
+}
+
+type ChatMember {
+  ChatMember(status: String)
 }
 
 /// Telegram Inline Query
@@ -564,6 +574,11 @@ fn decode_update() -> decode.Decoder(Update) {
     None,
     decode.optional(decode_message_reaction()),
   )
+  use my_chat_member <- decode.optional_field(
+    "my_chat_member",
+    None,
+    decode.optional(decode_chat_member_updated()),
+  )
 
   decode.success(Update(
     update_id: update_id,
@@ -576,7 +591,22 @@ fn decode_update() -> decode.Decoder(Update) {
     callback_query: callback_query,
     poll_answer: poll_answer,
     message_reaction: message_reaction,
+    my_chat_member: my_chat_member,
   ))
+}
+
+fn decode_chat_member_updated() -> decode.Decoder(ChatMemberUpdated) {
+  use chat <- decode.field("chat", decode_chat())
+  use new_chat_member <- decode.field("new_chat_member", decode_chat_member())
+  decode.success(ChatMemberUpdated(
+    chat: chat,
+    new_status: new_chat_member.status,
+  ))
+}
+
+fn decode_chat_member() -> decode.Decoder(ChatMember) {
+  use status <- decode.field("status", decode.string)
+  decode.success(ChatMember(status: status))
 }
 
 /// Decode Message object
@@ -1344,6 +1374,18 @@ fn chat_action_to_string(action: ChatAction) -> String {
     FindLocationAction -> "find_location"
     RecordVideoNoteAction -> "record_video_note"
     UploadVideoNoteAction -> "upload_video_note"
+  }
+}
+
+/// Leave a group/supergroup. Returns Ok(Nil) on success.
+pub fn leave_chat(
+  config: Config,
+  chat_id: ChatId,
+) -> Result(Nil, TelegramError) {
+  let body = "{\"chat_id\":\"" <> chat_id <> "\"}"
+  case api_post(config, "leaveChat", body) {
+    Ok(_response) -> Ok(Nil)
+    Error(error) -> Error(error)
   }
 }
 
