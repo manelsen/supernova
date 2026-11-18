@@ -10,6 +10,22 @@ vim supernova.yaml
 docker compose up
 ```
 
+## Container Images (GHCR)
+
+CI publishes the container image to `ghcr.io/<owner>/supernova` **only on `v*` tags**:
+
+| Git tag | Image tags |
+|---------|------------|
+| `v0.3.0` | `0.3.0`, `0.3` |
+
+The moving `:master` tag is **no longer published**, and commit-SHA tags are gone as well. A push to `master` no longer triggers a build, and pull requests targeting `master` only verify the build (no push).
+
+```bash
+docker pull ghcr.io/<owner>/supernova:0.3.0
+```
+
+Deploy a released version tag (or a digest); there is no image that tracks `master`.
+
 ## What You Need
 
 At minimum, add a `providers` section to `supernova.yaml`:
@@ -189,3 +205,121 @@ curl -fsS http://127.0.0.1:8080/health/live
 docker rm -f supernova-smoke
 docker rmi supernova:smoke
 ```
+
+## Grupo fechado
+
+A instância nega todas as pessoas por padrão. Configure a lista antes de
+expor o bot:
+
+```yaml
+access:
+  mode: allowlist
+  admins: ["telegram:123"]
+  members: ["discord:456"]
+  denied_reply: "Esta instância é privada."
+  allowed_chats: ["telegram:-100123", "discord:guild:789"]
+```
+
+### Descobrir o próprio id
+
+Envie `/eu`. O comando responde mesmo para quem ainda não está autorizado,
+sem chamar o LLM e sem consumir a negação de 24 h. Em grupos/servidores ele
+também mostra a chave do chat (`telegram:-100...` ou `discord:guild:...`).
+
+### Primeiro admin e convidados
+
+Defina o primeiro admin por ambiente e reinicie:
+
+```bash
+export SUPERNOVA_ACCESS_ADMINS="telegram:123"
+docker compose up -d
+```
+
+Também é possível definir o primeiro admin em `access.admins` no
+`supernova.yaml` montado. Depois use `/acesso adicionar discord:456` (membro)
+ou `/acesso adicionar discord:456 admin`. Um admin não pode remover a si
+mesmo quando é o último admin.
+
+O YAML é a base e `<data_dir>/access.json` guarda apenas as diferenças feitas
+por comando (`added`/`removed`). Remover alguém do YAML e reiniciar revoga o
+acesso mesmo que a pessoa já tenha recebido uma negação ou tenha sido
+adicionada por comando em outro momento. Não edite `access.json` à mão.
+
+### Dados persistentes
+
+No compose, `SUPERNOVA_DATA_DIR=/data` e o volume nomeado
+`supernova_data` monta esse diretório. Ele contém `access.json`, `ledger/` e
+`audit_log/`; recriar o contêiner não perde esses arquivos. Para migrar um
+diretório `data/` existente antes de trocar o contêiner:
+
+```bash
+docker create --name supernova-data-copy \
+  -v supernova_supernova_data:/data supernova:smoke
+docker cp data/. supernova-data-copy:/data/
+docker rm supernova-data-copy
+```
+
+O nome do volume pode variar com o nome do projeto Compose; confira com
+`docker volume ls | grep supernova_data`.
+
+### Grupos e servidores
+
+Conversas privadas com principals autorizados passam sempre. Grupos e
+servidores precisam estar em `access.allowed_chats`. Autorize com
+`/acesso chat adicionar telegram:-100123` ou
+`/acesso chat adicionar discord:guild:789`. No Telegram, se o bot for
+adicionado a um grupo não autorizado, ele sai automaticamente; no Discord,
+ele apenas ignora.
+
+### Orçamento, teto, preços, limite e capabilities
+
+```yaml
+budget:
+  member: { tokens_per_hour: 50000, tool_calls_per_hour: 60 }
+  admin:  { tokens_per_hour: -1,    tool_calls_per_hour: -1 }
+rate_limit:
+  member: { messages_per_minute: 10 }
+  admin:  { messages_per_minute: -1 }
+capabilities:
+  member:
+    allowed: ["web", "web_fetch", "file_system", "canvas", "github"]
+    denied: ["safe_shell", "process", "browser", "gateway"]
+  admin: { allowed: ["*"], denied: [] }
+pricing:
+  default: { input_per_mtok: 1.0, output_per_mtok: 4.0 }
+  models: {}
+instance_budget:
+  daily_usd: 5.0        # -1 = sem teto
+  timezone: "America/Sao_Paulo"
+data_dir: "data"
+```
+
+Use `/uso` para o consumo próprio, `/uso todos` (admin) para a tabela da
+instância e `/teto liberar <usd>` (admin) para elevar o teto do dia. O teto
+global vale para todos, inclusive admins.
+
+### Comandos
+
+| Comando | Quem pode usar |
+|---|---|
+| `/eu` | todos, inclusive não autorizados |
+| `/uso` | membros e admins |
+| `/uso todos` | admin |
+| `/acesso listar` | admin |
+| `/acesso adicionar <principal> [admin\|membro]` | admin |
+| `/acesso remover <principal>` | admin |
+| `/acesso chat adicionar <id>` | admin |
+| `/acesso chat remover <id>` | admin |
+| `/acesso chat listar` | admin |
+| `/teto liberar <usd>` | admin |
+| `/auditoria [n]` | admin |
+| `/auditoria <principal> [n]` | admin |
+
+### Validar antes de subir
+
+```bash
+bin/supernova check-config supernova.yaml
+make check-config
+```
+
+Erros impedem o boot; avisos são registrados no log.

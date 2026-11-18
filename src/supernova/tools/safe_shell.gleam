@@ -95,14 +95,18 @@ fn validate_command(command: String) -> Result(String, String) {
           // Check command whitelist
           case is_allowed_command(trimmed) {
             True -> {
-              // Validate path arguments for file-reading commands
-              case validate_path_arguments(trimmed) {
+              case validate_git_subcommand(trimmed) {
+                Error(reason) -> Error(reason)
                 Ok(_) ->
-                  case validate_find_actions(trimmed) {
-                    Ok(_) -> Ok(trimmed)
+                  // Validate path arguments for file-reading commands
+                  case validate_path_arguments(trimmed) {
+                    Ok(_) ->
+                      case validate_find_actions(trimmed) {
+                        Ok(_) -> Ok(trimmed)
+                        Error(reason) -> Error(reason)
+                      }
                     Error(reason) -> Error(reason)
                   }
-                Error(reason) -> Error(reason)
               }
             }
             False -> Error("Command not in whitelist: " <> trimmed)
@@ -158,6 +162,7 @@ fn allowed_commands() -> List(String) {
     "date",
     "whoami",
     "uname",
+    "git",
   ]
 }
 
@@ -166,6 +171,139 @@ fn list_contains(list: List(String), value: String) -> Bool {
   case list {
     [] -> False
     [first, ..rest] -> first == value || list_contains(rest, value)
+  }
+}
+
+// ============================================================================
+// Git Validation
+// ============================================================================
+
+/// Read-only git subcommands. Anything else (push, commit, reset, checkout,
+/// clean, config, ...) mutates the repository or runs arbitrary programs.
+fn git_read_only_subcommands() -> List(String) {
+  ["status", "log", "branch", "diff", "show"]
+}
+
+/// Reject any git invocation outside the read-only allow-list.
+fn validate_git_subcommand(command: String) -> Result(Nil, String) {
+  case split_whitespace_tokens(command) {
+    ["git", ..args] -> validate_git_args(args)
+    _ -> Ok(Nil)
+  }
+}
+
+fn validate_git_args(args: List(String)) -> Result(Nil, String) {
+  case args {
+    [] -> Error("Blocked: git subcommand required")
+    [subcommand, ..rest] -> {
+      case list_contains(git_read_only_subcommands(), subcommand) {
+        False -> Error("Blocked: git subcommand not allowed: " <> subcommand)
+        True -> validate_git_operands(subcommand, rest, 0)
+      }
+    }
+  }
+}
+
+fn validate_git_operands(
+  subcommand: String,
+  args: List(String),
+  positionals: Int,
+) -> Result(Nil, String) {
+  case args {
+    [] -> Ok(Nil)
+    [raw, ..rest] -> {
+      let arg = strip_matching_quotes(raw)
+
+      case arg {
+        "-n" ->
+          case rest {
+            [count, ..tail] ->
+              case is_digits(strip_matching_quotes(count)) {
+                True -> validate_git_operands(subcommand, tail, positionals)
+                False -> Error("Blocked: git subcommand not allowed: " <> arg)
+              }
+            [] -> Error("Blocked: git subcommand not allowed: " <> arg)
+          }
+        _ ->
+          case string.starts_with(arg, "--max-count=") {
+            True -> {
+              let count = string.drop_start(arg, string.length("--max-count="))
+              case is_digits(count) {
+                True -> validate_git_operands(subcommand, rest, positionals)
+                False -> Error("Blocked: git subcommand not allowed: " <> arg)
+              }
+            }
+            False ->
+              case string.starts_with(arg, "-") {
+                True -> {
+                  let accepted =
+                    list_contains(git_options_for(subcommand), arg)
+                    || subcommand == "log"
+                    && is_dash_number(arg)
+                  case accepted {
+                    True -> validate_git_operands(subcommand, rest, positionals)
+                    False ->
+                      Error("Blocked: git subcommand not allowed: " <> arg)
+                  }
+                }
+                False -> {
+                  case positionals < git_max_positionals(subcommand) {
+                    True ->
+                      case workspace_guard.validate_path(".", arg) {
+                        Ok(_) ->
+                          validate_git_operands(
+                            subcommand,
+                            rest,
+                            positionals + 1,
+                          )
+                        Error(reason) -> Error(reason)
+                      }
+                    False ->
+                      Error("Blocked: git subcommand not allowed: " <> arg)
+                  }
+                }
+              }
+          }
+      }
+    }
+  }
+}
+
+fn git_options_for(subcommand: String) -> List(String) {
+  case subcommand {
+    "status" -> ["--short", "-s", "--branch", "-b", "--porcelain"]
+    "log" -> ["--oneline", "--stat", "--graph", "--decorate"]
+    "branch" -> ["--show-current", "--list", "-a", "-r", "-v", "-vv"]
+    "diff" -> ["--stat", "--name-only", "--name-status", "--cached", "--staged"]
+    "show" -> ["--stat", "--name-only", "--oneline"]
+    _ -> []
+  }
+}
+
+fn git_max_positionals(subcommand: String) -> Int {
+  case subcommand {
+    "log" -> 1
+    "diff" -> 2
+    "show" -> 1
+    _ -> 0
+  }
+}
+
+fn is_digits(value: String) -> Bool {
+  case value {
+    "" -> False
+    _ ->
+      string.to_graphemes(value)
+      |> list.all(fn(char) {
+        list_contains(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], char)
+      })
+  }
+}
+
+fn is_dash_number(value: String) -> Bool {
+  case string.starts_with(value, "-") {
+    True -> is_digits(string.drop_start(value, 1))
+    False -> False
   }
 }
 

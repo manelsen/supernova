@@ -4,6 +4,11 @@
 //// The Blackboard provides a shared key-value store that multiple processes
 //// can read from and write to. It supports optional TTL (time-to-live) for
 //// entries and subscription-based notifications when values change.
+////
+//// ISOLATION RULE: blackboard/memory_federation share memory across agents
+//// without access control; wire them only through the syscall gateway after
+//// PRD B3. Do not import this module outside its explicit allowlist; the rule
+//// is enforced by test/architecture/isolation_test.gleam.
 
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}

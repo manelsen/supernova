@@ -22,6 +22,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
+import supernova/core/safe_call
 
 // ============================================================================
 // Constants
@@ -253,6 +254,10 @@ pub type RestClientMessage {
     channel_id: Snowflake,
     content: String,
   )
+  OpenDm(
+    reply_to: Subject(Result(Snowflake, DiscordRestError)),
+    user_id: Snowflake,
+  )
   TriggerTyping(
     reply_to: Subject(Result(Nil, DiscordRestError)),
     channel_id: Snowflake,
@@ -329,6 +334,17 @@ pub fn send_message(
     channel_id,
     content,
   ))
+}
+
+/// Open (or reuse) the DM channel with a user and return its channel id.
+pub fn open_dm(
+  client: RestClient,
+  user_id: Snowflake,
+) -> Result(Snowflake, DiscordRestError) {
+  case safe_call.call(client, 5000, OpenDm(_, user_id)) {
+    Ok(result) -> result
+    Error(_) -> Error(HttpError("HTTP error: DM channel unavailable"))
+  }
 }
 
 /// Send a message with full options (embeds, attachments, etc.)
@@ -726,6 +742,12 @@ fn handle_message(
       actor.continue(state)
     }
 
+    OpenDm(reply_to, user_id) -> {
+      let result = do_open_dm(state, user_id)
+      process.send(reply_to, result)
+      actor.continue(state)
+    }
+
     EditMessage(reply_to, channel_id, message_id, options) -> {
       let result = do_edit_message(state, channel_id, message_id, options)
       process.send(reply_to, result)
@@ -758,6 +780,37 @@ fn handle_message(
 // ============================================================================
 // Internal - HTTP Request Execution
 // ============================================================================
+
+fn do_open_dm(
+  state: RestClientState,
+  user_id: Snowflake,
+) -> Result(Snowflake, DiscordRestError) {
+  let body =
+    json.object([#("recipient_id", json.string(user_id))]) |> json.to_string
+  case execute_json_request(state, http.Post, "/users/@me/channels", body) {
+    Error(error) -> Error(error)
+    Ok(resp) ->
+      case resp.status {
+        200 | 201 -> {
+          let decoder = {
+            use id <- decode.field("id", decode.string)
+            decode.success(id)
+          }
+          case json.parse(from: resp.body, using: decoder) {
+            Ok(channel_id) -> Ok(channel_id)
+            Error(_) -> Error(JsonError("DM channel response has no id"))
+          }
+        }
+        400 -> Error(BadRequest(extract_error_message(resp.body)))
+        401 -> Error(Unauthorized)
+        403 -> Error(Forbidden(extract_error_message(resp.body)))
+        404 -> Error(NotFound(extract_error_message(resp.body)))
+        429 -> Error(RateLimited(extract_retry_after(resp.body)))
+        500 -> Error(InternalError(extract_error_message(resp.body)))
+        status -> Error(UnknownError(status, resp.body))
+      }
+  }
+}
 
 fn do_send_message(
   state: RestClientState,
@@ -818,8 +871,16 @@ fn execute_message_request(
   path: String,
   options: SendMessageOptions,
 ) -> Result(Response(String), DiscordRestError) {
+  execute_json_request(state, method, path, encode_message_options(options))
+}
+
+fn execute_json_request(
+  state: RestClientState,
+  method: http.Method,
+  path: String,
+  body: String,
+) -> Result(Response(String), DiscordRestError) {
   let url = get_base_url(state.config) <> path
-  let body = encode_message_options(options)
 
   let req =
     request.new()

@@ -323,7 +323,7 @@ pub fn git_inspect_alias_invalid_action_returns_error_message_test() {
     [msg] ->
       msg.content
       |> should.equal(
-        "ERROR: git_inspect action must be status, log, or branch",
+        "ERROR: git_inspect action must be status, log, branch, diff, or show",
       )
     _ -> should.fail()
   }

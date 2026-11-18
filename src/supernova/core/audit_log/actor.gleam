@@ -20,6 +20,7 @@ import supernova/core/audit_log/types.{
   type AuditCommand, type AuditEntry, type AuditFilter, type AuditLogState,
   WriteToFile,
 }
+import supernova/core/safe_call
 
 // ============================================================================
 // FFI — File Write (Erlang)
@@ -177,7 +178,10 @@ pub fn start_with_capacity(
 ///
 /// Appends the entry to the in-memory buffer and writes to the rotating log file.
 pub fn log_entry(log: AuditLog, entry: AuditEntry) -> Nil {
-  actor.call(log, waiting: 5000, sending: LogEntry(_, entry))
+  case safe_call.call(log, 2000, LogEntry(_, entry)) {
+    Ok(_) -> Nil
+    Error(_) -> Nil
+  }
 }
 
 /// Query audit entries for an agent with a filter.
@@ -200,7 +204,10 @@ pub fn recent(log: AuditLog, agent_id: String, limit: Int) -> List(AuditEntry) {
 
 /// Get all entries in the buffer.
 pub fn get_all(log: AuditLog) -> List(AuditEntry) {
-  actor.call(log, waiting: 5000, sending: GetAllEntries)
+  case safe_call.call(log, 2000, GetAllEntries) {
+    Ok(entries) -> entries
+    Error(_) -> []
+  }
 }
 
 /// Get entries by operation type across all agents.

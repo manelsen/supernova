@@ -11,3 +11,6 @@ supernova.yaml
 !test/fixtures/docker/supernova.yaml
 *.local.yaml
 workspaces/
+
+# Runtime data (access list, ledger, workspace)
+data/

@@ -22,9 +22,13 @@ import supernova/adapters/slack_adapter
 import supernova/adapters/telegram
 import supernova/adapters/wechat_work_adapter
 import supernova/adapters/whatsapp_adapter
+import supernova/channel/chat_lanes
 import supernova/channel/chunking
 import supernova/channel/port
 import supernova/config
+import supernova/core/audit_log/actor as audit_actor
+import supernova/core/audit_log/types as audit_types
+import supernova/core/closed_group/global as closed_group_global
 
 // ============================================================================
 // Types
@@ -47,7 +51,10 @@ pub type StartHooks {
     matrix_inbound_events: List(port.ChannelInbound),
     disable_telegram_polling: Bool,
     typing_keepalive_ms: Int,
+    stream_timeout_ms: Int,
+    turn_hard_timeout_ms: Int,
     outbound_records: Option(process.Subject(OutboundRecord)),
+    leave_group: Option(fn(String) -> Nil),
   )
 }
 
@@ -92,6 +99,11 @@ const default_typing_keepalive_ms = 4000
 
 const stream_timeout_ms = 60_000
 
+const turn_hard_timeout_ms = 300_000
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn current_timestamp() -> Int
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -105,7 +117,10 @@ pub fn no_start_hooks() -> StartHooks {
     matrix_inbound_events: [],
     disable_telegram_polling: False,
     typing_keepalive_ms: default_typing_keepalive_ms,
+    stream_timeout_ms: 60_000,
+    turn_hard_timeout_ms: 300_000,
     outbound_records: None,
+    leave_group: None,
   )
 }
 
@@ -444,7 +459,14 @@ fn start_telegram_channel(
       )
 
       let worker =
-        start_telegram_worker(poller, handler, send_fn, stream_send_fn, hooks)
+        start_telegram_worker(
+          poller,
+          handler,
+          send_fn,
+          stream_send_fn,
+          hooks,
+          poller_config,
+        )
 
       Ok(#(
         port.ChannelAdapter(name: "telegram", send: send_fn, stop: fn() {
@@ -644,6 +666,7 @@ fn start_telegram_worker(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   hooks: StartHooks,
+  telegram_config: telegram.Config,
 ) -> TelegramWorker {
   let done = process.new_subject()
 
@@ -653,17 +676,38 @@ fn start_telegram_worker(
         True ->
           hooks.telegram_updates
           |> list.each(fn(update) {
-            dispatch_telegram_update(handler, send_fn, stream_send_fn, update)
+            dispatch_telegram_update(
+              handler,
+              send_fn,
+              stream_send_fn,
+              update,
+              telegram_config,
+              hooks.leave_group,
+            )
           })
         False -> {
           hooks.telegram_updates
           |> list.each(fn(update) {
-            dispatch_telegram_update(handler, send_fn, stream_send_fn, update)
+            dispatch_telegram_update(
+              handler,
+              send_fn,
+              stream_send_fn,
+              update,
+              telegram_config,
+              hooks.leave_group,
+            )
           })
 
           let _ =
             telegram.start_polling_loop(poller, fn(update) {
-              dispatch_telegram_update(handler, send_fn, stream_send_fn, update)
+              dispatch_telegram_update(
+                handler,
+                send_fn,
+                stream_send_fn,
+                update,
+                telegram_config,
+                hooks.leave_group,
+              )
             })
           Nil
         }
@@ -718,18 +762,158 @@ fn dispatch_telegram_update(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   update: telegram.Update,
+  telegram_config: telegram.Config,
+  leave_group: Option(fn(String) -> Nil),
 ) -> Nil {
+  case update.my_chat_member {
+    Some(member) ->
+      maybe_leave_unauthorized_group(telegram_config, member, leave_group)
+    None -> Nil
+  }
   case telegram_update_to_inbound(update) {
     Ok(inbound) -> dispatch_inbound(handler, send_fn, stream_send_fn, inbound)
     Error(_) -> Nil
   }
 }
 
+fn maybe_leave_unauthorized_group(
+  telegram_config: telegram.Config,
+  member: telegram.ChatMemberUpdated,
+  leave_group: Option(fn(String) -> Nil),
+) -> Nil {
+  let is_group = case member.chat.chat_type {
+    telegram.GroupChat | telegram.SupergroupChat -> True
+    _ -> False
+  }
+  let joined = case member.new_status {
+    "member" | "administrator" -> True
+    _ -> False
+  }
+  let chat_key = "telegram:" <> member.chat.id
+  case is_group && joined {
+    True ->
+      case closed_group_global.chat_authorized_result(chat_key) {
+        Ok(True) -> Nil
+        Ok(False) -> {
+          record_leave_audit(chat_key)
+          case leave_group {
+            Some(leave) -> leave(member.chat.id)
+            None -> {
+              let _ = telegram.leave_chat(telegram_config, member.chat.id)
+              Nil
+            }
+          }
+        }
+        Error(_) -> {
+          io.println(
+            "warn: access lookup failed while checking chat " <> chat_key,
+          )
+          record_chat_check_failed(chat_key)
+          schedule_leave_recheck(telegram_config, member, leave_group)
+        }
+      }
+    False -> Nil
+  }
+}
+
+fn schedule_leave_recheck(
+  telegram_config: telegram.Config,
+  member: telegram.ChatMemberUpdated,
+  leave_group: Option(fn(String) -> Nil),
+) -> Nil {
+  process.spawn_unlinked(fn() {
+    process.sleep(30_000)
+    recheck_leave(telegram_config, member, leave_group)
+  })
+  Nil
+}
+
+fn recheck_leave(
+  telegram_config: telegram.Config,
+  member: telegram.ChatMemberUpdated,
+  leave_group: Option(fn(String) -> Nil),
+) -> Nil {
+  let chat_key = "telegram:" <> member.chat.id
+  case closed_group_global.chat_authorized_result(chat_key) {
+    Ok(True) -> Nil
+    Ok(False) -> {
+      record_leave_audit(chat_key)
+      case leave_group {
+        Some(leave) -> leave(member.chat.id)
+        None -> {
+          let _ = telegram.leave_chat(telegram_config, member.chat.id)
+          Nil
+        }
+      }
+    }
+    Error(_) -> {
+      io.println(
+        "warn: access lookup failed again while checking chat " <> chat_key,
+      )
+      record_chat_check_failed(chat_key)
+    }
+  }
+}
+
+fn record_chat_check_failed(chat_key: String) -> Nil {
+  case closed_group_global.get_audit() {
+    None -> Nil
+    Some(audit) ->
+      audit_actor.log_entry(
+        audit,
+        audit_types.denied_entry(
+          closed_group_global.now(),
+          "telegram",
+          "chat_check_failed",
+          chat_key,
+          "access lookup unavailable",
+        ),
+      )
+  }
+}
+
+fn record_leave_audit(chat_key: String) -> Nil {
+  case closed_group_global.get_audit() {
+    None -> Nil
+    Some(audit) ->
+      audit_actor.log_entry(
+        audit,
+        audit_types.denied_entry(
+          closed_group_global.now(),
+          "telegram",
+          "chat_denied",
+          chat_key,
+          "left unauthorized group",
+        ),
+      )
+  }
+}
+
+/// Hand the inbound turn to the lane of its chat and return immediately.
+///
+/// The polling loop must never wait for a turn: a slow LLM or tool call
+/// would hold every other chat of the channel. Turns of the same chat stay
+/// ordered inside their lane.
 fn dispatch_inbound(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   inbound: port.ChannelInbound,
+) -> Nil {
+  let key = chat_lanes.key_for(inbound)
+  let _ =
+    chat_lanes.submit(key, fn() {
+      run_inbound_turn(handler, send_fn, stream_send_fn, inbound, key)
+    })
+  Nil
+}
+
+fn run_inbound_turn(
+  handler: port.ChannelHandler,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  stream_send_fn: StreamSendFn,
+  inbound: port.ChannelInbound,
+  chat_key: String,
 ) -> Nil {
   let stream_events = process.new_subject()
 
@@ -739,10 +923,63 @@ fn dispatch_inbound(
       Nil
     }
     Ok(port.StreamReply(base_reply)) -> {
-      let _ = stream_send_fn(base_reply, stream_events)
-      Nil
+      case stream_send_fn(base_reply, stream_events) {
+        Ok(_) -> Nil
+        Error(port.SendFailed("stream timed out")) ->
+          await_late_terminal(
+            stream_events,
+            send_fn,
+            base_reply,
+            chat_key,
+            current_timestamp() + turn_hard_timeout_ms,
+          )
+        Error(_) -> Nil
+      }
     }
     Error(_) -> Nil
+  }
+}
+
+fn await_late_terminal(
+  events: process.Subject(port.ChannelStreamEvent),
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  base_reply: port.ChannelReply,
+  chat_key: String,
+  deadline: Int,
+) -> Nil {
+  let remaining = deadline - current_timestamp()
+  case remaining <= 0 {
+    True -> {
+      io.println("error: chat lane turn hard timeout key=" <> chat_key)
+      Nil
+    }
+    False ->
+      case process.receive(events, within: remaining) {
+        Ok(port.StreamComplete(reply)) -> {
+          case string.trim(reply.content) {
+            "" -> Nil
+            _ -> {
+              let _ =
+                send_fn(
+                  port.ChannelReply(
+                    ..base_reply,
+                    content: reply.content,
+                    edit_message_id: None,
+                    typing: False,
+                  ),
+                )
+              Nil
+            }
+          }
+        }
+        Ok(port.StreamFailure(_)) -> Nil
+        Ok(port.StreamUpdate(_)) ->
+          await_late_terminal(events, send_fn, base_reply, chat_key, deadline)
+        Error(_) -> {
+          io.println("error: chat lane turn hard timeout key=" <> chat_key)
+          Nil
+        }
+      }
   }
 }
 
@@ -752,13 +989,20 @@ fn discord_message_to_port(
   port.ChannelMessage(
     id: message.id,
     channel: "discord",
-    channel_id: message.channel_id,
+    channel_id: discord_chat_id(message.channel_id, message.guild_id),
     user_id: message.author.id,
     username: message.author.username,
     content: message.content,
     is_bot: discord_is_bot(message.author.bot),
     reply_to_id: discord_reply_to_id(message.message_reference),
   )
+}
+
+fn discord_chat_id(channel_id: String, guild_id: Option(String)) -> String {
+  case guild_id {
+    Some(guild) -> channel_id <> "@guild:" <> guild
+    None -> "dm:" <> channel_id
+  }
 }
 
 fn discord_is_bot(bot: Option(Bool)) -> Bool {
@@ -771,9 +1015,10 @@ fn discord_is_bot(bot: Option(Bool)) -> Bool {
 fn discord_interaction_to_inbound(
   interaction: discord_events.Interaction,
 ) -> Result(port.ChannelInbound, port.ChannelError) {
-  use channel_id <- result.try(require_discord_channel_id(
+  use raw_channel_id <- result.try(require_discord_channel_id(
     interaction.channel_id,
   ))
+  let channel_id = discord_chat_id(raw_channel_id, interaction.guild_id)
   let #(user_id, username, is_bot) = discord_interaction_sender(interaction)
 
   case interaction.interaction_type, interaction.data {
@@ -1139,6 +1384,7 @@ fn discord_stream_send(
           base_reply,
           events,
           keepalive_ms,
+          hooks.stream_timeout_ms,
         )
       None ->
         stream_discord_reply(rest_client, base_reply, events, keepalive_ms)
@@ -1163,6 +1409,7 @@ fn telegram_stream_send(
           base_reply,
           events,
           keepalive_ms,
+          hooks.stream_timeout_ms,
         )
       None ->
         stream_telegram_reply(telegram_config, base_reply, events, keepalive_ms)
@@ -1226,6 +1473,7 @@ fn matrix_stream_send(
           base_reply,
           events,
           keepalive_ms,
+          hooks.stream_timeout_ms,
         )
       None ->
         stream_matrix_reply(
@@ -1243,8 +1491,8 @@ fn discord_send_message(
   rest_client: discord_rest.RestClient,
   reply: port.ChannelReply,
 ) -> Result(discord_rest.SentMessage, port.ChannelError) {
+  use target_channel <- result.try(discord_delivery_channel(rest_client, reply))
   let options = discord_options_for_reply(reply)
-  let target_channel = discord_target_channel(reply)
 
   let typing_result = case reply.typing {
     True -> discord_rest.trigger_typing_indicator(rest_client, target_channel)
@@ -1264,6 +1512,19 @@ fn discord_send_message(
         Ok(message) -> Ok(message)
         Error(error) -> Error(map_discord_send_error(error))
       }
+  }
+}
+
+/// Alert DMs carry `open-dm:<user_id>`; ordinary replies carry a channel id.
+fn discord_delivery_channel(
+  rest_client: discord_rest.RestClient,
+  reply: port.ChannelReply,
+) -> Result(String, port.ChannelError) {
+  case string.starts_with(reply.channel_id, "open-dm:") {
+    True ->
+      discord_rest.open_dm(rest_client, string.drop_start(reply.channel_id, 8))
+      |> result.map_error(map_discord_send_error)
+    False -> Ok(discord_target_channel(reply))
   }
 }
 
@@ -1316,7 +1577,19 @@ fn discord_options_for_reply(
 fn discord_target_channel(reply: port.ChannelReply) -> String {
   case reply.thread_id {
     Some(thread_id) -> thread_id
-    None -> reply.channel_id
+    None -> discord_route_channel(reply.channel_id)
+  }
+}
+
+/// Strip policy-only routing annotations before calling Discord.
+fn discord_route_channel(channel_id: String) -> String {
+  case string.starts_with(channel_id, "dm:") {
+    True -> string.drop_start(channel_id, 3)
+    False ->
+      case string.split(channel_id, "@guild:") {
+        [target, _guild] -> target
+        _ -> channel_id
+      }
   }
 }
 
@@ -1476,16 +1749,22 @@ fn consume_discord_stream_events(
     Ok(port.StreamComplete(reply)) ->
       case reply.content == last_content {
         True -> Ok(Nil)
-        False -> {
-          let final_reply =
-            port.ChannelReply(..reply, edit_message_id: Some(message_id))
-          use _ <- result.try(discord_edit_message(
-            rest_client,
-            final_reply,
+        False ->
+          finish_stream_in_parts(
+            reply,
             message_id,
-          ))
-          Ok(Nil)
-        }
+            chunking.discord_max_length,
+            fn(part) {
+              case part.edit_message_id {
+                Some(id) ->
+                  discord_edit_message(rest_client, part, id)
+                  |> result.map(fn(_) { Nil })
+                None ->
+                  discord_send_message(rest_client, part)
+                  |> result.map(fn(_) { Nil })
+              }
+            },
+          )
       }
     Ok(port.StreamFailure(error)) -> Error(error)
     Error(_) ->
@@ -1514,6 +1793,40 @@ fn consume_discord_stream_events(
           )
         }
       }
+  }
+}
+
+/// Deliver the final stream content within the channel's length limit: the
+/// first part edits the placeholder, the remaining parts go out as new
+/// messages. Editing a message past the limit is rejected by the channel.
+fn finish_stream_in_parts(
+  reply: port.ChannelReply,
+  placeholder_id: String,
+  max_length: Int,
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  case chunking.split_reply(reply, max_length) {
+    [] -> Ok(Nil)
+    [first, ..rest] -> {
+      use _ <- result.try(deliver(
+        port.ChannelReply(..first, edit_message_id: Some(placeholder_id)),
+      ))
+      send_chunked_replies(
+        list.map(rest, fn(part) {
+          port.ChannelReply(..part, edit_message_id: None)
+        }),
+        deliver,
+      )
+    }
+  }
+}
+
+fn stream_max_length(channel: String) -> Int {
+  case channel {
+    "telegram" -> chunking.telegram_max_length
+    "discord" -> chunking.discord_max_length
+    // Channels without a documented edit limit keep the whole content.
+    _ -> 1_000_000
   }
 }
 
@@ -1574,18 +1887,16 @@ fn consume_telegram_stream_events(
     Ok(port.StreamComplete(reply)) ->
       case reply.content == last_content {
         True -> Ok(Nil)
-        False -> {
-          let final_reply =
-            port.ChannelReply(
-              ..reply,
-              edit_message_id: Some(int.to_string(message_id)),
-            )
-          use _ <- result.try(telegram_send_message(
-            telegram_config,
-            final_reply,
-          ))
-          Ok(Nil)
-        }
+        False ->
+          finish_stream_in_parts(
+            reply,
+            int.to_string(message_id),
+            chunking.telegram_max_length,
+            fn(part) {
+              telegram_send_message(telegram_config, part)
+              |> result.map(fn(_) { Nil })
+            },
+          )
       }
     Ok(port.StreamFailure(error)) -> Error(error)
     Error(_) ->
@@ -1743,6 +2054,7 @@ fn record_stream_for_test(
   base_reply: port.ChannelReply,
   events: process.Subject(port.ChannelStreamEvent),
   keepalive_ms: Int,
+  timeout_ms: Int,
 ) -> Result(Nil, port.ChannelError) {
   let message_id = case channel {
     "discord" -> "discord-stream-1"
@@ -1781,7 +2093,7 @@ fn record_stream_for_test(
     message_id,
     "",
     base_reply.typing,
-    stream_timeout_ms,
+    timeout_ms,
     keepalive_ms,
   )
 }
@@ -1818,6 +2130,7 @@ fn record_slack_stream_for_test(
         "slack",
         base_reply,
         events,
+        stream_timeout_ms,
         stream_timeout_ms,
       )
   }
@@ -1908,25 +2221,46 @@ fn consume_recorded_stream_events(
     }
     Ok(port.StreamComplete(reply)) -> {
       case reply.content == last_content {
-        True -> Nil
+        True -> Ok(Nil)
         False ->
+          finish_stream_in_parts(
+            reply,
+            message_id,
+            stream_max_length(channel),
+            fn(part) {
+              let #(action, id) = case part.edit_message_id {
+                Some(id) -> #("edit", Some(id))
+                None -> #("send", None)
+              }
+              process.send(
+                recorder,
+                OutboundRecord(
+                  channel: channel,
+                  action: action,
+                  content: part.content,
+                  message_id: id,
+                ),
+              )
+              Ok(Nil)
+            },
+          )
+      }
+    }
+    Ok(port.StreamFailure(error)) -> Error(error)
+    Error(_) ->
+      case remaining_ms <= wait_ms {
+        True -> {
           process.send(
             recorder,
             OutboundRecord(
               channel: channel,
               action: "edit",
-              content: reply.content,
+              content: "Streaming timed out",
               message_id: Some(message_id),
             ),
           )
-      }
-
-      Ok(Nil)
-    }
-    Ok(port.StreamFailure(error)) -> Error(error)
-    Error(_) ->
-      case remaining_ms <= wait_ms {
-        True -> Error(port.SendFailed("stream timed out"))
+          Error(port.SendFailed("stream timed out"))
+        }
         False -> {
           case channel_supports_typing(channel) && typing {
             True ->

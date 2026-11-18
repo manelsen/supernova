@@ -1,5 +1,6 @@
 -module(supernova_file_system_ffi).
--export([read_file/1, write_file/2, list_dir/1, ensure_dir/1]).
+-export([read_file/1, write_file/2, list_dir/1, ensure_dir/1, append_file/2,
+         delete_file/1, file_exists/1]).
 
 read_file(Path) ->
   case file:read_file(Path) of
@@ -24,3 +25,19 @@ ensure_dir(Path) ->
     ok -> {ok, nil};
     {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
   end.
+
+append_file(Path, Content) ->
+  case file:write_file(Path, Content, [append]) of
+    ok -> {ok, nil};
+    {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
+  end.
+
+delete_file(Path) ->
+  case file:delete(Path) of
+    ok -> {ok, nil};
+    {error, enoent} -> {ok, nil};
+    {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
+  end.
+
+file_exists(Path) ->
+  {ok, filelib:is_file(Path) orelse filelib:is_dir(Path)}.

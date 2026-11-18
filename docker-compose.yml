@@ -28,8 +28,16 @@ services:
       SUPERNOVA_OPENAI_API_KEY: ${SUPERNOVA_OPENAI_API_KEY:-}
 
       # Channel tokens — set the ones you use
+      SUPERNOVA_TELEGRAM_TOKEN: ${SUPERNOVA_TELEGRAM_TOKEN:-}
       SUPERNOVA_DISCORD_TOKEN: ${SUPERNOVA_DISCORD_TOKEN:-}
       SUPERNOVA_DISCORD_APP_ID: ${SUPERNOVA_DISCORD_APP_ID:-}
+
+      # Closed-group allowlist bootstrap
+      SUPERNOVA_ACCESS_ADMINS: ${SUPERNOVA_ACCESS_ADMINS:-}
+      SUPERNOVA_ACCESS_MEMBERS: ${SUPERNOVA_ACCESS_MEMBERS:-}
+
+      # Runtime state: access.json, ledger/ and audit_log/
+      SUPERNOVA_DATA_DIR: /data
 
       # Database (matches the postgres service above)
       SUPERNOVA_DB_HOST: postgres
@@ -47,6 +55,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./supernova.yaml:/config/supernova.yaml:ro
+      - supernova_data:/data
 
 volumes:
   postgres_data:
+  supernova_data:

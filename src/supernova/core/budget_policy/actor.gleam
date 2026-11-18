@@ -19,9 +19,10 @@ import gleam/otp/actor
 import supernova/core/budget_policy/pure
 import supernova/core/budget_policy/types.{
   type BudgetCommand, type BudgetConfig, type BudgetExceeded,
-  type BudgetPolicyState, type BudgetResource, BudgetPolicyState,
+  type BudgetPolicyState, type BudgetResource, BudgetExceeded, BudgetPolicyState,
   EmitBudgetViolation, WriteBudgetAudit,
 }
+import supernova/core/safe_call
 
 // ============================================================================
 // FFI — Timestamp (Erlang)
@@ -249,12 +250,31 @@ pub fn check(
   resource: BudgetResource,
   amount: Int,
 ) -> Result(Nil, BudgetExceeded) {
-  actor.call(policy, waiting: 5000, sending: Check(
-    _,
-    agent_id,
-    resource,
-    amount,
-  ))
+  case safe_call.call(policy, 2000, Check(_, agent_id, resource, amount)) {
+    Ok(result) -> result
+    Error(_) ->
+      Error(BudgetExceeded(
+        agent_id: agent_id,
+        resource: "budget_policy_unavailable",
+        current: 0,
+        limit: 0,
+        message: "Budget policy unavailable; refusing the operation",
+      ))
+  }
+}
+
+/// Check with an explicit failure, so callers can distinguish an exhausted
+/// budget from an unavailable policy actor.
+pub fn try_check(
+  policy: BudgetPolicy,
+  agent_id: String,
+  resource: BudgetResource,
+  amount: Int,
+) -> Result(Result(Nil, BudgetExceeded), Nil) {
+  case safe_call.call(policy, 2000, Check(_, agent_id, resource, amount)) {
+    Ok(result) -> Ok(result)
+    Error(_) -> Error(Nil)
+  }
 }
 
 /// Set a budget configuration for an agent.
@@ -263,12 +283,13 @@ pub fn set_budget(
   agent_id: String,
   config: BudgetConfig,
 ) -> Nil {
-  actor.call(policy, waiting: 5000, sending: SetBudget(_, agent_id, config))
+  let _ = safe_call.call(policy, 2000, SetBudget(_, agent_id, config))
+  Nil
 }
 
 /// Get the budget configuration for an agent.
 pub fn get_budget(policy: BudgetPolicy, agent_id: String) -> BudgetConfig {
-  actor.call(policy, waiting: 5000, sending: GetBudget(_, agent_id))
+  actor.call(policy, waiting: 2000, sending: GetBudget(_, agent_id))
 }
 
 /// Record consumption after a successful operation.
@@ -278,12 +299,14 @@ pub fn record_consumption(
   resource: BudgetResource,
   amount: Int,
 ) -> Nil {
-  actor.call(policy, waiting: 5000, sending: RecordConsumption(
-    _,
-    agent_id,
-    resource,
-    amount,
-  ))
+  let _ =
+    safe_call.call(policy, 2000, RecordConsumption(
+      _,
+      agent_id,
+      resource,
+      amount,
+    ))
+  Nil
 }
 
 /// Set parent agent for budget inheritance.
@@ -294,17 +317,17 @@ pub fn set_parent(
   agent_id: String,
   parent_id: String,
 ) -> Nil {
-  actor.call(policy, waiting: 5000, sending: SetParent(_, agent_id, parent_id))
+  actor.call(policy, waiting: 2000, sending: SetParent(_, agent_id, parent_id))
 }
 
 /// Release a sub-agent slot (decrement parent's sub-agent count).
 pub fn release_sub_agent(policy: BudgetPolicy, agent_id: String) -> Nil {
-  actor.call(policy, waiting: 5000, sending: ReleaseSubAgent(_, agent_id))
+  actor.call(policy, waiting: 2000, sending: ReleaseSubAgent(_, agent_id))
 }
 
 /// Reset time windows for an agent.
 pub fn reset_windows(policy: BudgetPolicy, agent_id: String) -> Nil {
-  actor.call(policy, waiting: 5000, sending: ResetWindows(_, agent_id))
+  actor.call(policy, waiting: 2000, sending: ResetWindows(_, agent_id))
 }
 
 /// Get current consumption for a resource type.
@@ -313,14 +336,14 @@ pub fn get_consumption(
   agent_id: String,
   resource: BudgetResource,
 ) -> Int {
-  actor.call(policy, waiting: 5000, sending: GetConsumption(
-    _,
-    agent_id,
-    resource,
-  ))
+  case safe_call.call(policy, 2000, GetConsumption(_, agent_id, resource)) {
+    Ok(value) -> value
+    Error(_) -> 0
+  }
 }
 
 /// Stop the budget policy actor.
 pub fn stop(policy: BudgetPolicy) -> Nil {
-  actor.call(policy, waiting: 5000, sending: Stop)
+  let _ = safe_call.call(policy, 2000, Stop)
+  Nil
 }

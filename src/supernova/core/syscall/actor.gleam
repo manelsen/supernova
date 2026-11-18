@@ -12,15 +12,22 @@
 //// actor.stop(gw)
 //// ```
 
+import gleam/dict.{type Dict}
+import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/string
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/budget_policy/types as budget_types
+import supernova/core/capability_manifest/pure as cap_pure
+import supernova/core/capability_manifest/types as cap_types
+import supernova/core/safe_call
 import supernova/core/syscall/pure
 import supernova/core/syscall/types.{
   type SyscallCommand, type SyscallOp, type SyscallResult, type SyscallState,
@@ -47,6 +54,23 @@ fn ffi_current_timestamp() -> Int
 pub type SyscallMessage {
   /// Invoke a syscall on behalf of agent_id
   Invoke(reply_to: Subject(SyscallResult), agent_id: String, op: SyscallOp)
+  /// Authorize a concrete tool call on behalf of a principal. On success the
+  /// reply carries the executor: the tool runs in the caller's process, never
+  /// inside the gateway, so a slow tool cannot hold other principals.
+  AuthorizeTool(
+    reply_to: Subject(Result(ToolExecutor, String)),
+    principal_id: String,
+    role: String,
+    tool_name: String,
+    args: String,
+  )
+  /// Report the outcome of an authorized tool call (audit only).
+  ToolCompleted(
+    principal_id: String,
+    tool_name: String,
+    result: Result(String, String),
+    timestamp: Int,
+  )
   /// Register an agent to make syscalls
   RegisterAgent(reply_to: Subject(Nil), agent_id: String)
   /// Unregister an agent
@@ -63,6 +87,10 @@ pub type SyscallMessage {
 pub type SyscallGateway =
   Subject(SyscallMessage)
 
+/// Executes an authorized tool call: `fn(tool_name, args_json)`.
+pub type ToolExecutor =
+  fn(String, String) -> Result(String, String)
+
 /// Internal actor state: pure syscall state + optional policy/audit handles.
 type ActorState {
   ActorState(
@@ -70,6 +98,8 @@ type ActorState {
     workspace_policy: Option(policy_actor.WorkspacePolicy),
     budget_policy: Option(budget_actor.BudgetPolicy),
     audit_log: Option(audit_actor.AuditLog),
+    capability_manifests: Dict(String, cap_types.CapabilityManifest),
+    tool_executor: fn(String, String) -> Result(String, String),
   )
 }
 
@@ -124,14 +154,22 @@ fn check_workspace_policy(
       case actor_state.workspace_policy {
         Some(policy) ->
           policy_actor.authorize(policy, agent_id, policy_types.OpRead, path)
-        None -> Ok(path)
+        None ->
+          case dict.is_empty(actor_state.capability_manifests) {
+            True -> Ok(path)
+            False -> Error("workspace policy unavailable")
+          }
       }
     }
     WriteFile(path, _) -> {
       case actor_state.workspace_policy {
         Some(policy) ->
           policy_actor.authorize(policy, agent_id, policy_types.OpWrite, path)
-        None -> Ok(path)
+        None ->
+          case dict.is_empty(actor_state.capability_manifests) {
+            True -> Ok(path)
+            False -> Error("workspace policy unavailable")
+          }
       }
     }
     // Non-file operations: no workspace check needed
@@ -298,6 +336,167 @@ fn float_to_string(f: Float) -> String {
 @external(erlang, "supernova_ledger_ffi", "format_float")
 fn do_float_to_string(f: Float) -> String
 
+fn argument_path(args: String) -> Option(String) {
+  case json.parse(from: args, using: path_decoder()) {
+    Ok(path) -> Some(path)
+    Error(_) -> None
+  }
+}
+
+fn path_decoder() -> decode.Decoder(String) {
+  use path <- decode.field("path", decode.string)
+  decode.success(path)
+}
+
+// ============================================================================
+// Tool Pipeline
+// ============================================================================
+
+fn capability_denied(
+  manifests: Dict(String, cap_types.CapabilityManifest),
+  role: String,
+  tool_name: String,
+) -> Bool {
+  case dict.get(manifests, role) {
+    Ok(manifest) -> !cap_pure.allowed(manifest, tool_name)
+    Error(_) ->
+      // A role without an explicit manifest can only be admin. This keeps the
+      // gateway closed by default while preserving old syscall tests.
+      role != "admin"
+  }
+}
+
+fn tool_touches_write(tool_name: String, args: String) -> Bool {
+  tool_name == "file_system" && string.contains(args, "\"write\"")
+}
+
+fn tool_path_check(
+  actor_state: ActorState,
+  principal_id: String,
+  tool_name: String,
+  args: String,
+) -> Result(Nil, String) {
+  case argument_path(args) {
+    None -> Ok(Nil)
+    Some(path) ->
+      case actor_state.workspace_policy {
+        None ->
+          case dict.is_empty(actor_state.capability_manifests) {
+            True -> Ok(Nil)
+            False -> Error("workspace policy unavailable")
+          }
+        Some(policy) -> {
+          let op = case tool_touches_write(tool_name, args) {
+            True -> policy_types.OpWrite
+            False -> policy_types.OpRead
+          }
+          case policy_actor.authorize(policy, principal_id, op, path) {
+            Ok(_) -> Ok(Nil)
+            Error(reason) -> Error(reason)
+          }
+        }
+      }
+  }
+}
+
+fn check_tool_budget(
+  actor_state: ActorState,
+  principal_id: String,
+) -> Result(Nil, String) {
+  case actor_state.budget_policy {
+    None -> Ok(Nil)
+    Some(policy) -> {
+      case
+        budget_actor.check(
+          policy,
+          principal_id,
+          budget_types.BudgetToolCallsHourly,
+          1,
+        )
+      {
+        Ok(_) -> Ok(Nil)
+        Error(exceeded) -> Error(exceeded.message)
+      }
+    }
+  }
+}
+
+fn authorize_tool(
+  actor_state: ActorState,
+  principal_id: String,
+  role: String,
+  tool_name: String,
+  args: String,
+  timestamp: Int,
+) -> Result(ToolExecutor, String) {
+  // 1. Capability manifest
+  case capability_denied(actor_state.capability_manifests, role, tool_name) {
+    True -> {
+      audit_syscall(
+        actor_state.audit_log,
+        principal_id,
+        "capability_denied",
+        tool_name,
+        audit_types.AuditDenied,
+        "role=" <> role,
+        timestamp,
+      )
+      Error("capability_denied: tool '" <> tool_name <> "' is not allowed")
+    }
+    False -> {
+      // 2. Workspace policy (only when the tool touches a path)
+      case tool_path_check(actor_state, principal_id, tool_name, args) {
+        Error(reason) -> {
+          audit_syscall(
+            actor_state.audit_log,
+            principal_id,
+            "tool_call",
+            tool_name,
+            audit_types.AuditDenied,
+            "workspace_policy: " <> reason,
+            timestamp,
+          )
+          Error("Blocked: " <> reason)
+        }
+        Ok(_) -> {
+          // 3. Budget (tool calls per hour)
+          case check_tool_budget(actor_state, principal_id) {
+            Error(reason) -> {
+              audit_syscall(
+                actor_state.audit_log,
+                principal_id,
+                "tool_call",
+                tool_name,
+                audit_types.AuditDenied,
+                "budget_policy: " <> reason,
+                timestamp,
+              )
+              Error(reason)
+            }
+            Ok(_) -> {
+              // 4. Charge the tool call now, before it runs, so parallel
+              //    calls of the same principal cannot overshoot the budget.
+              case actor_state.budget_policy {
+                Some(policy) ->
+                  budget_actor.record_consumption(
+                    policy,
+                    principal_id,
+                    budget_types.BudgetToolCallsHourly,
+                    1,
+                  )
+                None -> Nil
+              }
+              // 5. Execution happens in the caller; the outcome comes back
+              //    as ToolCompleted for the audit log.
+              Ok(actor_state.tool_executor)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 // ============================================================================
 // Actor Handler
 // ============================================================================
@@ -307,6 +506,38 @@ fn handle_message(
   message: SyscallMessage,
 ) -> actor.Next(ActorState, SyscallMessage) {
   case message {
+    AuthorizeTool(reply_to, principal_id, role, tool_name, args) -> {
+      let timestamp = ffi_current_timestamp()
+      let result =
+        authorize_tool(
+          actor_state,
+          principal_id,
+          role,
+          tool_name,
+          args,
+          timestamp,
+        )
+      actor.send(reply_to, result)
+      actor.continue(actor_state)
+    }
+
+    ToolCompleted(principal_id, tool_name, result, timestamp) -> {
+      let #(audit_result, details) = case result {
+        Ok(_) -> #(audit_types.AuditSuccess, "ok")
+        Error(reason) -> #(audit_types.AuditFailure, reason)
+      }
+      audit_syscall(
+        actor_state.audit_log,
+        principal_id,
+        "tool_call",
+        tool_name,
+        audit_result,
+        details,
+        timestamp,
+      )
+      actor.continue(actor_state)
+    }
+
     Invoke(reply_to, agent_id, op) -> {
       let timestamp = ffi_current_timestamp()
 
@@ -384,8 +615,37 @@ pub fn start_with_policies(
       workspace_policy: workspace_policy,
       budget_policy: budget_policy,
       audit_log: audit_log,
+      capability_manifests: dict.new(),
+      tool_executor: fn(_, _) { Error("tool executor not configured") },
     )
 
+  start_with_state(initial)
+}
+
+/// Start the syscall gateway with capability manifests and a bounded tool
+/// executor. Production uses this entry point for every tool call.
+pub fn start_with_capabilities(
+  workspace_policy: Option(policy_actor.WorkspacePolicy),
+  budget_policy: Option(budget_actor.BudgetPolicy),
+  audit_log: Option(audit_actor.AuditLog),
+  capability_manifests: Dict(String, cap_types.CapabilityManifest),
+  tool_executor: fn(String, String) -> Result(String, String),
+) -> Result(SyscallGateway, actor.StartError) {
+  let initial =
+    ActorState(
+      state: types.initial_state(),
+      workspace_policy: workspace_policy,
+      budget_policy: budget_policy,
+      audit_log: audit_log,
+      capability_manifests: capability_manifests,
+      tool_executor: tool_executor,
+    )
+  start_with_state(initial)
+}
+
+fn start_with_state(
+  initial: ActorState,
+) -> Result(SyscallGateway, actor.StartError) {
   case
     actor.new(initial)
     |> actor.on_message(handle_message)
@@ -393,6 +653,41 @@ pub fn start_with_policies(
   {
     Ok(started) -> Ok(started.data)
     Error(error) -> Error(error)
+  }
+}
+
+/// Invoke a concrete tool through the kernel policy pipeline.
+///
+/// Pipeline: capability manifest → workspace policy → hourly tool budget →
+/// execution → ledger → audit log. Explicit 2 s timeout: callers must treat a
+/// timeout as a denial.
+pub fn invoke_tool(
+  gw: SyscallGateway,
+  principal_id: String,
+  role: String,
+  tool_name: String,
+  args: String,
+) -> Result(String, String) {
+  case
+    safe_call.call(gw, 2000, AuthorizeTool(
+      _,
+      principal_id,
+      role,
+      tool_name,
+      args,
+    ))
+  {
+    Error(_) -> Error("kernel unavailable; tool call refused")
+    Ok(Error(reason)) -> Error(reason)
+    Ok(Ok(execute)) -> {
+      // Run in the caller's process: the gateway only decides.
+      let result = execute(tool_name, args)
+      process.send(
+        gw,
+        ToolCompleted(principal_id, tool_name, result, ffi_current_timestamp()),
+      )
+      result
+    }
   }
 }
 

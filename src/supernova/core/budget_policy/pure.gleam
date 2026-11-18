@@ -17,7 +17,7 @@ import supernova/core/budget_policy/types.{
   type BudgetExceeded, type BudgetPolicyState, type BudgetResource,
   AgentBudgetState, BudgetConfig, BudgetExceeded, BudgetPolicyState,
   BudgetRecursionDepth, BudgetSubAgents, BudgetTokens, BudgetToolCalls,
-  EmitBudgetViolation, WindowState, WriteBudgetAudit,
+  BudgetToolCallsHourly, EmitBudgetViolation, WindowState, WriteBudgetAudit,
 }
 
 // ============================================================================
@@ -46,6 +46,8 @@ pub fn check(
     BudgetTokens -> check_tokens(state, agent_id, agent_state, config, amount)
     BudgetToolCalls ->
       check_tool_calls(state, agent_id, agent_state, config, amount)
+    BudgetToolCallsHourly ->
+      check_tool_calls_hourly(state, agent_id, agent_state, config, amount)
     BudgetRecursionDepth ->
       check_recursion_depth(state, agent_id, agent_state, config, amount)
     BudgetSubAgents ->
@@ -108,6 +110,11 @@ pub fn record_consumption(
       let window = agent_state.tool_call_window
       let new_window = WindowState(..window, consumed: window.consumed + amount)
       AgentBudgetState(..agent_state, tool_call_window: new_window)
+    }
+    BudgetToolCallsHourly -> {
+      let window = agent_state.tool_call_hour_window
+      let new_window = WindowState(..window, consumed: window.consumed + amount)
+      AgentBudgetState(..agent_state, tool_call_hour_window: new_window)
     }
     BudgetRecursionDepth -> agent_state
     BudgetSubAgents -> agent_state
@@ -212,6 +219,10 @@ pub fn reset_windows(
           ..agent_state,
           token_window: WindowState(consumed: 0, window_start: timestamp),
           tool_call_window: WindowState(consumed: 0, window_start: timestamp),
+          tool_call_hour_window: WindowState(
+            consumed: 0,
+            window_start: timestamp,
+          ),
         )
       BudgetPolicyState(
         ..state,
@@ -235,6 +246,7 @@ pub fn get_consumption(
       case resource {
         BudgetTokens -> agent_state.token_window.consumed
         BudgetToolCalls -> agent_state.tool_call_window.consumed
+        BudgetToolCallsHourly -> agent_state.tool_call_hour_window.consumed
         BudgetRecursionDepth -> agent_state.current_recursion_depth
         BudgetSubAgents -> agent_state.current_sub_agents
       }
@@ -259,6 +271,7 @@ fn get_or_create_agent_state(
         config: state.default_config,
         token_window: WindowState(consumed: 0, window_start: 0),
         tool_call_window: WindowState(consumed: 0, window_start: 0),
+        tool_call_hour_window: WindowState(consumed: 0, window_start: 0),
         current_recursion_depth: 0,
         current_sub_agents: 0,
         parent_id: None,
@@ -287,10 +300,19 @@ fn reset_expired_windows(
     False -> agent_state.tool_call_window
   }
 
+  // Tool call window: 1 hour = 3_600_000 ms
+  let tool_call_hour_window = case
+    timestamp - agent_state.tool_call_hour_window.window_start >= 3_600_000
+  {
+    True -> WindowState(consumed: 0, window_start: timestamp)
+    False -> agent_state.tool_call_hour_window
+  }
+
   AgentBudgetState(
     ..agent_state,
     token_window: token_window,
     tool_call_window: tool_call_window,
+    tool_call_hour_window: tool_call_hour_window,
   )
 }
 
@@ -396,6 +418,71 @@ fn check_tool_calls(
             EmitBudgetViolation(
               agent_id,
               "tool_calls_per_minute",
+              new_total,
+              limit,
+            ),
+          ]
+          let new_state =
+            BudgetPolicyState(
+              ..state,
+              agents: dict.insert(state.agents, agent_id, agent_state),
+            )
+          #(new_state, Error(error), commands)
+        }
+        False -> {
+          let new_state =
+            BudgetPolicyState(
+              ..state,
+              agents: dict.insert(state.agents, agent_id, agent_state),
+            )
+          #(new_state, Ok(Nil), [])
+        }
+      }
+    }
+  }
+}
+
+/// Check hourly tool call budget.
+fn check_tool_calls_hourly(
+  state: BudgetPolicyState,
+  agent_id: String,
+  agent_state: AgentBudgetState,
+  config: BudgetConfig,
+  amount: Int,
+) -> #(BudgetPolicyState, Result(Nil, BudgetExceeded), List(BudgetCommand)) {
+  let limit = config.tool_calls_per_hour
+  case limit {
+    -1 -> {
+      let new_state =
+        BudgetPolicyState(
+          ..state,
+          agents: dict.insert(state.agents, agent_id, agent_state),
+        )
+      #(new_state, Ok(Nil), [])
+    }
+    _ -> {
+      let current = agent_state.tool_call_hour_window.consumed
+      let new_total = current + amount
+      case new_total > limit {
+        True -> {
+          let error =
+            BudgetExceeded(
+              agent_id: agent_id,
+              resource: "tool_calls_per_hour",
+              current: new_total,
+              limit: limit,
+              message: "Budget exceeded: agent '"
+                <> agent_id
+                <> "' would make "
+                <> int.to_string(new_total)
+                <> " tool calls (limit: "
+                <> int.to_string(limit)
+                <> " per hour)",
+            )
+          let commands = [
+            EmitBudgetViolation(
+              agent_id,
+              "tool_calls_per_hour",
               new_total,
               limit,
             ),
@@ -539,6 +626,7 @@ fn inherit_config(parent_config: BudgetConfig, ratio: Int) -> BudgetConfig {
   BudgetConfig(
     tokens_per_hour: apply_ratio(parent_config.tokens_per_hour),
     tool_calls_per_minute: apply_ratio(parent_config.tool_calls_per_minute),
+    tool_calls_per_hour: apply_ratio(parent_config.tool_calls_per_hour),
     max_recursion_depth: parent_config.max_recursion_depth,
     max_sub_agents: apply_ratio(parent_config.max_sub_agents),
   )

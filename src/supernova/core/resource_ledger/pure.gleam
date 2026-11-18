@@ -10,15 +10,25 @@
 //// ```
 
 import gleam/dict
+import gleam/dynamic/decode
 import gleam/int
+import gleam/json
 import gleam/list
+import gleam/order
 import gleam/result
+import gleam/string
 import supernova/core/resource_ledger/types.{
   type LedgerCommand, type LedgerError, type LedgerState, type ResourceCounters,
-  type ResourceType, CPUTimeMs, EmitTelemetry, LLMTokensCompletion,
-  LLMTokensPrompt, QuotaExceeded, ResourceCounters, StorageRead, StorageWrite,
-  ToolCall, WriteAudit,
+  type ResourceType, type UsageEvent, CPUTimeMs, EmitTelemetry,
+  LLMTokensCompletion, LLMTokensPrompt, LLMUsage, QuotaExceeded,
+  ResourceCounters, StorageRead, StorageWrite, ToolCall, ToolUsage, WriteAudit,
 }
+import supernova/llm/pricing
+
+/// Files older than this many days are rotated away on actor start.
+const retention_days: Int = 30
+
+const milliseconds_per_day: Int = 86_400_000
 
 // ============================================================================
 // Public API
@@ -219,5 +229,233 @@ fn get_resource_value(
     StorageRead -> counters.storage_reads
     StorageWrite -> counters.storage_writes
     CPUTimeMs -> counters.cpu_time_ms
+  }
+}
+
+// ============================================================================
+// Usage Trail
+// ============================================================================
+
+/// Append an event to the usage trail.
+pub fn add_usage_event(
+  events: List(UsageEvent),
+  event: UsageEvent,
+) -> List(UsageEvent) {
+  list.append(events, [event])
+}
+
+/// All events belonging to a principal, in recording order.
+pub fn usage_for(
+  events: List(UsageEvent),
+  principal_id: String,
+) -> List(UsageEvent) {
+  list.filter(events, fn(event) { event_principal_id(event) == principal_id })
+}
+
+/// Sum of LLM costs for a UTC day, across all principals.
+pub fn daily_cost(events: List(UsageEvent), day: String) -> Float {
+  events
+  |> list.filter(fn(event) { event_day(event) == day })
+  |> total_cost
+}
+
+/// Sum of LLM costs for a UTC day, restricted to one principal.
+pub fn daily_cost_for(
+  events: List(UsageEvent),
+  day: String,
+  principal_id: String,
+) -> Float {
+  events
+  |> usage_for(principal_id)
+  |> list.filter(fn(event) { event_day(event) == day })
+  |> total_cost
+}
+
+/// Whether the event is an LLM usage event (the only costed kind).
+pub fn is_costed(event: UsageEvent) -> Bool {
+  case event {
+    LLMUsage(..) -> True
+    ToolUsage(..) -> False
+  }
+}
+
+/// The stored day key (UTC) of an event.
+pub fn event_day(event: UsageEvent) -> String {
+  pricing.day_key(event_timestamp(event), "UTC")
+}
+
+/// The wall-clock timestamp of an event.
+pub fn event_timestamp(event: UsageEvent) -> Int {
+  case event {
+    LLMUsage(timestamp: timestamp, ..) -> timestamp
+    ToolUsage(timestamp: timestamp, ..) -> timestamp
+  }
+}
+
+/// The principal that caused an event.
+pub fn event_principal_id(event: UsageEvent) -> String {
+  case event {
+    LLMUsage(principal_id: principal_id, ..) -> principal_id
+    ToolUsage(principal_id: principal_id, ..) -> principal_id
+  }
+}
+
+// ============================================================================
+// Serialisation (JSON Lines)
+// ============================================================================
+
+/// Whether a directory entry is a usage trail file.
+pub fn is_jsonl_file(name: String) -> Bool {
+  string.ends_with(name, ".jsonl")
+}
+
+/// Whether a usage trail file should be deleted at `now_ms`.
+///
+/// Files are named `YYYY-MM-DD.jsonl`; ISO dates sort lexicographically, so the
+/// comparison is safe. Files exactly `retention_days` old are kept.
+pub fn should_rotate(name: String, now_ms: Int) -> Bool {
+  case is_jsonl_file(name) {
+    True -> {
+      let cutoff =
+        pricing.day_key(
+          now_ms - { retention_days * milliseconds_per_day },
+          "UTC",
+        )
+      string.compare(string.slice(name, 0, 10), cutoff) == order.Lt
+    }
+    False -> False
+  }
+}
+
+/// The name of the trail file an event belongs to.
+pub fn event_file_name(event: UsageEvent) -> String {
+  event_day(event) <> ".jsonl"
+}
+
+/// Encode an event as a single JSON line (no trailing newline).
+pub fn event_to_json(event: UsageEvent) -> String {
+  case event {
+    LLMUsage(
+      principal_id: principal_id,
+      provider: provider,
+      model: model,
+      prompt_tokens: prompt_tokens,
+      completion_tokens: completion_tokens,
+      cost_usd: cost_usd,
+      timestamp: timestamp,
+    ) ->
+      json.object([
+        #("type", json.string("llm")),
+        #("principal_id", json.string(principal_id)),
+        #("provider", json.string(provider)),
+        #("model", json.string(model)),
+        #("prompt_tokens", json.int(prompt_tokens)),
+        #("completion_tokens", json.int(completion_tokens)),
+        #("cost_usd", json.float(cost_usd)),
+        #("timestamp", json.int(timestamp)),
+      ])
+    ToolUsage(
+      principal_id: principal_id,
+      tool_name: tool_name,
+      ok: ok,
+      timestamp: timestamp,
+    ) ->
+      json.object([
+        #("type", json.string("tool")),
+        #("principal_id", json.string(principal_id)),
+        #("tool_name", json.string(tool_name)),
+        #("ok", json.bool(ok)),
+        #("timestamp", json.int(timestamp)),
+      ])
+  }
+  |> json.to_string
+}
+
+/// Decode a single JSON line into an event. Malformed lines are rejected.
+pub fn event_from_json(line: String) -> Result(UsageEvent, Nil) {
+  case json.parse(from: line, using: raw_usage_event_decoder()) {
+    Ok(raw) -> raw_to_event(raw)
+    Error(_) -> Error(Nil)
+  }
+}
+
+// ============================================================================
+// Internal Helpers — Usage Trail
+// ============================================================================
+
+fn total_cost(events: List(UsageEvent)) -> Float {
+  list.fold(events, 0.0, fn(total, event) {
+    case event {
+      LLMUsage(cost_usd: cost_usd, ..) -> total +. cost_usd
+      ToolUsage(..) -> total
+    }
+  })
+}
+
+type RawUsageEvent {
+  RawUsageEvent(
+    kind: String,
+    principal_id: String,
+    provider: String,
+    model: String,
+    prompt_tokens: Int,
+    completion_tokens: Int,
+    cost_usd: Float,
+    tool_name: String,
+    ok: Bool,
+    timestamp: Int,
+  )
+}
+
+fn raw_usage_event_decoder() -> decode.Decoder(RawUsageEvent) {
+  use kind <- decode.field("type", decode.string)
+  use principal_id <- decode.field("principal_id", decode.string)
+  use provider <- decode.optional_field("provider", "", decode.string)
+  use model <- decode.optional_field("model", "", decode.string)
+  use prompt_tokens <- decode.optional_field("prompt_tokens", 0, decode.int)
+  use completion_tokens <- decode.optional_field(
+    "completion_tokens",
+    0,
+    decode.int,
+  )
+  use cost_usd <- decode.optional_field("cost_usd", 0.0, decode.float)
+  use tool_name <- decode.optional_field("tool_name", "", decode.string)
+  use ok <- decode.optional_field("ok", False, decode.bool)
+  use timestamp <- decode.field("timestamp", decode.int)
+
+  decode.success(RawUsageEvent(
+    kind: kind,
+    principal_id: principal_id,
+    provider: provider,
+    model: model,
+    prompt_tokens: prompt_tokens,
+    completion_tokens: completion_tokens,
+    cost_usd: cost_usd,
+    tool_name: tool_name,
+    ok: ok,
+    timestamp: timestamp,
+  ))
+}
+
+fn raw_to_event(raw: RawUsageEvent) -> Result(UsageEvent, Nil) {
+  case raw.kind {
+    "llm" ->
+      Ok(LLMUsage(
+        principal_id: raw.principal_id,
+        provider: raw.provider,
+        model: raw.model,
+        prompt_tokens: raw.prompt_tokens,
+        completion_tokens: raw.completion_tokens,
+        cost_usd: raw.cost_usd,
+        timestamp: raw.timestamp,
+      ))
+    "tool" ->
+      Ok(ToolUsage(
+        principal_id: raw.principal_id,
+        tool_name: raw.tool_name,
+        ok: raw.ok,
+        timestamp: raw.timestamp,
+      ))
+    _ -> Error(Nil)
   }
 }

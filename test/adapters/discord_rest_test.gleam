@@ -872,6 +872,12 @@ pub fn send_message_connection_error_test() {
   |> should_be_http_error
 }
 
+pub fn open_dm_connection_error_test() {
+  let client = unreachable_rest_client()
+  rest.open_dm(client, "456")
+  |> should_be_http_error
+}
+
 pub fn send_message_with_options_connection_error_test() {
   let client = unreachable_rest_client()
   let options =

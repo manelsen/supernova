@@ -32,6 +32,7 @@ fn custom_config(t: Int, tc: Int, rd: Int, sa: Int) -> types.BudgetConfig {
   BudgetConfig(
     tokens_per_hour: t,
     tool_calls_per_minute: tc,
+    tool_calls_per_hour: -1,
     max_recursion_depth: rd,
     max_sub_agents: sa,
   )

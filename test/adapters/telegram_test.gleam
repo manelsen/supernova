@@ -940,6 +940,7 @@ fn decode_update() -> decode.Decoder(telegram.Update) {
     callback_query: callback_query,
     poll_answer: None,
     message_reaction: None,
+    my_chat_member: None,
   ))
 }
 

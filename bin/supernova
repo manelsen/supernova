@@ -19,6 +19,7 @@ Commands:
     build        Build Docker image
     test         Run tests
     coverage     Run line coverage gate (85% minimum)
+    check-config Validate configuration [path]
     help         Show this help
 
 Examples:
@@ -68,6 +69,12 @@ cmd_coverage() {
     make coverage
 }
 
+cmd_check_config() {
+    cd "$PROJECT_DIR"
+    local config_path="${1:-supernova.yaml}"
+    gleam run -m supernova/check_config_main -- "$config_path"
+}
+
 case "${1:-help}" in
     configure)  cmd_configure ;;
     start)      cmd_start ;;
@@ -77,6 +84,7 @@ case "${1:-help}" in
     build)      cmd_build ;;
     test)       cmd_test ;;
     coverage)   cmd_coverage ;;
+    check-config) cmd_check_config "${2:-supernova.yaml}" ;;
     help|--help|-h) show_help ;;
     *)
         echo "Unknown command: $1"

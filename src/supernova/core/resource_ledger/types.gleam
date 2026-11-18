@@ -69,3 +69,22 @@ pub type LedgerState {
     counters: Dict(String, ResourceCounters),
   )
 }
+
+/// A single entry in the per-principal usage trail.
+///
+/// Unlike the aggregate `ResourceCounters`, each event keeps enough detail to
+/// attribute usage to a principal, a model or a tool, and to price it.
+pub type UsageEvent {
+  /// A completed LLM call.
+  LLMUsage(
+    principal_id: String,
+    provider: String,
+    model: String,
+    prompt_tokens: Int,
+    completion_tokens: Int,
+    cost_usd: Float,
+    timestamp: Int,
+  )
+  /// A tool invocation.
+  ToolUsage(principal_id: String, tool_name: String, ok: Bool, timestamp: Int)
+}

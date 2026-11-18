@@ -77,32 +77,6 @@ pub fn new_interactive_state_starts_empty_test() {
   dict.size(state.session_profiles) |> should.equal(0)
 }
 
-pub fn handle_message_rejects_mismatch_and_accepts_normal_message_test() {
-  use _ <- test_workspace.with_isolated_workspace("common-router")
-  let cfg = default_llm_config()
-  let mismatch =
-    router.handle_message(
-      "discord",
-      message("telegram", "c-1", "u-1", "hello", False),
-      cfg,
-      fn(_) { "session-1" },
-    )
-  mismatch
-  |> should.equal(Error(port.Ignored(reason: "channel mismatch: telegram")))
-
-  let result =
-    router.handle_message(
-      "discord",
-      message("discord", "c-1", "u-1", "hello", False),
-      cfg,
-      fn(_) { "session-1" },
-    )
-  case result {
-    Ok(reply) -> reply.content |> should.equal("Mock response")
-    Error(_) -> should.fail()
-  }
-}
-
 pub fn handle_inbound_start_and_status_commands_test() {
   use _ <- test_workspace.with_isolated_workspace("common-router")
   let cfg = default_llm_config()

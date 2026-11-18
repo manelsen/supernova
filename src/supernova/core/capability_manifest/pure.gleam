@@ -28,10 +28,12 @@ import supernova/core/capability_manifest/types.{
 /// 2. If tool is in allowed_tools → allowed
 /// 3. If tool is in neither → denied (default-deny)
 pub fn allowed(manifest: CapabilityManifest, tool_name: String) -> Bool {
-  // Denied takes precedence
+  // Denied takes precedence. `*` grants every tool to a role.
   case list.contains(manifest.denied_tools, tool_name) {
     True -> False
-    False -> list.contains(manifest.allowed_tools, tool_name)
+    False ->
+      list.contains(manifest.allowed_tools, "*")
+      || list.contains(manifest.allowed_tools, tool_name)
   }
 }
 

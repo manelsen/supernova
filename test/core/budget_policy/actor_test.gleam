@@ -82,6 +82,7 @@ pub fn set_and_get_budget_test() {
     types.BudgetConfig(
       tokens_per_hour: 50_000,
       tool_calls_per_minute: 30,
+      tool_calls_per_hour: -1,
       max_recursion_depth: 3,
       max_sub_agents: 5,
     )
@@ -152,6 +153,7 @@ pub fn set_parent_inherits_budget_test() {
     types.BudgetConfig(
       tokens_per_hour: 100_000,
       tool_calls_per_minute: 100,
+      tool_calls_per_hour: -1,
       max_recursion_depth: 5,
       max_sub_agents: 10,
     )
@@ -246,6 +248,7 @@ pub fn start_with_custom_config_test() {
     types.BudgetConfig(
       tokens_per_hour: 50_000,
       tool_calls_per_minute: 30,
+      tool_calls_per_hour: -1,
       max_recursion_depth: 3,
       max_sub_agents: 5,
     )
