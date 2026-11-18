@@ -101,16 +101,39 @@ fn check_tools(data: Dataset) -> List(Violation) {
 }
 
 fn check_denials(data: Dataset) -> List(Violation) {
-  data.denials
-  |> list.filter(fn(denial) {
-    !list.any(data.audits, fn(audit) {
-      audit.principal_id == denial.principal_id
-      && audit.operation == denial.operation
+  let #(_, violations) =
+    list.fold(data.denials, #(data.audits, []), fn(acc, denial) {
+      let #(remaining, violations) = acc
+      case take_matching_audit(remaining, denial) {
+        Ok(rest) -> #(rest, violations)
+        Error(_) -> #(remaining, [
+          Violation("I4", "missing audit for " <> denial.operation),
+          ..violations
+        ])
+      }
     })
-  })
-  |> list.map(fn(denial) {
-    Violation("I4", "missing audit for " <> denial.operation)
-  })
+  list.reverse(violations)
+}
+
+fn take_matching_audit(
+  audits: List(Audit),
+  denial: Denial,
+) -> Result(List(Audit), Nil) {
+  case audits {
+    [] -> Error(Nil)
+    [audit, ..rest] ->
+      case
+        audit.principal_id == denial.principal_id
+        && audit.operation == denial.operation
+      {
+        True -> Ok(rest)
+        False ->
+          case take_matching_audit(rest, denial) {
+            Ok(remaining) -> Ok([audit, ..remaining])
+            Error(_) -> Error(Nil)
+          }
+      }
+  }
 }
 
 fn check_turns(data: Dataset) -> List(Violation) {

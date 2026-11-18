@@ -48,6 +48,24 @@ pub fn allowlist_invariant_test() {
   invariants.check(denied) |> should.equal([])
 }
 
+pub fn each_denial_needs_its_own_audit_test() {
+  let data =
+    invariants.Dataset(
+      ..base(),
+      denials: [
+        invariants.Denial(principal_id: "sim:a", operation: "tool_call"),
+        invariants.Denial(principal_id: "sim:a", operation: "tool_call"),
+      ],
+      audits: [
+        invariants.Audit(principal_id: "sim:a", operation: "tool_call"),
+      ],
+    )
+  invariants.check(data)
+  |> should.equal([
+    invariants.Violation("I4", "missing audit for tool_call"),
+  ])
+}
+
 pub fn tool_capability_invariant_test() {
   let bad =
     invariants.Dataset(..base(), tool_uses: [

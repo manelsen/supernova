@@ -23,13 +23,27 @@ pub fn main() -> Nil {
 }
 
 fn run(data_dir: String, transcripts_path: String) -> Nil {
+  case path_exists(transcripts_path) {
+    False -> {
+      io.println("error: transcripts not found: " <> transcripts_path)
+      halt(1)
+    }
+    True -> Nil
+  }
+  case path_exists(data_dir) {
+    False -> {
+      io.println("error: data dir not found: " <> data_dir)
+      halt(1)
+    }
+    True -> Nil
+  }
   let daily_cap = case envoy.get("SUPERNOVA_INSTANCE_DAILY_USD") {
     Ok(value) ->
       case float.parse(value) {
         Ok(parsed) -> parsed
-        Error(_) -> 100.0
+        Error(_) -> 5.0
       }
-    Error(_) -> 100.0
+    Error(_) -> 5.0
   }
   let reserve = case envoy.get("SUPERNOVA_RESERVE_ESTIMATE_USD") {
     Ok(value) ->
@@ -82,6 +96,7 @@ pub fn evaluate(
 }
 
 fn ledger_spend(data_dir: String) -> List(#(String, Float)) {
+  let timezone = env_or("SUPERNOVA_BUDGET_TIMEZONE", "America/Sao_Paulo")
   find_files(data_dir <> "/ledger", "*.jsonl")
   |> list.fold(dict.new(), fn(acc, path) {
     case read_file(path) {
@@ -92,7 +107,7 @@ fn ledger_spend(data_dir: String) -> List(#(String, Float)) {
         |> list.fold(acc, fn(inner, line) {
           case json.parse(from: line, using: usage_decoder()) {
             Ok(#(timestamp, cost)) -> {
-              let day = pricing.day_key(timestamp, "UTC")
+              let day = pricing.day_key(timestamp, timezone)
               case dict.get(inner, day) {
                 Ok(current) -> dict.insert(inner, day, current +. cost)
                 Error(_) -> dict.insert(inner, day, cost)
@@ -123,8 +138,15 @@ fn audit_entries(data_dir: String) -> List(invariants.Audit) {
         |> list.filter(fn(line) { string.trim(line) != "" })
         |> list.filter_map(fn(line) {
           case string.split(line, " | ") {
-            [_timestamp, principal, operation, ..] ->
-              Ok(invariants.Audit(principal_id: principal, operation: operation))
+            [_timestamp, principal, operation, _target, result, ..] ->
+              case result == "denied" {
+                True ->
+                  Ok(invariants.Audit(
+                    principal_id: principal,
+                    operation: operation,
+                  ))
+                False -> Error(Nil)
+              }
             _ -> Error(Nil)
           }
         })
@@ -285,6 +307,16 @@ fn env_or(name: String, fallback: String) -> String {
 
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
+
+@external(erlang, "supernova_file_system_ffi", "file_exists")
+fn ffi_file_exists(path: String) -> Result(Bool, String)
+
+fn path_exists(path: String) -> Bool {
+  case ffi_file_exists(path) {
+    Ok(value) -> value
+    Error(_) -> False
+  }
+}
 
 @external(erlang, "supernova_file_system_ffi", "find_files")
 fn find_files(dir: String, pattern: String) -> List(String)
