@@ -5,6 +5,7 @@
 
 import gleam/dict
 import gleam/list
+import gleam/option.{None}
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -13,6 +14,9 @@ import supernova/adapters/pgvector
 pub fn main() {
   gleeunit.main()
 }
+
+@external(erlang, "pgvector_test_ffi", "fake_connection")
+fn fake_connection() -> pgvector.Connection
 
 // ============================================================================
 // Configuration Tests
@@ -249,6 +253,88 @@ pub fn vector_dimension_mismatch_error_test() {
   let err = pgvector.VectorDimensionMismatch(expected: 1536, got: 768)
   case err {
     pgvector.VectorDimensionMismatch(expected: 1536, got: 768) -> Nil
+    _ -> should.fail()
+  }
+}
+
+// ============================================================================
+// Early Validation Branches in DB Operations
+// ============================================================================
+
+pub fn insert_dimension_mismatch_short_circuits_before_db_test() {
+  let config =
+    pgvector.new_config("mismatch_pool_1", "localhost", 5432, "mydb", "user")
+    |> pgvector.with_dimensions(3)
+  let record =
+    pgvector.EmbeddingRecord(
+      id: "",
+      content: "hello",
+      embedding: [1.0, 2.0],
+      metadata: dict.new(),
+    )
+
+  case pgvector.insert(fake_connection(), config, record) {
+    Error(pgvector.VectorDimensionMismatch(expected: 3, got: 2)) -> Nil
+    _ -> should.fail()
+  }
+}
+
+pub fn similarity_search_dimension_mismatch_short_circuits_before_db_test() {
+  let config =
+    pgvector.new_config("mismatch_pool_2", "localhost", 5432, "mydb", "user")
+    |> pgvector.with_dimensions(4)
+
+  case
+    pgvector.similarity_search(fake_connection(), config, [1.0, 2.0, 3.0], None)
+  {
+    Error(pgvector.VectorDimensionMismatch(expected: 4, got: 3)) -> Nil
+    _ -> should.fail()
+  }
+}
+
+pub fn retrieve_context_dimension_mismatch_short_circuits_before_db_test() {
+  let config =
+    pgvector.new_config("mismatch_pool_3", "localhost", 5432, "mydb", "user")
+    |> pgvector.with_dimensions(5)
+
+  case pgvector.retrieve_context(fake_connection(), config, [1.0, 2.0], 3) {
+    Error(pgvector.VectorDimensionMismatch(expected: 5, got: 2)) -> Nil
+    _ -> should.fail()
+  }
+}
+
+pub fn delete_by_metadata_rejects_unsafe_key_before_db_test() {
+  let config =
+    pgvector.new_config("mismatch_pool_4", "localhost", 5432, "mydb", "user")
+
+  case
+    pgvector.delete_by_metadata(
+      fake_connection(),
+      config,
+      "unsafe key",
+      "value",
+    )
+  {
+    Error(pgvector.InvalidMetadataKey("unsafe key")) -> Nil
+    _ -> should.fail()
+  }
+}
+
+pub fn schema_sql_quotes_unsafe_identifier_characters_test() {
+  let config =
+    pgvector.new_config("quoted_pool", "localhost", 5432, "mydb", "user")
+    |> pgvector.with_table_name("embeddings\"v2")
+
+  let sql = pgvector.schema_sql(config)
+  sql |> string.contains("\"embeddings\"\"v2\"") |> should.equal(True)
+}
+
+pub fn delete_by_metadata_rejects_empty_key_test() {
+  let config =
+    pgvector.new_config("empty_key_pool", "localhost", 5432, "mydb", "user")
+
+  case pgvector.delete_by_metadata(fake_connection(), config, "", "value") {
+    Error(pgvector.InvalidMetadataKey("")) -> Nil
     _ -> should.fail()
   }
 }

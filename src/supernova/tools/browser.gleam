@@ -4,6 +4,7 @@
 //// interact with it, evaluate JavaScript, take screenshots, and extract
 //// readable text incrementally.
 
+import envoy
 import gleam/dynamic/decode
 import gleam/json
 import gleam/option.{type Option, None, Some}
@@ -11,6 +12,46 @@ import gleam/result
 import gleam/string
 import supernova/core/url_guard
 import supernova/llm/provider
+
+const evaluate_disabled_error = "browser evaluate is disabled by configuration"
+
+const evaluate_global_key = "supernova_browser_allow_evaluate"
+
+@external(erlang, "supernova_global_ffi", "global_put")
+fn global_put(key: String, value: Bool) -> Nil
+
+@external(erlang, "supernova_global_ffi", "global_get")
+fn global_get(key: String) -> Bool
+
+@external(erlang, "supernova_global_ffi", "global_has")
+fn global_has(key: String) -> Bool
+
+/// Configure whether arbitrary JavaScript evaluation is enabled globally.
+pub fn set_evaluate_allowed(allowed: Bool) -> Nil {
+  global_put(evaluate_global_key, allowed)
+}
+
+/// Check whether browser `evaluate` is currently enabled by env or config.
+/// Defaults to `False` unless `SUPERNOVA_BROWSER_ALLOW_EVALUATE=true` or
+/// `tools.browser.allow_evaluate: true` has been applied.
+pub fn is_evaluate_allowed() -> Bool {
+  case envoy.get("SUPERNOVA_BROWSER_ALLOW_EVALUATE") {
+    Ok(value) ->
+      case string.lowercase(string.trim(value)) {
+        "true" -> True
+        "false" -> False
+        _ -> stored_evaluate_allowed()
+      }
+    Error(_) -> stored_evaluate_allowed()
+  }
+}
+
+fn stored_evaluate_allowed() -> Bool {
+  case global_has(evaluate_global_key) {
+    True -> global_get(evaluate_global_key)
+    False -> False
+  }
+}
 
 type BrowserArgs {
   BrowserArgs(
@@ -78,13 +119,26 @@ pub fn type_text(
   do_type_text(session_id, selector, text, timeout_ms)
 }
 
-/// Evaluate JavaScript in the current page context.
+/// Evaluate JavaScript in the current page context if enabled by config/env.
 pub fn evaluate(
   session_id: String,
   script: String,
   timeout_ms: Int,
 ) -> Result(String, String) {
-  do_evaluate(session_id, script, timeout_ms)
+  evaluate_with_config(session_id, script, timeout_ms, is_evaluate_allowed())
+}
+
+/// Evaluate JavaScript in the current page context with an explicit flag.
+pub fn evaluate_with_config(
+  session_id: String,
+  script: String,
+  timeout_ms: Int,
+  allow_evaluate: Bool,
+) -> Result(String, String) {
+  case allow_evaluate {
+    False -> Error(evaluate_disabled_error)
+    True -> do_evaluate(session_id, script, timeout_ms)
+  }
 }
 
 /// Extract readable text from the current page.
@@ -96,7 +150,10 @@ pub fn extract_readable(
 }
 
 /// Take a PNG screenshot of the current page.
-pub fn screenshot(session_id: String, timeout_ms: Int) -> Result(String, String) {
+pub fn screenshot(
+  session_id: String,
+  timeout_ms: Int,
+) -> Result(String, String) {
   do_screenshot(session_id, timeout_ms)
 }
 
@@ -107,8 +164,16 @@ pub fn close(session_id: String) -> Result(String, String) {
 
 /// Execute a browser tool call encoded as JSON arguments.
 pub fn execute(args_json: String) -> Result(String, String) {
+  execute_with_config(args_json, is_evaluate_allowed())
+}
+
+/// Execute a browser tool call with an explicit `allow_evaluate` flag.
+pub fn execute_with_config(
+  args_json: String,
+  allow_evaluate: Bool,
+) -> Result(String, String) {
   case json.parse(from: args_json, using: browser_args_decoder()) {
-    Ok(args) -> dispatch(args)
+    Ok(args) -> dispatch(args, allow_evaluate)
     Error(error) ->
       Error("Invalid arguments for browser: " <> string.inspect(error))
   }
@@ -150,7 +215,7 @@ fn browser_args_decoder() -> decode.Decoder(BrowserArgs) {
   ))
 }
 
-fn dispatch(args: BrowserArgs) -> Result(String, String) {
+fn dispatch(args: BrowserArgs, allow_evaluate: Bool) -> Result(String, String) {
   let operation = string.lowercase(string.trim(args.operation))
 
   case operation {
@@ -175,16 +240,20 @@ fn dispatch(args: BrowserArgs) -> Result(String, String) {
         type_text(session_id, selector, text, args.timeout_ms)
       })
     "evaluate" ->
-      require_session_and_field(
-        args.session_id,
-        args.script,
-        "script",
-        operation,
-      )
-      |> result_then(fn(pair) {
-        let #(session_id, script) = pair
-        evaluate(session_id, script, args.timeout_ms)
-      })
+      case allow_evaluate {
+        False -> Error(evaluate_disabled_error)
+        True ->
+          require_session_and_field(
+            args.session_id,
+            args.script,
+            "script",
+            operation,
+          )
+          |> result_then(fn(pair) {
+            let #(session_id, script) = pair
+            evaluate_with_config(session_id, script, args.timeout_ms, True)
+          })
+      }
     "extract_readable" ->
       require_session(args.session_id, operation)
       |> result_then(fn(session_id) {

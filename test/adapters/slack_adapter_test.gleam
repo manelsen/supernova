@@ -97,6 +97,22 @@ pub fn parse_empty_content_ignored_test() {
   should.equal(event, Error(port.Ignored("empty content")))
 }
 
+pub fn parse_unsupported_subtype_ignored_test() {
+  let event = slack_adapter.parse_event(sample_unsupported_subtype_event())
+  should.equal(event, Error(port.Ignored("unsupported subtype: channel_join")))
+}
+
+pub fn parse_message_without_mention_preserves_content_test() {
+  let assert Ok(message) = slack_adapter.parse_event(sample_plain_text_event())
+  message.content |> should.equal("Hello without mention")
+}
+
+pub fn parse_malformed_mention_preserves_content_test() {
+  let assert Ok(message) =
+    slack_adapter.parse_event(sample_malformed_mention_event())
+  message.content |> should.equal("Hello <@broken mention")
+}
+
 pub fn parse_invalid_json_error_test() {
   let result = slack_adapter.parse_event("{\"not\": \"a valid slack event\"}")
   should.equal(result, Error(port.SendFailed("invalid JSON")))
@@ -269,6 +285,41 @@ pub fn build_stream_start_payload_preserves_thread_ts_test() {
   |> should.equal(True)
 }
 
+pub fn build_stream_start_payload_requires_thread_target_test() {
+  let reply =
+    port.ChannelReply(
+      channel_id: "D012345678",
+      content: "",
+      reply_to_id: option.None,
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.None,
+      media: [],
+    )
+
+  should.equal(
+    slack_adapter.build_stream_start_payload(reply),
+    Error(port.SendFailed("Slack streaming requires thread_ts or reply_to_id")),
+  )
+}
+
+pub fn build_stream_append_payload_includes_channel_ts_and_content_test() {
+  let payload =
+    slack_adapter.build_stream_append_payload(
+      channel_id: "D012345678",
+      stream_ts: "1730000000.999999",
+      markdown_text: "delta",
+    )
+
+  string.contains(payload, "\"channel\":\"D012345678\"")
+  |> should.equal(True)
+  string.contains(payload, "\"ts\":\"1730000000.999999\"")
+  |> should.equal(True)
+  string.contains(payload, "\"markdown_text\":\"delta\"")
+  |> should.equal(True)
+}
+
 pub fn build_stream_stop_payload_targets_stream_message_ts_test() {
   let payload =
     slack_adapter.build_stream_stop_payload(
@@ -283,6 +334,18 @@ pub fn build_stream_stop_payload_targets_stream_message_ts_test() {
   |> should.equal(True)
   string.contains(payload, "\"markdown_text\":\"done\"")
   |> should.equal(True)
+}
+
+pub fn build_stream_stop_payload_omits_markdown_text_when_empty_test() {
+  let payload =
+    slack_adapter.build_stream_stop_payload(
+      channel_id: "D012345678",
+      stream_ts: "1730000000.999999",
+      trailing_text: "",
+    )
+
+  string.contains(payload, "\"markdown_text\"")
+  |> should.equal(False)
 }
 
 // --------------------------------------------------------------------------
@@ -323,6 +386,79 @@ pub fn session_id_from_dm_test() {
   should.equal(session_id, "slack:D012345678:U012345679")
 }
 
+pub fn start_returns_slack_channel_adapter_test() {
+  let handler = fn(_, _) { Error(port.Ignored("not used in unit test")) }
+  let assert Ok(adapter) =
+    slack_adapter.start("xoxb-token", "signing-secret", handler)
+
+  adapter.name |> should.equal("slack")
+}
+
+pub fn progress_mode_uses_fallback_without_thread_context_test() {
+  let reply =
+    port.ChannelReply(
+      channel_id: "D012345678",
+      content: "",
+      reply_to_id: option.None,
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.None,
+      media: [],
+    )
+
+  slack_adapter.progress_mode(reply)
+  |> should.equal(slack_adapter.MessageUpdateFallback)
+}
+
+pub fn build_interactive_text_block_payload_test() {
+  let reply =
+    port.ChannelReply(
+      channel_id: "C0123456789",
+      content: "Choose",
+      reply_to_id: option.None,
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.Some(
+        port.interactive_reply([port.text_block("*Markdown text*")]),
+      ),
+      media: [],
+    )
+
+  let assert Ok(payload) = slack_adapter.build_reply_payload(reply)
+  string.contains(payload, "\"type\":\"section\"")
+  |> should.equal(True)
+  string.contains(payload, "\"type\":\"mrkdwn\"")
+  |> should.equal(True)
+}
+
+pub fn build_select_block_uses_default_placeholder_test() {
+  let interactive =
+    port.interactive_reply([
+      port.select_block(
+        action_id: "picker_model_select",
+        placeholder: option.None,
+        options: [port.select_option("gpt-5.1", "openai/gpt-5.1")],
+      ),
+    ])
+  let reply =
+    port.ChannelReply(
+      channel_id: "C0123456789",
+      content: "Select model",
+      reply_to_id: option.None,
+      thread_id: option.None,
+      typing: False,
+      edit_message_id: option.None,
+      interactive: option.Some(interactive),
+      media: [],
+    )
+
+  let assert Ok(payload) = slack_adapter.build_reply_payload(reply)
+  string.contains(payload, "\"text\":\"Select an option\"")
+  |> should.equal(True)
+}
+
 fn list_length(list: List(a)) -> Int {
   case list {
     [] -> 0
@@ -360,4 +496,16 @@ fn sample_bot_subtype_event() -> String {
 
 fn sample_empty_event() -> String {
   "{\"type\": \"message\", \"user\": \"U012345678\", \"text\": \"\", \"channel\": \"C0123456789\", \"ts\": \"1234567890.888888\", \"event_ts\": \"1234567890.888888\", \"channel_type\": \"channel\"}"
+}
+
+fn sample_unsupported_subtype_event() -> String {
+  "{\"type\": \"message\", \"subtype\": \"channel_join\", \"user\": \"U012345678\", \"text\": \"joined\", \"channel\": \"C0123456789\", \"ts\": \"1234567890.999998\", \"event_ts\": \"1234567890.999998\", \"channel_type\": \"channel\"}"
+}
+
+fn sample_plain_text_event() -> String {
+  "{\"type\": \"message\", \"user\": \"U012345678\", \"text\": \"Hello without mention\", \"channel\": \"C0123456789\", \"ts\": \"1234567890.999997\", \"event_ts\": \"1234567890.999997\", \"channel_type\": \"channel\"}"
+}
+
+fn sample_malformed_mention_event() -> String {
+  "{\"type\": \"message\", \"user\": \"U012345678\", \"text\": \"Hello <@broken mention\", \"channel\": \"C0123456789\", \"ts\": \"1234567890.999996\", \"event_ts\": \"1234567890.999996\", \"channel_type\": \"channel\"}"
 }

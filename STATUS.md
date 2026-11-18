@@ -1,162 +1,57 @@
 # Supernova Implementation Status
 
-**Última atualização:** 2026-03-26  
-**Status:** ✅ FASE 0 COMPLETA - Pronto para implementação
-
-## 📊 Progresso Geral
-
-```
-Fundação (Refatoração):     [████████████████████] 100% (PLANEJADA)
-Milestone 1: Canais Básicos [░░░░░░░░░░░░░░░░░░░░]   0%
-Milestone 2: Tools Avançadas [░░░░░░░░░░░░░░░░░░░░]   0%
-Milestone 3: UX Completa     [░░░░░░░░░░░░░░░░░░░░]   0%
-Milestone 4: Canais Restantes [░░░░░░░░░░░░░░░░░░░░]   0%
-Milestone 5: Arquitetura Limpa [░░░░░░░░░░░░░░░░░░░░]   0%
-
-TOTAL GERAL:                 [███░░░░░░░░░░░░░░░░░]  15%
-```
-
-## ✅ COMPLETO: FASE 0 - Fundação
-
-### 1. Research & Documentation (100%)
-- ✅ Gleam 1.15.0 instalado via mise
-- ✅ Documentação Gleam coletada (`docs/research/gleam_docs.md`)
-- ✅ Documentação Telegram Bot API 9.5 (`docs/research/telegram_api.md`)
-- ✅ Documentação Slack Web API (`docs/research/slack_api.md`)
-- ✅ Análise completa de código scaffolded
-
-### 2. Architecture Analysis (100%)
-- ✅ Identificados 7 canais totalmente scaffolded
-- ✅ Identificados 6 tools not implemented
-- ✅ Identificados recursos UX não implementados
-- ✅ Análise de violação de DRY em routers
-
-### 3. Planning (100%)
-- ✅ Plano de refatoração detalhado (`docs/REFACTORING_PLAN.md`)
-- ✅ TODO detalhado por componente (`IMPLEMENTATION_TODO.md`)
-- ✅ Resumo executivo (`IMPLEMENTATION_SUMMARY.md`)
-- ✅ Documento de prontidão (`IMPLEMENTATION_READY.md`)
-
-## 🔄 EM ANDAMENTO: Refatoração da Fundação
-
-### Próximos Passos Imediatos
-1. ⚡ **Criar session management unificado**
-   - `src/supernova/channel/session.gleam`
-   - Interface `SessionResolver`
-   - Eliminar duplicação de session resolution
-
-2. ⚡ **Criar router unificado**
-   - `src/supernova/adapters/unified_router.gleam`
-   - Reduzir código duplicado em 80%
-   - Type-safe router builder
-
-3. ⚡ **Implementar ChannelAdapter**
-   - Em todos os canais existentes
-   - Core não depende mais de módulos concretos
-   - Protocolo limpo
-
-**Estimativa:** 2-3 dias para refatoração completa
-
-## 📋 Pendente: Milestones
-
-### Milestone 1: Canais Básicos (0%)
-- [ ] Matrix Channel
-- [ ] Slack Channel
-- [ ] Botões/Menus em Telegram/Discord
-- [ ] Comandos /help, /start, /status, /model
-
-### Milestone 2: Tools Avançadas (0%)
-- [ ] Browser tool
-- [ ] Process tool
-- [ ] Sessions yield
-
-### Milestone 3: UX Completa (0%)
-- [ ] Threading em todos canais
-- [ ] Typing indicators
-- [ ] Chunking por limite
-- [ ] Loop de tools end-to-end
-
-### Milestone 4: Canais Restantes (0%)
-- [ ] WhatsApp
-- [ ] Google Chat
-- [ ] Lark
-- [ ] Mattermost
-- [ ] WeChat Work
-- [ ] QQ
-
-### Milestone 5: Arquitetura Limpa (0%)
-- [ ] Sessão unificada
-- [ ] Remoção de todos os TODOs
-
-## 🎯 Ordem de Execução
-
-```
-1. REFATORAÇÃO DA FUNDAÇÃO (2-3 dias) ← VOCÊ AQUI
-   ├─ Session management unificado
-   ├─ Router pattern unificado  
-   ├─ ChannelAdapter implementation
-   └─ Type-safe router builder
-
-2. MILESTONE 1 (4-6 semanas)
-   ├─ Matrix Channel
-   ├─ Slack Channel
-   └─ Botões/Menus + Comandos
-
-3. MILESTONE 2 (2-3 semanas)
-   └─ Tools Avançadas
-
-4. MILESTONE 3 (3-4 semanas)
-   └─ UX Completa
-
-5. MILESTONE 4 (6-8 semanas)
-   └─ Canais Restantes
-
-6. MILESTONE 5 (2-3 semanas)
-   └─ Arquitetura Limpa
-```
-
-## 📊 Métricas de Sucesso
-
-### Antes da Refatoração
-- **Código duplicado:** 80% em routers
-- **Canais funcionais:** 2 (Telegram, Discord)
-- **Canais scaffolded:** 7
-- **Type-safety:** Parcial
-
-### Depois da Refatoração
-- **Código duplicado:** 0%
-- **Canais funcionais:** 2 (Telegram, Discord)
-- **Canais scaffolded:** 7 (mas com arquitetura limpa)
-- **Type-safety:** Total
-
-### Após Milestone 1
-- **Código duplicado:** 0%
-- **Canais funcionais:** 4 (Telegram, Discord, Matrix, Slack)
-- **Canais scaffolded:** 5
-- **UX interativa:** Funcional em 2 canais
-
-### Após Todos os Milestones
-- **Código duplicado:** 0%
-- **Canais funcionais:** 9 (todos)
-- **UX interativa:** Funcional em todos
-- **Tools:** Todas funcionando
-- **Arquitetura:** Limpa, sem TODOs
-
-## ✅ Prontidão para Implementação
-
-- [x] Research completa
-- [x] Análise completa
-- [x] Planejamento completo
-- [x] Documentação organizada
-- [x] Gleam instalado
-- [x] Plano de refatoração aprovado
-- [ ] **Refatoração implementada** ← PRÓXIMO PASSO
-- [ ] Milestone 1 implementado
-- [ ] Milestone 2 implementado
-- [ ] Milestone 3 implementado
-- [ ] Milestone 4 implementado
-- [ ] Milestone 5 implementado
+**Last updated:** 2026-11-17
+**Version:** `0.3.0` (`gleam.toml`)
+**Toolchain:** Erlang `28.5.0.8` / Gleam `1.19.2` (`.tool-versions`)
 
 ---
 
-**Conclusão:** Fundação está 100% pronta. Começando refatoração do Port/Adapter wiring e DRY conforme solicitado. Estimativa total: 17-24 semanas.
+## Quality Metrics
+
+| Check | Result | Notes |
+|-------|--------|-------|
+| `gleam format --check src test` | Passing | Clean formatting |
+| `gleam build --warnings-as-errors` | Passing | 0 warnings |
+| `gleam test` | `1998` passed, `0` failed | Offline suite (`SUPERNOVA_BROWSER_TESTS=1` opt-in for live Chromium) |
+| `make coverage` | `74.49%` (`8929/11987` lines) | Exceeds `73.00%` CI gate (`--threshold 73`) |
+| Docker smoke test | Verified (`HTTP 200` on `/health/live`) | Tested with offline `ollama` config (`test/fixtures/docker/supernova.yaml`) |
+| Audit status (`audit/STATUS_2026-11.md`) | `20 RESOLVIDO`, `5 ACEITO`, `0 ABERTO` | Deferred items tracked for PRD B |
+
+---
+
+## Verified Component Matrix
+
+### Channel Adapters & Routing
+
+| Channel | Implementation Status | Test Coverage Scope |
+|---------|-----------------------|---------------------|
+| Discord | Implemented & wired | Unit + mocked adapter/router/streaming/keepalive tests |
+| Telegram | Implemented & wired | Unit + mocked polling/callback/router/streaming/keepalive tests |
+| Slack | Implemented & wired | Unit + mocked native stream & block-kit router tests |
+| Matrix | Implemented & wired | Unit + mocked room/edit streaming & router tests |
+| Google Chat | Implemented & wired | Unit + webhook parsing/router tests |
+| Lark | Implemented & wired | Unit + event parsing/router tests |
+| Mattermost | Implemented & wired | Unit + REST parsing/router tests |
+| WeChat Work | Implemented & wired | Unit + webhook parsing/router tests |
+| WhatsApp | Implemented & wired | Unit + bridge API parsing/router tests |
+
+### LLM Providers & Execution
+
+| Component | Implementation Status | Test Coverage Scope |
+|-----------|-----------------------|---------------------|
+| LLM Client (`openai`, `anthropic`, `openrouter`, `opencode_zen`, `zhipu`, `zhipu_coding`, `minimax`, `ollama`) | Implemented | Request/response mapping, circuit breaker, cooldown, mock mode, and loopback stream tests |
+| Kernel Primitives (`KernelScheduler`, `BudgetPolicy`, `WorkspacePolicy`, `CapabilityManifest`, `ResourceLedger`, `AuditLog`, `WorldModel`, `SyscallGateway`) | Implemented | Unit and OTP actor lifecycle tests with isolated temp workspaces |
+| Built-in Tools (`file_system`, `safe_shell`, `web`, `browser`, `github`, `gateway`, `canvas`, `process`) | Implemented | Policy, SSRF, and path-containment unit tests; real Chromium gated by `SUPERNOVA_BROWSER_TESTS=1` |
+| Health Server (`/health`, `/health/live`, `/health/ready`) | Implemented | Unit JSON/uptime tests + Docker container live probe |
+| Persistence (`adapters/postgres`, `adapters/pgvector`, `adapters/sqlite`, `adapters/redis`) | Implemented | Offline driver/query tests (`pgvector` & live PostgreSQL migrations deferred to PRD B) |
+
+---
+
+## Deferred to PRD B (External Live Integrations)
+
+The following items are accepted (`ACEITO`) in [audit/STATUS_2026-11.md](audit/STATUS_2026-11.md) and scoped out of offline stabilization:
+
+1. **Live PostgreSQL & pgvector integration tests** (findings `2.11`, `REQ-PROD-05`, `2.12`) — schema migration and vector queries against a running PostgreSQL instance
+2. **Real Chromium / Playwright browser E2E suite** (`3.4`, `SUPERNOVA_BROWSER_TESTS=1`) — automated CI stage with Playwright + Chromium installed
+3. **Live external provider & messaging API smoke tests** (`2.1`, `2.2`) — real token E2E validation beyond offline mocked/loopback HTTP tests
+4. **Coverage expansion toward 85%** — raising coverage on low-hit network/provider modules (`minimax`, `pgvector`, `channel/registry`, adapters) once live harnesses exist in PRD B

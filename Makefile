@@ -1,4 +1,4 @@
-.PHONY: help configure up down logs rebuild test clean restart
+.PHONY: help configure up down logs rebuild test coverage clean restart
 
 COMPOSE_FILE := -f docker-compose.yml
 
@@ -23,6 +23,12 @@ rebuild: ## Rebuild image without starting
 	docker compose $(COMPOSE_FILE) build supernova
 
 test: ## Run test suite
+	gleam test
+
+coverage: ## Run line coverage gate (minimum 73%)
+	gleam test
+	./scripts/coverage/line_coverage.escript --threshold 73
+
 restart: ## Restart the container
 	docker compose $(COMPOSE_FILE) restart supernova
 

@@ -25,7 +25,7 @@ SN_CONFIG="$SN_CONFIG_DIR/supernova.yaml"
 SN_SECRETS="$SN_CONFIG_DIR/secrets.env"
 SN_DATA="$SN_USER_DIR/data"
 SN_LOGS="$SN_USER_DIR/logs"
-SN_IMAGE="ghcr.io/manelsen/supernova:main"
+SN_IMAGE="ghcr.io/manelsen/supernova:master"
 SN_CONTAINER_NAME="supernova"
 
 # Common paths for container runtimes (crun, runc)

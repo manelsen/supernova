@@ -12,6 +12,9 @@ pub fn main() {
   gleeunit.main()
 }
 
+@external(erlang, "test_hackney_ffi", "ensure_started")
+fn ensure_hackney_started() -> Nil
+
 // ============================================================================
 // Configuration Tests
 // ============================================================================
@@ -1442,4 +1445,288 @@ pub fn encode_text_input_test() {
   string.contains(encoded, "\"required\":true") |> should.equal(True)
   string.contains(encoded, "\"min_length\":3") |> should.equal(True)
   string.contains(encoded, "\"max_length\":20") |> should.equal(True)
+}
+
+// ============================================================================
+// API Error Path Tests
+// ============================================================================
+
+pub fn register_global_command_nxdomain_error_test() {
+  let client = invalid_base_url_client()
+  let command = cmds.new_command("ping", "Ping command")
+
+  cmds.register_global_command(client, command)
+  |> should_be_http_error()
+  cmds.clear_handlers(client)
+}
+
+pub fn register_guild_command_nxdomain_error_test() {
+  let client = invalid_base_url_client()
+  let command = cmds.new_command("ping", "Ping command")
+
+  cmds.register_guild_command(client, command, "guild-123")
+  |> should_be_http_error()
+  cmds.clear_handlers(client)
+}
+
+pub fn get_global_commands_nxdomain_error_test() {
+  let client = invalid_base_url_client()
+
+  cmds.get_global_commands(client)
+  |> should_be_http_error()
+  cmds.clear_handlers(client)
+}
+
+pub fn delete_command_nxdomain_error_test() {
+  let client = invalid_base_url_client()
+
+  cmds.delete_command(client, "cmd-123", None)
+  |> should_be_http_error()
+  cmds.clear_handlers(client)
+}
+
+pub fn delete_guild_command_nxdomain_error_test() {
+  let client = invalid_base_url_client()
+
+  cmds.delete_command(client, "cmd-123", Some("guild-123"))
+  |> should_be_http_error()
+  cmds.clear_handlers(client)
+}
+
+fn invalid_base_url_client() -> cmds.CommandsClient {
+  ensure_hackney_started()
+  let config =
+    cmds.new_config("test-token", "app-id")
+    |> cmds.with_base_url("invalid://bad")
+  let assert Ok(client) = cmds.start(config)
+  client
+}
+
+fn should_be_http_error(result: Result(a, cmds.CommandsError)) -> Nil {
+  case result {
+    Error(cmds.CommandsHttpError(message)) -> {
+      string.contains(message, "HTTP error:")
+      |> should.equal(True)
+    }
+    _ -> should.fail()
+  }
+}
+
+pub fn encode_response_covers_select_component_variants_test() {
+  let user_select =
+    cmds.ResponseUserSelect(
+      custom_id: "user-select",
+      placeholder: Some("Pick user"),
+      min_values: Some(1),
+      max_values: Some(2),
+      disabled: Some(True),
+    )
+  let role_select =
+    cmds.ResponseRoleSelect(
+      custom_id: "role-select",
+      placeholder: Some("Pick role"),
+      min_values: Some(1),
+      max_values: Some(3),
+      disabled: Some(False),
+    )
+  let channel_select =
+    cmds.ResponseChannelSelect(
+      custom_id: "channel-select",
+      channel_types: [cmds.GuildTextChannel, cmds.PublicThreadChannel],
+      placeholder: Some("Pick channel"),
+      min_values: Some(1),
+      max_values: Some(1),
+      disabled: Some(False),
+    )
+
+  let response =
+    cmds.message_response("Choose")
+    |> cmds.with_components([
+      cmds.action_row([user_select, role_select, channel_select]),
+    ])
+  let encoded = cmds.encode_response(response)
+
+  string.contains(encoded, "\"type\":5") |> should.equal(True)
+  string.contains(encoded, "\"type\":6") |> should.equal(True)
+  string.contains(encoded, "\"type\":8") |> should.equal(True)
+  string.contains(encoded, "\"channel_types\":[0,11]") |> should.equal(True)
+}
+
+pub fn encode_response_with_allowed_mentions_attachments_and_choices_test() {
+  let data =
+    cmds.InteractionCallbackData(
+      content: Some("Result"),
+      ephemeral: False,
+      embeds: [],
+      allowed_mentions: Some(cmds.AllowedMentions(
+        parse: ["users"],
+        users: ["u-1"],
+        roles: ["r-1"],
+        replied_user: Some(True),
+      )),
+      flags: Some(4),
+      components: [],
+      attachments: [
+        cmds.ResponseAttachment(
+          id: "att-1",
+          filename: "file.txt",
+          description: Some("desc"),
+        ),
+      ],
+      tts: Some(True),
+      custom_id: None,
+      title: None,
+      choices: [
+        cmds.CommandOptionChoice(
+          name: "half",
+          value: cmds.FloatChoiceValue(0.5),
+        ),
+      ],
+    )
+  let response =
+    cmds.InteractionResponse(
+      response_type: cmds.AutocompleteResult,
+      data: Some(data),
+    )
+  let encoded = cmds.encode_response(response)
+
+  string.contains(encoded, "\"type\":8") |> should.equal(True)
+  string.contains(encoded, "\"allowed_mentions\"") |> should.equal(True)
+  string.contains(encoded, "\"attachments\"") |> should.equal(True)
+  string.contains(encoded, "\"tts\":true") |> should.equal(True)
+  string.contains(encoded, "\"flags\":4") |> should.equal(True)
+  string.contains(encoded, "\"choices\"") |> should.equal(True)
+}
+
+pub fn encode_response_escapes_special_characters_test() {
+  let response = cmds.message_response("line1\n\"quoted\"\\tail")
+  let encoded = cmds.encode_response(response)
+  string.contains(encoded, "\\n") |> should.equal(True)
+  string.contains(encoded, "\\\"quoted\\\"") |> should.equal(True)
+  string.contains(encoded, "\\\\tail") |> should.equal(True)
+}
+
+pub fn register_global_command_complex_options_still_reports_http_error_test() {
+  let client = invalid_base_url_client()
+  let complex_option =
+    cmds.CommandOption(
+      option_type: cmds.CmdNumberOption,
+      name: "temperature",
+      description: "Sampling temperature",
+      required: False,
+      choices: [
+        cmds.CommandOptionChoice(
+          name: "half",
+          value: cmds.FloatChoiceValue(0.5),
+        ),
+      ],
+      channel_types: [],
+      min_value: Some(0.1),
+      max_value: Some(1.0),
+      min_length: None,
+      max_length: None,
+      autocomplete: True,
+      options: [],
+    )
+  let nested_subcommand =
+    cmds.CommandOption(
+      option_type: cmds.CmdSubCommand,
+      name: "run",
+      description: "Run operation",
+      required: False,
+      choices: [],
+      channel_types: [],
+      min_value: None,
+      max_value: None,
+      min_length: None,
+      max_length: None,
+      autocomplete: False,
+      options: [
+        cmds.string_option("prompt", "Prompt text", True)
+        |> cmds.with_choices([cmds.string_choice("A", "a")]),
+      ],
+    )
+  let channel_option =
+    cmds.CommandOption(
+      option_type: cmds.CmdChannelOption,
+      name: "target_channel",
+      description: "Target channel",
+      required: False,
+      choices: [],
+      channel_types: [cmds.GuildTextChannel, cmds.PublicThreadChannel],
+      min_value: None,
+      max_value: None,
+      min_length: None,
+      max_length: None,
+      autocomplete: False,
+      options: [],
+    )
+
+  let command =
+    cmds.new_command("complex", "Complex command")
+    |> cmds.command_with_options([
+      complex_option,
+      nested_subcommand,
+      channel_option,
+    ])
+
+  cmds.register_global_command(client, command)
+  |> should_be_http_error()
+  cmds.clear_handlers(client)
+}
+
+pub fn register_context_menu_command_variants_http_error_test() {
+  let client = invalid_base_url_client()
+  let user_menu =
+    cmds.SlashCommand(
+      name: "Profile",
+      description: "Inspect profile",
+      command_type: cmds.UserContextMenu,
+      options: [],
+      default_permission: None,
+      default_member_permissions: None,
+      dm_permission: Some(True),
+      name_localizations: None,
+      description_localizations: None,
+      nsfw: Some(False),
+    )
+  let message_menu =
+    cmds.SlashCommand(
+      name: "Quote",
+      description: "Quote message",
+      command_type: cmds.MessageContextMenu,
+      options: [],
+      default_permission: None,
+      default_member_permissions: None,
+      dm_permission: Some(True),
+      name_localizations: None,
+      description_localizations: None,
+      nsfw: Some(False),
+    )
+
+  cmds.register_global_command(client, user_menu) |> should_be_http_error()
+  cmds.register_global_command(client, message_menu) |> should_be_http_error()
+  cmds.clear_handlers(client)
+}
+
+pub fn handle_interaction_with_missing_data_returns_none_test() {
+  let config = cmds.new_config("test-token", "app-id")
+  let assert Ok(client) = cmds.start(config)
+
+  let interaction =
+    cmds.InteractionPayload(
+      id: "int-no-data",
+      application_id: "app-123",
+      interaction_type: cmds.ApplicationCommandInteraction,
+      data: None,
+      guild_id: None,
+      channel_id: Some("channel-123"),
+      member: None,
+      user: None,
+      token: "token-123",
+      version: 1,
+    )
+
+  cmds.handle_interaction(client, interaction) |> should.equal(None)
+  cmds.clear_handlers(client)
 }

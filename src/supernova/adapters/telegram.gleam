@@ -431,7 +431,9 @@ fn build_query_string(params: List(#(String, String))) -> String {
 }
 
 /// Handle HTTP response
-fn handle_response(response: Response(String)) -> Result(String, TelegramError) {
+fn handle_response(
+  response: Response(String),
+) -> Result(String, TelegramError) {
   case response.status {
     200 -> Ok(response.body)
     429 -> {

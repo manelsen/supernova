@@ -7,6 +7,7 @@
 //// - executor dispatch
 //// - standardized reply/error mapping
 
+import envoy
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
@@ -685,8 +686,28 @@ fn default_agent_id(user_id: String) -> String {
   "agent:" <> user_id
 }
 
+/// Resolve the base directory used for agent workspaces.
+/// Defaults to `"workspaces"` unless `SUPERNOVA_WORKSPACE_ROOT` is configured.
+pub fn workspace_root() -> String {
+  case envoy.get("SUPERNOVA_WORKSPACE_ROOT") {
+    Ok(root) ->
+      case string.trim(root) {
+        "" -> "workspaces"
+        trimmed -> strip_trailing_slashes(trimmed)
+      }
+    Error(_) -> "workspaces"
+  }
+}
+
+fn strip_trailing_slashes(path: String) -> String {
+  case path != "/" && string.ends_with(path, "/") {
+    True -> strip_trailing_slashes(string.drop_end(path, 1))
+    False -> path
+  }
+}
+
 fn workspace_path_for_agent(agent_id: String) -> String {
-  "workspaces/" <> agent_id
+  workspace_root() <> "/" <> agent_id
 }
 
 fn sync_session_profile_from_workspace(

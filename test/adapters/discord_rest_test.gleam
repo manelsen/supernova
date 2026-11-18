@@ -12,6 +12,9 @@ pub fn main() {
   gleeunit.main()
 }
 
+@external(erlang, "test_hackney_ffi", "ensure_started")
+fn ensure_hackney_started() -> Nil
+
 // ============================================================================
 // Configuration Tests
 // ============================================================================
@@ -184,6 +187,143 @@ pub fn encode_message_options_with_components_test() {
   |> should.equal(True)
   string.contains(encoded, "\"type\":2") |> should.equal(True)
   string.contains(encoded, "\"type\":3") |> should.equal(True)
+}
+
+pub fn encode_message_options_with_all_component_styles_test() {
+  let opts =
+    rest.new_message_options()
+    |> rest.with_content("Style matrix")
+    |> rest.with_components([
+      rest.action_row([
+        rest.primary_button("primary", "Primary"),
+        rest.secondary_button("secondary", "Secondary"),
+        rest.success_button("success", "Success"),
+        rest.danger_button("danger", "Danger"),
+      ]),
+      rest.action_row([
+        rest.string_select("picker_model_select", [
+          rest.select_option("gpt-5.1", "openai/gpt-5.1"),
+        ]),
+      ]),
+    ])
+
+  let encoded = rest.encode_message_options(opts)
+
+  string.contains(encoded, "\"style\":1") |> should.equal(True)
+  string.contains(encoded, "\"style\":2") |> should.equal(True)
+  string.contains(encoded, "\"style\":3") |> should.equal(True)
+  string.contains(encoded, "\"style\":4") |> should.equal(True)
+  string.contains(encoded, "\"custom_id\":\"picker_model_select\"")
+  |> should.equal(True)
+}
+
+pub fn encode_message_options_with_full_embed_reference_mentions_and_attachments_test() {
+  let embed =
+    rest.new_embed()
+    |> rest.embed_title("Full")
+    |> rest.embed_description("Everything")
+    |> rest.embed_url("https://example.com/embed")
+    |> rest.embed_timestamp("2026-01-01T00:00:00Z")
+    |> rest.embed_color(0x112233)
+    |> rest.embed_footer(
+      rest.new_footer("Footer")
+      |> rest.footer_icon_url("https://example.com/footer.png"),
+    )
+    |> rest.embed_image(rest.new_image("https://example.com/image.png"))
+    |> rest.embed_thumbnail(rest.new_thumbnail("https://example.com/thumb.png"))
+    |> rest.embed_author(
+      rest.new_author("Author")
+      |> rest.author_url("https://example.com/author")
+      |> rest.author_icon_url("https://example.com/author.png"),
+    )
+    |> rest.embed_fields([
+      rest.new_field("inline", "yes") |> rest.field_inline(True),
+      rest.new_field("plain", "no"),
+    ])
+
+  let mentions =
+    rest.AllowedMentions(
+      parse: ["users", "roles"],
+      users: ["123"],
+      roles: ["456"],
+      replied_user: Some(False),
+    )
+  let reference =
+    rest.MessageReference(
+      message_id: Some("111"),
+      channel_id: Some("222"),
+      guild_id: Some("333"),
+    )
+  let attachment =
+    rest.new_attachment("0", "doc.txt")
+    |> rest.attachment_description("Attached doc")
+  let opts =
+    rest.new_message_options()
+    |> rest.with_content("payload")
+    |> rest.with_tts(True)
+    |> rest.with_embed(embed)
+    |> rest.with_attachment(attachment)
+    |> rest.with_message_reference(reference)
+    |> rest.with_allowed_mentions(mentions)
+
+  let encoded = rest.encode_message_options(opts)
+
+  string.contains(encoded, "\"content\":\"payload\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"tts\":true")
+  |> should.equal(True)
+  string.contains(encoded, "\"embeds\":[")
+  |> should.equal(True)
+  string.contains(encoded, "\"footer\":")
+  |> should.equal(True)
+  string.contains(encoded, "\"text\":\"Footer\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"icon_url\":\"https://example.com/footer.png\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"author\":")
+  |> should.equal(True)
+  string.contains(encoded, "\"name\":\"Author\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"url\":\"https://example.com/author\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"icon_url\":\"https://example.com/author.png\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"fields\":[")
+  |> should.equal(True)
+  string.contains(encoded, "\"attachments\":[")
+  |> should.equal(True)
+  string.contains(encoded, "\"id\":\"0\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"filename\":\"doc.txt\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"description\":\"Attached doc\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"message_reference\":")
+  |> should.equal(True)
+  string.contains(encoded, "\"message_id\":\"111\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"channel_id\":\"222\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"guild_id\":\"333\"")
+  |> should.equal(True)
+  string.contains(encoded, "\"allowed_mentions\":")
+  |> should.equal(True)
+}
+
+pub fn encode_message_options_omits_optional_blocks_when_not_set_test() {
+  let opts =
+    rest.new_message_options()
+    |> rest.with_content("minimal")
+  let encoded = rest.encode_message_options(opts)
+
+  string.contains(encoded, "\"embeds\"")
+  |> should.equal(False)
+  string.contains(encoded, "\"attachments\"")
+  |> should.equal(False)
+  string.contains(encoded, "\"allowed_mentions\"")
+  |> should.equal(False)
+  string.contains(encoded, "\"components\"")
+  |> should.equal(False)
 }
 
 // ============================================================================
@@ -691,4 +831,105 @@ pub fn snowflake_type_test() {
   // Snowflake is just a type alias for String
   let snowflake: rest.Snowflake = "123456789012345678"
   snowflake |> should.equal("123456789012345678")
+}
+
+// ============================================================================
+// API Actor Integration Tests (validation + network failure)
+// ============================================================================
+
+pub fn send_message_requires_payload_test() {
+  let client = unreachable_rest_client()
+  case
+    rest.send_message_with_options(client, "123", rest.new_message_options())
+  {
+    Error(rest.BadRequest(message)) ->
+      message
+      |> should.equal("Message must have content, embeds, or attachments")
+    _ -> should.fail()
+  }
+}
+
+pub fn edit_message_requires_payload_test() {
+  let client = unreachable_rest_client()
+  case
+    rest.edit_message_with_options(
+      client,
+      "123",
+      "message-1",
+      rest.new_message_options(),
+    )
+  {
+    Error(rest.BadRequest(message)) ->
+      message
+      |> should.equal("Message must have content, embeds, or attachments")
+    _ -> should.fail()
+  }
+}
+
+pub fn send_message_connection_error_test() {
+  let client = unreachable_rest_client()
+  rest.send_message(client, "123", "hello")
+  |> should_be_http_error
+}
+
+pub fn send_message_with_options_connection_error_test() {
+  let client = unreachable_rest_client()
+  let options =
+    rest.new_message_options()
+    |> rest.with_content("hello")
+  rest.send_message_with_options(client, "123", options)
+  |> should_be_http_error
+}
+
+pub fn edit_message_with_options_connection_error_test() {
+  let client = unreachable_rest_client()
+  let options =
+    rest.new_message_options()
+    |> rest.with_content("patched")
+  rest.edit_message_with_options(client, "123", "message-1", options)
+  |> should_be_http_error
+}
+
+pub fn trigger_typing_indicator_connection_error_test() {
+  let client = unreachable_rest_client()
+  rest.trigger_typing_indicator(client, "123")
+  |> should_be_http_error
+}
+
+pub fn get_rate_limit_info_defaults_to_empty_map_test() {
+  let client = unreachable_rest_client()
+  rest.get_rate_limit_info(client)
+  |> dict.size
+  |> should.equal(0)
+}
+
+pub fn clear_rate_limits_keeps_empty_map_test() {
+  let client = unreachable_rest_client()
+  rest.clear_rate_limits(client)
+  rest.get_rate_limit_info(client)
+  |> dict.size
+  |> should.equal(0)
+}
+
+pub fn stop_client_returns_nil_test() {
+  let client = unreachable_rest_client()
+  rest.stop(client) |> should.equal(Nil)
+}
+
+fn unreachable_rest_client() -> rest.RestClient {
+  ensure_hackney_started()
+  let config =
+    rest.new_config("test-token")
+    |> rest.with_base_url("http://127.0.0.1:1")
+    |> rest.with_timeout(50)
+  let assert Ok(client) = rest.start(config)
+  client
+}
+
+fn should_be_http_error(result: Result(a, rest.DiscordRestError)) {
+  case result {
+    Error(rest.HttpError(message)) ->
+      string.contains(message, "HTTP error:") |> should.equal(True)
+    _ -> should.fail()
+  }
 }

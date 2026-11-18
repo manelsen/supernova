@@ -37,7 +37,9 @@ pub type SessionResolver {
 ///
 /// The manager_fn is called to resolve sessions. If it fails, a fallback
 /// session ID is generated.
-pub fn with_manager(manager_fn: fn(String, String) -> String) -> SessionResolver {
+pub fn with_manager(
+  manager_fn: fn(String, String) -> String,
+) -> SessionResolver {
   SessionResolver(resolve: fn(channel_id, user_id) {
     let session_id = manager_fn(channel_id, user_id)
     case string.is_empty(session_id) {

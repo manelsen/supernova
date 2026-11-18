@@ -18,7 +18,10 @@ import gleam/string
 /// Validate that a path is within the workspace.
 ///
 /// Returns the full path on success, or an error message on failure.
-pub fn validate_path(workspace: String, path: String) -> Result(String, String) {
+pub fn validate_path(
+  workspace: String,
+  path: String,
+) -> Result(String, String) {
   // Block absolute paths
   case string.starts_with(path, "/") {
     True -> Error("Absolute path blocked: " <> path)

@@ -740,7 +740,9 @@ fn configure_lark(state: WizardState) -> Result(WizardState, WizardError) {
   }
 }
 
-fn configure_google_chat(state: WizardState) -> Result(WizardState, WizardError) {
+fn configure_google_chat(
+  state: WizardState,
+) -> Result(WizardState, WizardError) {
   print_section("Google Chat Bot Setup")
   use webhook_url <- result_try(ask(
     "Paste your Google Chat webhook URL (blank to skip): ",
@@ -762,7 +764,9 @@ fn configure_slack(state: WizardState) -> Result(WizardState, WizardError) {
   Ok(WizardState(..state, slack_token: slack_token))
 }
 
-fn configure_mattermost(state: WizardState) -> Result(WizardState, WizardError) {
+fn configure_mattermost(
+  state: WizardState,
+) -> Result(WizardState, WizardError) {
   print_section("Mattermost Bot Setup")
   use token <- result_try(ask("Paste your Mattermost token (blank to skip): "))
   let mattermost_token = case string.trim(token) {
@@ -793,7 +797,9 @@ fn configure_mattermost(state: WizardState) -> Result(WizardState, WizardError) 
   }
 }
 
-fn configure_wechat_work(state: WizardState) -> Result(WizardState, WizardError) {
+fn configure_wechat_work(
+  state: WizardState,
+) -> Result(WizardState, WizardError) {
   print_section("WeChat Work Bot Setup")
   use webhook_url <- result_try(ask(
     "Paste your WeChat Work webhook URL (blank to skip): ",

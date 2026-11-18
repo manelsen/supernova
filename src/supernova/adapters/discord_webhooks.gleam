@@ -612,7 +612,10 @@ pub fn with_avatar_url(
 }
 
 /// Set TTS flag
-pub fn with_tts(opts: ExecuteWebhookOptions, tts: Bool) -> ExecuteWebhookOptions {
+pub fn with_tts(
+  opts: ExecuteWebhookOptions,
+  tts: Bool,
+) -> ExecuteWebhookOptions {
   ExecuteWebhookOptions(..opts, tts: Some(tts))
 }
 
@@ -785,7 +788,10 @@ pub fn new_author(name: String) -> WebhookEmbedAuthor {
 }
 
 /// Set author URL
-pub fn author_url(author: WebhookEmbedAuthor, url: String) -> WebhookEmbedAuthor {
+pub fn author_url(
+  author: WebhookEmbedAuthor,
+  url: String,
+) -> WebhookEmbedAuthor {
   WebhookEmbedAuthor(..author, url: Some(url))
 }
 
@@ -803,7 +809,10 @@ pub fn new_field(name: String, value: String) -> WebhookEmbedField {
 }
 
 /// Set field inline
-pub fn field_inline(field: WebhookEmbedField, inline: Bool) -> WebhookEmbedField {
+pub fn field_inline(
+  field: WebhookEmbedField,
+  inline: Bool,
+) -> WebhookEmbedField {
   WebhookEmbedField(..field, inline: Some(inline))
 }
 
@@ -850,7 +859,10 @@ pub fn new_allowed_mentions() -> AllowedMentions {
 }
 
 /// Add parse type (e.g., "users", "roles", "everyone")
-pub fn allow_parse(mentions: AllowedMentions, parse: String) -> AllowedMentions {
+pub fn allow_parse(
+  mentions: AllowedMentions,
+  parse: String,
+) -> AllowedMentions {
   AllowedMentions(..mentions, parse: [parse, ..mentions.parse])
 }
 

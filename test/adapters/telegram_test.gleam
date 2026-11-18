@@ -244,6 +244,127 @@ pub fn decode_update_with_edited_message_test() -> Nil {
   }
 }
 
+pub fn parse_update_with_inline_query_test() -> Nil {
+  let json_str =
+    "{\"update_id\": 103, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": {\"id\": \"iq-1\", \"from\": {\"id\": 777, \"is_bot\": false, \"first_name\": \"Ada\", \"last_name\": null, \"username\": \"ada\", \"language_code\": \"pt\"}, \"query\": \"status\", \"offset\": \"0\", \"chat_type\": \"supergroup\"}, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": null}"
+
+  case telegram.parse_update(json_str) {
+    Ok(update) -> {
+      update.update_id |> should.equal(103)
+      case update.inline_query {
+        Some(inline_query) -> {
+          inline_query.id |> should.equal("iq-1")
+          inline_query.query |> should.equal("status")
+        }
+        None -> should.fail()
+      }
+      telegram.get_user(update) |> should.equal(None)
+    }
+    Error(err) -> panic as err
+  }
+}
+
+pub fn parse_update_with_chosen_inline_result_and_location_test() -> Nil {
+  let json_str =
+    "{\"update_id\": 104, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": {\"result_id\": \"res-9\", \"from\": {\"id\": 321, \"is_bot\": false, \"first_name\": \"Lin\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"location\": {\"latitude\": -23.5, \"longitude\": -46.6}, \"inline_message_id\": \"inline-1\", \"query\": \"weather\"}, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": null}"
+
+  case telegram.parse_update(json_str) {
+    Ok(update) -> {
+      update.update_id |> should.equal(104)
+      case update.chosen_inline_result {
+        Some(result) -> {
+          result.result_id |> should.equal("res-9")
+          result.inline_message_id |> should.equal(Some("inline-1"))
+          result.query |> should.equal("weather")
+        }
+        None -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn parse_update_with_poll_answer_and_get_user_test() -> Nil {
+  let json_str =
+    "{\"update_id\": 105, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": {\"poll_id\": \"poll-1\", \"user\": {\"id\": 654, \"is_bot\": false, \"first_name\": \"Jo\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"option_ids\": [1, 3]}, \"message_reaction\": null}"
+
+  case telegram.parse_update(json_str) {
+    Ok(update) -> {
+      update.update_id |> should.equal(105)
+      case update.poll_answer {
+        Some(answer) -> {
+          answer.poll_id |> should.equal("poll-1")
+          answer.option_ids |> should.equal([1, 3])
+        }
+        None -> should.fail()
+      }
+      case telegram.get_user(update) {
+        Some(user) -> user.id |> should.equal("654")
+        None -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn parse_update_with_message_reaction_and_get_chat_id_test() -> Nil {
+  let json_str =
+    "{\"update_id\": 106, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": {\"chat\": {\"id\": 999, \"type\": \"group\", \"title\": \"Ops\", \"username\": null, \"first_name\": null, \"last_name\": null}, \"message_id\": 44, \"user\": {\"id\": 888, \"is_bot\": false, \"first_name\": \"Rea\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"date\": 1700000000, \"old_reaction\": [{\"type\": \"emoji\", \"emoji\": \"👍\", \"custom_emoji_id\": null}], \"new_reaction\": [{\"type\": \"emoji\", \"emoji\": \"🔥\", \"custom_emoji_id\": null}]}}"
+
+  case telegram.parse_update(json_str) {
+    Ok(update) -> {
+      update.update_id |> should.equal(106)
+      telegram.get_chat_id(update) |> should.equal(Some("999"))
+      case telegram.get_user(update) {
+        Some(user) -> user.id |> should.equal("888")
+        None -> should.fail()
+      }
+      case update.message_reaction {
+        Some(reaction) -> {
+          reaction.message_id |> should.equal(44)
+          list.length(reaction.old_reaction) |> should.equal(1)
+          list.length(reaction.new_reaction) |> should.equal(1)
+        }
+        None -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn parse_updates_array_public_helper_test() -> Nil {
+  let json_str =
+    "[{\"update_id\": 201, \"message\": {\"message_id\": 1, \"from\": null, \"sender_chat\": null, \"date\": 1609459200, \"chat\": {\"id\": 123, \"type\": \"private\", \"title\": null, \"username\": null, \"first_name\": null, \"last_name\": null}, \"forward_from\": null, \"forward_date\": null, \"text\": \"Hello\", \"caption\": null, \"entities\": null, \"caption_entities\": null}, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": null}, {\"update_id\": 202, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": {\"id\": \"cb-a\", \"from\": {\"id\": 456, \"is_bot\": false, \"first_name\": \"John\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"message\": null, \"inline_message_id\": null, \"chat_instance\": \"12345\", \"data\": \"click\", \"game_short_name\": null}, \"poll_answer\": null, \"message_reaction\": null}]"
+
+  case telegram.parse_updates_array(json_str) {
+    Ok(updates) -> {
+      updates |> list_length |> should.equal(2)
+      case updates {
+        [first, second] -> {
+          first.update_id |> should.equal(201)
+          second.update_id |> should.equal(202)
+        }
+        _ -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn parse_callback_query_public_helper_test() -> Nil {
+  let json_str =
+    "{\"id\": \"cb-public\", \"from\": {\"id\": 333, \"is_bot\": false, \"first_name\": \"Pub\", \"last_name\": null, \"username\": \"pub\", \"language_code\": null}, \"message\": null, \"inline_message_id\": null, \"chat_instance\": \"abc\", \"data\": \"choose\", \"game_short_name\": null}"
+
+  case telegram.parse_callback_query(json_str) {
+    Ok(callback_query) -> {
+      callback_query.id |> should.equal("cb-public")
+      callback_query.data |> should.equal(Some("choose"))
+      callback_query.from.id |> should.equal("333")
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn decode_updates_array_test() -> Nil {
   let json_str =
     "{\"ok\": true, \"result\": [{\"update_id\": 100, \"message\": {\"message_id\": 1, \"from\": null, \"sender_chat\": null, \"date\": 1609459200, \"chat\": {\"id\": 123, \"type\": \"private\", \"title\": null, \"username\": null, \"first_name\": null, \"last_name\": null}, \"forward_from\": null, \"forward_date\": null, \"text\": \"Hello\", \"caption\": null, \"entities\": null, \"caption_entities\": null}, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null}]}"
@@ -307,6 +428,89 @@ pub fn get_chat_id_from_callback_update_test() -> Nil {
       "{\"update_id\": 101, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": {\"id\": \"cb123\", \"from\": {\"id\": 456, \"is_bot\": false, \"first_name\": \"John\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"message\": {\"message_id\": 1, \"from\": null, \"sender_chat\": null, \"date\": 1609459200, \"chat\": {\"id\": 456, \"type\": \"private\", \"title\": null, \"username\": null, \"first_name\": null, \"last_name\": null}, \"forward_from\": null, \"forward_date\": null, \"text\": null, \"caption\": null, \"entities\": null, \"caption_entities\": null}, \"inline_message_id\": null, \"chat_instance\": \"12345\", \"data\": \"test\", \"game_short_name\": null}}",
     )
   telegram.get_chat_id(update) |> should.equal(Some("456"))
+}
+
+pub fn get_chat_id_from_edited_message_update_test() -> Nil {
+  let update =
+    decode_update_from_json(
+      "{\"update_id\": 107, \"message\": null, \"edited_message\": {\"message_id\": 2, \"from\": null, \"sender_chat\": null, \"date\": 1609459200, \"chat\": {\"id\": 789, \"type\": \"group\", \"title\": \"Team\", \"username\": null, \"first_name\": null, \"last_name\": null}, \"forward_from\": null, \"forward_date\": null, \"text\": \"Edited\", \"caption\": null, \"entities\": null, \"caption_entities\": null}, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null}",
+    )
+  telegram.get_chat_id(update) |> should.equal(Some("789"))
+}
+
+pub fn get_chat_id_from_message_reaction_update_test() -> Nil {
+  let assert Ok(update) =
+    telegram.parse_update(
+      "{\"update_id\": 108, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": {\"chat\": {\"id\": 654, \"type\": \"group\", \"title\": \"Ops\", \"username\": null, \"first_name\": null, \"last_name\": null}, \"message_id\": 44, \"user\": null, \"date\": 1700000000, \"old_reaction\": [{\"type\": \"emoji\", \"emoji\": \"👍\", \"custom_emoji_id\": null}], \"new_reaction\": [{\"type\": \"emoji\", \"emoji\": \"🔥\", \"custom_emoji_id\": null}]}}",
+    )
+  telegram.get_chat_id(update) |> should.equal(Some("654"))
+}
+
+pub fn get_user_from_callback_query_update_test() -> Nil {
+  let update =
+    decode_update_from_json(
+      "{\"update_id\": 109, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": {\"id\": \"cb-user\", \"from\": {\"id\": 456, \"is_bot\": false, \"first_name\": \"John\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"message\": null, \"inline_message_id\": null, \"chat_instance\": \"12345\", \"data\": \"test\", \"game_short_name\": null}}",
+    )
+  case telegram.get_user(update) {
+    Some(user) -> user.id |> should.equal("456")
+    None -> should.fail()
+  }
+}
+
+pub fn get_user_from_poll_answer_update_test() -> Nil {
+  let assert Ok(update) =
+    telegram.parse_update(
+      "{\"update_id\": 110, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": {\"poll_id\": \"poll-u\", \"user\": {\"id\": 999, \"is_bot\": false, \"first_name\": \"Pol\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"option_ids\": [0]}, \"message_reaction\": null}",
+    )
+  case telegram.get_user(update) {
+    Some(user) -> user.id |> should.equal("999")
+    None -> should.fail()
+  }
+}
+
+pub fn get_user_from_message_reaction_update_test() -> Nil {
+  let assert Ok(update) =
+    telegram.parse_update(
+      "{\"update_id\": 111, \"message\": null, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": {\"chat\": {\"id\": 654, \"type\": \"group\", \"title\": \"Ops\", \"username\": null, \"first_name\": null, \"last_name\": null}, \"message_id\": 44, \"user\": {\"id\": 111, \"is_bot\": false, \"first_name\": \"Rea\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"date\": 1700000000, \"old_reaction\": [{\"type\": \"emoji\", \"emoji\": \"👍\", \"custom_emoji_id\": null}], \"new_reaction\": [{\"type\": \"emoji\", \"emoji\": \"🔥\", \"custom_emoji_id\": null}]}}",
+    )
+  case telegram.get_user(update) {
+    Some(user) -> user.id |> should.equal("111")
+    None -> should.fail()
+  }
+}
+
+pub fn parse_update_invalid_json_returns_error_test() -> Nil {
+  case telegram.parse_update("{not json") {
+    Error(_) -> Nil
+    Ok(_) -> should.fail()
+  }
+}
+
+pub fn parse_updates_array_invalid_json_returns_error_test() -> Nil {
+  case telegram.parse_updates_array("[invalid") {
+    Error(_) -> Nil
+    Ok(_) -> should.fail()
+  }
+}
+
+pub fn send_message_with_options_message_too_long_short_circuits_test() -> Nil {
+  let config = telegram.new_config("test-token")
+  let long_text = string.repeat("a", 4097)
+  let options = telegram.new_send_options()
+
+  telegram.send_message_with_options(config, "123456", long_text, options)
+  |> should.equal(Error(telegram.MessageTooLongError))
+}
+
+pub fn send_or_edit_message_message_too_long_short_circuits_test() -> Nil {
+  let config = telegram.new_config("test-token")
+  let long_text = string.repeat("b", 4097)
+  let options = telegram.new_send_options()
+
+  telegram.send_or_edit_message(config, "123456", long_text, None, options)
+  |> should.equal(Error(telegram.MessageTooLongError))
+  telegram.send_or_edit_message(config, "123456", long_text, Some(10), options)
+  |> should.equal(Error(telegram.MessageTooLongError))
 }
 
 pub fn is_command_with_command_test() -> Nil {
@@ -400,6 +604,70 @@ pub fn stop_polling_test() -> Nil {
   let assert Ok(Nil) = telegram.stop_polling(poller)
   let state = telegram.get_poller_state(poller)
   state.is_running |> should.equal(False)
+}
+
+pub fn parse_update_unknown_chat_type_defaults_to_private_test() -> Nil {
+  let json_str =
+    "{\"update_id\": 120, \"message\": {\"message_id\": 9, \"from\": null, \"sender_chat\": null, \"date\": 1609459200, \"chat\": {\"id\": 333, \"type\": \"mystery\", \"title\": null, \"username\": null, \"first_name\": null, \"last_name\": null}, \"forward_from\": null, \"forward_date\": null, \"text\": \"hello\", \"caption\": null, \"entities\": null, \"caption_entities\": null}, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": null}"
+
+  let assert Ok(update) = telegram.parse_update(json_str)
+  let assert Some(message) = update.message
+  message.chat.chat_type |> should.equal(telegram.PrivateChat)
+}
+
+pub fn parse_update_extracts_reply_to_message_id_test() -> Nil {
+  let json_str =
+    "{\"update_id\": 121, \"message\": {\"message_id\": 10, \"from\": null, \"sender_chat\": null, \"date\": 1609459200, \"chat\": {\"id\": 333, \"type\": \"private\", \"title\": null, \"username\": null, \"first_name\": null, \"last_name\": null}, \"reply_to_message\": {\"message_id\": 77}, \"forward_from\": null, \"forward_date\": null, \"text\": \"reply\", \"caption\": null, \"entities\": null, \"caption_entities\": null}, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": null}"
+
+  let assert Ok(update) = telegram.parse_update(json_str)
+  let assert Some(message) = update.message
+  message.reply_to_message_id |> should.equal(Some(77))
+}
+
+pub fn parse_update_invalid_reply_to_message_defaults_to_none_test() -> Nil {
+  let json_str =
+    "{\"update_id\": 122, \"message\": {\"message_id\": 11, \"from\": null, \"sender_chat\": null, \"date\": 1609459200, \"chat\": {\"id\": 333, \"type\": \"private\", \"title\": null, \"username\": null, \"first_name\": null, \"last_name\": null}, \"reply_to_message\": {\"id\": 77}, \"forward_from\": null, \"forward_date\": null, \"text\": \"reply\", \"caption\": null, \"entities\": null, \"caption_entities\": null}, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": null}"
+
+  let assert Ok(update) = telegram.parse_update(json_str)
+  let assert Some(message) = update.message
+  message.reply_to_message_id |> should.equal(None)
+}
+
+pub fn parse_callback_query_accepts_numeric_id_test() -> Nil {
+  let json_str =
+    "{\"id\": 987654, \"from\": {\"id\": 1, \"is_bot\": false, \"first_name\": \"N\", \"last_name\": null, \"username\": null, \"language_code\": null}, \"message\": null, \"inline_message_id\": null, \"chat_instance\": \"ci\", \"data\": \"click\", \"game_short_name\": null}"
+
+  let assert Ok(cb) = telegram.parse_callback_query(json_str)
+  cb.id |> should.equal("987654")
+}
+
+pub fn parse_update_decodes_all_message_entity_types_test() -> Nil {
+  let json_str =
+    "{\"update_id\": 123, \"message\": {\"message_id\": 12, \"from\": null, \"sender_chat\": null, \"date\": 1609459200, \"chat\": {\"id\": 333, \"type\": \"private\", \"title\": null, \"username\": null, \"first_name\": null, \"last_name\": null}, \"forward_from\": null, \"forward_date\": null, \"text\": \"entities\", \"caption\": null, \"entities\": [{\"type\":\"mention\",\"offset\":0,\"length\":1},{\"type\":\"hashtag\",\"offset\":1,\"length\":1},{\"type\":\"cashtag\",\"offset\":2,\"length\":1},{\"type\":\"bot_command\",\"offset\":3,\"length\":1},{\"type\":\"url\",\"offset\":4,\"length\":1},{\"type\":\"email\",\"offset\":5,\"length\":1},{\"type\":\"phone_number\",\"offset\":6,\"length\":1},{\"type\":\"bold\",\"offset\":7,\"length\":1},{\"type\":\"italic\",\"offset\":8,\"length\":1},{\"type\":\"underline\",\"offset\":9,\"length\":1},{\"type\":\"strikethrough\",\"offset\":10,\"length\":1},{\"type\":\"spoiler\",\"offset\":11,\"length\":1},{\"type\":\"code\",\"offset\":12,\"length\":1},{\"type\":\"pre\",\"offset\":13,\"length\":1},{\"type\":\"text_link\",\"offset\":14,\"length\":1},{\"type\":\"text_mention\",\"offset\":15,\"length\":1},{\"type\":\"custom_emoji\",\"offset\":16,\"length\":1},{\"type\":\"unknown_type\",\"offset\":17,\"length\":1}], \"caption_entities\": null}, \"edited_message\": null, \"channel_post\": null, \"edited_channel_post\": null, \"inline_query\": null, \"chosen_inline_result\": null, \"callback_query\": null, \"poll_answer\": null, \"message_reaction\": null}"
+
+  let assert Ok(update) = telegram.parse_update(json_str)
+  let assert Some(message) = update.message
+  list.length(message.entities) |> should.equal(18)
+
+  let entity_types =
+    list.map(message.entities, fn(entity) { entity.entity_type })
+  list.any(entity_types, fn(t) { t == telegram.CustomEmojiEntity })
+  |> should.equal(True)
+  // Unknown entity type falls back to MentionEntity
+  list.length(list.filter(entity_types, fn(t) { t == telegram.MentionEntity }))
+  |> should.equal(2)
+}
+
+pub fn get_updates_with_invalid_token_returns_http_error_test() -> Nil {
+  let config = telegram.new_config("invalid token with spaces")
+  let assert Ok(poller) = telegram.start_poller(config)
+
+  case telegram.get_updates(poller) {
+    Error(telegram.HttpError(message)) ->
+      string.starts_with(message, "Failed to parse URL:")
+      |> should.equal(True)
+    _ -> should.fail()
+  }
 }
 
 // ============================================================================

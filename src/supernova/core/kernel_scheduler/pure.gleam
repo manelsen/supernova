@@ -250,7 +250,9 @@ fn is_starved(info: AgentInfo, now: Int) -> Bool {
 }
 
 /// Boost a priority by one level (for starvation recovery).
-fn boost_priority(priority: types.SchedulerPriority) -> types.SchedulerPriority {
+fn boost_priority(
+  priority: types.SchedulerPriority,
+) -> types.SchedulerPriority {
   case priority {
     types.Low -> types.Normal
     types.Normal -> types.High

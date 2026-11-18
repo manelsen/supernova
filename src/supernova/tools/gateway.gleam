@@ -19,6 +19,7 @@ import supernova/core/syscall/types.{
   KillAgent, ReadFile, ReadWorld, Schedule, SpawnAgent, SyscallDenied,
   SyscallFailed, SyscallOk, WriteFile, WriteWorld,
 }
+import supernova/core/workspace_policy/actor as policy_actor
 import supernova/llm/provider
 
 const default_agent_id = "gateway_tool"
@@ -250,22 +251,33 @@ fn invoke_once(
   register_agent: Bool,
   op: SyscallOp,
 ) -> Result(String, String) {
-  case syscall_actor.start() {
+  case policy_actor.start("workspaces") {
     Error(error) ->
       Error(
-        "Invalid arguments for gateway: could not start syscall gateway: "
+        "Invalid arguments for gateway: could not start workspace policy: "
         <> string.inspect(error),
       )
-    Ok(gateway) -> {
-      case register_agent {
-        True -> syscall_actor.register_agent(gateway, agent_id)
-        False -> Nil
-      }
+    Ok(policy) ->
+      case syscall_actor.start_with_policies(Some(policy), None, None) {
+        Error(error) -> {
+          policy_actor.stop(policy)
+          Error(
+            "Invalid arguments for gateway: could not start syscall gateway: "
+            <> string.inspect(error),
+          )
+        }
+        Ok(gateway) -> {
+          case register_agent {
+            True -> syscall_actor.register_agent(gateway, agent_id)
+            False -> Nil
+          }
 
-      let result = syscall_actor.invoke(gateway, agent_id, op)
-      syscall_actor.stop(gateway)
-      Ok(render_result(result))
-    }
+          let result = syscall_actor.invoke(gateway, agent_id, op)
+          syscall_actor.stop(gateway)
+          policy_actor.stop(policy)
+          Ok(render_result(result))
+        }
+      }
   }
 }
 

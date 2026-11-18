@@ -20,9 +20,9 @@ pub type HealthServer {
 }
 
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
-fn current_timestamp() -> Int
+pub fn current_timestamp() -> Int
 
-fn uptime_seconds(start_time_ms: Int) -> Int {
+pub fn uptime_seconds(start_time_ms: Int) -> Int {
   let now_ms = current_timestamp()
   { now_ms - start_time_ms } / 1000
 }
@@ -42,13 +42,17 @@ fn handle_request(
   }
 }
 
-fn handle_health(start_time_ms: Int) -> response.Response(ResponseData) {
+pub fn render_health_json(start_time_ms: Int) -> String {
   let status =
     health_types.HealthStatus(
       status: "ok",
       uptime_seconds: uptime_seconds(start_time_ms),
     )
-  let body = health_types.health_status_to_json(status)
+  health_types.health_status_to_json(status)
+}
+
+fn handle_health(start_time_ms: Int) -> response.Response(ResponseData) {
+  let body = render_health_json(start_time_ms)
   response.new(200)
   |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
   |> response.set_header("content-type", "application/json")
@@ -59,10 +63,10 @@ fn handle_live() -> response.Response(ResponseData) {
   |> response.set_body(mist.Bytes(bytes_tree.from_string("ok")))
 }
 
-fn handle_ready(
+pub fn render_ready_json(
   start_time_ms: Int,
   get_ready_channels: fn() -> List(String),
-) -> response.Response(ResponseData) {
+) -> String {
   let channels =
     get_ready_channels()
     |> list.map(fn(name) {
@@ -74,7 +78,14 @@ fn handle_ready(
       uptime_seconds: uptime_seconds(start_time_ms),
       channels_ready: channels,
     )
-  let body = health_types.readiness_status_to_json(status)
+  health_types.readiness_status_to_json(status)
+}
+
+fn handle_ready(
+  start_time_ms: Int,
+  get_ready_channels: fn() -> List(String),
+) -> response.Response(ResponseData) {
+  let body = render_ready_json(start_time_ms, get_ready_channels)
   response.new(200)
   |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
   |> response.set_header("content-type", "application/json")

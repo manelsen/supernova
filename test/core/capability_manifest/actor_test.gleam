@@ -8,6 +8,7 @@ import gleeunit
 import gleeunit/should
 import supernova/core/capability_manifest/actor
 import supernova/core/capability_manifest/types.{CapabilityManifest}
+import test_workspace
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -18,7 +19,8 @@ pub fn main() -> Nil {
 // ============================================================================
 
 pub fn start_and_stop_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
   actor.stop(caps)
 
   // Give actor time to terminate
@@ -30,7 +32,8 @@ pub fn start_and_stop_test() {
 // ============================================================================
 
 pub fn default_allows_filesystem_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   actor.allowed(caps, "agent_1", "filesystem")
   |> should.be_true()
@@ -40,7 +43,8 @@ pub fn default_allows_filesystem_test() {
 }
 
 pub fn default_allows_web_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   actor.allowed(caps, "agent_1", "web")
   |> should.be_true()
@@ -50,7 +54,8 @@ pub fn default_allows_web_test() {
 }
 
 pub fn default_denies_shell_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   actor.allowed(caps, "agent_1", "shell")
   |> should.be_false()
@@ -60,7 +65,8 @@ pub fn default_denies_shell_test() {
 }
 
 pub fn default_denies_github_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   actor.allowed(caps, "agent_1", "github")
   |> should.be_false()
@@ -70,7 +76,8 @@ pub fn default_denies_github_test() {
 }
 
 pub fn default_denies_unknown_tool_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   actor.allowed(caps, "agent_1", "unknown_tool")
   |> should.be_false()
@@ -84,7 +91,8 @@ pub fn default_denies_unknown_tool_test() {
 // ============================================================================
 
 pub fn set_and_get_manifest_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   let custom =
     CapabilityManifest(
@@ -105,7 +113,8 @@ pub fn set_and_get_manifest_test() {
 }
 
 pub fn set_manifest_affects_allowed_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   // Before: shell is denied by default
   actor.allowed(caps, "agent_1", "shell")
@@ -129,7 +138,8 @@ pub fn set_manifest_affects_allowed_test() {
 }
 
 pub fn get_manifest_returns_default_for_unknown_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   let manifest = actor.get_manifest(caps, "unknown_agent")
 
@@ -149,7 +159,8 @@ pub fn get_manifest_returns_default_for_unknown_test() {
 // ============================================================================
 
 pub fn allow_tool_adds_capability_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   // custom_tool not in default
   actor.allowed(caps, "agent_1", "custom_tool")
@@ -166,7 +177,8 @@ pub fn allow_tool_adds_capability_test() {
 }
 
 pub fn deny_tool_revokes_capability_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   // filesystem is allowed by default
   actor.allowed(caps, "agent_1", "filesystem")
@@ -187,7 +199,8 @@ pub fn deny_tool_revokes_capability_test() {
 // ============================================================================
 
 pub fn list_allowed_returns_default_tools_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   let allowed = actor.list_allowed(caps, "agent_1")
 
@@ -199,7 +212,8 @@ pub fn list_allowed_returns_default_tools_test() {
 }
 
 pub fn list_denied_returns_default_tools_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   let denied = actor.list_denied(caps, "agent_1")
 
@@ -215,7 +229,8 @@ pub fn list_denied_returns_default_tools_test() {
 // ============================================================================
 
 pub fn different_agents_have_independent_manifests_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   // Set custom manifest for agent_1
   let custom =
@@ -242,7 +257,8 @@ pub fn different_agents_have_independent_manifests_test() {
 // ============================================================================
 
 pub fn override_default_manifest_test() {
-  let assert Ok(caps) = actor.start("workspaces")
+  use root <- test_workspace.with_isolated_workspace("cap-actor")
+  let assert Ok(caps) = actor.start(root)
 
   // Default denies shell
   actor.allowed(caps, "agent_1", "shell")

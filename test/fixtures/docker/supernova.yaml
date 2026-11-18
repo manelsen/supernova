@@ -1,0 +1,8 @@
+app_name: "supernova-smoke"
+environment: "development"
+log_level: "info"
+
+providers:
+  ollama:
+    provider: "ollama"
+    model: "llama3.2"

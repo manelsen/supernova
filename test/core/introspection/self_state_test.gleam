@@ -2,9 +2,8 @@ import gleam/int
 import gleam/string
 import gleeunit/should
 import supernova/core/introspection/mood
-import supernova/core/introspection/self_state as introspection_self_state
 import supernova/core/introspection/self_state.{
-  default_preferences, from_workspace, prompt_block, save,
+  SelfState, default_preferences, from_workspace, prompt_block, save,
 }
 
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
@@ -17,7 +16,7 @@ fn unique_workspace(prefix: String) -> String {
 pub fn save_and_load_round_trip_test() {
   let workspace = unique_workspace("round-trip")
   let state =
-    introspection_self_state.SelfState(
+    SelfState(
       mood: mood.Mood(valence: -0.2, arousal: 0.9),
       mood_cause: "tool_error",
       wakefulness: 0.8,
@@ -37,7 +36,7 @@ pub fn save_and_load_round_trip_test() {
 
 pub fn prompt_block_contains_portuguese_humor_label_test() {
   let state =
-    introspection_self_state.SelfState(
+    SelfState(
       mood: mood.Mood(valence: -0.5, arousal: 0.8),
       mood_cause: "falha de ferramenta",
       wakefulness: 0.7,

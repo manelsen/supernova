@@ -339,7 +339,10 @@ pub fn new_plugin_message(content: String) -> PluginMessage {
 }
 
 /// Set message role
-pub fn message_with_role(message: PluginMessage, role: String) -> PluginMessage {
+pub fn message_with_role(
+  message: PluginMessage,
+  role: String,
+) -> PluginMessage {
   PluginMessage(..message, role: role)
 }
 
@@ -773,7 +776,7 @@ pub fn parse_config_yaml(
 fn do_parse_config_yaml(
   yaml: String,
 ) -> Result(PluginsConfigFile, ConfigParseError) {
-  case yay.parse_string(yaml) {
+  case yay.parse_string(string.trim(yaml)) {
     Ok([doc]) -> {
       let root = yay.document_root(doc)
       // Try to get plugins list

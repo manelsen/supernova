@@ -15,6 +15,7 @@
 import gleam/erlang/process.{type Subject}
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/string
 
 // ============================================================================
 // FFI Bindings
@@ -34,6 +35,22 @@ fn do_send_and_receive(
   timeout_ms: Int,
 ) -> Result(String, String)
 
+@external(erlang, "supernova_mcp_ffi", "send_and_receive_classified")
+fn do_send_and_receive_classified(
+  port: Dynamic,
+  data: String,
+  timeout_ms: Int,
+) -> Result(String, StdioError)
+
+@external(erlang, "supernova_mcp_ffi", "receive_line_classified")
+fn do_receive_line_classified(
+  port: Dynamic,
+  timeout_ms: Int,
+) -> Result(String, StdioError)
+
+@external(erlang, "supernova_mcp_ffi", "monotonic_ms")
+fn do_monotonic_ms() -> Int
+
 @external(erlang, "supernova_mcp_ffi", "send_data")
 fn do_send_data(port: Dynamic, data: String) -> Result(Nil, String)
 
@@ -47,6 +64,20 @@ pub type Dynamic
 // Types
 // ============================================================================
 
+/// Classified transport error produced by STDIO reads.
+pub type StdioError {
+  ProcessDead(String)
+  Timeout(String)
+  OtherError(String)
+}
+
+/// Convert a typed StdioError into its human-readable message.
+pub fn error_to_string(err: StdioError) -> String {
+  case err {
+    ProcessDead(msg) | Timeout(msg) | OtherError(msg) -> msg
+  }
+}
+
 /// Messages for the STDIO transport actor.
 pub type StdioMessage {
   /// Send a JSON-RPC message and wait for response
@@ -54,6 +85,13 @@ pub type StdioMessage {
     reply_to: Subject(Result(String, String)),
     data: String,
     timeout_ms: Int,
+  )
+  /// Send a JSON-RPC message and read lines inside the actor until predicate holds
+  SendReceiveMatching(
+    reply_to: Subject(Result(String, StdioError)),
+    data: String,
+    timeout_ms: Int,
+    predicate: fn(String) -> Bool,
   )
   /// Send a JSON-RPC message without waiting (for notifications)
   SendOnly(reply_to: Subject(Result(Nil, String)), data: String)
@@ -94,6 +132,26 @@ fn handle_message(
         }
         None -> {
           actor.send(reply_to, Error("Port not open"))
+          actor.continue(state)
+        }
+      }
+    }
+
+    SendReceiveMatching(reply_to, data, timeout_ms, predicate) -> {
+      case state.port {
+        Some(port) -> {
+          let deadline = do_monotonic_ms() + timeout_ms
+          let result = case
+            do_send_and_receive_classified(port, data, timeout_ms)
+          {
+            Ok(line) -> drain_until_matching(port, line, deadline, predicate)
+            Error(err) -> Error(err)
+          }
+          actor.send(reply_to, result)
+          actor.continue(state)
+        }
+        None -> {
+          actor.send(reply_to, Error(ProcessDead("Port not open")))
           actor.continue(state)
         }
       }
@@ -177,8 +235,49 @@ pub fn send_and_receive(
   ))
 }
 
+fn drain_until_matching(
+  port: Dynamic,
+  line: String,
+  deadline: Int,
+  predicate: fn(String) -> Bool,
+) -> Result(String, StdioError) {
+  case predicate(line) {
+    True -> Ok(line)
+    False -> {
+      let remaining = deadline - do_monotonic_ms()
+      case remaining <= 0 {
+        True -> Error(Timeout("timeout"))
+        False ->
+          case do_receive_line_classified(port, remaining) {
+            Ok(next_line) ->
+              drain_until_matching(port, next_line, deadline, predicate)
+            Error(err) -> Error(err)
+          }
+      }
+    }
+  }
+}
+
+/// Send a JSON-RPC message and wait for a line matching `predicate`.
+/// Lines failing `predicate` are discarded inside the actor without yielding.
+pub fn send_and_receive_matching(
+  transport: StdioTransport,
+  data: String,
+  timeout_ms: Int,
+  predicate: fn(String) -> Bool,
+) -> Result(String, StdioError) {
+  actor.call(
+    transport,
+    waiting: timeout_ms + 1000,
+    sending: SendReceiveMatching(_, data, timeout_ms, predicate),
+  )
+}
+
 /// Send a JSON-RPC notification (no response expected).
-pub fn send_only(transport: StdioTransport, data: String) -> Result(Nil, String) {
+pub fn send_only(
+  transport: StdioTransport,
+  data: String,
+) -> Result(Nil, String) {
   actor.call(transport, waiting: 5000, sending: SendOnly(_, data))
 }
 
@@ -186,6 +285,3 @@ pub fn send_only(transport: StdioTransport, data: String) -> Result(Nil, String)
 pub fn stop(transport: StdioTransport) -> Nil {
   actor.call(transport, waiting: 5000, sending: Stop)
 }
-
-// Import for string.inspect
-import gleam/string

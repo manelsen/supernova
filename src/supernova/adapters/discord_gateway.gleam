@@ -550,7 +550,9 @@ fn handle_message(
 // ============================================================================
 
 /// Connect to Discord Gateway
-fn connect_to_gateway(state: GatewayState) -> Result(GatewayState, GatewayError) {
+fn connect_to_gateway(
+  state: GatewayState,
+) -> Result(GatewayState, GatewayError) {
   // Create WebSocket connection
   // Note: In production, this would start the actual stratus actor
   // For now, we return state with Connecting status

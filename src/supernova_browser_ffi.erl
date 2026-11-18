@@ -197,7 +197,15 @@ normalize_line(Line) ->
     case Trimmed of
         <<"ERROR: ", Rest/binary>> -> {error, Rest};
         _ when Trimmed =:= <<>> -> {error, <<"Browser runner returned empty response">>};
-        _ -> {ok, Trimmed}
+        <<"{", _/binary>> -> {ok, Trimmed};
+        <<"[", _/binary>> -> {ok, Trimmed};
+        <<"\"", _/binary>> -> {ok, Trimmed};
+        <<"true">> -> {ok, Trimmed};
+        <<"false">> -> {ok, Trimmed};
+        <<"null">> -> {ok, Trimmed};
+        <<Digit, _/binary>> when Digit >= $0, Digit =< $9 -> {ok, Trimmed};
+        <<$-, Digit, _/binary>> when Digit >= $0, Digit =< $9 -> {ok, Trimmed};
+        _ -> {error, <<"Unexpected browser runner output: ", Trimmed/binary>>}
     end.
 
 normalize_exit(Acc, 0) ->

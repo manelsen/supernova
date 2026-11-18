@@ -213,7 +213,10 @@ pub fn get_all_alerts(state: AlertsState) -> List(Alert) {
 }
 
 /// Get alerts for a specific agent.
-pub fn get_alerts_by_agent(state: AlertsState, agent_id: String) -> List(Alert) {
+pub fn get_alerts_by_agent(
+  state: AlertsState,
+  agent_id: String,
+) -> List(Alert) {
   state.alerts
   |> dict.values()
   |> list.filter(fn(a) { a.agent_id == agent_id })

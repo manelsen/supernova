@@ -325,7 +325,10 @@ pub fn get_channel_adapter(
 }
 
 /// Check if a channel is registered and available.
-pub fn is_channel_available(registry: ChannelRegistry, channel: String) -> Bool {
+pub fn is_channel_available(
+  registry: ChannelRegistry,
+  channel: String,
+) -> Bool {
   dict.has_key(registry.channels, channel)
 }
 
@@ -783,15 +786,8 @@ fn discord_interaction_to_inbound(
         is_bot,
         command_data,
       )
-    discord_events.ApplicationCommandAutocomplete, Some(command_data) ->
-      discord_command_interaction_to_inbound(
-        interaction,
-        channel_id,
-        user_id,
-        username,
-        is_bot,
-        command_data,
-      )
+    discord_events.ApplicationCommandAutocomplete, _ ->
+      Error(port.Ignored("discord autocomplete interaction ignored"))
     discord_events.MessageComponent, Some(component_data) ->
       discord_component_interaction_to_inbound(
         interaction,
@@ -2129,7 +2125,9 @@ fn telegram_reply_markup(
   |> telegram.inline_keyboard
 }
 
-fn telegram_button(button: port.ChannelButton) -> telegram.InlineKeyboardButton {
+fn telegram_button(
+  button: port.ChannelButton,
+) -> telegram.InlineKeyboardButton {
   telegram.inline_keyboard_button(
     port.button_label(button),
     port.button_action_id(button),

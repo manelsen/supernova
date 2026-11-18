@@ -45,7 +45,9 @@ fn launch_ids(commands: List(types.OrchestratorCommand)) -> List(String) {
   })
 }
 
-fn cancelled_reports(commands: List(types.OrchestratorCommand)) -> List(String) {
+fn cancelled_reports(
+  commands: List(types.OrchestratorCommand),
+) -> List(String) {
   list.filter_map(commands, fn(cmd) {
     case cmd {
       types.ReportProgress(id, "cancelled", _) -> Ok(id)

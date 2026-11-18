@@ -22,7 +22,7 @@ import gleam/list
 import gleam/order
 import gleam/otp/actor
 import gleam/string
-import supernova/adapters/mcp/stdio.{type StdioTransport}
+import supernova/adapters/mcp/stdio.{type StdioError, type StdioTransport}
 import supernova/llm/provider
 
 // ============================================================================
@@ -46,10 +46,12 @@ pub type ServerConfig {
 /// A discovered tool from an MCP server.
 pub type MCPTool {
   MCPTool(
-    /// Tool definition (for LLM)
+    /// Tool definition (for LLM). spec.name is qualified: "server_name/tool_name"
     spec: provider.ToolDefinition,
     /// Which server provides this tool
     server_name: String,
+    /// Original tool name as declared by the MCP server (unqualified)
+    original_name: String,
   )
 }
 
@@ -84,6 +86,14 @@ type ManagerState {
     servers: Dict(String, ServerConnection),
     tools: Dict(String, MCPTool),
   )
+}
+
+/// Classification of tools/call failures so transport loss and JSON-RPC
+/// application errors are handled distinctly.
+type ToolsCallFailure {
+  DeadTransportError(String)
+  TransientTransportError(String)
+  ProtocolError(String)
 }
 
 /// The manager handle.
@@ -134,25 +144,74 @@ fn initialize_params() -> String {
   "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"supernova\",\"version\":\"1.0.0\"}}"
 }
 
+fn supported_protocol_versions() -> List(String) {
+  ["2024-11-05"]
+}
+
+fn protocol_version_decoder() -> decode.Decoder(String) {
+  use version <- decode.field("protocolVersion", decode.string)
+  decode.success(version)
+}
+
+fn validate_protocol_version(result_json: String) -> Result(Nil, String) {
+  case json.parse(result_json, protocol_version_decoder()) {
+    Ok(version) ->
+      case list.contains(supported_protocol_versions(), version) {
+        True -> Ok(Nil)
+        False -> Error("Unsupported MCP protocol version: " <> version)
+      }
+    Error(_) -> Error("Missing protocolVersion in initialize response")
+  }
+}
+
+/// Send a JSON-RPC request and drain lines inside the stdio transport until a
+/// response with matching `id` arrives or the timeout expires. Non-JSON lines
+/// are accepted immediately so the parser reports invalid responses without blocking.
+fn send_request_matching_id(
+  transport: StdioTransport,
+  expected_id: Int,
+  request: String,
+  timeout_ms: Int,
+) -> Result(String, StdioError) {
+  stdio.send_and_receive_matching(transport, request, timeout_ms, fn(line) {
+    matches_expected_id_or_non_json(line, expected_id)
+  })
+}
+
+fn matches_expected_id_or_non_json(line: String, expected_id: Int) -> Bool {
+  case json.parse(line, decode.dynamic) {
+    Error(_) -> True
+    Ok(_) ->
+      case json.parse(line, decode.at(["id"], decode.int)) {
+        Ok(resp_id) -> resp_id == expected_id
+        Error(_) -> False
+      }
+  }
+}
+
 /// Send the initialize handshake to an MCP server.
 fn send_initialize(transport: StdioTransport, id: Int) -> Result(Nil, String) {
   let request = jsonrpc_request(id, "initialize", initialize_params())
-  case stdio.send_and_receive(transport, request, 10_000) {
+  case send_request_matching_id(transport, id, request, 10_000) {
     Ok(response) -> {
       case parse_jsonrpc_result(response) {
-        Ok(_) -> {
-          // Send initialized notification
-          let notification =
-            jsonrpc_notification("notifications/initialized", "{}")
-          case stdio.send_only(transport, notification) {
-            Ok(_) -> Ok(Nil)
-            Error(e) -> Error("Failed to send initialized: " <> e)
+        Ok(result_json) -> {
+          case validate_protocol_version(result_json) {
+            Error(e) -> Error(e)
+            Ok(_) -> {
+              let notification =
+                jsonrpc_notification("notifications/initialized", "{}")
+              case stdio.send_only(transport, notification) {
+                Ok(_) -> Ok(Nil)
+                Error(e) -> Error("Failed to send initialized: " <> e)
+              }
+            }
           }
         }
         Error(e) -> Error("Initialize failed: " <> e)
       }
     }
-    Error(e) -> Error("Initialize timeout/error: " <> e)
+    Error(e) -> Error("Initialize timeout/error: " <> stdio.error_to_string(e))
   }
 }
 
@@ -167,14 +226,14 @@ fn send_tools_list(
   server_name: String,
 ) -> Result(List(MCPTool), String) {
   let request = jsonrpc_request(id, "tools/list", "{}")
-  case stdio.send_and_receive(transport, request, 10_000) {
+  case send_request_matching_id(transport, id, request, 10_000) {
     Ok(response) -> {
       case parse_jsonrpc_result(response) {
         Ok(result_json) -> parse_tools_response(result_json, server_name)
         Error(e) -> Error("tools/list failed: " <> e)
       }
     }
-    Error(e) -> Error("tools/list timeout/error: " <> e)
+    Error(e) -> Error("tools/list timeout/error: " <> stdio.error_to_string(e))
   }
 }
 
@@ -202,26 +261,31 @@ fn tools_list_decoder(server_name: String) -> decode.Decoder(List(MCPTool)) {
 fn tool_decoder(server_name: String) -> decode.Decoder(MCPTool) {
   use name <- decode.field("name", decode.string)
   use description <- decode.optional_field("description", "", decode.string)
+  let qualified_name = server_name <> "/" <> name
   let spec =
     provider.ToolDefinition(
-      name: name,
+      name: qualified_name,
       description: description,
       parameters: [],
     )
-  decode.success(MCPTool(spec: spec, server_name: server_name))
+  decode.success(MCPTool(
+    spec: spec,
+    server_name: server_name,
+    original_name: name,
+  ))
 }
 
 // ============================================================================
 // MCP Protocol: Tools Call
 // ============================================================================
 
-/// Send tools/call request and return the result.
+/// Send tools/call request and return the result or classified failure.
 fn send_tools_call(
   transport: StdioTransport,
   id: Int,
   tool_name: String,
   args: String,
-) -> Result(String, String) {
+) -> Result(String, ToolsCallFailure) {
   let params =
     "{\"name\":\""
     <> json_escape(tool_name)
@@ -230,14 +294,17 @@ fn send_tools_call(
     <> "}"
 
   let request = jsonrpc_request(id, "tools/call", params)
-  case stdio.send_and_receive(transport, request, 30_000) {
+  case send_request_matching_id(transport, id, request, 30_000) {
     Ok(response) -> {
       case parse_jsonrpc_result(response) {
         Ok(result_json) -> Ok(result_json)
-        Error(e) -> Error("tools/call failed: " <> e)
+        Error(e) -> Error(ProtocolError("tools/call failed: " <> e))
       }
     }
-    Error(e) -> Error("tools/call timeout/error: " <> e)
+    Error(stdio.ProcessDead(msg)) ->
+      Error(DeadTransportError("tools/call timeout/error: " <> msg))
+    Error(stdio.Timeout(msg)) | Error(stdio.OtherError(msg)) ->
+      Error(TransientTransportError("tools/call timeout/error: " <> msg))
   }
 }
 
@@ -427,25 +494,36 @@ fn handle_message(
     ExecuteTool(reply_to, tool_name, args) -> {
       case dict.get(state.tools, tool_name) {
         Ok(mcp_tool) -> {
-          // Find the server connection
           case dict.get(state.servers, mcp_tool.server_name) {
             Ok(connection) -> {
               let id = connection.request_id
               let result =
-                send_tools_call(connection.transport, id, tool_name, args)
-
-              // Update request ID
-              let updated_connection =
-                ServerConnection(..connection, request_id: id + 1)
-              let new_servers =
-                dict.insert(
-                  state.servers,
-                  mcp_tool.server_name,
-                  updated_connection,
+                send_tools_call(
+                  connection.transport,
+                  id,
+                  mcp_tool.original_name,
+                  args,
                 )
 
-              actor.send(reply_to, result)
-              actor.continue(ManagerState(..state, servers: new_servers))
+              case result {
+                Ok(output) -> {
+                  let new_state =
+                    advance_request_id(state, mcp_tool.server_name, connection)
+                  actor.send(reply_to, Ok(output))
+                  actor.continue(new_state)
+                }
+                Error(DeadTransportError(e)) -> {
+                  let new_state = evict_dead_server(state, mcp_tool.server_name)
+                  actor.send(reply_to, Error(e))
+                  actor.continue(new_state)
+                }
+                Error(TransientTransportError(e)) | Error(ProtocolError(e)) -> {
+                  let new_state =
+                    advance_request_id(state, mcp_tool.server_name, connection)
+                  actor.send(reply_to, Error(e))
+                  actor.continue(new_state)
+                }
+              }
             }
             Error(_) -> {
               actor.send(
@@ -476,6 +554,28 @@ fn handle_message(
 
 fn string_compare(a: String, b: String) -> order.Order {
   string.compare(a, b)
+}
+
+fn advance_request_id(
+  state: ManagerState,
+  server_name: String,
+  connection: ServerConnection,
+) -> ManagerState {
+  let updated_connection =
+    ServerConnection(..connection, request_id: connection.request_id + 1)
+  let new_servers = dict.insert(state.servers, server_name, updated_connection)
+  ManagerState(..state, servers: new_servers)
+}
+
+fn evict_dead_server(state: ManagerState, server_name: String) -> ManagerState {
+  case dict.get(state.servers, server_name) {
+    Ok(connection) -> stdio.stop(connection.transport)
+    Error(_) -> Nil
+  }
+  let new_servers = dict.delete(state.servers, server_name)
+  let new_tools =
+    dict.filter(state.tools, fn(_k, t) { t.server_name != server_name })
+  ManagerState(servers: new_servers, tools: new_tools)
 }
 
 // ============================================================================

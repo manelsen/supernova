@@ -1,7 +1,7 @@
 //// Tests for Discord Gateway module
 
 import gleam/erlang/process
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit
 import gleeunit/should
@@ -331,6 +331,206 @@ pub fn subscribe_to_event_test() {
   let sub_id = gateway.subscribe_to_event(gw, subject, "MESSAGE_CREATE")
 
   should.equal(sub_id >= 1, True)
+
+  gateway.stop(gw)
+}
+
+pub fn connect_sets_status_to_connecting_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+
+  gateway.connect(gw)
+  |> should.equal(Ok(Nil))
+  gateway.get_status(gw)
+  |> should.equal(gateway.Connecting)
+
+  gateway.stop(gw)
+}
+
+pub fn reconnect_without_session_starts_fresh_connect_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+
+  gateway.reconnect(gw)
+  |> should.equal(Ok(Nil))
+  gateway.get_status(gw)
+  |> should.equal(gateway.Connecting)
+
+  gateway.stop(gw)
+}
+
+pub fn ws_hello_moves_gateway_to_identifying_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+
+  process.send(
+    gw,
+    gateway.WsMessage("{\"op\":10,\"d\":{\"heartbeat_interval\":12345}}"),
+  )
+
+  gateway.get_status(gw)
+  |> should.equal(gateway.Identifying)
+
+  gateway.stop(gw)
+}
+
+pub fn ws_ready_dispatch_sets_connected_and_session_info_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+  let subscriber = process.new_subject()
+  let _ = gateway.subscribe(gw, subscriber)
+
+  process.send(
+    gw,
+    gateway.WsMessage(
+      "{\"op\":0,\"d\":{\"session_id\":\"sess-1\",\"resume_gateway_url\":\"wss://resume.gateway\",\"user\":{\"id\":\"u1\",\"username\":\"alice\",\"discriminator\":\"1234\",\"bot\":true}},\"s\":7,\"t\":\"READY\"}",
+    ),
+  )
+
+  gateway.get_status(gw)
+  |> should.equal(gateway.Connected)
+  gateway.get_session_info(gw)
+  |> should.equal(
+    Some(gateway.SessionInfo(
+      session_id: "sess-1",
+      sequence: 7,
+      resume_gateway_url: "wss://resume.gateway",
+    )),
+  )
+
+  let assert Ok(event) = process.receive(subscriber, within: 1000)
+  case event {
+    gateway.Ready(data) -> {
+      data.session_id |> should.equal("sess-1")
+      data.user.username |> should.equal("alice")
+    }
+    _ -> should.fail()
+  }
+
+  gateway.stop(gw)
+}
+
+pub fn ws_dispatch_notifies_filtered_subscriber_only_for_matching_event_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+  let subscriber = process.new_subject()
+  let _ = gateway.subscribe_to_event(gw, subscriber, "MESSAGE_CREATE")
+
+  process.send(
+    gw,
+    gateway.WsMessage(
+      "{\"op\":0,\"d\":{\"id\":\"m1\",\"content\":\"hello\"},\"s\":9,\"t\":\"MESSAGE_CREATE\"}",
+    ),
+  )
+
+  let assert Ok(event) = process.receive(subscriber, within: 1000)
+  case event {
+    gateway.MessageCreate(payload) -> {
+      string.contains(payload, "\"content\":\"hello\"")
+      |> should.equal(True)
+    }
+    _ -> should.fail()
+  }
+
+  gateway.stop(gw)
+}
+
+pub fn ws_dispatch_unknown_event_emits_raw_event_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+  let subscriber = process.new_subject()
+  let _ = gateway.subscribe(gw, subscriber)
+
+  process.send(
+    gw,
+    gateway.WsMessage(
+      "{\"op\":0,\"d\":{\"k\":\"v\"},\"s\":10,\"t\":\"SOMETHING_ELSE\"}",
+    ),
+  )
+
+  let assert Ok(event) = process.receive(subscriber, within: 1000)
+  case event {
+    gateway.RawEvent(name, payload) -> {
+      name |> should.equal("SOMETHING_ELSE")
+      string.contains(payload, "\"k\":\"v\"") |> should.equal(True)
+    }
+    _ -> should.fail()
+  }
+
+  gateway.stop(gw)
+}
+
+pub fn ws_reconnect_opcode_sets_disconnected_status_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+  let _ = gateway.connect(gw)
+
+  process.send(gw, gateway.WsMessage("{\"op\":7,\"d\":{},\"s\":11}"))
+
+  gateway.get_status(gw)
+  |> should.equal(gateway.Disconnected)
+
+  gateway.stop(gw)
+}
+
+pub fn ws_invalid_session_non_resumable_clears_session_info_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+
+  process.send(
+    gw,
+    gateway.WsMessage(
+      "{\"op\":0,\"d\":{\"session_id\":\"sess-2\",\"resume_gateway_url\":\"wss://resume.gateway\",\"user\":{\"id\":\"u2\",\"username\":\"bob\",\"discriminator\":\"0001\",\"bot\":false}},\"s\":13,\"t\":\"READY\"}",
+    ),
+  )
+  process.send(gw, gateway.WsMessage("{\"op\":9,\"d\":false,\"s\":14}"))
+
+  gateway.get_status(gw)
+  |> should.equal(gateway.ConnectionError("Invalid session"))
+  gateway.get_session_info(gw)
+  |> should.equal(None)
+
+  gateway.stop(gw)
+}
+
+pub fn ws_invalid_session_resumable_keeps_session_info_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+
+  process.send(
+    gw,
+    gateway.WsMessage(
+      "{\"op\":0,\"d\":{\"session_id\":\"sess-3\",\"resume_gateway_url\":\"wss://resume.gateway\",\"user\":{\"id\":\"u3\",\"username\":\"carol\",\"discriminator\":\"0002\",\"bot\":false}},\"s\":21,\"t\":\"READY\"}",
+    ),
+  )
+  process.send(gw, gateway.WsMessage("{\"op\":9,\"d\":true,\"s\":22}"))
+
+  gateway.get_session_info(gw)
+  |> should.equal(
+    Some(gateway.SessionInfo(
+      session_id: "sess-3",
+      sequence: 21,
+      resume_gateway_url: "wss://resume.gateway",
+    )),
+  )
+
+  gateway.stop(gw)
+}
+
+pub fn double_heartbeat_without_ack_marks_zombie_connection_test() {
+  let config = gateway.default_config("test_token")
+  let assert Ok(gw) = gateway.start(config)
+  let reply_one = process.new_subject()
+  let reply_two = process.new_subject()
+
+  process.send(gw, gateway.HeartbeatTick(reply_to: reply_one))
+  let assert Ok(_) = process.receive(reply_one, within: 1000)
+
+  process.send(gw, gateway.HeartbeatTick(reply_to: reply_two))
+  let assert Ok(_) = process.receive(reply_two, within: 1000)
+
+  gateway.get_status(gw)
+  |> should.equal(gateway.ConnectionError("Zombie connection"))
 
   gateway.stop(gw)
 }

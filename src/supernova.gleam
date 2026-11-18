@@ -37,6 +37,7 @@ import supernova/llm/failover_cooldown/types as cd_types
 import supernova/llm/provider
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
+import supernova/tools/browser
 import supernova/tracing/actor as tracing_actor
 import supernova/tracing/global as tracing_global
 import supernova/tracing/types as tracing_types
@@ -159,6 +160,8 @@ pub type Services {
 
 /// Start all core services
 fn start_services(cfg: config.Config) -> Result(Services, String) {
+  browser.set_evaluate_allowed(cfg.tools.browser.allow_evaluate)
+
   // Start Session Supervisor
   use session_sup <- result.try(
     supervisor.start()
@@ -266,7 +269,7 @@ fn wait_for_metrics(attempts: Int) -> Result(metrics_global.Metrics, String) {
 
 /// Start infrastructure actors under an OTP supervisor (one_for_one).
 /// Each child re-registers its global reference on (re)start.
-fn start_infrastructure_supervisor(
+pub fn start_infrastructure_supervisor(
   tracer_config: tracing_types.TracerConfig,
   cb_config: cb_actor.CircuitBreakerConfig,
   cd_config: cd_types.FailoverCooldownConfig,
@@ -340,7 +343,7 @@ fn register_mcp_servers(
   }
 }
 
-fn build_channel_handler(
+pub fn build_channel_handler(
   cfg: config.Config,
   session_supervisor: supervisor.SessionSupervisor,
 ) -> Result(port.ChannelHandler, String) {
@@ -467,7 +470,7 @@ fn provider_config_to_runtime(
 /// Block until SIGTERM or shutdown signal is received.
 /// Uses Erlang's trap_exit to catch exit signals.
 @external(erlang, "supernova_signal_ffi", "wait_for_shutdown")
-fn wait_for_shutdown() -> Nil
+pub fn wait_for_shutdown() -> Nil
 
 /// Graceful shutdown of all services
 fn shutdown_services(services: Services) -> Nil {

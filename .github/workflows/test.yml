@@ -1,0 +1,45 @@
+name: Test Suite
+
+on:
+  push:
+    branches:
+      - master
+      - chore/retomada
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+          rebar3-version: "3.24.0"
+
+      - name: Download dependencies
+        run: gleam deps download
+
+      - name: Check formatting
+        run: gleam format --check src test
+
+      - name: Build with warnings as errors
+        run: gleam build --warnings-as-errors
+
+      - name: Run test suite
+        run: gleam test
+
+      - name: Check line coverage threshold
+        run: make coverage
+
+      - name: Ensure working tree is clean of test artifacts
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Working tree has unexpected changes after tests:"
+            git status --short
+            exit 1
+          fi

@@ -12,6 +12,7 @@ import supernova/adapters/wechat_work_router
 import supernova/adapters/whatsapp_router
 import supernova/channel/port
 import supernova/llm/provider
+import test_workspace
 
 fn mock_provider_config() -> provider.ProviderConfig {
   provider.ProviderConfig(
@@ -23,6 +24,7 @@ fn mock_provider_config() -> provider.ProviderConfig {
 }
 
 pub fn matrix_router_smoke_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = matrix_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -40,6 +42,7 @@ pub fn matrix_router_smoke_test() {
 }
 
 pub fn lark_router_smoke_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = lark_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -57,6 +60,7 @@ pub fn lark_router_smoke_test() {
 }
 
 pub fn google_chat_router_smoke_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = google_chat_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -74,6 +78,7 @@ pub fn google_chat_router_smoke_test() {
 }
 
 pub fn slack_router_smoke_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = slack_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -91,6 +96,7 @@ pub fn slack_router_smoke_test() {
 }
 
 pub fn mattermost_router_smoke_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = mattermost_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -108,6 +114,7 @@ pub fn mattermost_router_smoke_test() {
 }
 
 pub fn wechat_work_router_smoke_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = wechat_work_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -125,6 +132,7 @@ pub fn wechat_work_router_smoke_test() {
 }
 
 pub fn whatsapp_router_smoke_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = whatsapp_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -142,6 +150,7 @@ pub fn whatsapp_router_smoke_test() {
 }
 
 pub fn generic_router_channel_mismatch_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = matrix_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -163,6 +172,7 @@ pub fn generic_router_channel_mismatch_test() {
 }
 
 pub fn matrix_router_model_command_falls_back_to_text_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = matrix_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -191,6 +201,7 @@ pub fn matrix_router_model_command_falls_back_to_text_test() {
 }
 
 pub fn matrix_router_rejects_interactive_callbacks_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = matrix_router.start(mock_provider_config())
   let interaction =
     port.ChannelInteractionMessage(
@@ -218,6 +229,7 @@ pub fn matrix_router_rejects_interactive_callbacks_test() {
 }
 
 pub fn slack_router_model_command_returns_interactive_test() {
+  use _ <- test_workspace.with_isolated_workspace("new-router")
   let assert Ok(router) = slack_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(

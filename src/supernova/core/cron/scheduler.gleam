@@ -64,7 +64,10 @@ pub fn list_jobs(state: SchedulerState) -> List(String) {
 }
 
 /// Get a job's interval by name.
-pub fn get_interval(state: SchedulerState, name: String) -> Result(Int, String) {
+pub fn get_interval(
+  state: SchedulerState,
+  name: String,
+) -> Result(Int, String) {
   case dict.get(state.jobs, name) {
     Ok(job) -> Ok(job.interval_ms)
     Error(_) -> Error("Job not found: " <> name)

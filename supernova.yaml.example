@@ -123,3 +123,12 @@ budgets:
     tool_calls_per_minute: 60
     max_recursion_depth: 5
     max_sub_agents: 3
+
+# Tools
+# tools:
+#   browser:
+#     # SECURITY WARNING: Enables arbitrary JavaScript execution in the browser
+#     # page context via globalThis.eval(). Prompt injection against the LLM
+#     # could run arbitrary JS in visited pages. Keep false unless required.
+#     # Env override: SUPERNOVA_BROWSER_ALLOW_EVALUATE=true
+#     allow_evaluate: false

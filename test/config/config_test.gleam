@@ -15,12 +15,15 @@ import supernova/config.{
   TelegramConfig as TelegramConfigRecord, TypeMismatch, ValidationError,
   WechatWorkConfig as WechatWorkConfigRecord,
   WhatsAppConfig as WhatsAppConfigRecord, YamlParseError, Zhipu, ZhipuCoding,
-  apply_env_overrides, default_config, default_provider_config, error_to_string,
-  get_provider, is_discord_enabled, is_google_chat_enabled, is_lark_enabled,
-  is_matrix_enabled, is_mattermost_enabled, is_slack_enabled,
-  is_telegram_enabled, is_wechat_work_enabled, is_whatsapp_enabled, load,
-  load_unsafe, parse_yaml, provider_requires_api_key, validate,
+  apply_env_overrides, default_budgets_config, default_config,
+  default_provider_config, default_tools_config, error_to_string, get_provider,
+  is_discord_enabled, is_google_chat_enabled, is_lark_enabled, is_matrix_enabled,
+  is_mattermost_enabled, is_slack_enabled, is_telegram_enabled,
+  is_wechat_work_enabled, is_whatsapp_enabled, load, load_from_file, load_unsafe,
+  parse_yaml, provider_default_model, provider_requires_api_key,
+  provider_runtime_name, validate,
 }
+import test_env
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -1057,6 +1060,73 @@ pub fn get_provider_non_existing_test() {
     None -> Nil
     Some(_) -> panic as "Expected None for non-existing provider"
   }
+}
+
+pub fn default_budgets_config_defaults_test() {
+  let budgets = default_budgets_config()
+  budgets.default.tokens_per_hour |> should_equal(100_000)
+  budgets.default.tool_calls_per_minute |> should_equal(60)
+  budgets.default.max_recursion_depth |> should_equal(5)
+  budgets.default.max_sub_agents |> should_equal(10)
+  budgets.inheritance_ratio |> should_equal(20)
+  budgets.agents |> dict.size |> should_equal(0)
+}
+
+pub fn load_from_file_missing_file_returns_file_error_test() {
+  case load_from_file("/tmp/supernova-config-missing-does-not-exist.yaml") {
+    Error(_) -> Nil
+    Ok(_) -> panic as "Expected load_from_file to fail for missing path"
+  }
+}
+
+pub fn provider_runtime_name_maps_supported_providers_test() {
+  provider_runtime_name(OpenAI) |> should_equal("openai")
+  provider_runtime_name(Anthropic) |> should_equal("anthropic")
+  provider_runtime_name(OpenRouter) |> should_equal("openrouter")
+  provider_runtime_name(OpenCodeZen) |> should_equal("opencode_zen")
+  provider_runtime_name(Zhipu) |> should_equal("zhipu")
+  provider_runtime_name(ZhipuCoding) |> should_equal("zhipu_coding")
+  provider_runtime_name(Minimax) |> should_equal("minimax")
+  provider_runtime_name(Ollama) |> should_equal("ollama")
+}
+
+pub fn provider_default_model_maps_supported_providers_test() {
+  provider_default_model(OpenAI) |> should_equal("gpt-5.4-2026-03-05")
+  provider_default_model(Anthropic) |> should_equal("claude-sonnet-4-20260217")
+  provider_default_model(OpenRouter) |> should_equal("openrouter/free")
+  provider_default_model(OpenCodeZen) |> should_equal("claude-sonnet-4-6")
+  provider_default_model(Zhipu) |> should_equal("glm-5")
+  provider_default_model(ZhipuCoding) |> should_equal("glm-5.1")
+  provider_default_model(Minimax) |> should_equal("MiniMax-M2.7")
+  provider_default_model(Ollama) |> should_equal("llama3")
+}
+
+pub fn tools_browser_allow_evaluate_defaults_to_false_test() {
+  use <- test_env.without_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE")
+  default_tools_config().browser.allow_evaluate |> should_equal(False)
+  default_config().tools.browser.allow_evaluate |> should_equal(False)
+
+  let assert Ok(cfg) = parse_yaml("app_name: supernova\n")
+  cfg.tools.browser.allow_evaluate |> should_equal(False)
+}
+
+pub fn tools_browser_allow_evaluate_enabled_via_yaml_test() {
+  use <- test_env.without_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE")
+  let yaml =
+    "
+app_name: supernova
+tools:
+  browser:
+    allow_evaluate: true
+"
+  let assert Ok(cfg) = load(yaml)
+  cfg.tools.browser.allow_evaluate |> should_equal(True)
+}
+
+pub fn tools_browser_allow_evaluate_overridden_by_env_test() {
+  use <- test_env.with_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE", "true")
+  let assert Ok(cfg) = load("app_name: supernova\n")
+  cfg.tools.browser.allow_evaluate |> should_equal(True)
 }
 
 // ============================================================================
