@@ -8,6 +8,8 @@ import gleam/erlang/process
 import gleam/option
 import gleeunit
 import gleeunit/should
+import supernova/core/budget_policy/actor as budget_actor
+import supernova/core/budget_policy/types as budget_types
 import supernova/core/capability_manifest/types as cap_types
 import supernova/core/syscall/actor
 import supernova/core/syscall/types.{
@@ -70,6 +72,101 @@ pub fn capabilities_without_workspace_policy_deny_file_operations_test() {
   |> should.equal(Error("Blocked: workspace policy unavailable"))
 
   actor.stop(gw)
+}
+
+fn claim_gateway(
+  budget_limit: Int,
+) -> #(actor.SyscallGateway, budget_actor.BudgetPolicy) {
+  let assert Ok(budget) =
+    budget_actor.start_with_config(
+      budget_types.BudgetConfig(
+        tokens_per_hour: -1,
+        tool_calls_per_minute: -1,
+        tool_calls_per_hour: budget_limit,
+        max_recursion_depth: 3,
+        max_sub_agents: 3,
+      ),
+      20,
+    )
+  let manifests =
+    dict.from_list([
+      #(
+        "admin",
+        cap_types.CapabilityManifest(allowed_tools: ["*"], denied_tools: []),
+      ),
+    ])
+  let assert Ok(gateway) =
+    actor.start_with_capabilities(
+      option.None,
+      option.Some(budget),
+      option.None,
+      manifests,
+      fn(_, _) { Ok("ran") },
+    )
+  #(gateway, budget)
+}
+
+pub fn unclaimed_tool_authorization_does_not_charge_test() {
+  let #(gateway, budget) = claim_gateway(1)
+  let assert Ok(#(reservation_id, _execute)) =
+    actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+
+  budget_actor.get_consumption(
+    budget,
+    "agent_1",
+    budget_types.BudgetToolCallsHourly,
+  )
+  |> should.equal(0)
+
+  let assert Ok(execute) = actor.claim_tool_call(gateway, reservation_id)
+  execute("web", "{}") |> should.equal(Ok("ran"))
+
+  budget_actor.get_consumption(
+    budget,
+    "agent_1",
+    budget_types.BudgetToolCallsHourly,
+  )
+  |> should.equal(1)
+
+  actor.stop(gateway)
+  budget_actor.stop(budget)
+}
+
+pub fn parallel_authorizations_share_one_credit_test() {
+  let #(gateway, budget) = claim_gateway(1)
+
+  let assert Ok(#(reservation_id, _)) =
+    actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+  actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+  |> should.be_error()
+
+  let assert Ok(_) = actor.claim_tool_call(gateway, reservation_id)
+
+  actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+  |> should.be_error()
+
+  actor.stop(gateway)
+  budget_actor.stop(budget)
+}
+
+pub fn expired_tool_authorization_does_not_charge_test() {
+  let #(gateway, budget) = claim_gateway(1)
+  let assert Ok(#(reservation_id, _)) =
+    actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+
+  actor.expire_tool_reservations_for_test(gateway, 9_999_999_999_999)
+  actor.claim_tool_call(gateway, reservation_id)
+  |> should.be_error()
+
+  budget_actor.get_consumption(
+    budget,
+    "agent_1",
+    budget_types.BudgetToolCallsHourly,
+  )
+  |> should.equal(0)
+
+  actor.stop(gateway)
+  budget_actor.stop(budget)
 }
 
 // ============================================================================
@@ -454,4 +551,31 @@ pub fn multiple_syscalls_increment_count_test() {
   count |> should.equal(3)
   actor.stop(gw)
   process.sleep(100)
+}
+
+pub fn cancelled_claim_refunds_budget_test() {
+  let #(gateway, budget) = claim_gateway(1)
+  let assert Ok(#(reservation_id, _)) =
+    actor.authorize_tool_call(gateway, "agent_1", "admin", "web", "{}")
+
+  let assert Ok(_) = actor.claim_tool_call(gateway, reservation_id)
+  budget_actor.get_consumption(
+    budget,
+    "agent_1",
+    budget_types.BudgetToolCallsHourly,
+  )
+  |> should.equal(1)
+
+  actor.cancel_tool_claim(gateway, reservation_id)
+  budget_actor.get_consumption(
+    budget,
+    "agent_1",
+    budget_types.BudgetToolCallsHourly,
+  )
+  |> should.equal(0)
+
+  actor.claim_tool_call(gateway, reservation_id) |> should.be_error()
+
+  actor.stop(gateway)
+  budget_actor.stop(budget)
 }
