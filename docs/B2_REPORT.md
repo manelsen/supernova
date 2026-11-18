@@ -68,3 +68,35 @@ Riscos aceitos e documentados:
 - No modo aberto, o workspace do router (`SUPERNOVA_WORKSPACE_ROOT`) e o root da política (`data_dir/workspace`) continuam divergentes; o PRD só fecha o layout no modo grupo fechado.
 - I3 usa os registros `tool`/`role_tools` das transcrições; sucessos presentes só no audit log, sem papel declarado, não são reconstruídos pelo CLI.
 - O CLI usa `SUPERNOVA_INSTANCE_DAILY_USD` e `SUPERNOVA_BUDGET_TIMEZONE`; sem eles assume 5 USD e `America/Sao_Paulo`, os padrões do app, mas não relê `supernova.yaml`.
+
+## Fase B
+
+### Histórias → testes
+
+| História | Testes |
+|---|---|
+| B-01 constelação | `test/self/constellation_test.gleam`: carga, afinidade simétrica, dimensão desconhecida, traço duplicado, afinidade órfã, peso fora de faixa, `pick` acima da dimensão. |
+| B-02 sorteio coerente | `test/self/sampler_test.gleam`: determinismo, 1000 sementes, Jaccard, incompatibilidade absoluta e afinidade forte. |
+| B-03 nascimento | `test/self/birth_test.gleam` + `sim_birth_names_and_prompts_from_core_test`: pergunta do nome, aceite, custo no ledger, três arquivos, erro sem escrita, `min_distance` entre agentes. |
+| B-04 núcleo imutável | `sim_birth_names_and_prompts_from_core_test` compara hashes de `core.json`/`core.md` após três pedidos de mudança e `/reset-identity`; `sim_tool_cannot_write_self_test` tenta `file_system` em `../self/core.json` pelo fluxo HTTP e verifica o audit negado. |
+| B-05 prompt do núcleo | Gravação de prompts do mock: prosa do núcleo + nome presentes, `SOUL` ausente, núcleo de A ausente no prompt de B. |
+
+### Números
+
+| Métrica | Antes | Depois |
+|---|---|---|
+| Testes | 2225 | 2270 |
+| Cobertura de linhas | 76,01% (10667/14034) | 76,09% (11242/14774) |
+
+### O que o mantenedor precisa escrever antes do uso real
+
+- `priv/constellation/constellation.json`: conteúdo real no formato versionado de B-01. Sem esse arquivo, o modo grupo fechado responde "A Supernova ainda não está pronta para receber agentes novas." e audita `birth_unavailable`.
+- `priv/constellation/birth_prompt.md`: prompt real de nascimento. O arquivo atual é provisório e está marcado como tal.
+
+### Decisões e limitações registradas
+
+- O onboarding antigo continua fora do modo grupo fechado; dentro dele, o nascimento substitui o onboarding e `/start`/`/reset-identity` são recusados depois do nome.
+- O teste de chats paralelos do `sim` cobre o transporte HTTP concorrente; as filas por chat continuam no runtime de grupo fechado.
+- `is_group` é aceito no payload do `sim`, mas o `port.ChannelMessage` não carrega esse campo; na prática todo chat `sim` passa pela checagem de `allowed_chats`, inclusive conversas privadas. O verificador recebe a allowlist efetiva por `SUPERNOVA_ALLOWLIST`.
+- O verificador lê `core.json`/`core.md` apenas para o teste de hash; nenhuma ferramenta recebe acesso a `self/`.
+- `priv/constellation/constellation.json` não foi criado: o conteúdo real é responsabilidade do mantenedor.
