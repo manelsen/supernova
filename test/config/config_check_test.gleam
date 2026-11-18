@@ -36,7 +36,7 @@ pub fn malformed_principals_are_errors_test() {
       [
         "access:",
         "  admins: [\"telegram\", \"slack:1\"]",
-        "  members: [\"discord:\"]",
+        "  members: [\"discord:\", \"telegram:1:2\"]",
       ],
       "\n",
     ))
@@ -65,12 +65,13 @@ pub fn unknown_capability_tool_is_error_test() {
         "capabilities:",
         "  member:",
         "    allowed: [\"web\", \"no_such_tool\"]",
-        "    denied: []",
+        "    denied: [\"also_missing\"]",
       ],
       "\n",
     ))
   let issues = config_check.check(cfg)
   should.be_true(has_error(issues, "no_such_tool"))
+  should.be_true(has_error(issues, "also_missing"))
 }
 
 pub fn negative_non_minus_one_is_error_test() {
@@ -95,8 +96,14 @@ pub fn negative_non_minus_one_is_error_test() {
 pub fn empty_allowlist_is_warning_test() {
   let cfg = parsed("access:\n  mode: allowlist\n")
   let issues = config_check.check(cfg)
-  should.be_true(has_warning(issues, "no admins"))
+  should.be_true(has_warning(issues, "allowlist is empty, nobody can use"))
   should.be_true(config_check.is_bootable(issues))
+}
+
+pub fn allowlist_with_members_but_no_admins_warns_test() {
+  let cfg = parsed("access:\n  mode: allowlist\n  members: [\"telegram:1\"]\n")
+  let issues = config_check.check(cfg)
+  should.be_true(has_warning(issues, "no admins"))
 }
 
 pub fn experimental_enabled_channel_is_warning_test() {

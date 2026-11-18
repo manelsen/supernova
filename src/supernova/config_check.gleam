@@ -119,8 +119,9 @@ fn check_capabilities(
   let known = known_tool_names()
   [capabilities.member, capabilities.admin]
   |> list.flat_map(fn(role) {
-    role.allowed
+    list.append(role.allowed, role.denied)
     |> list.filter(fn(name) { name != "*" && !list.contains(known, name) })
+    |> list.unique
     |> list.map(fn(name) {
       ConfigIssue(
         level: Error,
@@ -158,16 +159,24 @@ fn check_non_negative_float(value: Float, field: String) -> List(ConfigIssue) {
 }
 
 fn warnings(config: config.Config) -> List(ConfigIssue) {
-  let access_warning = case
-    config.access.mode == config.Allowlist && config.access.admins == []
-  {
-    True -> [
-      ConfigIssue(
-        level: Warning,
-        message: "access: allowlist has no admins, nobody can administer this instance",
-      ),
-    ]
-    False -> []
+  let access_warning = case config.access.mode {
+    config.Allowlist ->
+      case config.access.admins, config.access.members {
+        [], [] -> [
+          ConfigIssue(
+            level: Warning,
+            message: "access: allowlist is empty, nobody can use this instance",
+          ),
+        ]
+        [], _ -> [
+          ConfigIssue(
+            level: Warning,
+            message: "access: allowlist has no admins, nobody can administer this instance",
+          ),
+        ]
+        _, _ -> []
+      }
+    config.Open -> []
   }
 
   let channel_warnings =
