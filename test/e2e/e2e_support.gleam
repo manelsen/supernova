@@ -166,6 +166,46 @@ pub fn telegram_start_registry(
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
         outbound_records: Some(recorder),
+        leave_group: None,
+      ),
+    )
+  channel_registry
+}
+
+pub fn telegram_chat_member_update(
+  chat_id: String,
+  status: String,
+) -> telegram.Update {
+  let json =
+    "{\"update_id\":1,\"my_chat_member\":{\"chat\":{\"id\":"
+    <> chat_id
+    <> ",\"type\":\"supergroup\",\"title\":\"Grupo\"},\"new_chat_member\":{\"status\":\""
+    <> status
+    <> "\"}}}"
+  let assert Ok(update) = telegram.parse_update(json)
+  update
+}
+
+pub fn telegram_start_registry_with_leave(
+  cfg: config.Config,
+  handler: port.ChannelHandler,
+  updates: List(telegram.Update),
+  recorder: process.Subject(registry.OutboundRecord),
+  leave_recorder: process.Subject(String),
+) -> registry.ChannelRegistry {
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      cfg,
+      handler,
+      registry.StartHooks(
+        discord_events: [],
+        telegram_updates: updates,
+        slack_inbound_events: [],
+        matrix_inbound_events: [],
+        disable_telegram_polling: True,
+        typing_keepalive_ms: 4000,
+        outbound_records: Some(recorder),
+        leave_group: Some(fn(chat_id) { process.send(leave_recorder, chat_id) }),
       ),
     )
   channel_registry
@@ -177,6 +217,22 @@ pub fn discord_message_event(
 ) -> discord_gateway.DiscordEvent {
   let data =
     "{\"id\":\"m1\",\"channel_id\":\"dm1\",\"content\":\""
+    <> content
+    <> "\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"author\":{\"id\":\""
+    <> user_id
+    <> "\",\"username\":\"tester\",\"discriminator\":\"0\",\"bot\":false}}"
+  discord_gateway.MessageCreate(data)
+}
+
+pub fn discord_guild_message_event(
+  content: String,
+  user_id: String,
+  guild_id: String,
+) -> discord_gateway.DiscordEvent {
+  let data =
+    "{\"id\":\"m1\",\"channel_id\":\"chan1\",\"guild_id\":\""
+    <> guild_id
+    <> "\",\"content\":\""
     <> content
     <> "\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"author\":{\"id\":\""
     <> user_id
@@ -202,6 +258,7 @@ pub fn discord_start_registry(
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
         outbound_records: Some(recorder),
+        leave_group: None,
       ),
     )
   channel_registry

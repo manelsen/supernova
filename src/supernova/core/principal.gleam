@@ -41,6 +41,7 @@ pub fn is_valid_id(id: String) -> Bool {
       list.contains(["telegram", "discord"], principal.channel)
       && string.trim(id) == id
       && !string.contains(principal.user_id, " ")
+      && !string.contains(principal.user_id, ":")
     Error(_) -> False
   }
 }
@@ -78,7 +79,11 @@ pub fn chat_principal(channel: String, chat_id: String) -> String {
     "discord" ->
       case string.starts_with(chat_id, "dm:") {
         True -> "discord:dm:" <> string.drop_start(chat_id, 3)
-        False -> "discord:guild:" <> chat_id
+        False ->
+          case string.split(chat_id, "@guild:") {
+            [_target, guild] -> "discord:guild:" <> guild
+            _ -> "discord:guild:" <> chat_id
+          }
       }
     _ -> channel <> ":" <> chat_id
   }

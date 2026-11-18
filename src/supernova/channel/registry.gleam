@@ -25,6 +25,8 @@ import supernova/adapters/whatsapp_adapter
 import supernova/channel/chunking
 import supernova/channel/port
 import supernova/config
+import supernova/core/audit_log/actor as audit_actor
+import supernova/core/audit_log/types as audit_types
 import supernova/core/closed_group/global as closed_group_global
 
 // ============================================================================
@@ -49,6 +51,7 @@ pub type StartHooks {
     disable_telegram_polling: Bool,
     typing_keepalive_ms: Int,
     outbound_records: Option(process.Subject(OutboundRecord)),
+    leave_group: Option(fn(String) -> Nil),
   )
 }
 
@@ -107,6 +110,7 @@ pub fn no_start_hooks() -> StartHooks {
     disable_telegram_polling: False,
     typing_keepalive_ms: default_typing_keepalive_ms,
     outbound_records: None,
+    leave_group: None,
   )
 }
 
@@ -668,6 +672,7 @@ fn start_telegram_worker(
               stream_send_fn,
               update,
               telegram_config,
+              hooks.leave_group,
             )
           })
         False -> {
@@ -679,6 +684,7 @@ fn start_telegram_worker(
               stream_send_fn,
               update,
               telegram_config,
+              hooks.leave_group,
             )
           })
 
@@ -690,6 +696,7 @@ fn start_telegram_worker(
                 stream_send_fn,
                 update,
                 telegram_config,
+                hooks.leave_group,
               )
             })
           Nil
@@ -746,9 +753,11 @@ fn dispatch_telegram_update(
   stream_send_fn: StreamSendFn,
   update: telegram.Update,
   telegram_config: telegram.Config,
+  leave_group: Option(fn(String) -> Nil),
 ) -> Nil {
   case update.my_chat_member {
-    Some(member) -> maybe_leave_unauthorized_group(telegram_config, member)
+    Some(member) ->
+      maybe_leave_unauthorized_group(telegram_config, member, leave_group)
     None -> Nil
   }
   case telegram_update_to_inbound(update) {
@@ -760,6 +769,7 @@ fn dispatch_telegram_update(
 fn maybe_leave_unauthorized_group(
   telegram_config: telegram.Config,
   member: telegram.ChatMemberUpdated,
+  leave_group: Option(fn(String) -> Nil),
 ) -> Nil {
   let is_group = case member.chat.chat_type {
     telegram.GroupChat | telegram.SupergroupChat -> True
@@ -772,10 +782,33 @@ fn maybe_leave_unauthorized_group(
   let chat_key = "telegram:" <> member.chat.id
   case is_group && joined && !closed_group_global.chat_authorized(chat_key) {
     True -> {
-      let _ = telegram.leave_chat(telegram_config, member.chat.id)
-      Nil
+      case leave_group {
+        Some(leave) -> leave(member.chat.id)
+        None -> {
+          let _ = telegram.leave_chat(telegram_config, member.chat.id)
+          Nil
+        }
+      }
+      record_leave_audit(chat_key)
     }
     False -> Nil
+  }
+}
+
+fn record_leave_audit(chat_key: String) -> Nil {
+  case closed_group_global.get_audit() {
+    None -> Nil
+    Some(audit) ->
+      audit_actor.log_entry(
+        audit,
+        audit_types.denied_entry(
+          closed_group_global.now(),
+          "telegram",
+          "chat_denied",
+          chat_key,
+          "left unauthorized group",
+        ),
+      )
   }
 }
 
@@ -817,7 +850,7 @@ fn discord_message_to_port(
 
 fn discord_chat_id(channel_id: String, guild_id: Option(String)) -> String {
   case guild_id {
-    Some(_) -> channel_id
+    Some(guild) -> channel_id <> "@guild:" <> guild
     None -> "dm:" <> channel_id
   }
 }
@@ -1305,8 +1338,8 @@ fn discord_send_message(
   rest_client: discord_rest.RestClient,
   reply: port.ChannelReply,
 ) -> Result(discord_rest.SentMessage, port.ChannelError) {
+  use target_channel <- result.try(discord_delivery_channel(rest_client, reply))
   let options = discord_options_for_reply(reply)
-  let target_channel = discord_target_channel(reply)
 
   let typing_result = case reply.typing {
     True -> discord_rest.trigger_typing_indicator(rest_client, target_channel)
@@ -1326,6 +1359,19 @@ fn discord_send_message(
         Ok(message) -> Ok(message)
         Error(error) -> Error(map_discord_send_error(error))
       }
+  }
+}
+
+/// Alert DMs carry `open-dm:<user_id>`; ordinary replies carry a channel id.
+fn discord_delivery_channel(
+  rest_client: discord_rest.RestClient,
+  reply: port.ChannelReply,
+) -> Result(String, port.ChannelError) {
+  case string.starts_with(reply.channel_id, "open-dm:") {
+    True ->
+      discord_rest.open_dm(rest_client, string.drop_start(reply.channel_id, 8))
+      |> result.map_error(map_discord_send_error)
+    False -> Ok(discord_target_channel(reply))
   }
 }
 
@@ -1378,10 +1424,18 @@ fn discord_options_for_reply(
 fn discord_target_channel(reply: port.ChannelReply) -> String {
   case reply.thread_id {
     Some(thread_id) -> thread_id
-    None ->
-      case string.starts_with(reply.channel_id, "dm:") {
-        True -> string.drop_start(reply.channel_id, 3)
-        False -> reply.channel_id
+    None -> discord_route_channel(reply.channel_id)
+  }
+}
+
+/// Strip policy-only routing annotations before calling Discord.
+fn discord_route_channel(channel_id: String) -> String {
+  case string.starts_with(channel_id, "dm:") {
+    True -> string.drop_start(channel_id, 3)
+    False ->
+      case string.split(channel_id, "@guild:") {
+        [target, _guild] -> target
+        _ -> channel_id
       }
   }
 }

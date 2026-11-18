@@ -1,12 +1,14 @@
 import e2e/e2e_support as support
 import gleam/erlang/process
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
 import supernova/channel/registry
 import supernova/config
 import supernova/core/access/types as access_types
+import supernova/core/audit_log/actor as audit_actor
+import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure as cg_pure
 import supernova/core/executor
 import supernova/llm/provider
@@ -71,6 +73,31 @@ pub fn unauthorized_gets_denied_once_test() {
   })
 }
 
+pub fn leaves_unauthorized_group_and_audits_test() {
+  support.with_runtime(cfg(["telegram:123"]), fn() {
+    let recorder = process.new_subject()
+    let left = process.new_subject()
+    let channel_registry =
+      support.telegram_start_registry_with_leave(
+        support.channel_config(),
+        support.telegram_handler(support.mock_config()),
+        [support.telegram_chat_member_update("-1001", "member")],
+        recorder,
+        left,
+      )
+
+    process.receive(left, within: 1000)
+    |> should.equal(Ok("-1001"))
+    let assert Some(audit) = closed_group_global.get_audit()
+    audit_actor.get_all(audit)
+    |> list.any(fn(entry) {
+      entry.operation == "chat_denied" && entry.target == "telegram:-1001"
+    })
+    |> should.equal(True)
+    registry.stop_channels(channel_registry)
+  })
+}
+
 pub fn exhausted_budget_reply_test() {
   let base = cfg(["telegram:123"])
   let cfg =
@@ -101,6 +128,20 @@ pub fn exhausted_budget_reply_test() {
     record.content |> should.equal(cg_pure.budget_exhausted_reply(support.now))
     registry.stop_channels(channel_registry)
   })
+}
+
+pub fn member_tools_hide_dangerous_tools_test() {
+  let visible =
+    cg_pure.tools_for(
+      support.channel_config().capabilities,
+      access_types.Member,
+      executor.builtin_tools(),
+    )
+  let names = list.map(visible, fn(tool) { tool.name })
+  should.equal(list.contains(names, "safe_shell"), False)
+  should.equal(list.contains(names, "process"), False)
+  should.equal(list.contains(names, "browser"), False)
+  should.equal(list.contains(names, "gateway"), False)
 }
 
 pub fn long_reply_is_split_test() {

@@ -49,6 +49,30 @@ pub fn authorized_member_receives_reply_test() {
   })
 }
 
+pub fn authorized_guild_receives_reply_test() {
+  let base = cfg(["discord:456"])
+  let cfg =
+    config.Config(
+      ..base,
+      access: config.AccessConfig(..base.access, allowed_chats: [
+        "discord:guild:guild1",
+      ]),
+    )
+  support.with_runtime(cfg, fn() {
+    let recorder = process.new_subject()
+    let channel_registry =
+      support.discord_start_registry(
+        support.channel_config(),
+        support.discord_handler(support.mock_config()),
+        [support.discord_guild_message_event("oi", "456", "guild1")],
+        recorder,
+      )
+    let assert Ok(record) = process.receive(recorder, within: 5000)
+    string.contains(record.content, "Mock response") |> should.equal(True)
+    registry.stop_channels(channel_registry)
+  })
+}
+
 pub fn unauthorized_gets_denied_once_test() {
   support.with_runtime(cfg(["discord:456"]), fn() {
     let recorder = process.new_subject()
@@ -65,6 +89,38 @@ pub fn unauthorized_gets_denied_once_test() {
     let assert Ok(record) = process.receive(recorder, within: 5000)
     record.content |> should.equal("Esta instância é privada.")
     process.receive(recorder, within: 400) |> should.equal(Error(Nil))
+    registry.stop_channels(channel_registry)
+  })
+}
+
+pub fn exhausted_budget_reply_test() {
+  let base = cfg(["discord:456"])
+  let cfg =
+    config.Config(
+      ..base,
+      role_budgets: config.RoleBudgetsConfig(
+        member: config.RoleBudgetConfig(
+          tokens_per_hour: 0,
+          tool_calls_per_hour: 10,
+        ),
+        admin: config.RoleBudgetConfig(
+          tokens_per_hour: -1,
+          tool_calls_per_hour: -1,
+        ),
+      ),
+    )
+  support.with_runtime(cfg, fn() {
+    let recorder = process.new_subject()
+    let channel_registry =
+      support.discord_start_registry(
+        support.channel_config(),
+        support.discord_handler(support.mock_config()),
+        [support.discord_message_event("oi", "456")],
+        recorder,
+      )
+    let assert Ok(record) = process.receive(recorder, within: 5000)
+    record.content
+    |> should.equal(cg_pure.budget_exhausted_reply(support.now))
     registry.stop_channels(channel_registry)
   })
 }

@@ -279,9 +279,13 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
   closed_group_global.set_alert_sender(fn(principal_id, text) {
     case principal.parse(principal_id) {
       Ok(speaker) -> {
+        let target = case speaker.channel {
+          "discord" -> "open-dm:" <> speaker.user_id
+          _ -> speaker.user_id
+        }
         let reply =
           port.ChannelReply(
-            channel_id: speaker.user_id,
+            channel_id: target,
             content: text,
             reply_to_id: None,
             thread_id: None,

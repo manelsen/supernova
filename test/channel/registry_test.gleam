@@ -262,6 +262,7 @@ fn test_hooks(
     disable_telegram_polling: True,
     typing_keepalive_ms: 4000,
     outbound_records: None,
+    leave_group: None,
   )
 }
 
@@ -277,6 +278,7 @@ fn test_hooks_with_slack_inbound(
     disable_telegram_polling: True,
     typing_keepalive_ms: 4000,
     outbound_records: Some(recorder),
+    leave_group: None,
   )
 }
 
@@ -292,6 +294,7 @@ fn test_hooks_with_matrix_inbound(
     disable_telegram_polling: True,
     typing_keepalive_ms: 4000,
     outbound_records: Some(recorder),
+    leave_group: None,
   )
 }
 
@@ -322,6 +325,7 @@ fn test_hooks_with_recorder_and_keepalive(
     disable_telegram_polling: True,
     typing_keepalive_ms: typing_keepalive_ms,
     outbound_records: Some(recorder),
+    leave_group: None,
   )
 }
 
@@ -623,7 +627,8 @@ pub fn start_channels_routes_discord_gateway_message_to_handler_test() {
     port.InboundMessage(msg) -> {
       msg.channel |> should.equal("discord")
       msg.id |> should.equal("900000000000000087")
-      msg.channel_id |> should.equal("900000000000000009")
+      msg.channel_id
+      |> should.equal("900000000000000009@guild:900000000000000008")
       msg.user_id |> should.equal("900000000000000002")
       msg.username |> should.equal("username_1")
       msg.content |> should.equal("content_2")
@@ -651,7 +656,8 @@ pub fn start_channels_routes_discord_slash_command_to_handler_test() {
     port.InboundMessage(msg) -> {
       msg.channel |> should.equal("discord")
       msg.id |> should.equal("interaction-help-1")
-      msg.channel_id |> should.equal("900000000000000004")
+      msg.channel_id
+      |> should.equal("900000000000000004@guild:900000000000000009")
       msg.user_id |> should.equal("900000000000000026")
       msg.username |> should.equal("username_5")
       msg.content |> should.equal("/help")
@@ -678,7 +684,8 @@ pub fn start_channels_routes_discord_component_interaction_to_handler_test() {
   case inbound {
     port.InboundInteraction(interaction) -> {
       interaction.channel |> should.equal("discord")
-      interaction.channel_id |> should.equal("900000000000000004")
+      interaction.channel_id
+      |> should.equal("900000000000000004@guild:900000000000000009")
       interaction.user_id |> should.equal("900000000000000026")
       interaction.username |> should.equal("username_5")
       interaction.is_bot |> should.equal(False)
@@ -1690,6 +1697,7 @@ pub fn slack_inbound_event_dispatched_to_handler_test() {
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
         outbound_records: None,
+        leave_group: None,
       ),
     )
 
@@ -1838,6 +1846,7 @@ pub fn matrix_inbound_event_dispatched_to_handler_test() {
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
         outbound_records: None,
+        leave_group: None,
       ),
     )
 
@@ -2451,7 +2460,7 @@ fn collect_registry_records(
   recorder: process.Subject(registry.OutboundRecord),
   acc: List(registry.OutboundRecord),
 ) -> List(registry.OutboundRecord) {
-  case process.receive(recorder, within: 500) {
+  case process.receive(recorder, within: 2000) {
     Ok(record) -> collect_registry_records(recorder, [record, ..acc])
     Error(_) -> list.reverse(acc)
   }

@@ -177,15 +177,7 @@ pub fn canonical_tool_name(name: String) -> String {
 // ============================================================================
 
 pub fn chat_key(channel: String, chat_id: String) -> String {
-  case channel {
-    "telegram" -> "telegram:" <> chat_id
-    "discord" ->
-      case string.starts_with(chat_id, "guild:") {
-        True -> "discord:" <> chat_id
-        False -> "discord:guild:" <> chat_id
-      }
-    _ -> principal.chat_principal(channel, chat_id)
-  }
+  principal.chat_principal(channel, chat_id)
 }
 
 pub fn is_private_chat(channel: String, chat_id: String) -> Bool {
