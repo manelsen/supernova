@@ -568,6 +568,10 @@ fn advance_request_id(
 }
 
 fn evict_dead_server(state: ManagerState, server_name: String) -> ManagerState {
+  case dict.get(state.servers, server_name) {
+    Ok(connection) -> stdio.stop(connection.transport)
+    Error(_) -> Nil
+  }
   let new_servers = dict.delete(state.servers, server_name)
   let new_tools =
     dict.filter(state.tools, fn(_k, t) { t.server_name != server_name })

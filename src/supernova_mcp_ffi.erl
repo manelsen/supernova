@@ -75,7 +75,7 @@ send_and_receive_classified(Port, Data, TimeoutMs) ->
     wait_for_line_classified(Port, TimeoutMs)
   catch
     _:Reason ->
-      {error, {other_error, list_to_binary(io_lib:format("Send/receive failed: ~p", [Reason]))}}
+      classify_port_error(Port, "Send/receive failed", Reason)
   end.
 
 %% Wait for the next complete line from the port without sending new data.
@@ -91,8 +91,16 @@ receive_line_classified(Port, TimeoutMs) ->
     wait_for_line_classified(Port, TimeoutMs)
   catch
     _:Reason ->
-      {error, {other_error, list_to_binary(io_lib:format("Receive failed: ~p", [Reason]))}}
+      classify_port_error(Port, "Receive failed", Reason)
   end.
+
+classify_port_error(Port, Label, badarg) ->
+  case erlang:port_info(Port) of
+    undefined -> {error, {process_dead, <<"Port closed">>}};
+    _ -> {error, {other_error, list_to_binary(io_lib:format("~s: badarg", [Label]))}}
+  end;
+classify_port_error(_Port, Label, Reason) ->
+  {error, {other_error, list_to_binary(io_lib:format("~s: ~p", [Label, Reason]))}}.
 
 %% Current monotonic clock in milliseconds.
 monotonic_ms() ->
@@ -120,31 +128,30 @@ close_port(Port) ->
   end,
   nil.
 
-%% Internal: wait for a complete line from the port, returning classified error.
+%% Internal: wait for a complete line from the port under an absolute monotonic deadline.
 wait_for_line_classified(Port, TimeoutMs) ->
-  receive
-    {Port, {data, {eol, Line}}} ->
-      {ok, Line};
-    {Port, {data, {noeol, Partial}}} ->
-      %% Incomplete line, wait for the rest
-      collect_rest_classified(Port, Partial, TimeoutMs);
-    {Port, {exit_status, Status}} ->
-      {error, {process_dead, list_to_binary(io_lib:format("Process exited with status ~p", [Status]))}}
-  after TimeoutMs ->
-    {error, {timeout, <<"timeout">>}}
-  end.
+  DeadlineMs = monotonic_ms() + max(0, TimeoutMs),
+  collect_line_until(Port, <<>>, DeadlineMs).
 
-%% Internal: collect remaining data until we get eol or timeout.
-collect_rest_classified(Port, Acc, TimeoutMs) ->
-  receive
-    {Port, {data, {eol, Rest}}} ->
-      {ok, <<Acc/binary, Rest/binary>>};
-    {Port, {data, {noeol, Partial}}} ->
-      collect_rest_classified(Port, <<Acc/binary, Partial/binary>>, TimeoutMs);
-    {Port, {exit_status, Status}} ->
-      {error, {process_dead, list_to_binary(io_lib:format("Process exited with status ~p", [Status]))}}
-  after TimeoutMs ->
-    {error, {timeout, <<"timeout">>}}
+remaining_timeout(DeadlineMs) ->
+  DeadlineMs - monotonic_ms().
+
+%% Internal: collect EOL-delimited chunks into Acc until EOL or DeadlineMs expires.
+collect_line_until(Port, Acc, DeadlineMs) ->
+  case remaining_timeout(DeadlineMs) of
+    Remaining when Remaining =< 0 ->
+      {error, {timeout, <<"timeout">>}};
+    Remaining ->
+      receive
+        {Port, {data, {eol, Rest}}} ->
+          {ok, <<Acc/binary, Rest/binary>>};
+        {Port, {data, {noeol, Partial}}} ->
+          collect_line_until(Port, <<Acc/binary, Partial/binary>>, DeadlineMs);
+        {Port, {exit_status, Status}} ->
+          {error, {process_dead, list_to_binary(io_lib:format("Process exited with status ~p", [Status]))}}
+      after Remaining ->
+        {error, {timeout, <<"timeout">>}}
+      end
   end.
 
 %% Convert a dynamic (arbitrary Erlang term) to JSON string.
