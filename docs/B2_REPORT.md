@@ -18,10 +18,10 @@ Implementação do `PRD-B2-um-self-por-pessoa.md` nas fases A e B. A fase C não
 
 | Métrica | Antes | Depois |
 |---|---|---|
-| Testes | 2226 | 2264 |
-| Cobertura de linhas | 68,19% | 75,84% (11167/14724) |
+| Testes | 2225 | 2270 |
+| Cobertura de linhas | 76,01% (10667/14034) | 76,09% (11242/14774) |
 
-A cobertura "antes" foi medida no tree de trabalho durante a implementação, não no commit base; o número fica registrado como limitação. O gate do repositório é 75%.
+A cobertura "antes" foi medida em worktree limpo no commit base `fb589c6`. O gate do repositório é 75%.
 
 ### Comportamento
 
@@ -46,3 +46,25 @@ Saída:
 ```json
 {"invariants":[{"invariant":"I1","ok":true,"violations":[]},{"invariant":"I2","ok":true,"violations":[]},{"invariant":"I3","ok":true,"violations":[]},{"invariant":"I4","ok":true,"violations":[]},{"invariant":"I5","ok":true,"violations":[]},{"invariant":"I6","ok":true,"violations":[]}]}
 ```
+
+### Revisão CodeRabbit
+
+Corrigido nesta rodada:
+
+- `access.allowed_chats` aceita `sim:<id>`, com teste de configuração.
+- O adaptador `sim` rejeita `chat_id`/`user_id` com `:` para não colidir com a codificação de principal; ids privados do `sim` continuam exigindo `allowed_chats`.
+- O stream do `sim` espera até 60 s e publica um evento visível em falha ou timeout.
+- O verificador usa o teto diário padrão de 5 USD, agrupa gasto no timezone configurado, só aceita auditorias `denied` para I4 e consome uma auditoria por negação.
+- `core.json` malformado não é sobrescrito; o nascimento retorna falha e preserva o arquivo.
+- Escritas parciais do nascimento são desfeitas; falha ao gravar a biografia do nome restaura o núcleo sem nome para permitir retry.
+- O sorteio ignora candidatos de peso zero e `nth_result` avança a cauda da lista.
+- O diretório temporário do teste do ledger inclui o pid da VM; o teste do nascimento usa o workspace isolado.
+
+Riscos aceitos e documentados:
+
+- A codificação de principal segue o PRD literalmente: `:` vira `_` e `_` permanece `_`. Por isso `sim:a_b` e `sim:a:b` colidem; o segundo é rejeitado no adaptador.
+- O id de sessão é `canal:chat:user`; usuários com `:` não são representáveis sem mudar o contrato. O `sim` rejeita esses ids.
+- O nascimento ainda roda no processo do router; um provedor lento bloqueia as outras conversas daquele handler. O turno normal já roda fora do router.
+- No modo aberto, o workspace do router (`SUPERNOVA_WORKSPACE_ROOT`) e o root da política (`data_dir/workspace`) continuam divergentes; o PRD só fecha o layout no modo grupo fechado.
+- I3 usa os registros `tool`/`role_tools` das transcrições; sucessos presentes só no audit log, sem papel declarado, não são reconstruídos pelo CLI.
+- O CLI usa `SUPERNOVA_INSTANCE_DAILY_USD` e `SUPERNOVA_BUDGET_TIMEZONE`; sem eles assume 5 USD e `America/Sao_Paulo`, os padrões do app, mas não relê `supernova.yaml`.
