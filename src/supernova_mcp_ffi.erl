@@ -1,5 +1,15 @@
 -module(supernova_mcp_ffi).
--export([open_port/3, send_and_receive/3, receive_line/2, send_data/2, close_port/1, monotonic_ms/0, dynamic_to_json/1]).
+-export([
+  open_port/3,
+  send_and_receive/3,
+  send_and_receive_classified/3,
+  receive_line/2,
+  receive_line_classified/2,
+  send_data/2,
+  close_port/1,
+  monotonic_ms/0,
+  dynamic_to_json/1
+]).
 
 %% Open an OS process and return {ok, Port} or {error, Reason}.
 %% Uses Erlang port with {line, 1024} for line-buffered STDIO communication.
@@ -51,24 +61,37 @@ resolve_command(CommandStr) ->
 %% NOTE: This must be called from the process that opened the port,
 %% or the port's controlling process must be changed first.
 send_and_receive(Port, Data, TimeoutMs) ->
+  case send_and_receive_classified(Port, Data, TimeoutMs) of
+    {ok, Line} -> {ok, Line};
+    {error, {_Kind, Msg}} -> {error, Msg}
+  end.
+
+%% Typed variant classifying process exit vs timeout vs other transport failure.
+send_and_receive_classified(Port, Data, TimeoutMs) ->
   try
     %% Ensure this process is the port's controlling process
     erlang:port_connect(Port, self()),
     Port ! {self(), {command, <<Data/binary, "\n">>}},
-    wait_for_line(Port, TimeoutMs)
+    wait_for_line_classified(Port, TimeoutMs)
   catch
     _:Reason ->
-      {error, list_to_binary(io_lib:format("Send/receive failed: ~p", [Reason]))}
+      {error, {other_error, list_to_binary(io_lib:format("Send/receive failed: ~p", [Reason]))}}
   end.
 
 %% Wait for the next complete line from the port without sending new data.
 receive_line(Port, TimeoutMs) ->
+  case receive_line_classified(Port, TimeoutMs) of
+    {ok, Line} -> {ok, Line};
+    {error, {_Kind, Msg}} -> {error, Msg}
+  end.
+
+receive_line_classified(Port, TimeoutMs) ->
   try
     erlang:port_connect(Port, self()),
-    wait_for_line(Port, TimeoutMs)
+    wait_for_line_classified(Port, TimeoutMs)
   catch
     _:Reason ->
-      {error, list_to_binary(io_lib:format("Receive failed: ~p", [Reason]))}
+      {error, {other_error, list_to_binary(io_lib:format("Receive failed: ~p", [Reason]))}}
   end.
 
 %% Current monotonic clock in milliseconds.
@@ -97,31 +120,31 @@ close_port(Port) ->
   end,
   nil.
 
-%% Internal: wait for a complete line from the port.
-wait_for_line(Port, TimeoutMs) ->
+%% Internal: wait for a complete line from the port, returning classified error.
+wait_for_line_classified(Port, TimeoutMs) ->
   receive
     {Port, {data, {eol, Line}}} ->
       {ok, Line};
     {Port, {data, {noeol, Partial}}} ->
       %% Incomplete line, wait for the rest
-      collect_rest(Port, Partial, TimeoutMs);
+      collect_rest_classified(Port, Partial, TimeoutMs);
     {Port, {exit_status, Status}} ->
-      {error, list_to_binary(io_lib:format("Process exited with status ~p", [Status]))}
+      {error, {process_dead, list_to_binary(io_lib:format("Process exited with status ~p", [Status]))}}
   after TimeoutMs ->
-    {error, <<"timeout">>}
+    {error, {timeout, <<"timeout">>}}
   end.
 
 %% Internal: collect remaining data until we get eol or timeout.
-collect_rest(Port, Acc, TimeoutMs) ->
+collect_rest_classified(Port, Acc, TimeoutMs) ->
   receive
     {Port, {data, {eol, Rest}}} ->
       {ok, <<Acc/binary, Rest/binary>>};
     {Port, {data, {noeol, Partial}}} ->
-      collect_rest(Port, <<Acc/binary, Partial/binary>>, TimeoutMs);
+      collect_rest_classified(Port, <<Acc/binary, Partial/binary>>, TimeoutMs);
     {Port, {exit_status, Status}} ->
-      {error, list_to_binary(io_lib:format("Process exited with status ~p", [Status]))}
+      {error, {process_dead, list_to_binary(io_lib:format("Process exited with status ~p", [Status]))}}
   after TimeoutMs ->
-    {error, <<"timeout">>}
+    {error, {timeout, <<"timeout">>}}
   end.
 
 %% Convert a dynamic (arbitrary Erlang term) to JSON string.
@@ -138,13 +161,15 @@ dynamic_to_json(Term) ->
       {error, list_to_binary(io_lib:format("Failed to encode JSON: ~p", [Reason]))}
   end.
 
-%% Escape a string for safe JSON embedding.
+%% Escape a string for safe JSON embedding (including all control chars < 0x20).
 escape_json_string([]) -> [];
 escape_json_string([$" | Rest])  -> [$\\, $"  | escape_json_string(Rest)];
 escape_json_string([$\\ | Rest]) -> [$\\, $\\ | escape_json_string(Rest)];
 escape_json_string([$\n | Rest]) -> [$\\, $n  | escape_json_string(Rest)];
 escape_json_string([$\r | Rest]) -> [$\\, $r  | escape_json_string(Rest)];
 escape_json_string([$\t | Rest]) -> [$\\, $t  | escape_json_string(Rest)];
+escape_json_string([C | Rest]) when C >= 0, C < 32 ->
+  lists:flatten(io_lib:format("\\u~4.16.0b", [C])) ++ escape_json_string(Rest);
 escape_json_string([C | Rest])   -> [C        | escape_json_string(Rest)].
 
 %% Simple JSON formatter for common Erlang terms.
@@ -178,8 +203,8 @@ format_as_json(_) ->
   "null".
 
 format_key_value(Key, Value) when is_binary(Key) ->
-  "\"" ++ binary_to_list(Key) ++ "\":" ++ format_as_json(Value);
+  "\"" ++ escape_json_string(binary_to_list(Key)) ++ "\":" ++ format_as_json(Value);
 format_key_value(Key, Value) when is_atom(Key) ->
-  "\"" ++ atom_to_list(Key) ++ "\":" ++ format_as_json(Value);
+  "\"" ++ escape_json_string(atom_to_list(Key)) ++ "\":" ++ format_as_json(Value);
 format_key_value(Key, Value) ->
-  "\"" ++ lists:flatten(io_lib:format("~p", [Key])) ++ "\":" ++ format_as_json(Value).
+  "\"" ++ escape_json_string(lists:flatten(io_lib:format("~p", [Key]))) ++ "\":" ++ format_as_json(Value).

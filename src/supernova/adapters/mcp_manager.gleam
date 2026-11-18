@@ -22,7 +22,7 @@ import gleam/list
 import gleam/order
 import gleam/otp/actor
 import gleam/string
-import supernova/adapters/mcp/stdio.{type StdioTransport}
+import supernova/adapters/mcp/stdio.{type StdioError, type StdioTransport}
 import supernova/llm/provider
 
 // ============================================================================
@@ -91,7 +91,8 @@ type ManagerState {
 /// Classification of tools/call failures so transport loss and JSON-RPC
 /// application errors are handled distinctly.
 type ToolsCallFailure {
-  TransportError(String)
+  DeadTransportError(String)
+  TransientTransportError(String)
   ProtocolError(String)
 }
 
@@ -171,7 +172,7 @@ fn send_request_matching_id(
   expected_id: Int,
   request: String,
   timeout_ms: Int,
-) -> Result(String, String) {
+) -> Result(String, StdioError) {
   stdio.send_and_receive_matching(transport, request, timeout_ms, fn(line) {
     matches_expected_id_or_non_json(line, expected_id)
   })
@@ -210,7 +211,7 @@ fn send_initialize(transport: StdioTransport, id: Int) -> Result(Nil, String) {
         Error(e) -> Error("Initialize failed: " <> e)
       }
     }
-    Error(e) -> Error("Initialize timeout/error: " <> e)
+    Error(e) -> Error("Initialize timeout/error: " <> stdio.error_to_string(e))
   }
 }
 
@@ -232,7 +233,7 @@ fn send_tools_list(
         Error(e) -> Error("tools/list failed: " <> e)
       }
     }
-    Error(e) -> Error("tools/list timeout/error: " <> e)
+    Error(e) -> Error("tools/list timeout/error: " <> stdio.error_to_string(e))
   }
 }
 
@@ -300,7 +301,10 @@ fn send_tools_call(
         Error(e) -> Error(ProtocolError("tools/call failed: " <> e))
       }
     }
-    Error(e) -> Error(TransportError("tools/call timeout/error: " <> e))
+    Error(stdio.ProcessDead(msg)) ->
+      Error(DeadTransportError("tools/call timeout/error: " <> msg))
+    Error(stdio.Timeout(msg)) | Error(stdio.OtherError(msg)) ->
+      Error(TransientTransportError("tools/call timeout/error: " <> msg))
   }
 }
 
@@ -508,22 +512,14 @@ fn handle_message(
                   actor.send(reply_to, Ok(output))
                   actor.continue(new_state)
                 }
-                Error(ProtocolError(e)) -> {
-                  let new_state =
-                    advance_request_id(state, mcp_tool.server_name, connection)
+                Error(DeadTransportError(e)) -> {
+                  let new_state = evict_dead_server(state, mcp_tool.server_name)
                   actor.send(reply_to, Error(e))
                   actor.continue(new_state)
                 }
-                Error(TransportError(e)) -> {
-                  let new_state = case is_process_dead_error(e) {
-                    True -> evict_dead_server(state, mcp_tool.server_name)
-                    False ->
-                      advance_request_id(
-                        state,
-                        mcp_tool.server_name,
-                        connection,
-                      )
-                  }
+                Error(TransientTransportError(e)) | Error(ProtocolError(e)) -> {
+                  let new_state =
+                    advance_request_id(state, mcp_tool.server_name, connection)
                   actor.send(reply_to, Error(e))
                   actor.continue(new_state)
                 }
@@ -569,10 +565,6 @@ fn advance_request_id(
     ServerConnection(..connection, request_id: connection.request_id + 1)
   let new_servers = dict.insert(state.servers, server_name, updated_connection)
   ManagerState(..state, servers: new_servers)
-}
-
-fn is_process_dead_error(e: String) -> Bool {
-  string.contains(e, "exited") || string.contains(e, "Port not open")
 }
 
 fn evict_dead_server(state: ManagerState, server_name: String) -> ManagerState {

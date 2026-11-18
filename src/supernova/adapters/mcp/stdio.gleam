@@ -35,8 +35,18 @@ fn do_send_and_receive(
   timeout_ms: Int,
 ) -> Result(String, String)
 
-@external(erlang, "supernova_mcp_ffi", "receive_line")
-fn do_receive_line(port: Dynamic, timeout_ms: Int) -> Result(String, String)
+@external(erlang, "supernova_mcp_ffi", "send_and_receive_classified")
+fn do_send_and_receive_classified(
+  port: Dynamic,
+  data: String,
+  timeout_ms: Int,
+) -> Result(String, StdioError)
+
+@external(erlang, "supernova_mcp_ffi", "receive_line_classified")
+fn do_receive_line_classified(
+  port: Dynamic,
+  timeout_ms: Int,
+) -> Result(String, StdioError)
 
 @external(erlang, "supernova_mcp_ffi", "monotonic_ms")
 fn do_monotonic_ms() -> Int
@@ -54,6 +64,20 @@ pub type Dynamic
 // Types
 // ============================================================================
 
+/// Classified transport error produced by STDIO reads.
+pub type StdioError {
+  ProcessDead(String)
+  Timeout(String)
+  OtherError(String)
+}
+
+/// Convert a typed StdioError into its human-readable message.
+pub fn error_to_string(err: StdioError) -> String {
+  case err {
+    ProcessDead(msg) | Timeout(msg) | OtherError(msg) -> msg
+  }
+}
+
 /// Messages for the STDIO transport actor.
 pub type StdioMessage {
   /// Send a JSON-RPC message and wait for response
@@ -64,7 +88,7 @@ pub type StdioMessage {
   )
   /// Send a JSON-RPC message and read lines inside the actor until predicate holds
   SendReceiveMatching(
-    reply_to: Subject(Result(String, String)),
+    reply_to: Subject(Result(String, StdioError)),
     data: String,
     timeout_ms: Int,
     predicate: fn(String) -> Bool,
@@ -117,15 +141,17 @@ fn handle_message(
       case state.port {
         Some(port) -> {
           let deadline = do_monotonic_ms() + timeout_ms
-          let result = case do_send_and_receive(port, data, timeout_ms) {
+          let result = case
+            do_send_and_receive_classified(port, data, timeout_ms)
+          {
             Ok(line) -> drain_until_matching(port, line, deadline, predicate)
-            Error(e) -> Error(e)
+            Error(err) -> Error(err)
           }
           actor.send(reply_to, result)
           actor.continue(state)
         }
         None -> {
-          actor.send(reply_to, Error("Port not open"))
+          actor.send(reply_to, Error(ProcessDead("Port not open")))
           actor.continue(state)
         }
       }
@@ -214,18 +240,18 @@ fn drain_until_matching(
   line: String,
   deadline: Int,
   predicate: fn(String) -> Bool,
-) -> Result(String, String) {
+) -> Result(String, StdioError) {
   case predicate(line) {
     True -> Ok(line)
     False -> {
       let remaining = deadline - do_monotonic_ms()
       case remaining <= 0 {
-        True -> Error("timeout")
+        True -> Error(Timeout("timeout"))
         False ->
-          case do_receive_line(port, remaining) {
+          case do_receive_line_classified(port, remaining) {
             Ok(next_line) ->
               drain_until_matching(port, next_line, deadline, predicate)
-            Error(e) -> Error(e)
+            Error(err) -> Error(err)
           }
       }
     }
@@ -239,7 +265,7 @@ pub fn send_and_receive_matching(
   data: String,
   timeout_ms: Int,
   predicate: fn(String) -> Bool,
-) -> Result(String, String) {
+) -> Result(String, StdioError) {
   actor.call(
     transport,
     waiting: timeout_ms + 1000,
