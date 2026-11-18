@@ -115,3 +115,24 @@ acima da linha de base de 74,56%.
   arquitetura em `test/architecture/isolation_test.gleam`.
 - Os testes de ponta a ponta de Telegram e Discord usam o registry real com
   HTTP mock/hooks determinísticos, sem rede.
+
+## Correções pós-revisão (18/11)
+
+A revisão do PR encontrou problemas de concorrência e de autorização. Todos
+têm teste que falhava antes da correção.
+
+| Problema | Efeito | Correção |
+|---|---|---|
+| Turnos com barreira rodavam dentro do ator do router | Cada turno de LLM bloqueava o router de todos; acima de 30 s, o processo chamador caía | O turno sempre roda num processo próprio; o router responde na hora com o indicador de digitação |
+| O laço de polling consumia o stream do turno | Um turno lento travava todos os outros chats do canal | Fila por chat (`supernova_chat_lanes_ffi`): chats diferentes em paralelo, o mesmo chat em ordem |
+| O gateway executava a ferramenta dentro do ator | Fila global de ferramentas; ferramenta acima de 2 s era dada como recusada mas continuava executando | O gateway só autoriza (e já desconta o orçamento); a ferramenta roda no processo do turno; o resultado vai ao audit log por mensagem |
+| Papel `"membro"` no contexto, manifestos com chave `"member"` | Membros não conseguiam usar nenhuma ferramenta | `role_key` estável (`admin`/`member`) para contexto e manifestos; `role_name` só para exibição |
+| Cliques em botões não passavam pela barreira | Não membro podia trocar provider/modelo de uma sessão compartilhada | Interações passam pela mesma barreira das mensagens |
+| Recusa do kernel no caminho assíncrono virava `StreamFailure` | O usuário ficava vendo "Thinking..." sem explicação | A recusa chega como mensagem final |
+| Mensagem final do stream não era dividida | Edição acima de 4096 (Telegram) ou 2000 (Discord) caracteres era rejeitada | A primeira parte edita o placeholder; as demais vão como mensagens novas |
+| Teto diário copiava o histórico inteiro do ledger a cada chamada ao LLM | Ficava mais lento com o tempo e podia falhar fechado sem motivo | A soma do dia é feita dentro do ator do ledger |
+| `handle_message` público rodava sem kernel | Caminho sem orçamento nem gateway, sem chamadores | Removido; o contexto vazio do executor passou a ser `member` |
+
+Estado após as correções: `gleam test` 2167 passaram, 0 falhas; cobertura
+75,75% (gate 75); `gleam build --warnings-as-errors` e `gleam format --check`
+verdes.
