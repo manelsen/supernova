@@ -88,6 +88,13 @@ type ManagerState {
   )
 }
 
+/// Classification of tools/call failures so transport loss and JSON-RPC
+/// application errors are handled distinctly.
+type ToolsCallFailure {
+  TransportError(String)
+  ProtocolError(String)
+}
+
 /// The manager handle.
 pub type MCPManager =
   Subject(ManagerMessage)
@@ -246,13 +253,13 @@ fn tool_decoder(server_name: String) -> decode.Decoder(MCPTool) {
 // MCP Protocol: Tools Call
 // ============================================================================
 
-/// Send tools/call request and return the result.
+/// Send tools/call request and return the result or classified failure.
 fn send_tools_call(
   transport: StdioTransport,
   id: Int,
   tool_name: String,
   args: String,
-) -> Result(String, String) {
+) -> Result(String, ToolsCallFailure) {
   let params =
     "{\"name\":\""
     <> json_escape(tool_name)
@@ -265,10 +272,10 @@ fn send_tools_call(
     Ok(response) -> {
       case parse_jsonrpc_result(response) {
         Ok(result_json) -> Ok(result_json)
-        Error(e) -> Error("tools/call failed: " <> e)
+        Error(e) -> Error(ProtocolError("tools/call failed: " <> e))
       }
     }
-    Error(e) -> Error("tools/call timeout/error: " <> e)
+    Error(e) -> Error(TransportError("tools/call timeout/error: " <> e))
   }
 }
 
@@ -470,22 +477,27 @@ fn handle_message(
                 )
 
               case result {
-                Ok(_) -> {
-                  let updated_connection =
-                    ServerConnection(..connection, request_id: id + 1)
-                  let new_servers =
-                    dict.insert(
-                      state.servers,
-                      mcp_tool.server_name,
-                      updated_connection,
-                    )
-                  actor.send(reply_to, result)
-                  actor.continue(ManagerState(..state, servers: new_servers))
+                Ok(output) -> {
+                  let new_state =
+                    advance_request_id(state, mcp_tool.server_name, connection)
+                  actor.send(reply_to, Ok(output))
+                  actor.continue(new_state)
                 }
-                Error(e) -> {
+                Error(ProtocolError(e)) -> {
+                  let new_state =
+                    advance_request_id(state, mcp_tool.server_name, connection)
+                  actor.send(reply_to, Error(e))
+                  actor.continue(new_state)
+                }
+                Error(TransportError(e)) -> {
                   let new_state = case is_process_dead_error(e) {
                     True -> evict_dead_server(state, mcp_tool.server_name)
-                    False -> state
+                    False ->
+                      advance_request_id(
+                        state,
+                        mcp_tool.server_name,
+                        connection,
+                      )
                   }
                   actor.send(reply_to, Error(e))
                   actor.continue(new_state)
@@ -521,6 +533,17 @@ fn handle_message(
 
 fn string_compare(a: String, b: String) -> order.Order {
   string.compare(a, b)
+}
+
+fn advance_request_id(
+  state: ManagerState,
+  server_name: String,
+  connection: ServerConnection,
+) -> ManagerState {
+  let updated_connection =
+    ServerConnection(..connection, request_id: connection.request_id + 1)
+  let new_servers = dict.insert(state.servers, server_name, updated_connection)
+  ManagerState(..state, servers: new_servers)
 }
 
 fn is_process_dead_error(e: String) -> Bool {

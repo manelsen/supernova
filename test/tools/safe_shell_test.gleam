@@ -37,3 +37,27 @@ pub fn safe_shell_blocks_shell_operators_test() {
   safe_shell.execute("echo ok; id")
   |> should.be_error
 }
+
+pub fn safe_shell_blocks_shell_expansions_test() {
+  [
+    "cat ~/.ssh/id_rsa",
+    "cat $HOME/x",
+    "echo $API_KEY",
+    "ls src/*",
+    "cat foo?",
+    "cat {a,b}",
+    "cat \\/etc/passwd",
+  ]
+  |> list_each_blocked()
+}
+
+fn list_each_blocked(commands: List(String)) -> Nil {
+  case commands {
+    [] -> Nil
+    [cmd, ..rest] -> {
+      safe_shell.execute(cmd)
+      |> should.be_error
+      list_each_blocked(rest)
+    }
+  }
+}

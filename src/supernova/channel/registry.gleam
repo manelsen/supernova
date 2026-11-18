@@ -786,15 +786,8 @@ fn discord_interaction_to_inbound(
         is_bot,
         command_data,
       )
-    discord_events.ApplicationCommandAutocomplete, Some(command_data) ->
-      discord_command_interaction_to_inbound(
-        interaction,
-        channel_id,
-        user_id,
-        username,
-        is_bot,
-        command_data,
-      )
+    discord_events.ApplicationCommandAutocomplete, _ ->
+      Error(port.Ignored("discord autocomplete interaction ignored"))
     discord_events.MessageComponent, Some(component_data) ->
       discord_component_interaction_to_inbound(
         interaction,

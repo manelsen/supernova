@@ -97,15 +97,8 @@ fn validate_command(command: String) -> Result(String, String) {
 
 /// Check if command contains dangerous shell operators.
 fn contains_dangerous_chars(command: String) -> Bool {
-  string.contains(command, ";")
-  || string.contains(command, "|")
-  || string.contains(command, "&&")
-  || string.contains(command, "||")
-  || string.contains(command, "$(")
-  || string.contains(command, "`")
-  || string.contains(command, ">")
-  || string.contains(command, "<")
-  || string.contains(command, "..")
+  [";", "|", "&&", "||", "$", "`", ">", "<", "..", "~", "*", "?", "{", "\\"]
+  |> list.any(fn(token) { string.contains(command, token) })
 }
 
 /// Check if the base command is in the whitelist.

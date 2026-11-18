@@ -469,3 +469,37 @@ pub fn dead_server_is_evicted_after_crash_test() {
 
   mcp_manager.stop(mgr)
 }
+
+pub fn protocol_error_advances_request_id_and_does_not_evict_live_server_test() {
+  let script =
+    "import json, sys\nseen = set()\nfor line in sys.stdin:\n  req = json.loads(line)\n  m = req.get('method')\n  i = req.get('id')\n  if m == 'initialize':\n    print(json.dumps({'jsonrpc':'2.0','id':i,'result':{'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'probe','version':'1.0'}}}), flush=True)\n  elif m == 'notifications/initialized':\n    pass\n  elif m == 'tools/list':\n    print(json.dumps({'jsonrpc':'2.0','id':i,'result':{'tools':[{'name':'probe','description':'Probe','inputSchema':{'type':'object','properties':{}}}]}}), flush=True)\n  elif m == 'tools/call':\n    if i in seen:\n      print(json.dumps({'jsonrpc':'2.0','id':i,'error':{'code':-32600,'message':'duplicate request id'}}), flush=True)\n      continue\n    seen.add(i)\n    args = req.get('params', {}).get('arguments', {})\n    if args.get('fail_with_exited'):\n      print(json.dumps({'jsonrpc':'2.0','id':i,'error':{'code':-32000,'message':'child process exited with status 1'}}), flush=True)\n    else:\n      print(json.dumps({'jsonrpc':'2.0','id':i,'result':{'content':[{'type':'text','text':'ok:' + str(i)}]}}), flush=True)\n"
+
+  let assert Ok(mgr) = mcp_manager.start()
+  let config =
+    mcp_manager.ServerConfig(
+      name: "proto-err",
+      command: "python3",
+      args: ["-u", "-c", script],
+      env: [],
+    )
+  let assert Ok(Nil) = mcp_manager.register(mgr, config)
+
+  // Application error containing "exited" must fail without evicting the live server
+  let first =
+    mcp_manager.execute_tool(
+      mgr,
+      "proto-err/probe",
+      "{\"fail_with_exited\":true}",
+    )
+  first |> should.be_error
+  mcp_manager.list_servers(mgr) |> should.equal(["proto-err"])
+
+  // Subsequent request must use an incremented request ID rather than repeating the failed ID
+  let second = mcp_manager.execute_tool(mgr, "proto-err/probe", "{}")
+  case second {
+    Ok(response) -> response |> string.contains("ok:") |> should.equal(True)
+    Error(_) -> should.fail()
+  }
+
+  mcp_manager.stop(mgr)
+}

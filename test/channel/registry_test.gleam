@@ -1995,7 +1995,7 @@ pub fn send_stream_returns_error_for_unregistered_channel_test() {
   registry.stop_channels(channel_registry)
 }
 
-pub fn start_channels_routes_discord_autocomplete_with_channel_and_role_options_test() {
+pub fn start_channels_ignores_discord_autocomplete_interaction_test() {
   let received = process.new_subject()
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
@@ -2003,6 +2003,23 @@ pub fn start_channels_routes_discord_autocomplete_with_channel_and_role_options_
       ignoring_handler(received),
       test_hooks(
         [discord_fixture_interaction_autocomplete_with_channel_role_event()],
+        [],
+      ),
+    )
+
+  process.receive(received, within: 150) |> should.be_error
+
+  registry.stop_channels(channel_registry)
+}
+
+pub fn start_channels_routes_discord_command_with_channel_and_role_options_test() {
+  let received = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_discord_and_telegram_config(),
+      ignoring_handler(received),
+      test_hooks(
+        [discord_fixture_interaction_command_with_channel_role_event()],
         [],
       ),
     )
@@ -2407,6 +2424,13 @@ fn discord_fixture_interaction_autocomplete_with_channel_role_event() -> discord
   discord_gateway.RawEvent(
     "INTERACTION_CREATE",
     "{\"id\":\"interaction-auto-1\",\"application_id\":\"app-1\",\"type\":4,\"token\":\"token-auto\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}},\"data\":{\"id\":\"cmd-config-1\",\"name\":\"configure\",\"type\":1,\"options\":[{\"name\":\"channel\",\"type\":7,\"value\":\"123\"},{\"name\":\"role\",\"type\":8,\"value\":\"456\"}]}}",
+  )
+}
+
+fn discord_fixture_interaction_command_with_channel_role_event() -> discord_gateway.DiscordEvent {
+  discord_gateway.RawEvent(
+    "INTERACTION_CREATE",
+    "{\"id\":\"interaction-cmd-1\",\"application_id\":\"app-1\",\"type\":2,\"token\":\"token-cmd\",\"version\":1,\"guild_id\":\"900000000000000009\",\"channel_id\":\"900000000000000004\",\"member\":{\"user\":{\"id\":\"900000000000000026\",\"username\":\"username_5\",\"discriminator\":\"0\",\"bot\":false}},\"data\":{\"id\":\"cmd-config-1\",\"name\":\"configure\",\"type\":1,\"options\":[{\"name\":\"channel\",\"type\":7,\"value\":\"123\"},{\"name\":\"role\",\"type\":8,\"value\":\"456\"}]}}",
   )
 }
 
