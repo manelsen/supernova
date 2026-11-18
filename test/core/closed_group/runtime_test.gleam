@@ -136,8 +136,10 @@ pub fn authorized_member_and_admin_pass_test() {
     config_with_access(["telegram:1"], ["telegram:123"], []),
     fn(runtime) {
       case member_gate(runtime) {
+        // The context carries the machine key used by the gateway's
+        // capability manifests, not the Portuguese display name.
         cg_types.Allowed(cg_types.PrincipalContext(role:, ..)) ->
-          should.equal(role, "membro")
+          should.equal(role, "member")
         _ -> should.fail()
       }
       case cg_runtime.gate(runtime, "telegram", "1", "1", "oi") {

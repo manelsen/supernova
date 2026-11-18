@@ -149,6 +149,9 @@ pub type LedgerMessage {
   GetUsage(reply_to: Subject(List(UsageEvent)), principal_id: String)
   /// Get the full usage trail
   GetAllUsage(reply_to: Subject(List(UsageEvent)))
+  /// Sum the LLM cost of events whose timestamp satisfies `keep`. Computed
+  /// inside the actor so callers never copy the whole usage trail.
+  GetLLMCostWhere(reply_to: Subject(Float), keep: fn(Int) -> Bool)
   /// Get the total LLM cost for a UTC day
   GetDailyCost(reply_to: Subject(Float), day: String)
   /// Get the LLM cost for a UTC day for one principal
@@ -409,6 +412,22 @@ fn handle_message(
 
     GetAllUsage(reply_to) -> {
       actor.send(reply_to, state.events)
+      actor.continue(state)
+    }
+
+    GetLLMCostWhere(reply_to, keep) -> {
+      let total =
+        list.fold(state.events, 0.0, fn(acc, event) {
+          case event {
+            LLMUsage(timestamp: timestamp, cost_usd: cost, ..) ->
+              case keep(timestamp) {
+                True -> acc +. cost
+                False -> acc
+              }
+            ToolUsage(..) -> acc
+          }
+        })
+      actor.send(reply_to, total)
       actor.continue(state)
     }
 
@@ -716,7 +735,18 @@ pub fn get_usage(
   }
 }
 
-/// Get the full usage trail.
+/// Sum the LLM cost of events whose timestamp satisfies `keep`, failing
+/// explicitly when the ledger is unavailable.
+pub fn try_llm_cost_where(
+  ledger: ResourceLedger,
+  keep: fn(Int) -> Bool,
+) -> Result(Float, Nil) {
+  case safe_call.call(ledger, 1500, GetLLMCostWhere(_, keep)) {
+    Ok(total) -> Ok(total)
+    Error(_) -> Error(Nil)
+  }
+}
+
 /// Get the full usage trail with an explicit failure.
 pub fn try_get_all_usage(
   ledger: ResourceLedger,

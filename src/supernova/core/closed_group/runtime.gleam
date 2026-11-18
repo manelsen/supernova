@@ -30,7 +30,6 @@ import supernova/core/principal
 import supernova/core/rate_limit/actor as rate_limiter
 import supernova/core/rate_limit/pure as rate_pure
 import supernova/core/resource_ledger/actor as ledger_actor
-import supernova/core/resource_ledger/types as ledger_types
 import supernova/core/syscall/actor as syscall_actor
 import supernova/llm/pricing
 import supernova/llm/provider
@@ -174,7 +173,7 @@ fn after_chat_allowed(
     rate_pure.RateLimited(notify: True) -> types.Reply(pure.rate_limited_reply)
     rate_pure.RateLimited(notify: False) -> types.Ignored("rate limited")
     rate_pure.Allowed -> {
-      let role_name = pure.role_name(role)
+      let role_key = pure.role_key(role)
       let budget_config =
         pure.budget_config(pure.role_budget_config(
           runtime.config.role_budgets,
@@ -186,7 +185,7 @@ fn after_chat_allowed(
         Ok(Nil) ->
           types.Allowed(types.PrincipalContext(
             principal_id: principal_id,
-            role: role_name,
+            role: role_key,
           ))
       }
     }
@@ -270,28 +269,12 @@ pub fn precheck(
 
 /// Estimated cost of all LLM calls in the configured local day.
 pub fn daily_spend(runtime: types.Runtime) -> Result(Float, Nil) {
-  let today =
-    pricing.day_key(runtime.clock(), runtime.config.instance_budget.timezone)
-  case ledger_actor.try_get_all_usage(runtime.ledger) {
-    Error(_) -> Error(Nil)
-    Ok(events) ->
-      events
-      |> list.filter(fn(event) {
-        case event {
-          ledger_types.LLMUsage(timestamp: timestamp, ..) ->
-            pricing.day_key(timestamp, runtime.config.instance_budget.timezone)
-            == today
-          ledger_types.ToolUsage(..) -> False
-        }
-      })
-      |> list.fold(0.0, fn(total, event) {
-        case event {
-          ledger_types.LLMUsage(cost_usd: cost, ..) -> total +. cost
-          ledger_types.ToolUsage(..) -> total
-        }
-      })
-      |> Ok
-  }
+  let timezone = runtime.config.instance_budget.timezone
+  let today = pricing.day_key(runtime.clock(), timezone)
+  // The sum runs inside the ledger actor: only the total crosses processes.
+  ledger_actor.try_llm_cost_where(runtime.ledger, fn(timestamp) {
+    pricing.day_key(timestamp, timezone) == today
+  })
 }
 
 // ============================================================================

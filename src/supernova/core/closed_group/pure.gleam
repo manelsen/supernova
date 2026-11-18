@@ -75,6 +75,16 @@ pub fn role_name(role: access_types.Role) -> String {
   }
 }
 
+/// Stable machine key for a role. Used as the `PrincipalContext.role` and as
+/// the capability-manifest key in the syscall gateway. `role_name` is the
+/// Portuguese display name and must never be used as a key.
+pub fn role_key(role: access_types.Role) -> String {
+  case role {
+    access_types.Admin -> "admin"
+    access_types.Member -> "member"
+  }
+}
+
 pub fn role_from_string(role: String) -> access_types.Role {
   case role {
     "admin" -> access_types.Admin

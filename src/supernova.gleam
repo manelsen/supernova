@@ -508,14 +508,14 @@ pub fn start_closed_group_supervisor(
             let manifests =
               dict.from_list([
                 #(
-                  "member",
+                  closed_group_pure.role_key(access_types.Member),
                   closed_group_pure.manifest_for(
                     cfg.capabilities,
                     access_types.Member,
                   ),
                 ),
                 #(
-                  "admin",
+                  closed_group_pure.role_key(access_types.Admin),
                   closed_group_pure.manifest_for(
                     cfg.capabilities,
                     access_types.Admin,
