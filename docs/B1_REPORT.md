@@ -203,7 +203,7 @@ revisão. Cada linha tem teste automatizado no PR "B1.1".
 |---|---|---|---|
 | Base pós-PR #11 (`1a2259c`) | 2167 | 75,75% | verde |
 | Fase A (`b71e09d`, PR #12) | 2184 | 75,67% | verde |
-| Fase B (PR "B1.1") | 2199 | 75,80% (10547/13915) | verde |
+| Fase B (PR "B1.1") | 2201 | 75,81% (10560/13930) | verde |
 
 ## Commits e CI
 
