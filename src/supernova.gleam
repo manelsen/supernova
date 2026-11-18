@@ -546,7 +546,7 @@ pub fn start_closed_group_supervisor(
                   ),
                 ),
               ])
-            let workspace_root = cfg.data_dir <> "/workspace"
+            let workspace_root = config.workspace_root(cfg)
             let policy_result = case ensure_dir(workspace_root) {
               Error(reason) ->
                 Error(otp_actor.InitFailed(

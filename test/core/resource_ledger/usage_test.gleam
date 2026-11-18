@@ -35,6 +35,12 @@ fn del_dir_r(path: String) -> Result(Nil, Nil)
 @external(erlang, "erlang", "unique_integer")
 fn unique_integer() -> Int
 
+@external(erlang, "os", "getpid")
+fn os_getpid() -> String
+
+@external(erlang, "erlang", "list_to_binary")
+fn list_to_binary(value: String) -> String
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -45,7 +51,10 @@ const now_ms: Int = 1_718_452_800_000
 const day: String = "2024-06-15"
 
 fn temp_dir() -> String {
-  "/tmp/supernova_ledger_test_" <> int.to_string(unique_integer())
+  "/tmp/supernova_ledger_test_"
+  <> list_to_binary(os_getpid())
+  <> "_"
+  <> int.to_string(unique_integer())
 }
 
 fn cleanup(dir: String) -> Nil {
@@ -70,6 +79,7 @@ fn file_exists_now(path: String) -> Bool {
 
 pub fn record_usage_per_principal_test() {
   let dir = temp_dir()
+  cleanup(dir)
   let assert Ok(ledger) =
     actor.start_persistent_with_clock(dir, fn() { now_ms })
 
@@ -251,6 +261,7 @@ pub fn rotation_uses_utc_day_key_test() {
 
 pub fn spend_today_returns_day_and_total_test() {
   let dir = temp_dir()
+  cleanup(dir)
   let assert Ok(ledger) =
     actor.start_persistent_with_clock_and_day_key(
       dir,

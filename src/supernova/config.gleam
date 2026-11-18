@@ -1951,6 +1951,14 @@ pub fn is_telegram_enabled(config: Config) -> Bool {
   config.telegram.enabled && config.telegram.token != None
 }
 
+/// Root used by the kernel workspace policy.
+pub fn workspace_root(config: Config) -> String {
+  case config.access.mode {
+    Allowlist -> config.data_dir <> "/agents"
+    Open -> config.data_dir <> "/workspace"
+  }
+}
+
 pub fn is_sim_enabled(config: Config) -> Bool {
   case config.sim.token {
     Some(token) -> config.sim.enabled && string.trim(token) != ""
