@@ -158,3 +158,86 @@ Todas entraram no PR #12 com teste que reproduzia a falha.
 Estado após a Fase A: `gleam test` 2184 passaram, 0 falhas; `gleam build
 --warnings-as-errors` e `gleam format --check` verdes. A cobertura foi medida
 com `make coverage` no fechamento.
+
+## Correções da Fase B (B1.1)
+
+A Fase B fecha os riscos de custo, entrega e concorrência levantados pela
+revisão. Cada linha tem teste automatizado no PR "B1.1".
+
+| História | Problema | Correção | Teste |
+|---|---|---|---|
+| B-01 | Estimativa de tokens ignorava definições de ferramentas e chamadas de ferramenta | `tool_definition_tokens`, `message_token_estimate` e `response_token_estimate` entram em `prompt_token_estimate` | `tool_definitions_and_calls_are_counted_in_estimates_test` |
+| B-02 | Cada consulta ao teto diário relia o ledger inteiro | Totais por dia mantidos no ator, reconstruídos na rotação e recarregados no boot | `persistence_survives_restart_test` |
+| B-03 | Duas chamadas concorrentes podiam passar pelo teto antes de qualquer cobrança | Reserva do custo estimado na admissão, liberada ou substituída pela cobrança real; dia do ledger explícito | `concurrent_admissions_respect_the_cap_test` |
+| B-04 | Falha de escrita no ledger perdia custo | `call_id` idempotente, três retentativas e alerta `ledger_write_lost` | `usage_retry_is_idempotent_test` |
+| B-05 | Entrega dividida tratava "mensagem não modificada" como falha e não repetia 429; updates acima do limite quebravam o consumidor | `not_modified` é sucesso, partes com 429 são repetidas até 10 s, fallback final, updates grandes ignorados | `split_delivery_treats_not_modified_as_success_test`, `split_delivery_retries_rate_limited_parts_test` |
+| B-06 | Saída do grupo era auditada antes de o Telegram confirmar | Auditoria só após confirmação; retentativas rechecam a autorização antes de cada tentativa | `failed_group_leave_is_retried_and_audited_test` |
+| B-07 | Interação de não membro podia editar um seletor compartilhado | Interações passam por `gate_interaction`; negação não carrega `edit_message_id` | `interaction_from_non_member_is_gated_test` |
+| B-08 | Shutdown parava dependências antes de drenar as lanes | Fila prefixada por registro, `drain` com prazo e `stop_channels_with_timeout` | `drain_reports_pending_turns_with_short_timeout_test` |
+| B-09 | Autorização descontava orçamento mesmo sem execução | Cobrança transferida para `ClaimTool`; reserva expira em 5 s; `CancelToolClaim` estorna claim tardio | `unclaimed_tool_authorization_does_not_charge_test`, `cancelled_claim_refunds_budget_test` |
+| B-10 | Fechamento | Riscos aceitos, notas e PR | `gh pr checks` |
+
+### Riscos aceitos
+
+- **Kill forçado de um worker de lane** perde jobs ainda não iniciados; não há
+  fila durável. O `drain` de 25 s cobre o caso normal; job iniciado recebe até
+  300 s para chegar a um evento terminal.
+- **Reserva de saída** usa `reserve_output_tokens` (padrão 1000). O provedor
+  não expõe hoje um limite de saída por chamada; uma resposta acima da reserva
+  é contabilizada pelo custo real e pode ultrapassar o teto em uma chamada. O
+  alerta de 80%/100% e o registro no ledger permanecem.
+- **Reserva de 10 min** existe para chamadas órfãs. Uma chamada de LLM que
+  dure mais que isso libera a reserva antes de terminar; o custo real continua
+  sendo cobrado quando chega.
+- **Migração de `access.json` legado** segue o PRD: listas antigas viram
+  `added = listas − YAML` e `removed = []`. Uma revogação feita por comando
+  antes da migração pode reaparecer; o admin deve revisar a lista após a
+  primeira subida. A migração é única e regrava o arquivo no formato novo.
+- **Fila durável de uso perdido** não foi implementada; após três tentativas o
+  custo é auditado e alertado, mas não entra no total diário. O teto falha
+  fechado no próximo `AdmitLLMCall` porque o gasto conhecido é menor que o real.
+
+## Linha de base e estado final
+
+| Fase | Testes | Cobertura de linha | `gleam build --warnings-as-errors` |
+|---|---|---|---|
+| Base pós-PR #11 (`1a2259c`) | 2167 | 75,75% | verde |
+| Fase A (`b71e09d`, PR #12) | 2184 | 75,67% | verde |
+| Fase B (PR "B1.1") | 2199 | 75,80% (10547/13915) | verde |
+
+## Commits e CI
+
+- Fase A: `b71e09d` `fix: harden closed-group access and channel execution`
+  no PR #12; CI `test` run 44303926982 e `docker` run 44303926937, ambos
+  verdes.
+- Fase B (branch `fix/b1-1-endurecimento`):
+  - `c0ae525` `fix(budget): count tool definitions and tool calls in usage estimates`
+  - `09a9532` `perf(ledger): keep daily totals and reserve LLM spend`
+  - `c1c63c1` `fix(channels): make stream delivery, leaves and shutdown resilient`
+  - `f980fd9` `fix(router): gate interactions and retry lost ledger writes`
+  - `54e1803` `fix(gateway): charge tool calls on claim and refund cancellations`
+  - `618634b` `docs: accepted risks and v0.4.0 notes for B1.1`
+  - CI do PR "B1.1" registrado na conversa do PR.
+
+## Decisões sem especificação explícita
+
+- A migração do `access.json` antigo segue o desenho do PRD (`added =
+  listas − YAML`, `removed = []`). O risco de revogação por comando
+  reaparecer está em "Riscos aceitos" e deve ser reconciliado pelo admin.
+- O worker do turno mantém a lane ocupada até o evento terminal ou até
+  `turn_hard_timeout_ms`; depois disso o PRD manda encerrar e logar. O job não
+  é cancelado à força para não matar escrita de sessão em andamento.
+- Reservas de custo expiram em 10 min, como o PRD pede; a cobrança real
+  substitui a reserva pelo `call_id`.
+- A fila de retentativa do ledger é em memória. Após três tentativas o custo é
+  auditado e alertado, mas um restart pode perder o registro.
+- `leave_group` no hook de teste devolve `Bool` para simular confirmação do
+  Telegram sem rede.
+
+## Revisões CodeRabbit
+
+| Rodada | Onde | Achados | Resolução |
+|---|---|---|---|
+| 1 | PR #12, revisão `5956360197` | 8 | Recheck de autorização antes do retry de saída (`f980fd9`) e cancelamento de claim cobrado (`54e1803`) corrigidos. Migração legada, timeout duro, reserva de saída, TTL de 10 min e fila de retry seguem o desenho explícito do PRD e estão em "Riscos aceitos". Commit antes do push atendido. |
+| 2 | PR "B1.1" | a preencher | a preencher |
+| 3 | PR "B1.1" | a preencher | a preencher |

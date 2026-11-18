@@ -185,6 +185,8 @@ pricing:
 instance_budget:
   daily_usd: 5.0
   timezone: "America/Sao_Paulo"
+  # Tokens reserved for the response when admitting an LLM call.
+  reserve_output_tokens: 1000
 
 # Writable directory for access.json and the ledger
 data_dir: "data"

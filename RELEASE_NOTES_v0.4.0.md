@@ -48,6 +48,21 @@ mocked end-to-end tests. The other seven channels are experimental.
 - Experimental channels warn at boot.
 - Container images are published only on `v*` tags.
 
+### Hardening after the closed-group review (B1.1)
+
+- Access lists persist only deltas over YAML (`added`/`removed`), and legacy
+  `access.json` files are migrated on load.
+- The daily cost total is maintained per day inside the ledger actor; LLM
+  admission reserves the estimated cost first, and actual usage replaces the
+  reservation using an idempotent call id.
+- Split replies treat "message is not modified" as success, retry rate-limited
+  parts, and send a final fallback instead of leaving a half-delivered answer.
+- The bot records a group leave only after Telegram confirms it, and rechecks
+  access before each leave retry.
+- Non-member interactions are denied before touching a shared picker.
+- Chat lanes drain before channel dependencies stop; tool calls are charged
+  when claimed, and unclaimed or cancelled claims are refunded.
+
 ## Upgrade Notes
 
 - Set at least one admin before starting:
