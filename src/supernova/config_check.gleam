@@ -98,7 +98,7 @@ fn check_chats(chats: List(String)) -> List(ConfigIssue) {
       level: Error,
       message: "access.allowed_chats: invalid chat id '"
         <> chat
-        <> "' (expected telegram:<id> or discord:guild:<id>)",
+        <> "' (expected telegram:<id>, discord:guild:<id>, or sim:<id>)",
     )
   })
 }
@@ -109,7 +109,11 @@ fn valid_chat_id(chat: String) -> Bool {
     False ->
       case string.starts_with(chat, "discord:guild:") {
         True -> string.length(chat) > string.length("discord:guild:")
-        False -> False
+        False ->
+          case string.starts_with(chat, "sim:") {
+            True -> string.length(chat) > string.length("sim:")
+            False -> False
+          }
       }
   }
 }

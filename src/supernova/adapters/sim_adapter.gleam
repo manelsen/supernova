@@ -11,6 +11,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/string
 import gleam/uri
 import mist.{type Connection, type ResponseData}
 import supernova/channel/chunking
@@ -224,7 +225,7 @@ fn handle_post(
       let result = handler(port.InboundMessage(message), events)
       case result {
         Ok(port.ImmediateReply(reply)) -> append_parts(store, reply)
-        Ok(port.StreamReply(_)) -> collect_stream(events, store)
+        Ok(port.StreamReply(base)) -> collect_stream(events, store, base)
         Error(port.Ignored(_)) -> Nil
         Error(port.SendFailed(_)) -> Nil
         Error(_) -> Nil
@@ -237,23 +238,26 @@ fn handle_post(
   }
 }
 
+const stream_idle_timeout_ms = 60_000
+
 fn collect_stream(
   events: Subject(port.ChannelStreamEvent),
   store: Subject(StoreMessage),
+  base: port.ChannelReply,
 ) -> Nil {
-  case process.receive(events, within: 1000) {
+  case process.receive(events, within: stream_idle_timeout_ms) {
     Ok(port.StreamUpdate(reply)) -> {
       append(store, reply)
-      collect_stream(events, store)
+      collect_stream(events, store, base)
     }
     Ok(port.StreamComplete(reply)) -> {
       append_parts(store, reply)
       Nil
     }
-    Ok(port.StreamFailure(_reason)) -> {
-      Nil
-    }
-    Error(_) -> Nil
+    Ok(port.StreamFailure(_reason)) ->
+      append(store, port.ChannelReply(..base, content: "stream failed"))
+    Error(_) ->
+      append(store, port.ChannelReply(..base, content: "stream timed out"))
   }
 }
 
@@ -310,7 +314,14 @@ fn decode_message(raw: String) -> Result(SimInput, Nil) {
     decode.success(SimInput(chat_id, user_id, username, content, is_group))
   }
   case json.parse(from: raw, using: decoder) {
-    Ok(value) -> Ok(value)
+    Ok(value) ->
+      case
+        string.contains(value.chat_id, ":")
+        || string.contains(value.user_id, ":")
+      {
+        True -> Error(Nil)
+        False -> Ok(value)
+      }
     Error(_) -> Error(Nil)
   }
 }

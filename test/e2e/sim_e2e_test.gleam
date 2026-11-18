@@ -82,6 +82,14 @@ pub fn sim_requires_bearer_token_test() {
   send(auth_port, Some("wrong"), "/sim/messages", "{}").0
   |> should.equal(401)
 
+  send(
+    auth_port,
+    Some("sim-token"),
+    "/sim/messages",
+    "{\"chat_id\":\"group-1\",\"user_id\":\"alice:west\",\"content\":\"oi\"}",
+  ).0
+  |> should.equal(400)
+
   sim_adapter.stop(sim)
 }
 
