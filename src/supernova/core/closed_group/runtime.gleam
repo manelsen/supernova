@@ -942,13 +942,26 @@ fn dispatch_alert(
 ) -> Nil {
   case alerts_actor.take(runtime.alerts, kind, subject, runtime.clock()) {
     False -> Nil
-    True -> {
-      let admins = case access_actor.list_admins(runtime.access) {
-        [] -> runtime.config.access.admins
-        admins -> admins
+    True ->
+      case access_actor.try_list_admins(runtime.access) {
+        Ok([]) ->
+          io.println(
+            "warn: alert dropped because no effective admins are configured",
+          )
+        Ok(admins) ->
+          list.each(admins, fn(admin) { runtime.send_alert(admin, text) })
+        Error(_) -> {
+          io.println("warn: alert dropped because access is unavailable")
+          audit_action(
+            runtime,
+            "system",
+            "alert_dropped",
+            subject,
+            audit_types.AuditFailure,
+            "access unavailable",
+          )
+        }
       }
-      list.each(admins, fn(admin) { runtime.send_alert(admin, text) })
-    }
   }
 }
 

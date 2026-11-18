@@ -1023,13 +1023,36 @@ fn record_leave_failed(chat_key: String) -> Nil {
 fn alert_admins(text: String) -> Nil {
   case closed_group_global.get_runtime() {
     None -> Nil
-    Some(runtime) -> {
-      let admins = case access_actor.list_admins(runtime.access) {
-        [] -> runtime.config.access.admins
-        admins -> admins
+    Some(runtime) ->
+      case access_actor.try_list_admins(runtime.access) {
+        Ok([]) ->
+          io.println(
+            "warn: alert dropped because no effective admins are configured",
+          )
+        Ok(admins) ->
+          list.each(admins, fn(admin) { runtime.send_alert(admin, text) })
+        Error(_) -> {
+          io.println("warn: alert dropped because access is unavailable")
+          record_alert_dropped("access unavailable")
+        }
       }
-      list.each(admins, fn(admin) { runtime.send_alert(admin, text) })
-    }
+  }
+}
+
+fn record_alert_dropped(reason: String) -> Nil {
+  case closed_group_global.get_audit() {
+    None -> Nil
+    Some(audit) ->
+      audit_actor.log_entry(
+        audit,
+        audit_types.denied_entry(
+          closed_group_global.now(),
+          "system",
+          "alert_dropped",
+          "admins",
+          reason,
+        ),
+      )
   }
 }
 

@@ -1091,3 +1091,43 @@ fn wait_for_ledger_usage(
     _ -> Nil
   }
 }
+
+pub fn alerts_only_reach_effective_admins_test() {
+  let cfg = config_with_access(["telegram:1", "telegram:2"], [], [])
+  let recorder = process.new_subject()
+  with_runtime_alerts(
+    cfg,
+    fn(admin, text) { process.send(recorder, #(admin, text)) },
+    fn(runtime) {
+      runtime.access
+      |> access_actor.remove_member("telegram:2")
+      |> should.be_ok()
+
+      cg_runtime.fail_closed_alert(runtime, "ledger")
+
+      let assert Ok(#(admin, _)) = process.receive(recorder, within: 1000)
+      admin |> should.equal("telegram:1")
+      process.receive(recorder, within: 100)
+      |> should.equal(Error(Nil))
+    },
+  )
+}
+
+pub fn alert_is_dropped_when_access_is_unavailable_test() {
+  let cfg = config_with_access(["telegram:1"], [], [])
+  let recorder = process.new_subject()
+  with_runtime_alerts(
+    cfg,
+    fn(admin, text) { process.send(recorder, #(admin, text)) },
+    fn(runtime) {
+      access_actor.stop(runtime.access)
+      cg_runtime.fail_closed_alert(runtime, "ledger")
+
+      process.receive(recorder, within: 2500)
+      |> should.equal(Error(Nil))
+      audit_actor.get_all(runtime.audit)
+      |> list.any(fn(entry) { entry.operation == "alert_dropped" })
+      |> should.be_true()
+    },
+  )
+}

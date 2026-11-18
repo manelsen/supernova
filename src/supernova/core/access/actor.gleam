@@ -458,6 +458,14 @@ pub fn try_list_chats(access: AccessActor) -> Result(List(String), Nil) {
   }
 }
 
+/// List admins with an explicit failure.
+pub fn try_list_admins(access: AccessActor) -> Result(List(String), Nil) {
+  case safe_call.call(access, call_timeout_ms, ListAdmins) {
+    Ok(admins) -> Ok(admins)
+    Error(_) -> Error(Nil)
+  }
+}
+
 /// List admins.
 pub fn list_admins(access: AccessActor) -> List(String) {
   call_or(access, [], ListAdmins)
