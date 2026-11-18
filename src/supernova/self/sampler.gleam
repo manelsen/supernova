@@ -190,7 +190,7 @@ fn weighted_at(
   case candidates, weights {
     [], _ -> #(rng, "")
     [trait, ..rest], [weight, ..rest_weights] -> {
-      case target <=. weight {
+      case weight >. 0.0 && target <=. weight {
         True -> #(rng, trait.id)
         False -> weighted_at(rest, rest_weights, target -. weight, rng)
       }
@@ -273,10 +273,10 @@ fn nth(items: List(a), index: Int) -> a {
 fn nth_result(items: List(a), index: Int) -> Result(a, Nil) {
   case items {
     [] -> Error(Nil)
-    [first, ..] ->
+    [first, ..rest] ->
       case index <= 0 {
         True -> Ok(first)
-        False -> nth_result(items, index - 1)
+        False -> nth_result(rest, index - 1)
       }
   }
 }

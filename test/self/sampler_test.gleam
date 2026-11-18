@@ -95,19 +95,30 @@ pub fn strong_affinity_is_sampled_more_often_test() {
       coherence_threshold: 0.0,
       min_distance: 0.0,
     )
-  let count =
-    seeds(0, 999)
-    |> list.fold(0, fn(acc, seed) {
-      case sampler.sample(constellation, seed, []) {
-        Ok(sampled) ->
-          case list.contains(sampled.traits, "a") {
-            True -> acc + 1
-            False -> acc
-          }
-        Error(_) -> acc
-      }
-    })
-  { count > 400 } |> should.be_true()
+  let count = count_trait(constellation, "a")
+  let baseline =
+    count_trait(
+      constellation.Constellation(..constellation, affinities: []),
+      "a",
+    )
+  { count > baseline + 200 } |> should.be_true()
+}
+
+fn count_trait(
+  constellation: constellation.Constellation,
+  trait: String,
+) -> Int {
+  seeds(0, 999)
+  |> list.fold(0, fn(acc, seed) {
+    case sampler.sample(constellation, seed, []) {
+      Ok(sampled) ->
+        case list.contains(sampled.traits, trait) {
+          True -> acc + 1
+          False -> acc
+        }
+      Error(_) -> acc
+    }
+  })
 }
 
 fn first_success(

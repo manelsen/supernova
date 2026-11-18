@@ -40,50 +40,60 @@ pub fn step(
           }
       }
     None ->
-      case constellation.load(core.constellation_path()) {
-        Error(_) -> Unavailable
-        Ok(loaded) -> {
-          let existing =
-            core.existing_traits(data_dir)
-            |> list.map(fn(ids) {
-              constellation.Constellation(
-                version: 1,
-                dimensions: [],
-                traits: list.map(ids, fn(id) {
-                  constellation.Trait(id: id, dimension: "", description: "")
-                }),
-                affinities: [],
-                coherence_threshold: 0.0,
-                min_distance: 0.0,
-              )
-            })
-          case
-            sampler.sample(loaded, now + phash(principal, 1_000_003), existing)
-          {
+      case core.exists(data_dir, principal) {
+        True -> BirthFailed
+        False -> birth_from_constellation(data_dir, principal, now, generate)
+      }
+  }
+}
+
+fn birth_from_constellation(
+  data_dir: String,
+  principal: String,
+  now: Int,
+  generate: fn(String) -> Result(String, String),
+) -> Step {
+  case constellation.load(core.constellation_path()) {
+    Error(_) -> Unavailable
+    Ok(loaded) -> {
+      let existing =
+        core.existing_traits(data_dir)
+        |> list.map(fn(ids) {
+          constellation.Constellation(
+            version: 1,
+            dimensions: [],
+            traits: list.map(ids, fn(id) {
+              constellation.Trait(id: id, dimension: "", description: "")
+            }),
+            affinities: [],
+            coherence_threshold: 0.0,
+            min_distance: 0.0,
+          )
+        })
+      case sampler.sample(loaded, now + phash(principal, 1_000_003), existing) {
+        Error(_) -> BirthFailed
+        Ok(sampled) -> {
+          let prompt = birth_prompt(loaded, sampled)
+          case generate(prompt) {
             Error(_) -> BirthFailed
-            Ok(sampled) -> {
-              let prompt = birth_prompt(loaded, sampled)
-              case generate(prompt) {
+            Ok(prose) ->
+              case
+                core.save_birth(
+                  data_dir,
+                  principal,
+                  sampled,
+                  loaded.version,
+                  prose,
+                  now,
+                )
+              {
+                Ok(_) -> AskName(prose <> "\n\n" <> question())
                 Error(_) -> BirthFailed
-                Ok(prose) ->
-                  case
-                    core.save_birth(
-                      data_dir,
-                      principal,
-                      sampled,
-                      loaded.version,
-                      prose,
-                      now,
-                    )
-                  {
-                    Ok(_) -> AskName(prose <> "\n\n" <> question())
-                    Error(_) -> BirthFailed
-                  }
               }
-            }
           }
         }
       }
+    }
   }
 }
 

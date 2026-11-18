@@ -34,6 +34,14 @@ pub fn biography_path(data_dir: String, principal: String) -> String {
   agent_identity.self_dir(data_dir, principal) <> "/biography.jsonl"
 }
 
+/// True when a core file exists, even if unreadable.
+pub fn exists(data_dir: String, principal: String) -> Bool {
+  case file_exists(core_path(data_dir, principal)) {
+    Ok(value) -> value
+    Error(_) -> True
+  }
+}
+
 pub fn load(data_dir: String, principal: String) -> Option(Core) {
   case read_file(core_path(data_dir, principal)) {
     Error(_) -> None
@@ -61,23 +69,39 @@ pub fn save_birth(
     )
   let directory = agent_identity.self_dir(data_dir, principal)
   use _ <- result.try(ensure_dir(directory))
-  use _ <- result.try(write_file(
-    core_path(data_dir, principal),
-    encode_core(core),
-  ))
-  use _ <- result.try(write_file(prose_path(data_dir, principal), prose))
-  use _ <- result.try(append_file(
-    biography_path(data_dir, principal),
-    json.to_string(
-      json.object([
-        #("at", json.int(born_at)),
-        #("kind", json.string("birth")),
-        #("traits", json.array(sampled.traits, json.string)),
-      ]),
-    )
-      <> "\n",
-  ))
-  Ok(Nil)
+  let json_path = core_path(data_dir, principal)
+  let md_path = prose_path(data_dir, principal)
+  case write_file(md_path, prose) {
+    Error(error) -> Error(error)
+    Ok(_) ->
+      case write_file(json_path, encode_core(core)) {
+        Error(error) -> {
+          let _ = delete_file(md_path)
+          Error(error)
+        }
+        Ok(_) ->
+          case
+            append_file(
+              biography_path(data_dir, principal),
+              json.to_string(
+                json.object([
+                  #("at", json.int(born_at)),
+                  #("kind", json.string("birth")),
+                  #("traits", json.array(sampled.traits, json.string)),
+                ]),
+              )
+                <> "\n",
+            )
+          {
+            Error(error) -> {
+              let _ = delete_file(json_path)
+              let _ = delete_file(md_path)
+              Error(error)
+            }
+            Ok(_) -> Ok(Nil)
+          }
+      }
+  }
 }
 
 pub fn set_name(
@@ -87,21 +111,30 @@ pub fn set_name(
   name: String,
   at: Int,
 ) -> Result(Nil, String) {
+  let path = core_path(data_dir, principal)
   use _ <- result.try(write_file(
-    core_path(data_dir, principal),
+    path,
     encode_core(Core(..core, name: Some(name))),
   ))
-  append_file(
-    biography_path(data_dir, principal),
-    json.to_string(
-      json.object([
-        #("at", json.int(at)),
-        #("kind", json.string("name")),
-        #("name", json.string(name)),
-      ]),
+  case
+    append_file(
+      biography_path(data_dir, principal),
+      json.to_string(
+        json.object([
+          #("at", json.int(at)),
+          #("kind", json.string("name")),
+          #("name", json.string(name)),
+        ]),
+      )
+        <> "\n",
     )
-      <> "\n",
-  )
+  {
+    Ok(_) -> Ok(Nil)
+    Error(error) -> {
+      let _ = write_file(path, encode_core(core))
+      Error(error)
+    }
+  }
 }
 
 pub fn read_prose(data_dir: String, principal: String) -> Option(String) {
@@ -192,6 +225,12 @@ pub fn constellation_path() -> String {
 
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
+
+@external(erlang, "supernova_file_system_ffi", "file_exists")
+fn file_exists(path: String) -> Result(Bool, String)
+
+@external(erlang, "supernova_file_system_ffi", "delete_file")
+fn delete_file(path: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)

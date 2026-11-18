@@ -1,4 +1,5 @@
 import envoy
+import exception
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -15,17 +16,17 @@ pub fn main() -> Nil {
 
 fn with_constellation(body: fn(String) -> a) -> a {
   let previous = envoy.get("SUPERNOVA_CONSTELLATION_PATH")
+  use <- exception.defer(fn() {
+    case previous {
+      Ok(value) -> envoy.set("SUPERNOVA_CONSTELLATION_PATH", value)
+      Error(_) -> envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
+    }
+  })
   envoy.set(
     "SUPERNOVA_CONSTELLATION_PATH",
     "test/fixtures/constellation_small.json",
   )
-  let result =
-    test_workspace.with_isolated_workspace("birth", fn(root) { body(root) })
-  case previous {
-    Ok(value) -> envoy.set("SUPERNOVA_CONSTELLATION_PATH", value)
-    Error(_) -> envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
-  }
-  result
+  test_workspace.with_isolated_workspace("birth", fn(root) { body(root) })
 }
 
 pub fn birth_writes_self_and_accepts_name_test() {
@@ -68,6 +69,20 @@ pub fn failed_birth_writes_nothing_test() {
   })
 }
 
+pub fn malformed_core_is_not_overwritten_test() {
+  with_constellation(fn(root) {
+    let sampled = sampler.Sampled(traits: ["temp_0"], seed: 1, attempts: 0)
+    let assert Ok(_) =
+      core.save_birth(root, "sim:a", sampled, 1, "Eu sou.", 1000)
+    let path = core.core_path(root, "sim:a")
+    let assert Ok(_) = write_file(path, "{malformed")
+    birth.step(root, "sim:a", "oi", 2000, fn(_) { Ok("novo") })
+    |> should.equal(birth.BirthFailed)
+    let assert Ok(after) = read_file(path)
+    after |> should.equal("{malformed")
+  })
+}
+
 pub fn invalid_name_asks_again_test() {
   with_constellation(fn(root) {
     let _ = birth.step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
@@ -91,3 +106,6 @@ pub fn two_agents_respect_min_distance_test() {
 
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_file(path: String, content: String) -> Result(Nil, String)
