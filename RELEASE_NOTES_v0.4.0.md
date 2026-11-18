@@ -60,8 +60,14 @@ mocked end-to-end tests. The other seven channels are experimental.
 - The bot records a group leave only after Telegram confirms it, and rechecks
   access before each leave retry.
 - Non-member interactions are denied before touching a shared picker.
-- Chat lanes drain before channel dependencies stop; tool calls are charged
-  when claimed, and unclaimed or cancelled claims are refunded.
+- Chat lanes drain before channel dependencies stop; expired lane submissions
+  never start, and rejections are logged outside the lane manager.
+- Empty environment variables no longer erase YAML channel tokens or
+  allowlists.
+- Stored access overrides survive unrelated `/acesso` commands, including a
+  temporary YAML gap.
+- Tool calls are charged when claimed, and unclaimed or cancelled claims are
+  refunded.
 
 ## Upgrade Notes
 
