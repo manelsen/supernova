@@ -46,8 +46,8 @@ pub fn authorized_member_receives_reply_test() {
         recorder,
       )
 
-    let assert Ok(record) = process.receive(recorder, within: 5000)
-    string.contains(record.content, "Mock response") |> should.equal(True)
+    support.await_content(recorder, "Mock response")
+    |> should.equal(True)
     registry.stop_channels(channel_registry)
   })
 }
@@ -182,8 +182,7 @@ pub fn llm_error_is_friendly_test() {
         recorder,
       )
 
-    let assert Ok(record) = process.receive(recorder, within: 5000)
-    string.contains(record.content, "Provedor de IA")
+    support.await_content(recorder, "Provedor de IA")
     |> should.equal(True)
     registry.stop_channels(channel_registry)
   })

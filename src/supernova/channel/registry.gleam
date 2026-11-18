@@ -22,6 +22,7 @@ import supernova/adapters/slack_adapter
 import supernova/adapters/telegram
 import supernova/adapters/wechat_work_adapter
 import supernova/adapters/whatsapp_adapter
+import supernova/channel/chat_lanes
 import supernova/channel/chunking
 import supernova/channel/port
 import supernova/config
@@ -812,7 +813,23 @@ fn record_leave_audit(chat_key: String) -> Nil {
   }
 }
 
+/// Hand the inbound turn to the lane of its chat and return immediately.
+///
+/// The polling loop must never wait for a turn: a slow LLM or tool call
+/// would hold every other chat of the channel. Turns of the same chat stay
+/// ordered inside their lane.
 fn dispatch_inbound(
+  handler: port.ChannelHandler,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  stream_send_fn: StreamSendFn,
+  inbound: port.ChannelInbound,
+) -> Nil {
+  chat_lanes.submit(chat_lanes.key_for(inbound), fn() {
+    run_inbound_turn(handler, send_fn, stream_send_fn, inbound)
+  })
+}
+
+fn run_inbound_turn(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
@@ -1596,16 +1613,22 @@ fn consume_discord_stream_events(
     Ok(port.StreamComplete(reply)) ->
       case reply.content == last_content {
         True -> Ok(Nil)
-        False -> {
-          let final_reply =
-            port.ChannelReply(..reply, edit_message_id: Some(message_id))
-          use _ <- result.try(discord_edit_message(
-            rest_client,
-            final_reply,
+        False ->
+          finish_stream_in_parts(
+            reply,
             message_id,
-          ))
-          Ok(Nil)
-        }
+            chunking.discord_max_length,
+            fn(part) {
+              case part.edit_message_id {
+                Some(id) ->
+                  discord_edit_message(rest_client, part, id)
+                  |> result.map(fn(_) { Nil })
+                None ->
+                  discord_send_message(rest_client, part)
+                  |> result.map(fn(_) { Nil })
+              }
+            },
+          )
       }
     Ok(port.StreamFailure(error)) -> Error(error)
     Error(_) ->
@@ -1634,6 +1657,40 @@ fn consume_discord_stream_events(
           )
         }
       }
+  }
+}
+
+/// Deliver the final stream content within the channel's length limit: the
+/// first part edits the placeholder, the remaining parts go out as new
+/// messages. Editing a message past the limit is rejected by the channel.
+fn finish_stream_in_parts(
+  reply: port.ChannelReply,
+  placeholder_id: String,
+  max_length: Int,
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  case chunking.split_reply(reply, max_length) {
+    [] -> Ok(Nil)
+    [first, ..rest] -> {
+      use _ <- result.try(deliver(
+        port.ChannelReply(..first, edit_message_id: Some(placeholder_id)),
+      ))
+      send_chunked_replies(
+        list.map(rest, fn(part) {
+          port.ChannelReply(..part, edit_message_id: None)
+        }),
+        deliver,
+      )
+    }
+  }
+}
+
+fn stream_max_length(channel: String) -> Int {
+  case channel {
+    "telegram" -> chunking.telegram_max_length
+    "discord" -> chunking.discord_max_length
+    // Channels without a documented edit limit keep the whole content.
+    _ -> 1_000_000
   }
 }
 
@@ -1694,18 +1751,16 @@ fn consume_telegram_stream_events(
     Ok(port.StreamComplete(reply)) ->
       case reply.content == last_content {
         True -> Ok(Nil)
-        False -> {
-          let final_reply =
-            port.ChannelReply(
-              ..reply,
-              edit_message_id: Some(int.to_string(message_id)),
-            )
-          use _ <- result.try(telegram_send_message(
-            telegram_config,
-            final_reply,
-          ))
-          Ok(Nil)
-        }
+        False ->
+          finish_stream_in_parts(
+            reply,
+            int.to_string(message_id),
+            chunking.telegram_max_length,
+            fn(part) {
+              telegram_send_message(telegram_config, part)
+              |> result.map(fn(_) { Nil })
+            },
+          )
       }
     Ok(port.StreamFailure(error)) -> Error(error)
     Error(_) ->
@@ -2028,20 +2083,30 @@ fn consume_recorded_stream_events(
     }
     Ok(port.StreamComplete(reply)) -> {
       case reply.content == last_content {
-        True -> Nil
+        True -> Ok(Nil)
         False ->
-          process.send(
-            recorder,
-            OutboundRecord(
-              channel: channel,
-              action: "edit",
-              content: reply.content,
-              message_id: Some(message_id),
-            ),
+          finish_stream_in_parts(
+            reply,
+            message_id,
+            stream_max_length(channel),
+            fn(part) {
+              let #(action, id) = case part.edit_message_id {
+                Some(id) -> #("edit", Some(id))
+                None -> #("send", None)
+              }
+              process.send(
+                recorder,
+                OutboundRecord(
+                  channel: channel,
+                  action: action,
+                  content: part.content,
+                  message_id: id,
+                ),
+              )
+              Ok(Nil)
+            },
           )
       }
-
-      Ok(Nil)
     }
     Ok(port.StreamFailure(error)) -> Error(error)
     Error(_) ->

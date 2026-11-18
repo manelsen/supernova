@@ -43,8 +43,8 @@ pub fn authorized_member_receives_reply_test() {
         [support.discord_message_event("oi", "456")],
         recorder,
       )
-    let assert Ok(record) = process.receive(recorder, within: 5000)
-    string.contains(record.content, "Mock response") |> should.equal(True)
+    support.await_content(recorder, "Mock response")
+    |> should.equal(True)
     registry.stop_channels(channel_registry)
   })
 }
@@ -67,8 +67,8 @@ pub fn authorized_guild_receives_reply_test() {
         [support.discord_guild_message_event("oi", "456", "guild1")],
         recorder,
       )
-    let assert Ok(record) = process.receive(recorder, within: 5000)
-    string.contains(record.content, "Mock response") |> should.equal(True)
+    support.await_content(recorder, "Mock response")
+    |> should.equal(True)
     registry.stop_channels(channel_registry)
   })
 }
@@ -161,8 +161,8 @@ pub fn llm_error_is_friendly_test() {
         [support.discord_message_event("oi", "456")],
         recorder,
       )
-    let assert Ok(record) = process.receive(recorder, within: 5000)
-    string.contains(record.content, "Provedor de IA") |> should.equal(True)
+    support.await_content(recorder, "Provedor de IA")
+    |> should.equal(True)
     registry.stop_channels(channel_registry)
   })
 }

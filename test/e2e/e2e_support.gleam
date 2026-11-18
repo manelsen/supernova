@@ -4,6 +4,7 @@ import exception
 import gleam/dict
 import gleam/erlang/process
 import gleam/option.{None, Some}
+import gleam/string
 import supernova/adapters/discord_gateway
 import supernova/adapters/discord_router
 import supernova/adapters/telegram
@@ -96,8 +97,14 @@ pub fn with_runtime(cfg: config.Config, body: fn() -> a) -> a {
 
     let manifests =
       dict.from_list([
-        #("member", cg_pure.manifest_for(cfg.capabilities, access_types.Member)),
-        #("admin", cg_pure.manifest_for(cfg.capabilities, access_types.Admin)),
+        #(
+          cg_pure.role_key(access_types.Member),
+          cg_pure.manifest_for(cfg.capabilities, access_types.Member),
+        ),
+        #(
+          cg_pure.role_key(access_types.Admin),
+          cg_pure.manifest_for(cfg.capabilities, access_types.Admin),
+        ),
       ])
     let assert Ok(gateway) =
       syscall_actor.start_with_capabilities(
@@ -275,4 +282,34 @@ pub fn access_config(
     denied_reply: "Esta instância é privada.",
     allowed_chats: [],
   )
+}
+
+/// Wait until some outbound record contains `needle`.
+///
+/// Turns are asynchronous: a reply arrives as typing → placeholder → final
+/// edit, so the content is not necessarily in the first record.
+pub fn await_content(
+  recorder: process.Subject(registry.OutboundRecord),
+  needle: String,
+) -> Bool {
+  await_content_loop(recorder, needle, 10)
+}
+
+fn await_content_loop(
+  recorder: process.Subject(registry.OutboundRecord),
+  needle: String,
+  attempts: Int,
+) -> Bool {
+  case attempts <= 0 {
+    True -> False
+    False ->
+      case process.receive(recorder, within: 500) {
+        Ok(record) ->
+          case string.contains(record.content, needle) {
+            True -> True
+            False -> await_content_loop(recorder, needle, attempts)
+          }
+        Error(_) -> await_content_loop(recorder, needle, attempts - 1)
+      }
+  }
 }
