@@ -13,6 +13,7 @@ pub fn friendly(error: executor.ExecutorError) -> String {
       "A execucao foi pausada temporariamente (checkpoint "
       <> checkpoint_id
       <> ")."
+    executor.PolicyDenied(message) -> message
   }
 }
 

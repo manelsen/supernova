@@ -12,11 +12,9 @@
 //// ```
 
 import gleam/dict
-import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/float
 import gleam/int
-import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
@@ -25,6 +23,7 @@ import supernova/core/budget_policy/types as budget_types
 import supernova/core/checkpoint/actor as checkpoint_actor
 import supernova/core/checkpoint/types as checkpoint_types
 import supernova/core/complexity_router
+import supernova/core/tool_dispatch
 import supernova/core/turn_outcome
 import supernova/llm/circuit_breaker/actor as cb_actor
 import supernova/llm/circuit_breaker/global as cb_global
@@ -34,15 +33,6 @@ import supernova/llm/retry/types as retry
 import supernova/llm/stream
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
-import supernova/tools/browser
-import supernova/tools/canvas
-import supernova/tools/file_system
-import supernova/tools/gateway
-import supernova/tools/git_inspect
-import supernova/tools/github
-import supernova/tools/process as process_tool
-import supernova/tools/safe_shell
-import supernova/tools/web
 import supernova/tracing/global as tracing_global
 import supernova/tracing/types as tracing_types
 
@@ -144,6 +134,8 @@ pub type ExecutorError {
   YieldPaused(checkpoint_id: String)
   /// Agent was aborted by scheduler
   YieldAborted(reason: String)
+  /// A kernel policy (access, budget, capability, instance cap) refused the turn
+  PolicyDenied(message: String)
 }
 
 // ============================================================================
@@ -170,6 +162,34 @@ pub type YieldConfig {
   )
 }
 
+/// Context injected by the closed-group runtime for production turns.
+///
+/// `before_llm` runs before every provider call; `on_llm_usage` records the
+/// estimated real usage after a successful call; `invoke_tool` routes every
+/// tool call through the syscall gateway.
+pub type RunContext {
+  RunContext(
+    principal_id: String,
+    role: String,
+    before_llm: Option(fn() -> Result(Nil, String)),
+    on_llm_usage: Option(fn(String, String, Int, Int) -> Nil),
+    invoke_tool: Option(fn(String, String) -> Result(String, String)),
+    on_tool_result: Option(fn(String, Bool) -> Nil),
+  )
+}
+
+/// An empty context: no policy callbacks, tools run locally.
+pub fn empty_run_context() -> RunContext {
+  RunContext(
+    principal_id: "",
+    role: "admin",
+    before_llm: None,
+    on_llm_usage: None,
+    invoke_tool: None,
+    on_tool_result: None,
+  )
+}
+
 /// Get current timestamp in milliseconds (Erlang FFI).
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn ffi_current_timestamp() -> Int
@@ -187,22 +207,22 @@ pub fn run(
   config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
 ) -> Result(provider.ChatResponse, ExecutorError) {
-  run_loop(messages, config, tools, 0)
+  run_loop(messages, config, tools, 0, empty_run_context())
+}
+
+/// Run the executor loop with kernel policy callbacks.
+pub fn run_with_context(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+  tools: List(provider.ToolDefinition),
+  context: RunContext,
+) -> Result(provider.ChatResponse, ExecutorError) {
+  run_loop(messages, config, tools, 0, context)
 }
 
 /// Built-in tool definitions wired by the executor.
 pub fn builtin_tools() -> List(provider.ToolDefinition) {
-  [
-    safe_shell.tool(),
-    browser.tool(),
-    canvas.tool(),
-    gateway.tool(),
-    process_tool.tool(),
-    github.tool(),
-    web.tool(),
-    git_inspect.tool(),
-    file_system.tool(),
-  ]
+  tool_dispatch.builtin_tools()
 }
 
 /// Run the executor loop with cooperative yield support.
@@ -216,7 +236,25 @@ pub fn run_with_checkpoint(
   tools: List(provider.ToolDefinition),
   yield_config: YieldConfig,
 ) -> Result(provider.ChatResponse, ExecutorError) {
-  run_loop_with_checkpoint(messages, config, tools, 0, yield_config)
+  run_loop_with_checkpoint(
+    messages,
+    config,
+    tools,
+    0,
+    yield_config,
+    empty_run_context(),
+  )
+}
+
+/// Run the checkpoint loop with kernel policy callbacks.
+pub fn run_with_checkpoint_and_context(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+  tools: List(provider.ToolDefinition),
+  yield_config: YieldConfig,
+  context: RunContext,
+) -> Result(provider.ChatResponse, ExecutorError) {
+  run_loop_with_checkpoint(messages, config, tools, 0, yield_config, context)
 }
 
 /// Request a cooperative manual pause for the current session.
@@ -238,6 +276,7 @@ fn run_loop(
   config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
   depth: Int,
+  context: RunContext,
 ) -> Result(provider.ChatResponse, ExecutorError) {
   // Check recursion depth
   case depth > max_recursion_depth {
@@ -251,7 +290,98 @@ fn run_loop(
         decision.tier,
         selected_config.default_model,
       )
-      // Call LLM with metrics
+      case before_llm(context) {
+        Error(reason) -> Error(PolicyDenied(message: reason))
+        Ok(Nil) -> {
+          // Call LLM with metrics
+          let start = current_timestamp()
+          case
+            retry.with_retry(default_retry_config, fn() {
+              with_llm_span(
+                selected_config.name,
+                selected_config.default_model,
+                depth,
+                fn() { client.chat(messages, selected_config, tools) },
+              )
+            })
+          {
+            Ok(response) -> {
+              let elapsed = current_timestamp() - start
+              record_llm_latency(
+                selected_config.name,
+                selected_config.default_model,
+                elapsed,
+              )
+              record_llm_usage(context, selected_config, messages, response)
+              // Classify the outcome
+              let outcome = turn_outcome.classify(response)
+
+              case outcome {
+                turn_outcome.TextResponse -> Ok(response)
+                turn_outcome.ToolCall(calls) -> {
+                  // Execute tool calls and add results to history
+                  let tool_results = execute_tool_calls(calls, tools, context)
+                  let updated_history =
+                    list.append(messages, [
+                      provider.assistant_message_with_tools(
+                        response.content,
+                        calls,
+                      ),
+                    ])
+                  let history_with_results =
+                    list.append(updated_history, tool_results)
+
+                  // Recurse
+                  run_loop(
+                    history_with_results,
+                    config,
+                    tools,
+                    depth + 1,
+                    context,
+                  )
+                }
+                turn_outcome.Empty -> Ok(response)
+                turn_outcome.Error(msg) ->
+                  Error(
+                    LLMError(reason: provider.APIError(status: 0, message: msg)),
+                  )
+              }
+            }
+            Error(err) -> {
+              record_llm_error(
+                selected_config.name,
+                selected_config.default_model,
+                error_type_name(err),
+              )
+              Error(LLMError(reason: err))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Inner loop body shared between yield-check and no-yield-check paths.
+fn run_loop_inner_with_checkpoint(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+  tools: List(provider.ToolDefinition),
+  depth: Int,
+  yield_config: YieldConfig,
+  context: RunContext,
+) -> Result(provider.ChatResponse, ExecutorError) {
+  let decision =
+    complexity_router.route(config, messages, list.length(tools), depth)
+  let selected_config = decision.selected_config
+  record_complexity_selection(
+    decision.score,
+    decision.tier,
+    selected_config.default_model,
+  )
+  case before_llm(context) {
+    Error(reason) -> Error(PolicyDenied(message: reason))
+    Ok(Nil) -> {
       let start = current_timestamp()
       case
         retry.with_retry(default_retry_config, fn() {
@@ -270,23 +400,38 @@ fn run_loop(
             selected_config.default_model,
             elapsed,
           )
-          // Classify the outcome
+          record_llm_usage(context, selected_config, messages, response)
           let outcome = turn_outcome.classify(response)
-
           case outcome {
             turn_outcome.TextResponse -> Ok(response)
             turn_outcome.ToolCall(calls) -> {
-              // Execute tool calls and add results to history
-              let tool_results = execute_tool_calls(calls, tools)
               let updated_history =
                 list.append(messages, [
                   provider.assistant_message_with_tools(response.content, calls),
                 ])
-              let history_with_results =
-                list.append(updated_history, tool_results)
-
-              // Recurse
-              run_loop(history_with_results, config, tools, depth + 1)
+              case
+                maybe_consume_tool_budget(
+                  updated_history,
+                  calls,
+                  depth,
+                  yield_config,
+                )
+              {
+                Ok(Nil) -> {
+                  let tool_results = execute_tool_calls(calls, tools, context)
+                  let history_with_results =
+                    list.append(updated_history, tool_results)
+                  run_loop_with_checkpoint(
+                    history_with_results,
+                    config,
+                    tools,
+                    depth + 1,
+                    yield_config,
+                    context,
+                  )
+                }
+                Error(error) -> Error(error)
+              }
             }
             turn_outcome.Empty -> Ok(response)
             turn_outcome.Error(msg) ->
@@ -304,87 +449,6 @@ fn run_loop(
           Error(LLMError(reason: err))
         }
       }
-    }
-  }
-}
-
-/// Inner loop body shared between yield-check and no-yield-check paths.
-fn run_loop_inner_with_checkpoint(
-  messages: List(provider.ChatMessage),
-  config: provider.ProviderConfig,
-  tools: List(provider.ToolDefinition),
-  depth: Int,
-  yield_config: YieldConfig,
-) -> Result(provider.ChatResponse, ExecutorError) {
-  let decision =
-    complexity_router.route(config, messages, list.length(tools), depth)
-  let selected_config = decision.selected_config
-  record_complexity_selection(
-    decision.score,
-    decision.tier,
-    selected_config.default_model,
-  )
-  let start = current_timestamp()
-  case
-    retry.with_retry(default_retry_config, fn() {
-      with_llm_span(
-        selected_config.name,
-        selected_config.default_model,
-        depth,
-        fn() { client.chat(messages, selected_config, tools) },
-      )
-    })
-  {
-    Ok(response) -> {
-      let elapsed = current_timestamp() - start
-      record_llm_latency(
-        selected_config.name,
-        selected_config.default_model,
-        elapsed,
-      )
-      let outcome = turn_outcome.classify(response)
-      case outcome {
-        turn_outcome.TextResponse -> Ok(response)
-        turn_outcome.ToolCall(calls) -> {
-          let updated_history =
-            list.append(messages, [
-              provider.assistant_message_with_tools(response.content, calls),
-            ])
-          case
-            maybe_consume_tool_budget(
-              updated_history,
-              calls,
-              depth,
-              yield_config,
-            )
-          {
-            Ok(Nil) -> {
-              let tool_results = execute_tool_calls(calls, tools)
-              let history_with_results =
-                list.append(updated_history, tool_results)
-              run_loop_with_checkpoint(
-                history_with_results,
-                config,
-                tools,
-                depth + 1,
-                yield_config,
-              )
-            }
-            Error(error) -> Error(error)
-          }
-        }
-        turn_outcome.Empty -> Ok(response)
-        turn_outcome.Error(msg) ->
-          Error(LLMError(reason: provider.APIError(status: 0, message: msg)))
-      }
-    }
-    Error(err) -> {
-      record_llm_error(
-        selected_config.name,
-        selected_config.default_model,
-        error_type_name(err),
-      )
-      Error(LLMError(reason: err))
     }
   }
 }
@@ -478,13 +542,51 @@ fn with_tool_span(tool_name: String, f: fn() -> String) -> String {
   }
 }
 
+/// Run the pre-LLM policy hook.
+fn before_llm(context: RunContext) -> Result(Nil, String) {
+  case context.before_llm {
+    None -> Ok(Nil)
+    Some(check) -> check()
+  }
+}
+
+/// Estimate tokens when a provider does not expose usage.
+fn estimate_tokens(text: String) -> Int {
+  int.max(1, string.length(text) / 4)
+}
+
+fn prompt_token_estimate(messages: List(provider.ChatMessage)) -> Int {
+  messages
+  |> list.map(fn(message) { estimate_tokens(message.content) })
+  |> list.fold(0, fn(acc, value) { acc + value })
+}
+
+fn record_llm_usage(
+  context: RunContext,
+  config: provider.ProviderConfig,
+  messages: List(provider.ChatMessage),
+  response: provider.ChatResponse,
+) -> Nil {
+  case context.on_llm_usage {
+    None -> Nil
+    Some(record) ->
+      record(
+        config.name,
+        config.default_model,
+        prompt_token_estimate(messages),
+        estimate_tokens(response.content),
+      )
+  }
+}
+
 /// Execute tool calls and return result messages.
 fn execute_tool_calls(
   calls: List(provider.ToolCall),
   tools: List(provider.ToolDefinition),
+  context: RunContext,
 ) -> List(provider.ChatMessage) {
   list.map(calls, fn(call) {
-    let content = execute_single_tool_call(call, tools)
+    let content = execute_single_tool_call(call, tools, context)
     provider.tool_result_message(call.id, content)
   })
 }
@@ -494,12 +596,13 @@ pub fn execute_tool_calls_for_test(
   calls: List(provider.ToolCall),
   tools: List(provider.ToolDefinition),
 ) -> List(provider.ChatMessage) {
-  execute_tool_calls(calls, tools)
+  execute_tool_calls(calls, tools, empty_run_context())
 }
 
 fn execute_single_tool_call(
   call: provider.ToolCall,
   tools: List(provider.ToolDefinition),
+  context: RunContext,
 ) -> String {
   case is_declared_tool(call.name, tools) {
     False -> {
@@ -509,19 +612,32 @@ fn execute_single_tool_call(
     True -> {
       let start = current_timestamp()
       with_tool_span(call.name, fn() {
-        case dispatch_builtin_tool(call.name, call.arguments) {
-          Ok(result) -> {
+        let result = case context.invoke_tool {
+          Some(invoke) -> invoke(call.name, call.arguments)
+          None -> dispatch_builtin_tool(call.name, call.arguments)
+        }
+        case result {
+          Ok(output) -> {
             let elapsed = current_timestamp() - start
             record_tool_latency(call.name, elapsed)
-            result
+            report_tool_result(context, call.name, True)
+            output
           }
           Error(reason) -> {
             record_tool_error(call.name)
+            report_tool_result(context, call.name, False)
             "ERROR: " <> reason
           }
         }
       })
     }
+  }
+}
+
+fn report_tool_result(context: RunContext, tool_name: String, ok: Bool) -> Nil {
+  case context.on_tool_result {
+    None -> Nil
+    Some(record) -> record(tool_name, ok)
   }
 }
 
@@ -565,136 +681,7 @@ fn dispatch_builtin_tool(
   name: String,
   args_json: String,
 ) -> Result(String, String) {
-  case name {
-    "safe_shell" -> execute_safe_shell(args_json)
-    "browser" -> execute_browser(args_json)
-    "canvas" -> execute_canvas(args_json)
-    "gateway" -> execute_gateway(args_json)
-    "process" -> execute_process(args_json)
-    "github" -> execute_github(args_json)
-    "web_fetch" -> execute_web_fetch(args_json)
-    "git_inspect" -> execute_git_inspect(args_json)
-    "file_system" -> execute_file_system(args_json)
-    _ -> Error("Tool '" <> name <> "' is not wired in executor")
-  }
-}
-
-type SafeShellArgs {
-  SafeShellArgs(command: String)
-}
-
-type WebFetchArgs {
-  WebFetchArgs(url: String)
-}
-
-type GitInspectArgs {
-  GitInspectArgs(action: String)
-}
-
-type FileSystemArgs {
-  FileSystemArgs(action: String, path: String, content: String)
-}
-
-fn safe_shell_args_decoder() -> decode.Decoder(SafeShellArgs) {
-  use command <- decode.field("command", decode.string)
-  decode.success(SafeShellArgs(command: command))
-}
-
-fn web_fetch_args_decoder() -> decode.Decoder(WebFetchArgs) {
-  use url <- decode.field("url", decode.string)
-  decode.success(WebFetchArgs(url: url))
-}
-
-fn git_inspect_alias_args_decoder() -> decode.Decoder(GitInspectArgs) {
-  use action <- decode.field("command", decode.string)
-  decode.success(GitInspectArgs(action: action))
-}
-
-fn git_inspect_args_decoder() -> decode.Decoder(GitInspectArgs) {
-  use action <- decode.field("action", decode.string)
-  decode.success(GitInspectArgs(action: action))
-}
-
-fn file_system_args_decoder() -> decode.Decoder(FileSystemArgs) {
-  use action <- decode.field("action", decode.string)
-  use path <- decode.field("path", decode.string)
-  use content <- decode.optional_field("content", "", decode.string)
-  decode.success(FileSystemArgs(action: action, path: path, content: content))
-}
-
-fn execute_safe_shell(args_json: String) -> Result(String, String) {
-  case json.parse(from: args_json, using: safe_shell_args_decoder()) {
-    Error(_) -> Error("Invalid arguments for safe_shell")
-    Ok(SafeShellArgs(command)) -> safe_shell.execute(command)
-  }
-}
-
-fn execute_browser(args_json: String) -> Result(String, String) {
-  browser.execute(args_json)
-}
-
-fn execute_canvas(args_json: String) -> Result(String, String) {
-  canvas.execute(args_json)
-}
-
-fn execute_gateway(args_json: String) -> Result(String, String) {
-  gateway.execute(args_json)
-}
-
-fn execute_process(args_json: String) -> Result(String, String) {
-  process_tool.execute(args_json)
-}
-
-fn execute_github(args_json: String) -> Result(String, String) {
-  github.execute(args_json)
-}
-
-fn execute_web_fetch(args_json: String) -> Result(String, String) {
-  case json.parse(from: args_json, using: web_fetch_args_decoder()) {
-    Error(_) -> Error("Invalid arguments for web_fetch")
-    Ok(WebFetchArgs(url)) -> web.fetch(url)
-  }
-}
-
-fn execute_git_inspect(args_json: String) -> Result(String, String) {
-  let parsed = case
-    json.parse(from: args_json, using: git_inspect_args_decoder())
-  {
-    Ok(args) -> Ok(args)
-    Error(_) ->
-      json.parse(from: args_json, using: git_inspect_alias_args_decoder())
-  }
-  case parsed {
-    Error(_) -> Error("Invalid arguments for git_inspect")
-    Ok(GitInspectArgs(action)) ->
-      case string.lowercase(string.trim(action)) {
-        "status" -> git_inspect.status()
-        "log" -> git_inspect.log()
-        "branch" -> git_inspect.branch()
-        _ -> Error("git_inspect action must be status, log, or branch")
-      }
-  }
-}
-
-fn execute_file_system(args_json: String) -> Result(String, String) {
-  case json.parse(from: args_json, using: file_system_args_decoder()) {
-    Error(_) -> Error("Invalid arguments for file_system")
-    Ok(FileSystemArgs(action, path, content)) ->
-      case string.lowercase(string.trim(action)) {
-        "read" -> file_system.read(".", path)
-        "write" ->
-          case file_system.write(".", path, content) {
-            Ok(Nil) -> Ok("ok")
-            Error(reason) -> Error(reason)
-          }
-        "list" ->
-          case file_system.list(".", path) {
-            Ok(entries) -> Ok(string.join(entries, "\n"))
-            Error(reason) -> Error(reason)
-          }
-        _ -> Error("file_system action must be read, write, or list")
-      }
-  }
+  tool_dispatch.execute(name, args_json)
 }
 
 // ============================================================================
@@ -708,6 +695,7 @@ fn run_loop_with_checkpoint(
   tools: List(provider.ToolDefinition),
   depth: Int,
   yield_config: YieldConfig,
+  context: RunContext,
 ) -> Result(provider.ChatResponse, ExecutorError) {
   // Check recursion depth
   case depth > max_recursion_depth {
@@ -721,6 +709,7 @@ fn run_loop_with_checkpoint(
             tools,
             depth,
             yield_config,
+            context,
           )
         Error(error) -> Error(error)
       }
