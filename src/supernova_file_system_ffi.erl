@@ -1,6 +1,6 @@
 -module(supernova_file_system_ffi).
 -export([read_file/1, write_file/2, list_dir/1, ensure_dir/1, append_file/2,
-         delete_file/1, file_exists/1]).
+         delete_file/1, file_exists/1, find_files/2, plain_argv/0]).
 
 read_file(Path) ->
   case file:read_file(Path) of
@@ -41,3 +41,17 @@ delete_file(Path) ->
 
 file_exists(Path) ->
   {ok, filelib:is_file(Path) orelse filelib:is_dir(Path)}.
+
+find_files(Directory0, Pattern0) ->
+    Directory = to_list(Directory0),
+    Pattern = to_list(Pattern0),
+    case filelib:is_dir(Directory) of
+        true -> [list_to_binary(Path) || Path <- filelib:wildcard(filename:join(Directory, Pattern))];
+        false -> []
+    end.
+
+to_list(Value) when is_binary(Value) -> binary_to_list(Value);
+to_list(Value) when is_list(Value) -> Value.
+
+plain_argv() ->
+    [list_to_binary(Arg) || Arg <- init:get_plain_arguments()].

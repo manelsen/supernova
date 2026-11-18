@@ -1,0 +1,2 @@
+2026-11-18T00:00:00Z | sim:mallory | member_denied | chat | denied | not a member
+2026-11-18T00:00:01Z | sim:alice | tool_call | file_system | denied | workspace_policy: path outside workspace
