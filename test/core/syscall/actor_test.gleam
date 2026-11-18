@@ -3,10 +3,12 @@
 //// Integration tests for the syscall gateway actor.
 //// Tests the full pipeline: authentication → WorkspacePolicy → BudgetPolicy → execution → AuditLog.
 
+import gleam/dict
 import gleam/erlang/process
 import gleam/option
 import gleeunit
 import gleeunit/should
+import supernova/core/capability_manifest/types as cap_types
 import supernova/core/syscall/actor
 import supernova/core/syscall/types.{
   CancelSchedule, EmitEvent, GetBudget, KillAgent, ReadFile, ReadWorld, Schedule,
@@ -32,6 +34,42 @@ pub fn start_with_policies_and_stop_test() {
     actor.start_with_policies(option.None, option.None, option.None)
   actor.stop(gw)
   process.sleep(100)
+}
+
+pub fn capabilities_without_workspace_policy_deny_file_operations_test() {
+  let manifests =
+    dict.from_list([
+      #(
+        "admin",
+        cap_types.CapabilityManifest(
+          allowed_tools: ["file_system"],
+          denied_tools: [],
+        ),
+      ),
+    ])
+  let assert Ok(gw) =
+    actor.start_with_capabilities(
+      option.None,
+      option.None,
+      option.None,
+      manifests,
+      fn(_, _) { Ok("should not run") },
+    )
+
+  actor.register_agent(gw, "agent_1")
+  actor.invoke(gw, "agent_1", ReadFile("src/main.gleam"))
+  |> should.equal(SyscallDenied("workspace policy unavailable"))
+
+  actor.invoke_tool(
+    gw,
+    "agent_1",
+    "admin",
+    "file_system",
+    "{\"action\":\"read\",\"path\":\"src/main.gleam\"}",
+  )
+  |> should.equal(Error("Blocked: workspace policy unavailable"))
+
+  actor.stop(gw)
 }
 
 // ============================================================================

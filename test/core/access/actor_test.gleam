@@ -4,6 +4,7 @@
 //// temporary `/tmp` directory. No network, no LLM, no real credentials.
 
 import exception
+import gleam/string
 import gleeunit
 import gleeunit/should
 import supernova/core/access/actor
@@ -43,6 +44,9 @@ fn config(
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn ffi_write_file(path: String, content: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn ffi_read_file(path: String) -> Result(String, String)
 
 // ============================================================================
 // Decisions
@@ -165,16 +169,16 @@ pub fn admin_commands_persist_across_restart_test() {
 
     actor.stop(first)
 
-    // The file is authoritative: runtime lists survive even though the
-    // process was restarted with an empty configured allowlist.
+    // The YAML base is authoritative: removing telegram:1 from config
+    // revokes it on restart, while command-added entries survive.
     let assert Ok(second) =
       actor.start_with_clock(config([], [], []), dir, fn() { 2000 })
 
-    actor.check(second, "telegram:1") |> should.equal(Allowed(Admin))
+    actor.check(second, "telegram:1") |> should.equal(Denied)
     actor.check(second, "telegram:2") |> should.equal(Allowed(Member))
     actor.check(second, "discord:3") |> should.equal(Allowed(Admin))
     actor.list_members(second) |> should.equal(["telegram:2"])
-    actor.list_admins(second) |> should.equal(["telegram:1", "discord:3"])
+    actor.list_admins(second) |> should.equal(["discord:3"])
     actor.list_chats(second) |> should.equal(["telegram:-100"])
 
     actor.stop(second)
@@ -255,6 +259,99 @@ pub fn corrupted_state_file_falls_back_to_config_test() {
 
     actor.stop(access)
   })
+}
+
+pub fn yaml_revocation_survives_denials_test() {
+  with_temp_dir(fn(dir) {
+    let assert Ok(first) =
+      actor.start_with_clock(config([], ["telegram:A"], []), dir, fn() { 1000 })
+
+    actor.take_denied_notice(first, "telegram:B") |> should.be_true()
+
+    actor.stop(first)
+
+    let assert Ok(second) =
+      actor.start_with_clock(config([], [], []), dir, fn() { 2000 })
+
+    actor.check(second, "telegram:A") |> should.equal(Denied)
+    actor.check(second, "telegram:B") |> should.equal(Denied)
+
+    actor.stop(second)
+  })
+}
+
+pub fn command_removal_survives_yaml_restart_test() {
+  with_temp_dir(fn(dir) {
+    let base = config([], ["telegram:A", "telegram:C"], [])
+
+    let assert Ok(first) = actor.start_with_clock(base, dir, fn() { 1000 })
+    first |> actor.remove_member("telegram:A") |> should.be_ok()
+    actor.stop(first)
+
+    let assert Ok(second) = actor.start_with_clock(base, dir, fn() { 2000 })
+    actor.check(second, "telegram:A") |> should.equal(Denied)
+    actor.check(second, "telegram:C") |> should.equal(Allowed(Member))
+    actor.stop(second)
+  })
+}
+
+pub fn added_member_survives_without_yaml_test() {
+  with_temp_dir(fn(dir) {
+    let assert Ok(first) =
+      actor.start_with_clock(config([], [], []), dir, fn() { 1000 })
+    first |> actor.add_member("telegram:D", Member) |> should.be_ok()
+    actor.stop(first)
+
+    let assert Ok(second) =
+      actor.start_with_clock(config([], [], []), dir, fn() { 2000 })
+    actor.check(second, "telegram:D") |> should.equal(Allowed(Member))
+    actor.stop(second)
+  })
+}
+
+pub fn legacy_full_list_file_is_migrated_test() {
+  with_temp_dir(fn(dir) {
+    let legacy =
+      "{\"version\":1,\"admins\":[],\"members\":[\"telegram:A\"],\"allowed_chats\":[]}"
+    let assert Ok(_) = ffi_write_file(dir <> "/access.json", legacy)
+
+    let assert Ok(access) =
+      actor.start_with_clock(config([], [], []), dir, fn() { 1000 })
+    actor.check(access, "telegram:A") |> should.equal(Allowed(Member))
+    actor.stop(access)
+
+    let assert Ok(rewritten) = ffi_read_file(dir <> "/access.json")
+    rewritten |> should_contain("\"version\":2")
+    rewritten |> should_contain("\"added\"")
+  })
+}
+
+pub fn notice_write_does_not_store_effective_lists_test() {
+  with_temp_dir(fn(dir) {
+    let base = config(["telegram:5"], ["telegram:A"], ["telegram:-100"])
+    let assert Ok(access) = actor.start_with_clock(base, dir, fn() { 1000 })
+    actor.take_denied_notice(access, "telegram:B") |> should.be_true()
+    actor.stop(access)
+
+    let assert Ok(text) = ffi_read_file(dir <> "/access.json")
+    text |> should_contain("\"denied_notices\"")
+    text |> should_not_contain("\"admins\":[\"telegram:5\"]")
+    text |> should_not_contain("\"members\":[\"telegram:A\"]")
+  })
+}
+
+fn should_contain(text: String, needle: String) -> Nil {
+  case string.contains(text, needle) {
+    False -> panic as "missing expected content"
+    True -> Nil
+  }
+}
+
+fn should_not_contain(text: String, needle: String) -> Nil {
+  case string.contains(text, needle) {
+    True -> panic as "unexpected content"
+    False -> Nil
+  }
 }
 
 // ============================================================================

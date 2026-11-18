@@ -76,11 +76,26 @@ pub fn gate(
             Ok(access_types.Allowed(role)) -> {
               case role {
                 // Admins may manage the current chat even when it is not yet
-                // authorized; other commands wait for the chat check.
+                // authorized; all other commands wait for the chat check.
                 access_types.Admin ->
-                  case handle_command(runtime, principal_id, role, content) {
-                    Some(reply) -> types.Reply(reply)
-                    None ->
+                  case pure.is_chat_management_command(content) {
+                    True ->
+                      case
+                        handle_command(runtime, principal_id, role, content)
+                      {
+                        Some(reply) -> types.Reply(reply)
+                        None ->
+                          after_chat(
+                            runtime,
+                            principal_id,
+                            role,
+                            content,
+                            is_private,
+                            chat_key,
+                            now,
+                          )
+                      }
+                    False ->
                       after_chat(
                         runtime,
                         principal_id,

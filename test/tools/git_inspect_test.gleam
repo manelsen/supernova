@@ -1,3 +1,4 @@
+import gleam/list
 import gleeunit/should
 import supernova/tools/git_inspect
 import supernova/tools/safe_shell
@@ -51,6 +52,39 @@ pub fn safe_shell_rejects_git_shell_metacharacters_test() {
   |> should.equal(Error("Command contains blocked operators: git log; id"))
   safe_shell.validate("git diff $(id)")
   |> should.equal(Error("Command contains blocked operators: git diff $(id)"))
+}
+
+pub fn safe_shell_rejects_git_write_options_test() {
+  [
+    "git branch -D main",
+    "git branch novo",
+    "git branch -m a b",
+    "git diff --output=/tmp/x",
+    "git show --output=x",
+    "git diff --no-index /etc/passwd /dev/null",
+    "git log --exec=x",
+    "git diff --ext-diff",
+    "git diff --textconv",
+    "git log -n abc",
+  ]
+  |> list.each(fn(command) { safe_shell.validate(command) |> should.be_error() })
+}
+
+pub fn safe_shell_allows_bounded_git_operands_test() {
+  safe_shell.validate("git status --short")
+  |> should.equal(Ok(["git", "status", "--short"]))
+  safe_shell.validate("git log --oneline -10")
+  |> should.equal(Ok(["git", "log", "--oneline", "-10"]))
+  safe_shell.validate("git log -n 10")
+  |> should.equal(Ok(["git", "log", "-n", "10"]))
+  safe_shell.validate("git log --max-count=10")
+  |> should.equal(Ok(["git", "log", "--max-count=10"]))
+  safe_shell.validate("git branch --show-current")
+  |> should.equal(Ok(["git", "branch", "--show-current"]))
+  safe_shell.validate("git diff --stat")
+  |> should.equal(Ok(["git", "diff", "--stat"]))
+  safe_shell.validate("git show HEAD --stat")
+  |> should.equal(Ok(["git", "show", "HEAD", "--stat"]))
 }
 
 // ---------------------------------------------------------------------------

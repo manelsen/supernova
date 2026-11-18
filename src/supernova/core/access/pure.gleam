@@ -18,9 +18,10 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/core/access/types.{
   type AccessConfig, type ChatDecision, type Command, type Decision,
-  type PersistedState, type Role, AccessConfig, AddAccess, AddChat, Admin,
-  Allowed, Allowlist, ChatAllowed, ChatDenied, Denied, ListAccess, ListChats,
-  Member, Open, PersistedState, RemoveAccess, RemoveChat,
+  type PersistedLists, type PersistedState, type Role, AccessConfig, AddAccess,
+  AddChat, Admin, Allowed, Allowlist, ChatAllowed, ChatDenied, Denied,
+  ListAccess, ListChats, Member, Open, PersistedLists, PersistedState,
+  RemoveAccess, RemoveChat,
 }
 
 /// Anti-spam window for denial notices: one calendar day.
@@ -290,51 +291,122 @@ pub fn notice_due(last_notice: Option(Int), now: Int, window_ms: Int) -> Bool {
 // Persistence
 // ============================================================================
 
-/// Encode the mutable access state as JSON for `<data_dir>/access.json`.
-pub fn encode_state(
-  config: AccessConfig,
-  denied_notices: Dict(String, Int),
-  chat_denied_notices: Dict(String, Int),
-) -> String {
+/// Encode command deltas and notice timestamps for `<data_dir>/access.json`.
+pub fn encode_state(persisted: PersistedState) -> String {
   json.object([
-    #("version", json.int(1)),
-    #("admins", json.array(config.admins, json.string)),
-    #("members", json.array(config.members, json.string)),
-    #("allowed_chats", json.array(config.allowed_chats, json.string)),
-    #("denied_notices", json.dict(denied_notices, same_key, json.int)),
-    #("chat_denied_notices", json.dict(chat_denied_notices, same_key, json.int)),
+    #("version", json.int(2)),
+    #("added", encode_lists(persisted.added)),
+    #("removed", encode_lists(persisted.removed)),
+    #("denied_notices", json.dict(persisted.denied_notices, same_key, json.int)),
+    #(
+      "chat_denied_notices",
+      json.dict(persisted.chat_denied_notices, same_key, json.int),
+    ),
   ])
   |> json.to_string
 }
 
-/// Decode persisted state, using `base` for missing fields.
+fn encode_lists(lists: PersistedLists) -> json.Json {
+  json.object([
+    #("admins", json.array(lists.admins, json.string)),
+    #("members", json.array(lists.members, json.string)),
+    #("allowed_chats", json.array(lists.allowed_chats, json.string)),
+  ])
+}
+
+/// Decode persisted state, migrating legacy full-list files.
 ///
-/// Returns `Error(Nil)` when the JSON is malformed; callers fall back to the
-/// configured policy rather than crashing at startup.
+/// The new format stores only command deltas. A legacy file with full
+/// `admins`/`members`/`allowed_chats` lists is read as `added` relative to
+/// `base` and `removed = []`; the actor rewrites it in the new shape.
 pub fn decode_state(
   base: AccessConfig,
   text: String,
 ) -> Result(PersistedState, Nil) {
-  case json.parse(from: text, using: persisted_decoder(base)) {
+  let decoder =
+    decode.one_of(new_persisted_decoder(), or: [legacy_persisted_decoder(base)])
+  case json.parse(from: text, using: decoder) {
     Ok(persisted) -> Ok(persisted)
     Error(_) -> Error(Nil)
   }
 }
 
-/// Apply the persisted mutable lists on top of the configured policy.
+/// Apply persisted command deltas on top of the YAML policy.
 pub fn apply_persisted(
   base: AccessConfig,
   persisted: PersistedState,
 ) -> AccessConfig {
   AccessConfig(
     ..base,
-    admins: persisted.admins,
-    members: persisted.members,
-    allowed_chats: persisted.allowed_chats,
+    admins: merge_minus(
+      base.admins,
+      persisted.added.admins,
+      persisted.removed.admins,
+    ),
+    members: merge_minus(
+      base.members,
+      persisted.added.members,
+      persisted.removed.members,
+    ),
+    allowed_chats: merge_minus(
+      base.allowed_chats,
+      persisted.added.allowed_chats,
+      persisted.removed.allowed_chats,
+    ),
   )
 }
 
-fn persisted_decoder(base: AccessConfig) -> decode.Decoder(PersistedState) {
+/// Build persisted deltas from the effective config.
+///
+/// This keeps a command's effect independent from later YAML edits: only the
+/// difference between the current effective config and the current base is
+/// stored.
+pub fn diff_persisted(
+  base: AccessConfig,
+  effective: AccessConfig,
+  denied_notices: Dict(String, Int),
+  chat_denied_notices: Dict(String, Int),
+) -> PersistedState {
+  PersistedState(
+    added: PersistedLists(
+      admins: difference(effective.admins, base.admins),
+      members: difference(effective.members, base.members),
+      allowed_chats: difference(effective.allowed_chats, base.allowed_chats),
+    ),
+    removed: PersistedLists(
+      admins: difference(base.admins, effective.admins),
+      members: difference(base.members, effective.members),
+      allowed_chats: difference(base.allowed_chats, effective.allowed_chats),
+    ),
+    denied_notices: denied_notices,
+    chat_denied_notices: chat_denied_notices,
+  )
+}
+
+fn new_persisted_decoder() -> decode.Decoder(PersistedState) {
+  use added <- decode.field("added", persisted_lists_decoder())
+  use removed <- decode.field("removed", persisted_lists_decoder())
+  use denied_notices <- decode.optional_field(
+    "denied_notices",
+    dict.new(),
+    decode.dict(decode.string, decode.int),
+  )
+  use chat_denied_notices <- decode.optional_field(
+    "chat_denied_notices",
+    dict.new(),
+    decode.dict(decode.string, decode.int),
+  )
+  decode.success(PersistedState(
+    added: added,
+    removed: removed,
+    denied_notices: denied_notices,
+    chat_denied_notices: chat_denied_notices,
+  ))
+}
+
+fn legacy_persisted_decoder(
+  base: AccessConfig,
+) -> decode.Decoder(PersistedState) {
   use admins <- decode.optional_field(
     "admins",
     base.admins,
@@ -361,12 +433,47 @@ fn persisted_decoder(base: AccessConfig) -> decode.Decoder(PersistedState) {
     decode.dict(decode.string, decode.int),
   )
   decode.success(PersistedState(
-    admins: admins,
-    members: members,
-    allowed_chats: allowed_chats,
+    added: PersistedLists(
+      admins: difference(admins, base.admins),
+      members: difference(members, base.members),
+      allowed_chats: difference(allowed_chats, base.allowed_chats),
+    ),
+    removed: PersistedLists(admins: [], members: [], allowed_chats: []),
     denied_notices: denied_notices,
     chat_denied_notices: chat_denied_notices,
   ))
+}
+
+fn persisted_lists_decoder() -> decode.Decoder(PersistedLists) {
+  use admins <- decode.optional_field("admins", [], decode.list(decode.string))
+  use members <- decode.optional_field(
+    "members",
+    [],
+    decode.list(decode.string),
+  )
+  use allowed_chats <- decode.optional_field(
+    "allowed_chats",
+    [],
+    decode.list(decode.string),
+  )
+  decode.success(PersistedLists(
+    admins: admins,
+    members: members,
+    allowed_chats: allowed_chats,
+  ))
+}
+
+fn merge_minus(
+  base: List(String),
+  added: List(String),
+  removed: List(String),
+) -> List(String) {
+  list.fold(added, base, insert_unique)
+  |> list.filter(fn(item) { !list.contains(removed, item) })
+}
+
+fn difference(items: List(String), subtract: List(String)) -> List(String) {
+  list.filter(items, fn(item) { !list.contains(subtract, item) })
 }
 
 // ============================================================================

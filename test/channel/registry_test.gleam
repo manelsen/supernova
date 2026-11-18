@@ -261,6 +261,8 @@ fn test_hooks(
     matrix_inbound_events: [],
     disable_telegram_polling: True,
     typing_keepalive_ms: 4000,
+    stream_timeout_ms: 60_000,
+    turn_hard_timeout_ms: 300_000,
     outbound_records: None,
     leave_group: None,
   )
@@ -277,6 +279,8 @@ fn test_hooks_with_slack_inbound(
     matrix_inbound_events: [],
     disable_telegram_polling: True,
     typing_keepalive_ms: 4000,
+    stream_timeout_ms: 60_000,
+    turn_hard_timeout_ms: 300_000,
     outbound_records: Some(recorder),
     leave_group: None,
   )
@@ -293,6 +297,8 @@ fn test_hooks_with_matrix_inbound(
     matrix_inbound_events: matrix_events,
     disable_telegram_polling: True,
     typing_keepalive_ms: 4000,
+    stream_timeout_ms: 60_000,
+    turn_hard_timeout_ms: 300_000,
     outbound_records: Some(recorder),
     leave_group: None,
   )
@@ -324,6 +330,8 @@ fn test_hooks_with_recorder_and_keepalive(
     matrix_inbound_events: [],
     disable_telegram_polling: True,
     typing_keepalive_ms: typing_keepalive_ms,
+    stream_timeout_ms: 60_000,
+    turn_hard_timeout_ms: 300_000,
     outbound_records: Some(recorder),
     leave_group: None,
   )
@@ -1696,6 +1704,8 @@ pub fn slack_inbound_event_dispatched_to_handler_test() {
         matrix_inbound_events: [],
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
+        stream_timeout_ms: 60_000,
+        turn_hard_timeout_ms: 300_000,
         outbound_records: None,
         leave_group: None,
       ),
@@ -1845,6 +1855,8 @@ pub fn matrix_inbound_event_dispatched_to_handler_test() {
         matrix_inbound_events: [matrix_fixture_message("hello matrix")],
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
+        stream_timeout_ms: 60_000,
+        turn_hard_timeout_ms: 300_000,
         outbound_records: None,
         leave_group: None,
       ),

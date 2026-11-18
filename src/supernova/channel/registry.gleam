@@ -51,6 +51,8 @@ pub type StartHooks {
     matrix_inbound_events: List(port.ChannelInbound),
     disable_telegram_polling: Bool,
     typing_keepalive_ms: Int,
+    stream_timeout_ms: Int,
+    turn_hard_timeout_ms: Int,
     outbound_records: Option(process.Subject(OutboundRecord)),
     leave_group: Option(fn(String) -> Nil),
   )
@@ -97,6 +99,11 @@ const default_typing_keepalive_ms = 4000
 
 const stream_timeout_ms = 60_000
 
+const turn_hard_timeout_ms = 300_000
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn current_timestamp() -> Int
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -110,6 +117,8 @@ pub fn no_start_hooks() -> StartHooks {
     matrix_inbound_events: [],
     disable_telegram_polling: False,
     typing_keepalive_ms: default_typing_keepalive_ms,
+    stream_timeout_ms: 60_000,
+    turn_hard_timeout_ms: 300_000,
     outbound_records: None,
     leave_group: None,
   )
@@ -781,8 +790,53 @@ fn maybe_leave_unauthorized_group(
     _ -> False
   }
   let chat_key = "telegram:" <> member.chat.id
-  case is_group && joined && !closed_group_global.chat_authorized(chat_key) {
-    True -> {
+  case is_group && joined {
+    True ->
+      case closed_group_global.chat_authorized_result(chat_key) {
+        Ok(True) -> Nil
+        Ok(False) -> {
+          record_leave_audit(chat_key)
+          case leave_group {
+            Some(leave) -> leave(member.chat.id)
+            None -> {
+              let _ = telegram.leave_chat(telegram_config, member.chat.id)
+              Nil
+            }
+          }
+        }
+        Error(_) -> {
+          io.println(
+            "warn: access lookup failed while checking chat " <> chat_key,
+          )
+          record_chat_check_failed(chat_key)
+          schedule_leave_recheck(telegram_config, member, leave_group)
+        }
+      }
+    False -> Nil
+  }
+}
+
+fn schedule_leave_recheck(
+  telegram_config: telegram.Config,
+  member: telegram.ChatMemberUpdated,
+  leave_group: Option(fn(String) -> Nil),
+) -> Nil {
+  process.spawn_unlinked(fn() {
+    process.sleep(30_000)
+    recheck_leave(telegram_config, member, leave_group)
+  })
+  Nil
+}
+
+fn recheck_leave(
+  telegram_config: telegram.Config,
+  member: telegram.ChatMemberUpdated,
+  leave_group: Option(fn(String) -> Nil),
+) -> Nil {
+  let chat_key = "telegram:" <> member.chat.id
+  case closed_group_global.chat_authorized_result(chat_key) {
+    Ok(True) -> Nil
+    Ok(False) -> {
       record_leave_audit(chat_key)
       case leave_group {
         Some(leave) -> leave(member.chat.id)
@@ -792,7 +846,29 @@ fn maybe_leave_unauthorized_group(
         }
       }
     }
-    False -> Nil
+    Error(_) -> {
+      io.println(
+        "warn: access lookup failed again while checking chat " <> chat_key,
+      )
+      record_chat_check_failed(chat_key)
+    }
+  }
+}
+
+fn record_chat_check_failed(chat_key: String) -> Nil {
+  case closed_group_global.get_audit() {
+    None -> Nil
+    Some(audit) ->
+      audit_actor.log_entry(
+        audit,
+        audit_types.denied_entry(
+          closed_group_global.now(),
+          "telegram",
+          "chat_check_failed",
+          chat_key,
+          "access lookup unavailable",
+        ),
+      )
   }
 }
 
@@ -824,9 +900,12 @@ fn dispatch_inbound(
   stream_send_fn: StreamSendFn,
   inbound: port.ChannelInbound,
 ) -> Nil {
-  chat_lanes.submit(chat_lanes.key_for(inbound), fn() {
-    run_inbound_turn(handler, send_fn, stream_send_fn, inbound)
-  })
+  let key = chat_lanes.key_for(inbound)
+  let _ =
+    chat_lanes.submit(key, fn() {
+      run_inbound_turn(handler, send_fn, stream_send_fn, inbound, key)
+    })
+  Nil
 }
 
 fn run_inbound_turn(
@@ -834,6 +913,7 @@ fn run_inbound_turn(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
   inbound: port.ChannelInbound,
+  chat_key: String,
 ) -> Nil {
   let stream_events = process.new_subject()
 
@@ -843,10 +923,63 @@ fn run_inbound_turn(
       Nil
     }
     Ok(port.StreamReply(base_reply)) -> {
-      let _ = stream_send_fn(base_reply, stream_events)
-      Nil
+      case stream_send_fn(base_reply, stream_events) {
+        Ok(_) -> Nil
+        Error(port.SendFailed("stream timed out")) ->
+          await_late_terminal(
+            stream_events,
+            send_fn,
+            base_reply,
+            chat_key,
+            current_timestamp() + turn_hard_timeout_ms,
+          )
+        Error(_) -> Nil
+      }
     }
     Error(_) -> Nil
+  }
+}
+
+fn await_late_terminal(
+  events: process.Subject(port.ChannelStreamEvent),
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  base_reply: port.ChannelReply,
+  chat_key: String,
+  deadline: Int,
+) -> Nil {
+  let remaining = deadline - current_timestamp()
+  case remaining <= 0 {
+    True -> {
+      io.println("error: chat lane turn hard timeout key=" <> chat_key)
+      Nil
+    }
+    False ->
+      case process.receive(events, within: remaining) {
+        Ok(port.StreamComplete(reply)) -> {
+          case string.trim(reply.content) {
+            "" -> Nil
+            _ -> {
+              let _ =
+                send_fn(
+                  port.ChannelReply(
+                    ..base_reply,
+                    content: reply.content,
+                    edit_message_id: None,
+                    typing: False,
+                  ),
+                )
+              Nil
+            }
+          }
+        }
+        Ok(port.StreamFailure(_)) -> Nil
+        Ok(port.StreamUpdate(_)) ->
+          await_late_terminal(events, send_fn, base_reply, chat_key, deadline)
+        Error(_) -> {
+          io.println("error: chat lane turn hard timeout key=" <> chat_key)
+          Nil
+        }
+      }
   }
 }
 
@@ -1251,6 +1384,7 @@ fn discord_stream_send(
           base_reply,
           events,
           keepalive_ms,
+          hooks.stream_timeout_ms,
         )
       None ->
         stream_discord_reply(rest_client, base_reply, events, keepalive_ms)
@@ -1275,6 +1409,7 @@ fn telegram_stream_send(
           base_reply,
           events,
           keepalive_ms,
+          hooks.stream_timeout_ms,
         )
       None ->
         stream_telegram_reply(telegram_config, base_reply, events, keepalive_ms)
@@ -1338,6 +1473,7 @@ fn matrix_stream_send(
           base_reply,
           events,
           keepalive_ms,
+          hooks.stream_timeout_ms,
         )
       None ->
         stream_matrix_reply(
@@ -1918,6 +2054,7 @@ fn record_stream_for_test(
   base_reply: port.ChannelReply,
   events: process.Subject(port.ChannelStreamEvent),
   keepalive_ms: Int,
+  timeout_ms: Int,
 ) -> Result(Nil, port.ChannelError) {
   let message_id = case channel {
     "discord" -> "discord-stream-1"
@@ -1956,7 +2093,7 @@ fn record_stream_for_test(
     message_id,
     "",
     base_reply.typing,
-    stream_timeout_ms,
+    timeout_ms,
     keepalive_ms,
   )
 }
@@ -1993,6 +2130,7 @@ fn record_slack_stream_for_test(
         "slack",
         base_reply,
         events,
+        stream_timeout_ms,
         stream_timeout_ms,
       )
   }
@@ -2111,7 +2249,18 @@ fn consume_recorded_stream_events(
     Ok(port.StreamFailure(error)) -> Error(error)
     Error(_) ->
       case remaining_ms <= wait_ms {
-        True -> Error(port.SendFailed("stream timed out"))
+        True -> {
+          process.send(
+            recorder,
+            OutboundRecord(
+              channel: channel,
+              action: "edit",
+              content: "Streaming timed out",
+              message_id: Some(message_id),
+            ),
+          )
+          Error(port.SendFailed("stream timed out"))
+        }
         False -> {
           case channel_supports_typing(channel) && typing {
             True ->

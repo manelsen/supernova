@@ -61,6 +61,9 @@ import supernova/tracing/types as tracing_types
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn current_timestamp() -> Int
 
+@external(erlang, "supernova_file_system_ffi", "ensure_dir")
+fn ensure_dir(path: String) -> Result(Nil, String)
+
 /// Starts Supernova, boots core services, and waits for shutdown.
 pub fn main() -> Nil {
   io.println("🚀 Starting Supernova...")
@@ -411,6 +414,13 @@ pub fn start_closed_group_supervisor(
   closed_group_global.set_config(cfg)
   closed_group_global.set_clock(current_timestamp)
 
+  use _ <- result.try(
+    ensure_dir(cfg.data_dir <> "/workspace")
+    |> result.map_error(fn(reason) {
+      "workspace policy unavailable: " <> reason
+    }),
+  )
+
   let builder =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.restart_tolerance(intensity: 5, period: 60)
@@ -522,26 +532,39 @@ pub fn start_closed_group_supervisor(
                   ),
                 ),
               ])
-            let policy = case
-              workspace_policy_actor.start(cfg.data_dir <> "/workspace")
-            {
-              Ok(policy) -> Some(policy)
-              Error(_) -> None
+            let workspace_root = cfg.data_dir <> "/workspace"
+            let policy_result = case ensure_dir(workspace_root) {
+              Error(reason) ->
+                Error(otp_actor.InitFailed(
+                  "workspace policy unavailable: " <> reason,
+                ))
+              Ok(_) ->
+                case workspace_policy_actor.start(workspace_root) {
+                  Ok(policy) -> Ok(policy)
+                  Error(_) ->
+                    Error(otp_actor.InitFailed(
+                      "workspace policy failed to start",
+                    ))
+                }
             }
-            case
-              syscall_actor.start_with_capabilities(
-                policy,
-                Some(budget),
-                Some(audit),
-                manifests,
-                tool_dispatch.execute,
-              )
-            {
-              Ok(started) -> {
-                closed_group_global.set_gateway(started)
-                wrap_started(started)
-              }
-              Error(e) -> Error(e)
+            case policy_result {
+              Error(error) -> Error(error)
+              Ok(policy) ->
+                case
+                  syscall_actor.start_with_capabilities(
+                    Some(policy),
+                    Some(budget),
+                    Some(audit),
+                    manifests,
+                    tool_dispatch.execute,
+                  )
+                {
+                  Ok(started) -> {
+                    closed_group_global.set_gateway(started)
+                    wrap_started(started)
+                  }
+                  Error(e) -> Error(e)
+                }
             }
           }
           _, _ ->

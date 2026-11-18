@@ -172,6 +172,8 @@ pub fn telegram_start_registry(
         matrix_inbound_events: [],
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
+        stream_timeout_ms: 60_000,
+        turn_hard_timeout_ms: 300_000,
         outbound_records: Some(recorder),
         leave_group: None,
       ),
@@ -211,6 +213,8 @@ pub fn telegram_start_registry_with_leave(
         matrix_inbound_events: [],
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
+        stream_timeout_ms: 60_000,
+        turn_hard_timeout_ms: 300_000,
         outbound_records: Some(recorder),
         leave_group: Some(fn(chat_id) { process.send(leave_recorder, chat_id) }),
       ),
@@ -264,6 +268,8 @@ pub fn discord_start_registry(
         matrix_inbound_events: [],
         disable_telegram_polling: True,
         typing_keepalive_ms: 4000,
+        stream_timeout_ms: 60_000,
+        turn_hard_timeout_ms: 300_000,
         outbound_records: Some(recorder),
         leave_group: None,
       ),
@@ -288,28 +294,49 @@ pub fn access_config(
 ///
 /// Turns are asynchronous: a reply arrives as typing → placeholder → final
 /// edit, so the content is not necessarily in the first record.
+@external(erlang, "erlang", "monotonic_time")
+fn monotonic_native() -> Int
+
+@external(erlang, "erlang", "convert_time_unit")
+fn convert_time_unit(value: Int, from: Atom, to: Atom) -> Int
+
+type Atom
+
+@external(erlang, "erlang", "binary_to_atom")
+fn atom(name: String) -> Atom
+
+fn monotonic_ms() -> Int {
+  convert_time_unit(monotonic_native(), atom("native"), atom("millisecond"))
+}
+
 pub fn await_content(
   recorder: process.Subject(registry.OutboundRecord),
   needle: String,
 ) -> Bool {
-  await_content_loop(recorder, needle, 10)
+  await_content_loop(recorder, needle, monotonic_ms() + 5000)
 }
 
 fn await_content_loop(
   recorder: process.Subject(registry.OutboundRecord),
   needle: String,
-  attempts: Int,
+  deadline: Int,
 ) -> Bool {
-  case attempts <= 0 {
+  let remaining = deadline - monotonic_ms()
+  case remaining <= 0 {
     True -> False
-    False ->
-      case process.receive(recorder, within: 500) {
+    False -> {
+      let wait_ms = case remaining < 500 {
+        True -> remaining
+        False -> 500
+      }
+      case process.receive(recorder, within: wait_ms) {
         Ok(record) ->
           case string.contains(record.content, needle) {
             True -> True
-            False -> await_content_loop(recorder, needle, attempts)
+            False -> await_content_loop(recorder, needle, deadline)
           }
-        Error(_) -> await_content_loop(recorder, needle, attempts - 1)
+        Error(_) -> await_content_loop(recorder, needle, deadline)
       }
+    }
   }
 }

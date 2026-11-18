@@ -184,10 +184,21 @@ pub fn get_runtime() -> Option(types.Runtime) {
 /// Whether a group chat/server is explicitly authorized.
 /// Missing runtime returns True (do not take destructive action without policy).
 pub fn chat_authorized(chat_key: String) -> Bool {
+  case chat_authorized_result(chat_key) {
+    Ok(authorized) -> authorized
+    Error(_) -> True
+  }
+}
+
+/// Like `chat_authorized`, but distinguishes an unavailable access actor.
+pub fn chat_authorized_result(chat_key: String) -> Result(Bool, Nil) {
   case get_runtime() {
-    None -> True
+    None -> Ok(True)
     Some(runtime) ->
-      list.contains(access_actor.list_chats(runtime.access), chat_key)
+      case access_actor.try_list_chats(runtime.access) {
+        Ok(chats) -> Ok(list.contains(chats, chat_key))
+        Error(_) -> Error(Nil)
+      }
   }
 }
 

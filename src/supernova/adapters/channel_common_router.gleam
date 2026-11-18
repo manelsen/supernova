@@ -20,6 +20,7 @@ import supernova/core/closed_group/pure as closed_group_pure
 import supernova/core/closed_group/runtime as closed_group_runtime
 import supernova/core/closed_group/types as closed_group_types
 import supernova/core/error_ux
+import supernova/core/exception_guard
 import supernova/core/executor
 import supernova/core/introspection/lesson
 import supernova/core/introspection/mood
@@ -1370,15 +1371,26 @@ fn start_streamed_message_reply(
   let base_reply = port.reply(to: msg, content: "") |> port.with_typing(True)
   let _ =
     process.spawn_unlinked(fn() {
-      run_streamed_message_reply(
-        stream_events,
-        msg,
-        session_id,
-        llm_config,
-        rich_session,
-        profile,
-        context,
-      )
+      case
+        exception_guard.run(fn() {
+          run_streamed_message_reply(
+            stream_events,
+            msg,
+            session_id,
+            llm_config,
+            rich_session,
+            profile,
+            context,
+          )
+        })
+      {
+        Ok(_) -> Nil
+        Error(reason) ->
+          process.send(
+            stream_events,
+            port.StreamFailure(port.SendFailed("turn crashed: " <> reason)),
+          )
+      }
     })
   port.StreamReply(base_reply: base_reply)
 }

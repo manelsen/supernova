@@ -75,18 +75,41 @@ pub type Command {
 // Persistence
 // ============================================================================
 
-/// Runtime state persisted to `<data_dir>/access.json`.
-///
-/// Configuration-only fields (`mode`, `denied_reply`) stay with the caller;
-/// only the mutable lists and the anti-spam notice timestamps are stored.
-pub type PersistedState {
-  PersistedState(
+/// Lists overridden by runtime commands, relative to the YAML base.
+pub type PersistedLists {
+  PersistedLists(
     admins: List(String),
     members: List(String),
     allowed_chats: List(String),
+  )
+}
+
+/// Runtime state persisted to `<data_dir>/access.json`.
+///
+/// The YAML configuration is the base. Only command-made differences are
+/// stored: effective list = (YAML union added) minus removed.
+pub type PersistedState {
+  PersistedState(
+    added: PersistedLists,
+    removed: PersistedLists,
     denied_notices: Dict(String, Int),
     chat_denied_notices: Dict(String, Int),
   )
+}
+
+/// Empty persisted delta used when no `access.json` exists.
+pub fn empty_persisted() -> PersistedState {
+  PersistedState(
+    added: empty_lists(),
+    removed: empty_lists(),
+    denied_notices: dict.new(),
+    chat_denied_notices: dict.new(),
+  )
+}
+
+/// Empty delta lists.
+pub fn empty_lists() -> PersistedLists {
+  PersistedLists(admins: [], members: [], allowed_chats: [])
 }
 
 // ============================================================================

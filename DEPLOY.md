@@ -235,9 +235,32 @@ export SUPERNOVA_ACCESS_ADMINS="telegram:123"
 docker compose up -d
 ```
 
-Depois use `/acesso adicionar discord:456` (membro) ou
-`/acesso adicionar discord:456 admin`. Um admin não pode remover a si mesmo
-quando é o último admin. As mudanças ficam em `<data_dir>/access.json`.
+Também é possível definir o primeiro admin em `access.admins` no
+`supernova.yaml` montado. Depois use `/acesso adicionar discord:456` (membro)
+ou `/acesso adicionar discord:456 admin`. Um admin não pode remover a si
+mesmo quando é o último admin.
+
+O YAML é a base e `<data_dir>/access.json` guarda apenas as diferenças feitas
+por comando (`added`/`removed`). Remover alguém do YAML e reiniciar revoga o
+acesso mesmo que a pessoa já tenha recebido uma negação ou tenha sido
+adicionada por comando em outro momento. Não edite `access.json` à mão.
+
+### Dados persistentes
+
+No compose, `SUPERNOVA_DATA_DIR=/data` e o volume nomeado
+`supernova_data` monta esse diretório. Ele contém `access.json`, `ledger/` e
+`audit_log/`; recriar o contêiner não perde esses arquivos. Para migrar um
+diretório `data/` existente antes de trocar o contêiner:
+
+```bash
+docker create --name supernova-data-copy \
+  -v supernova_supernova_data:/data supernova:smoke
+docker cp data/. supernova-data-copy:/data/
+docker rm supernova-data-copy
+```
+
+O nome do volume pode variar com o nome do projeto Compose; confira com
+`docker volume ls | grep supernova_data`.
 
 ### Grupos e servidores
 

@@ -9,6 +9,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/config
+import supernova/core/access/pure as access_pure
 import supernova/core/access/types as access_types
 import supernova/core/audit_log/types as audit_types
 import supernova/core/budget_policy/types as budget_types
@@ -573,4 +574,17 @@ fn list_text(items: List(String)) -> String {
 
 pub fn access_help() -> String {
   "Comandos: /acesso listar | /acesso adicionar <principal> [admin|membro] | /acesso remover <principal> | /acesso chat adicionar|remover|listar <id>"
+}
+
+/// Whether a command may bypass the chat allowlist check.
+///
+/// Only chat management may run in a not-yet-authorized group; report and
+/// principal-management commands still require the chat to be authorized.
+pub fn is_chat_management_command(content: String) -> Bool {
+  case access_pure.parse_command(content) {
+    Some(access_types.AddChat(_)) -> True
+    Some(access_types.RemoveChat(_)) -> True
+    Some(access_types.ListChats) -> True
+    _ -> False
+  }
 }

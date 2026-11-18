@@ -4,13 +4,14 @@
 
 import gleam/dict
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit
 import gleeunit/should
 import supernova/core/access/pure
 import supernova/core/access/types.{
   type AccessConfig, AccessConfig, AddAccess, AddChat, Admin, Allowed, Allowlist,
   ChatAllowed, ChatDenied, Denied, ListAccess, ListChats, Member, Open,
-  PersistedState, RemoveAccess, RemoveChat,
+  PersistedLists, PersistedState, RemoveAccess, RemoveChat, empty_lists,
 }
 
 pub fn main() -> Nil {
@@ -268,7 +269,7 @@ pub fn notice_suppressed_on_clock_skew_test() {
 // ============================================================================
 
 pub fn encode_decode_round_trip_test() {
-  let config =
+  let base =
     AccessConfig(
       mode: Allowlist,
       admins: ["telegram:1"],
@@ -278,25 +279,63 @@ pub fn encode_decode_round_trip_test() {
     )
   let denied = dict.from_list([#("telegram:9", 123_456)])
   let chat_denied = dict.from_list([#("telegram:-999", 654_321)])
+  let persisted =
+    PersistedState(
+      added: PersistedLists(
+        admins: ["telegram:3"],
+        members: ["discord:4"],
+        allowed_chats: ["telegram:-200"],
+      ),
+      removed: PersistedLists(
+        admins: ["telegram:1"],
+        members: [],
+        allowed_chats: ["telegram:-100"],
+      ),
+      denied_notices: denied,
+      chat_denied_notices: chat_denied,
+    )
 
-  let encoded = pure.encode_state(config, denied, chat_denied)
-  let assert Ok(persisted) = pure.decode_state(config, encoded)
+  let encoded = pure.encode_state(persisted)
+  let assert Ok(decoded) = pure.decode_state(base, encoded)
 
-  persisted
-  |> should.equal(PersistedState(
-    admins: ["telegram:1"],
-    members: ["discord:2"],
-    allowed_chats: ["telegram:-100", "discord:guild:7"],
-    denied_notices: denied,
-    chat_denied_notices: chat_denied,
-  ))
+  decoded |> should.equal(persisted)
 
-  let restored = pure.apply_persisted(config, persisted)
-  restored.admins |> should.equal(config.admins)
-  restored.members |> should.equal(config.members)
-  restored.allowed_chats |> should.equal(config.allowed_chats)
+  let restored = pure.apply_persisted(base, persisted)
+  restored.admins |> should.equal(["telegram:3"])
+  restored.members |> should.equal(["discord:2", "discord:4"])
+  restored.allowed_chats |> should.equal(["discord:guild:7", "telegram:-200"])
   restored.mode |> should.equal(Allowlist)
   restored.denied_reply |> should.equal("privada")
+}
+
+pub fn encode_state_stores_only_deltas_test() {
+  let encoded =
+    pure.encode_state(PersistedState(
+      added: empty_lists(),
+      removed: empty_lists(),
+      denied_notices: dict.new(),
+      chat_denied_notices: dict.new(),
+    ))
+
+  encoded |> should_contain("\"added\"")
+  encoded |> should_contain("\"removed\"")
+  encoded |> should_not_contain("\"admins\":[\"telegram:1\"]")
+}
+
+pub fn legacy_full_lists_become_added_deltas_test() {
+  let base = allowlist([], ["telegram:A", "telegram:C"])
+  let legacy =
+    "{\"version\":1,\"admins\":[],\"members\":[\"telegram:A\",\"telegram:B\"],\"allowed_chats\":[\"telegram:-100\"],\"denied_notices\":{\"telegram:9\":123}}"
+
+  let assert Ok(persisted) = pure.decode_state(base, legacy)
+
+  persisted.added.members |> should.equal(["telegram:B"])
+  persisted.removed.members |> should.equal([])
+  persisted.denied_notices
+  |> should.equal(dict.from_list([#("telegram:9", 123)]))
+
+  let restored = pure.apply_persisted(base, persisted)
+  restored.members |> should.equal(["telegram:A", "telegram:C", "telegram:B"])
 }
 
 pub fn decode_uses_config_when_fields_missing_test() {
@@ -304,12 +343,30 @@ pub fn decode_uses_config_when_fields_missing_test() {
   let assert Ok(persisted) =
     pure.decode_state(base, "{\"admins\":[\"telegram:9\"]}")
 
-  persisted.admins |> should.equal(["telegram:9"])
-  persisted.members |> should.equal(["telegram:2"])
-  persisted.allowed_chats |> should.equal([])
+  persisted.added.admins |> should.equal(["telegram:9"])
+  persisted.removed.admins |> should.equal([])
+
+  let restored = pure.apply_persisted(base, persisted)
+  restored.admins |> should.equal(["telegram:1", "telegram:9"])
+  restored.members |> should.equal(["telegram:2"])
+  restored.allowed_chats |> should.equal([])
 }
 
 pub fn decode_invalid_json_fails_test() {
   pure.decode_state(allowlist([], []), "not json")
   |> should.be_error()
+}
+
+fn should_contain(text: String, needle: String) -> Nil {
+  case string.contains(text, needle) {
+    True -> Nil
+    False -> panic as "missing expected content"
+  }
+}
+
+fn should_not_contain(text: String, needle: String) -> Nil {
+  case string.contains(text, needle) {
+    False -> Nil
+    True -> panic as "unexpected content"
+  }
 }

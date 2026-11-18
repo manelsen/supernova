@@ -154,14 +154,22 @@ fn check_workspace_policy(
       case actor_state.workspace_policy {
         Some(policy) ->
           policy_actor.authorize(policy, agent_id, policy_types.OpRead, path)
-        None -> Ok(path)
+        None ->
+          case dict.is_empty(actor_state.capability_manifests) {
+            True -> Ok(path)
+            False -> Error("workspace policy unavailable")
+          }
       }
     }
     WriteFile(path, _) -> {
       case actor_state.workspace_policy {
         Some(policy) ->
           policy_actor.authorize(policy, agent_id, policy_types.OpWrite, path)
-        None -> Ok(path)
+        None ->
+          case dict.is_empty(actor_state.capability_manifests) {
+            True -> Ok(path)
+            False -> Error("workspace policy unavailable")
+          }
       }
     }
     // Non-file operations: no workspace check needed
@@ -372,7 +380,11 @@ fn tool_path_check(
     None -> Ok(Nil)
     Some(path) ->
       case actor_state.workspace_policy {
-        None -> Ok(Nil)
+        None ->
+          case dict.is_empty(actor_state.capability_manifests) {
+            True -> Ok(Nil)
+            False -> Error("workspace policy unavailable")
+          }
         Some(policy) -> {
           let op = case tool_touches_write(tool_name, args) {
             True -> policy_types.OpWrite

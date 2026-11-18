@@ -136,3 +136,25 @@ têm teste que falhava antes da correção.
 Estado após as correções: `gleam test` 2167 passaram, 0 falhas; cobertura
 75,75% (gate 75); `gleam build --warnings-as-errors` e `gleam format --check`
 verdes.
+
+## Correções da revisão CodeRabbit (Fase A)
+
+A revisão do CodeRabbit em `1a2259c` formalizou 10 histórias de endurecimento.
+Todas entraram no PR #12 com teste que reproduzia a falha.
+
+| História | Problema | Correção | Teste |
+|---|---|---|---|
+| A-01 | `access.json` gravava listas efetivas e o YAML deixava de revogar | Deltas `added`/`removed` sobre a base YAML, com migração do formato antigo | `yaml_revocation_survives_denials_test`, `legacy_full_list_file_is_migrated_test` |
+| A-02 | Falha da política de workspace deixava o boot seguir sem checagem de caminhos | Boot falha; gateway nega caminhos quando há manifestos e não há política | `supervisor_fails_when_workspace_policy_cannot_start_test`, `capabilities_without_workspace_policy_deny_file_operations_test` |
+| A-03 | Admin executava relatórios em grupo não autorizado | Só `/eu` e comandos de gestão de chat dispensam a checagem do chat | `admin_report_requires_authorized_chat_test` |
+| A-04 | `git branch -D`, `--output`, `--no-index` etc. passavam | Allow-list de opções e limite de posicionais por subcomando; caminhos passam pelo `workspace_guard` | `safe_shell_rejects_git_write_options_test`, `safe_shell_allows_bounded_git_operands_test` |
+| A-05 | Timeout do acesso virava lista vazia e o bot saía do grupo | `try_list_chats` e `chat_authorized_result`; falha não sai, audita e recheca em 30 s | `access_lookup_failure_does_not_leave_group_test` |
+| A-06 | Compose não encaminhava token/allowlist nem preservava `data_dir` | Env do Telegram/access, `SUPERNOVA_DATA_DIR=/data` e volume nomeado | Inspeção do compose + smoke Docker |
+| A-07 | Fila aceitava jobs sem limite | 50 pendentes por chat, 2000 lanes, `submit` devolve `Bool` | `lanes_reject_pending_turns_above_limit_test`, `lanes_reject_new_chats_above_lane_limit_test` |
+| A-08 | Fila liberava antes de o turno terminar | Espera até 300 s pelo evento terminal e entrega o conteúdo atrasado como mensagem nova; exceções viram `StreamFailure` | `late_terminal_keeps_lane_until_content_is_delivered_test`, `executor_crash_emits_stream_failure_test` |
+| A-09 | Testes de assincronia, recusa e concorrência liam uma vez ou usavam prazos ociosos | `await_content` com prazo total, auditoria com polling de 2 s, mock delay, recusa exata e liberação por subject | Testes citados acima + `slow_tool_neither_refused_nor_blocking_test` |
+| A-10 | Fechamento | Esta seção, push e CI | `gh pr checks 12` |
+
+Estado após a Fase A: `gleam test` 2184 passaram, 0 falhas; `gleam build
+--warnings-as-errors` e `gleam format --check` verdes. A cobertura foi medida
+com `make coverage` no fechamento.

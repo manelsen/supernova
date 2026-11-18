@@ -914,27 +914,51 @@ pub fn run_stream_mock(
   let subject = process.new_subject()
 
   case latest_user_content(messages) {
-    Some(content) ->
-      case string.contains(content, "[stream-timeout]") {
-        True -> Nil
+    Some(content) -> {
+      case mock_delay_ms(content) {
+        Some(delay) -> process.sleep(delay)
+        None -> Nil
+      }
+      case string.contains(content, "[mock-crash]") {
+        True -> panic as "simulated executor crash"
         False ->
-          case string.contains(content, "[stream-error]") {
-            True ->
-              process.send(
-                subject,
-                stream.StreamError(reason: "simulated mock stream error"),
-              )
+          case string.contains(content, "[stream-timeout]") {
+            True -> Nil
             False ->
-              mock_stream_chunks(messages, config)
-              |> list.each(fn(chunk) { process.send(subject, chunk) })
+              case string.contains(content, "[stream-error]") {
+                True ->
+                  process.send(
+                    subject,
+                    stream.StreamError(reason: "simulated mock stream error"),
+                  )
+                False ->
+                  mock_stream_chunks(messages, config)
+                  |> list.each(fn(chunk) { process.send(subject, chunk) })
+              }
           }
       }
+    }
     None ->
       mock_stream_chunks(messages, config)
       |> list.each(fn(chunk) { process.send(subject, chunk) })
   }
 
   subject
+}
+
+fn mock_delay_ms(content: String) -> Option(Int) {
+  case string.split(content, "[mock-delay-ms=") {
+    [_, rest] ->
+      case string.split(rest, "]") {
+        [digits, ..] ->
+          case int.parse(digits) {
+            Ok(value) -> Some(value)
+            Error(_) -> None
+          }
+        [] -> None
+      }
+    _ -> None
+  }
 }
 
 fn mock_stream_chunks(

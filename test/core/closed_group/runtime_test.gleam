@@ -25,6 +25,12 @@ import supernova/core/syscall/actor as syscall_actor
 import supernova/core/tool_dispatch
 import test_workspace
 
+@external(erlang, "supernova_file_system_ffi", "ensure_dir")
+fn ffi_ensure_dir(path: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn ffi_write_file(path: String, content: String) -> Result(Nil, String)
+
 const now = 1_700_000_000_000
 
 fn base_config() -> config.Config {
@@ -183,6 +189,33 @@ pub fn group_requires_chat_allowlist_test() {
 
     case cg_runtime.gate(runtime, "telegram", "-100", "123", "oi") {
       cg_types.Allowed(_) -> should.be_true(True)
+      _ -> should.fail()
+    }
+  })
+}
+
+pub fn admin_report_requires_authorized_chat_test() {
+  let cfg = config_with_access(["telegram:1"], ["telegram:123"], [])
+  with_runtime(cfg, fn(runtime) {
+    cg_runtime.gate(runtime, "telegram", "-100", "1", "/auditoria")
+    |> should.equal(cg_types.Ignored("chat denied"))
+
+    case
+      cg_runtime.gate(
+        runtime,
+        "telegram",
+        "-100",
+        "1",
+        "/acesso chat adicionar telegram:-100",
+      )
+    {
+      cg_types.Reply(text) ->
+        should.be_true(string.contains(text, "autorizado"))
+      _ -> should.fail()
+    }
+
+    case cg_runtime.gate(runtime, "telegram", "-100", "1", "/auditoria") {
+      cg_types.Reply(_) -> Nil
       _ -> should.fail()
     }
   })
@@ -747,6 +780,24 @@ pub fn commands_and_eu_bypass_rate_limit_test() {
       cg_types.Reply(text) ->
         should.be_true(string.contains(text, "telegram:-1001"))
       _ -> should.fail()
+    }
+  })
+}
+
+pub fn supervisor_fails_when_workspace_policy_cannot_start_test() {
+  test_workspace.with_isolated_workspace("workspace-fail", fn(root) {
+    use <- exception.defer(closed_group_global.clear_runtime)
+    process.trap_exits(True)
+    use <- exception.defer(fn() { process.trap_exits(False) })
+    let data = root <> "/data"
+    let assert Ok(_) = ffi_ensure_dir(data)
+    let assert Ok(_) = ffi_write_file(data <> "/workspace", "not a directory")
+    let cfg = config.Config(..config_with_access([], [], []), data_dir: data)
+
+    case supernova.start_closed_group_supervisor(cfg) {
+      Error(reason) ->
+        should.be_true(string.contains(reason, "workspace policy"))
+      Ok(_) -> should.fail()
     }
   })
 }

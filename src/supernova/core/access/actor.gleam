@@ -19,8 +19,9 @@ import gleam/otp/actor
 import gleam/result
 import supernova/core/access/pure
 import supernova/core/access/types.{
-  type AccessConfig, type ChatDecision, type Decision, type Role, ChatDenied,
-  Denied,
+  type AccessConfig, type ChatDecision, type Decision,
+  type PersistedState as PersistedStateType, type Role, ChatDenied, Denied,
+  PersistedState, empty_persisted,
 }
 import supernova/core/safe_call
 
@@ -53,9 +54,9 @@ fn ffi_rename(from: String, to: String) -> Result(Nil, String)
 /// Actor state.
 pub type State {
   State(
+    base: AccessConfig,
     config: AccessConfig,
-    denied_notices: Dict(String, Int),
-    chat_denied_notices: Dict(String, Int),
+    persisted: PersistedStateType,
     data_dir: String,
     clock: fn() -> Int,
   )
@@ -107,14 +108,20 @@ fn load_state(
   case ffi_read_file(access_path(data_dir)) {
     Ok(text) ->
       case pure.decode_state(config, text) {
-        Ok(persisted) ->
-          State(
-            config: pure.apply_persisted(config, persisted),
-            denied_notices: persisted.denied_notices,
-            chat_denied_notices: persisted.chat_denied_notices,
-            data_dir: data_dir,
-            clock: clock,
-          )
+        Ok(persisted) -> {
+          let state =
+            State(
+              base: config,
+              config: pure.apply_persisted(config, persisted),
+              persisted: persisted,
+              data_dir: data_dir,
+              clock: clock,
+            )
+          // A legacy full-list file and any pre-delta format is rewritten in
+          // the current shape as soon as it is read.
+          persist_best_effort(state)
+          state
+        }
         Error(_) -> fresh_state(config, data_dir, clock)
       }
     Error(_) -> fresh_state(config, data_dir, clock)
@@ -127,9 +134,9 @@ fn fresh_state(
   clock: fn() -> Int,
 ) -> State {
   State(
+    base: config,
     config: config,
-    denied_notices: dict.new(),
-    chat_denied_notices: dict.new(),
+    persisted: empty_persisted(),
     data_dir: data_dir,
     clock: clock,
   )
@@ -143,11 +150,7 @@ fn persist_state(state: State) -> Result(Nil, String) {
   let temp_path = path <> ".tmp"
   use _ <- result.try(ffi_write_file(
     temp_path,
-    pure.encode_state(
-      state.config,
-      state.denied_notices,
-      state.chat_denied_notices,
-    ),
+    pure.encode_state(state.persisted),
   ))
   ffi_rename(temp_path, path)
 }
@@ -206,10 +209,20 @@ fn handle_message(
 
     TakeDeniedNotice(reply_to, principal_id) -> {
       let now = state.clock()
-      let #(notices, due) = take_notice(state.denied_notices, principal_id, now)
+      let #(notices, due) =
+        take_notice(state.persisted.denied_notices, principal_id, now)
       case due {
         True -> {
-          let new_state = State(..state, denied_notices: notices)
+          let new_state =
+            State(
+              ..state,
+              persisted: PersistedState(
+                added: state.persisted.added,
+                removed: state.persisted.removed,
+                denied_notices: notices,
+                chat_denied_notices: state.persisted.chat_denied_notices,
+              ),
+            )
           persist_best_effort(new_state)
           actor.send(reply_to, True)
           actor.continue(new_state)
@@ -224,10 +237,19 @@ fn handle_message(
     TakeChatDeniedNotice(reply_to, chat_key) -> {
       let now = state.clock()
       let #(notices, due) =
-        take_notice(state.chat_denied_notices, chat_key, now)
+        take_notice(state.persisted.chat_denied_notices, chat_key, now)
       case due {
         True -> {
-          let new_state = State(..state, chat_denied_notices: notices)
+          let new_state =
+            State(
+              ..state,
+              persisted: PersistedState(
+                added: state.persisted.added,
+                removed: state.persisted.removed,
+                denied_notices: state.persisted.denied_notices,
+                chat_denied_notices: notices,
+              ),
+            )
           persist_best_effort(new_state)
           actor.send(reply_to, True)
           actor.continue(new_state)
@@ -294,7 +316,14 @@ fn commit_config(
   new_config: AccessConfig,
   reply_to: Subject(Result(Nil, String)),
 ) -> actor.Next(State, AccessMessage) {
-  let new_state = State(..state, config: new_config)
+  let persisted =
+    pure.diff_persisted(
+      state.base,
+      new_config,
+      state.persisted.denied_notices,
+      state.persisted.chat_denied_notices,
+    )
+  let new_state = State(..state, config: new_config, persisted: persisted)
   case persist_state(new_state) {
     Ok(_) -> {
       actor.send(reply_to, Ok(Nil))
@@ -421,6 +450,17 @@ pub fn list_members(access: AccessActor) -> List(String) {
 /// List authorized group chats and servers.
 pub fn list_chats(access: AccessActor) -> List(String) {
   call_or(access, [], ListChats)
+}
+
+/// List authorized chats with an explicit failure.
+///
+/// Unlike `list_chats`, a timeout is not collapsed into an empty list: callers
+/// that make destructive decisions must distinguish "no chats" from "unknown".
+pub fn try_list_chats(access: AccessActor) -> Result(List(String), Nil) {
+  case safe_call.call(access, call_timeout_ms, ListChats) {
+    Ok(chats) -> Ok(chats)
+    Error(_) -> Error(Nil)
+  }
 }
 
 /// List admins.

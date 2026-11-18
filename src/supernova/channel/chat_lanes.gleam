@@ -8,7 +8,16 @@ import supernova/channel/port
 
 /// Run `job` on the lane identified by `key`.
 @external(erlang, "supernova_chat_lanes_ffi", "submit")
-pub fn submit(key: String, job: fn() -> Nil) -> Nil
+pub fn submit(key: String, job: fn() -> Nil) -> Bool
+
+/// Submit with explicit limits, used by tests and diagnostics.
+@external(erlang, "supernova_chat_lanes_ffi", "submit_with_limits")
+pub fn submit_with_limits(
+  key: String,
+  job: fn() -> Nil,
+  max_pending: Int,
+  max_lanes: Int,
+) -> Bool
 
 /// Number of live lanes (diagnostics and tests).
 @external(erlang, "supernova_chat_lanes_ffi", "lane_count")

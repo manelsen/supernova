@@ -1,5 +1,5 @@
 -module(supernova_chat_lanes_ffi).
--export([submit/2, lane_count/0]).
+-export([submit/2, submit_with_limits/4, lane_count/0]).
 
 %% Per-chat ordered execution lanes.
 %%
@@ -15,8 +15,16 @@
 -define(NAME, supernova_chat_lanes).
 
 submit(Key, Job) ->
-    manager() ! {submit, Key, Job},
-    nil.
+    submit_with_limits(Key, Job, 50, 2000).
+
+%% Same as submit/2 with explicit limits (tests and diagnostics).
+submit_with_limits(Key, Job, MaxPending, MaxLanes) ->
+    Ref = make_ref(),
+    manager() ! {submit, Key, Job, self(), Ref, MaxPending, MaxLanes},
+    receive
+        {Ref, Accepted} -> Accepted
+    after 1000 -> false
+    end.
 
 %% Number of live lanes (for tests and diagnostics).
 lane_count() ->
@@ -49,16 +57,17 @@ init() ->
 
 loop(Lanes) ->
     receive
-        {submit, Key, Job} ->
-            case maps:find(Key, Lanes) of
-                {ok, {Worker, Pending}} ->
-                    Worker ! {job, Job},
-                    loop(Lanes#{Key => {Worker, Pending + 1}});
-                error ->
-                    Self = self(),
-                    Worker = spawn_link(fun() -> worker(Self, Key) end),
-                    Worker ! {job, Job},
-                    loop(Lanes#{Key => {Worker, 1}})
+        {submit, Key, Job, From, Ref, MaxPending, MaxLanes} ->
+            case accept(Key, Job, Lanes, MaxPending, MaxLanes) of
+                {ok, NewLanes} ->
+                    From ! {Ref, true},
+                    loop(NewLanes);
+                {reject, Reason} ->
+                    io:format(standard_error,
+                              "warn: chat lane rejected key=~ts reason=~ts~n",
+                              [Key, Reason]),
+                    From ! {Ref, false},
+                    loop(Lanes)
             end;
         {done, Key, Worker} ->
             case maps:find(Key, Lanes) of
@@ -78,6 +87,22 @@ loop(Lanes) ->
             loop(maps:filter(fun(_, {W, _}) -> W =/= Pid end, Lanes));
         _ ->
             loop(Lanes)
+    end.
+
+accept(Key, Job, Lanes, MaxPending, MaxLanes) ->
+    case maps:find(Key, Lanes) of
+        {ok, {Worker, Pending}} when Pending >= MaxPending ->
+            {reject, pending_limit};
+        {ok, {Worker, Pending}} ->
+            Worker ! {job, Job},
+            {ok, Lanes#{Key => {Worker, Pending + 1}}};
+        error when map_size(Lanes) >= MaxLanes ->
+            {reject, lane_limit};
+        error ->
+            Self = self(),
+            Worker = spawn_link(fun() -> worker(Self, Key) end),
+            Worker ! {job, Job},
+            {ok, Lanes#{Key => {Worker, 1}}}
     end.
 
 worker(Manager, Key) ->

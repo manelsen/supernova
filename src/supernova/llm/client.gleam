@@ -82,6 +82,14 @@ fn mock_chat(
   config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
 ) -> Result(provider.ChatResponse, provider.LLMError) {
+  case latest_user_content(messages) {
+    Some(content) ->
+      case string.contains(content, "[mock-crash]") {
+        True -> panic as "simulated executor crash"
+        False -> Nil
+      }
+    None -> Nil
+  }
   case special_mock_response(messages, config) {
     Some(content) ->
       Ok(provider.ChatResponse(

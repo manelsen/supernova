@@ -68,6 +68,21 @@ fn await_final_content(
   }
 }
 
+@external(erlang, "erlang", "monotonic_time")
+fn monotonic_native() -> Int
+
+@external(erlang, "erlang", "convert_time_unit")
+fn convert_time_unit(value: Int, from: Atom, to: Atom) -> Int
+
+type Atom
+
+@external(erlang, "erlang", "binary_to_atom")
+fn atom(name: String) -> Atom
+
+fn monotonic_ms() -> Int {
+  convert_time_unit(monotonic_native(), atom("native"), atom("millisecond"))
+}
+
 // A gated turn must not run inside the router actor: the handler answers
 // immediately with a stream placeholder and the LLM turn runs elsewhere.
 // With the default member capabilities the mock LLM calls an allowed tool,
@@ -76,16 +91,32 @@ pub fn gated_turn_is_asynchronous_test() {
   support.with_runtime(cfg(["telegram:123"], 50_000), fn() {
     let handler = support.telegram_handler(support.mock_config())
     let events = process.new_subject()
+    let started = monotonic_ms()
 
-    let assert Ok(result) = handler(telegram_message("123", "oi"), events)
-    case result {
-      port.StreamReply(_) -> Nil
-      port.ImmediateReply(_) -> should.fail()
-    }
+    let assert Ok(port.StreamReply(_)) =
+      handler(telegram_message("123", "[mock-delay-ms=1500]"), events)
+    { monotonic_ms() - started < 300 } |> should.equal(True)
 
     await_final_content(events)
     |> string.contains("Mock response")
     |> should.equal(True)
+  })
+}
+
+pub fn executor_crash_emits_stream_failure_test() {
+  support.with_runtime(cfg(["telegram:123"], 50_000), fn() {
+    let handler = support.telegram_handler(support.mock_config())
+    let events = process.new_subject()
+
+    let assert Ok(port.StreamReply(_)) =
+      handler(telegram_message("123", "[mock-crash]"), events)
+
+    case process.receive(events, within: 5000) {
+      Ok(port.StreamFailure(_)) -> Nil
+      Ok(port.StreamUpdate(_)) -> should.fail()
+      Ok(port.StreamComplete(_)) -> should.fail()
+      Error(_) -> should.fail()
+    }
   })
 }
 
@@ -96,12 +127,9 @@ pub fn policy_refusal_reaches_the_user_test() {
     let handler = support.telegram_handler(support.mock_config())
     let events = process.new_subject()
 
-    let content = case handler(telegram_message("123", "oi"), events) {
-      Ok(port.ImmediateReply(reply)) -> reply.content
-      Ok(port.StreamReply(_)) -> await_final_content(events)
-      Error(_) -> "<error>"
-    }
-    content
+    let assert Ok(port.ImmediateReply(reply)) =
+      handler(telegram_message("123", "oi"), events)
+    reply.content
     |> string.starts_with("Seu limite de uso desta hora acabou.")
     |> should.equal(True)
   })
@@ -114,13 +142,9 @@ pub fn interaction_from_non_member_is_gated_test() {
     let handler = support.telegram_handler(support.mock_config())
     let events = process.new_subject()
 
-    case handler(telegram_click("999", "picker_provider:mock"), events) {
-      Ok(port.ImmediateReply(reply)) ->
-        string.contains(reply.content, "Provider set to")
-        |> should.equal(False)
-      Ok(port.StreamReply(_)) -> should.fail()
-      Error(_) -> Nil
-    }
+    let assert Ok(port.ImmediateReply(reply)) =
+      handler(telegram_click("999", "picker_provider:mock"), events)
+    reply.content |> should.equal("Esta instância é privada.")
   })
 }
 
