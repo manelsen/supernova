@@ -1,8 +1,11 @@
 //// SafeShell — secure shell command execution.
 ////
-//// Executes shell commands with security constraints:
+//// Executes allow-listed commands with security constraints:
 //// - Whitelist of allowed commands
-//// - Blocks shell operators (;, |, &&, $(), etc.)
+//// - Rejects shell operators (;, |, &, $(), etc.) as defense in depth
+//// - Never runs through a shell: the command is split into argv and the
+////   executable is spawned directly (`spawn_executable`)
+//// - Rejects `find` actions that delete, execute or write files
 //// - Timeout protection
 ////
 //// ## Usage
@@ -25,8 +28,19 @@ import supernova/llm/provider
 /// Validates the command against security rules before execution.
 /// Returns the command output on success or an error message.
 pub fn execute(command: String) -> Result(String, String) {
+  case validate(command) {
+    Ok(argv) -> run_command(argv)
+    Error(reason) -> Error(reason)
+  }
+}
+
+/// Validate a command without executing it.
+///
+/// Returns the argv that `execute` would spawn (quotes stripped per token).
+pub fn validate(command: String) -> Result(List(String), String) {
   case validate_command(command) {
-    Ok(validated) -> run_command(validated)
+    Ok(validated) ->
+      Ok(split_whitespace_tokens(validated) |> list.map(strip_matching_quotes))
     Error(reason) -> Error(reason)
   }
 }
@@ -42,8 +56,8 @@ pub fn execute_authorized(
 ) -> Result(String, String) {
   case policy_actor.authorize(policy, agent_id, OpShell, command) {
     Ok(_validated) -> {
-      case validate_command(command) {
-        Ok(validated) -> run_command(validated)
+      case validate(command) {
+        Ok(argv) -> run_command(argv)
         Error(reason) -> Error(reason)
       }
     }
@@ -83,7 +97,11 @@ fn validate_command(command: String) -> Result(String, String) {
             True -> {
               // Validate path arguments for file-reading commands
               case validate_path_arguments(trimmed) {
-                Ok(_) -> Ok(trimmed)
+                Ok(_) ->
+                  case validate_find_actions(trimmed) {
+                    Ok(_) -> Ok(trimmed)
+                    Error(reason) -> Error(reason)
+                  }
                 Error(reason) -> Error(reason)
               }
             }
@@ -98,7 +116,7 @@ fn validate_command(command: String) -> Result(String, String) {
 /// Check if command contains dangerous shell operators.
 fn contains_dangerous_chars(command: String) -> Bool {
   [
-    ";", "|", "&&", "||", "$", "`", ">", "<", "..", "~", "*", "?", "{", "\\",
+    ";", "|", "&", "(", ")", "$", "`", ">", "<", "..", "~", "*", "?", "{", "\\",
     "\n", "\r",
   ]
   |> list.any(fn(token) { string.contains(command, token) })
@@ -191,6 +209,30 @@ fn check_args_with_workspace_guard(args: List(String)) -> Result(Nil, String) {
   }
 }
 
+/// `find` actions with side effects. They are flags, so the workspace path
+/// check skips them; reject them explicitly.
+fn find_side_effect_actions() -> List(String) {
+  [
+    "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0",
+    "-fprintf", "-fls",
+  ]
+}
+
+fn validate_find_actions(command: String) -> Result(Nil, String) {
+  case split_whitespace_tokens(command) {
+    ["find", ..args] ->
+      case
+        list.find(args, fn(arg) {
+          list_contains(find_side_effect_actions(), strip_matching_quotes(arg))
+        })
+      {
+        Ok(action) -> Error("Blocked: find action not allowed: " <> action)
+        Error(_) -> Ok(Nil)
+      }
+    _ -> Ok(Nil)
+  }
+}
+
 fn strip_matching_quotes(value: String) -> String {
   let unquoted_double = case
     string.starts_with(value, "\"") && string.ends_with(value, "\"")
@@ -211,12 +253,11 @@ fn strip_matching_quotes(value: String) -> String {
 // Execution
 // ============================================================================
 
-/// Run the validated command via Erlang port.
-fn run_command(command: String) -> Result(String, String) {
-  // Use Erlang's :os.cmd for execution
-  do_run_command(command)
+/// Run the validated argv directly, without a shell.
+fn run_command(argv: List(String)) -> Result(String, String) {
+  do_run_command(argv)
 }
 
-/// FFI to run a shell command.
+/// FFI: spawn argv[0] with the remaining items as arguments (no shell).
 @external(erlang, "supernova_safe_shell_ffi", "run_command")
-fn do_run_command(command: String) -> Result(String, String)
+fn do_run_command(argv: List(String)) -> Result(String, String)
