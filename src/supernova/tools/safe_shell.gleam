@@ -95,14 +95,18 @@ fn validate_command(command: String) -> Result(String, String) {
           // Check command whitelist
           case is_allowed_command(trimmed) {
             True -> {
-              // Validate path arguments for file-reading commands
-              case validate_path_arguments(trimmed) {
+              case validate_git_subcommand(trimmed) {
+                Error(reason) -> Error(reason)
                 Ok(_) ->
-                  case validate_find_actions(trimmed) {
-                    Ok(_) -> Ok(trimmed)
+                  // Validate path arguments for file-reading commands
+                  case validate_path_arguments(trimmed) {
+                    Ok(_) ->
+                      case validate_find_actions(trimmed) {
+                        Ok(_) -> Ok(trimmed)
+                        Error(reason) -> Error(reason)
+                      }
                     Error(reason) -> Error(reason)
                   }
-                Error(reason) -> Error(reason)
               }
             }
             False -> Error("Command not in whitelist: " <> trimmed)
@@ -158,6 +162,7 @@ fn allowed_commands() -> List(String) {
     "date",
     "whoami",
     "uname",
+    "git",
   ]
 }
 
@@ -167,6 +172,54 @@ fn list_contains(list: List(String), value: String) -> Bool {
     [] -> False
     [first, ..rest] -> first == value || list_contains(rest, value)
   }
+}
+
+// ============================================================================
+// Git Validation
+// ============================================================================
+
+/// Read-only git subcommands. Anything else (push, commit, reset, checkout,
+/// clean, config, ...) mutates the repository or runs arbitrary programs.
+fn git_read_only_subcommands() -> List(String) {
+  ["status", "log", "branch", "diff", "show"]
+}
+
+/// Git options that take effect before the subcommand and would defeat the
+/// subcommand allow-list, e.g. `git -C /elsewhere status`, `git -c k=v log`
+/// or `git --exec-path=/tmp/evil status`.
+fn forbidden_git_options() -> List(String) {
+  ["-c", "-C", "--exec-path"]
+}
+
+/// Reject any git invocation outside the read-only allow-list.
+fn validate_git_subcommand(command: String) -> Result(Nil, String) {
+  case split_whitespace_tokens(command) {
+    ["git", ..args] -> validate_git_args(args)
+    _ -> Ok(Nil)
+  }
+}
+
+fn validate_git_args(args: List(String)) -> Result(Nil, String) {
+  case args {
+    [] -> Error("Blocked: git subcommand required")
+    [subcommand, ..rest] -> {
+      case list_contains(git_read_only_subcommands(), subcommand) {
+        False -> Error("Blocked: git subcommand not allowed: " <> subcommand)
+        True ->
+          case list.find(rest, is_forbidden_git_option) {
+            Ok(option) ->
+              Error("Blocked: git subcommand not allowed: " <> option)
+            Error(_) -> Ok(Nil)
+          }
+      }
+    }
+  }
+}
+
+fn is_forbidden_git_option(arg: String) -> Bool {
+  let cleaned = strip_matching_quotes(arg)
+  list_contains(forbidden_git_options(), cleaned)
+  || string.starts_with(cleaned, "--exec-path=")
 }
 
 // ============================================================================
