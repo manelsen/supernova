@@ -39,8 +39,8 @@ pub fn with_manager_empty_result_test() {
 }
 
 pub fn telegram_session_id_test() {
-  session.telegram_session_id("chat_123")
-  |> should.equal("telegram:chat_123")
+  session.telegram_session_id("chat_123", "user_456")
+  |> should.equal("telegram:chat_123:user_456")
 }
 
 pub fn discord_session_id_test() {

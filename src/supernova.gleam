@@ -23,6 +23,7 @@ import supernova/adapters/discord_router
 import supernova/adapters/matrix_router
 import supernova/adapters/mcp/config_loader
 import supernova/adapters/mcp_manager
+import supernova/adapters/sim_router
 import supernova/adapters/slack_router
 import supernova/adapters/telegram_router
 import supernova/channel/port
@@ -545,7 +546,7 @@ pub fn start_closed_group_supervisor(
                   ),
                 ),
               ])
-            let workspace_root = cfg.data_dir <> "/workspace"
+            let workspace_root = config.workspace_root(cfg)
             let policy_result = case ensure_dir(workspace_root) {
               Error(reason) ->
                 Error(otp_actor.InitFailed(
@@ -639,6 +640,11 @@ pub fn build_channel_handler(
     |> result.map_error(fn(_) { "Failed to start Matrix channel router" }),
   )
 
+  use sim_channel_router <- result.try(
+    sim_router.start_with_session_supervisor(session_supervisor, llm_config)
+    |> result.map_error(fn(_) { "Failed to start sim channel router" }),
+  )
+
   Ok(fn(inbound, stream_events) {
     route_channel_inbound_for_handler(
       inbound,
@@ -646,6 +652,7 @@ pub fn build_channel_handler(
       telegram_channel_router,
       slack_channel_router,
       matrix_channel_router,
+      sim_channel_router,
       stream_events,
     )
   })
@@ -657,6 +664,7 @@ fn route_channel_inbound_for_handler(
   telegram_channel_router: telegram_router.TelegramRouter,
   slack_channel_router: slack_router.SlackRouter,
   matrix_channel_router: matrix_router.MatrixRouter,
+  sim_channel_router: sim_router.SimRouter,
   stream_events: process.Subject(port.ChannelStreamEvent),
 ) -> Result(port.ChannelHandlerResult, port.ChannelError) {
   let channel = inbound_channel_name(inbound)
@@ -682,6 +690,12 @@ fn route_channel_inbound_for_handler(
     "matrix" ->
       matrix_router.route_inbound_for_handler(
         matrix_channel_router,
+        inbound,
+        stream_events,
+      )
+    "sim" ->
+      sim_router.route_inbound_for_handler(
+        sim_channel_router,
         inbound,
         stream_events,
       )
@@ -768,6 +782,7 @@ fn print_enabled_channels(cfg: config.Config) -> Nil {
   io.println("  Channels:")
   print_channel_status("discord", config.is_discord_enabled(cfg))
   print_channel_status("telegram", config.is_telegram_enabled(cfg))
+  print_channel_status("sim", config.is_sim_enabled(cfg))
   print_channel_status("matrix", config.is_matrix_enabled(cfg))
   print_channel_status("lark", config.is_lark_enabled(cfg))
   print_channel_status("google_chat", config.is_google_chat_enabled(cfg))

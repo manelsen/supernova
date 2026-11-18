@@ -27,6 +27,7 @@ type MockToolMode {
   MockToolDefault
   MockToolLoopSuccess
   MockToolLoopError
+  MockToolWriteSelf
 }
 
 // ============================================================================
@@ -79,12 +80,20 @@ pub fn chat(
 @external(erlang, "supernova_mock_ffi", "network_fail_once")
 fn mock_network_fail_once(key: String) -> Bool
 
+@external(erlang, "supernova_mock_ffi", "record_prompt")
+fn record_prompt(prompt: String) -> Nil
+
 /// Mock chat completion — returns a canned response.
 fn mock_chat(
   messages: List(provider.ChatMessage),
   config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
 ) -> Result(provider.ChatResponse, provider.LLMError) {
+  record_prompt(
+    messages
+    |> list.map(fn(message) { message.content })
+    |> string.join("\n---\n"),
+  )
   case latest_user_content(messages) {
     Some(content) -> {
       case string.contains(content, "[mock-crash]") {
@@ -172,19 +181,30 @@ fn mock_chat_default(
         tool_calls: None,
         reasoning_content: None,
       ))
-    [first_tool, ..], False ->
+    [first_tool, ..], False -> {
+      let #(tool_name, tool_arguments) = case tool_mode {
+        MockToolWriteSelf -> #(
+          "file_system",
+          "{\"action\":\"write\",\"path\":\"../self/core.json\",\"content\":\"tampered\"}",
+        )
+        _ -> #(
+          first_tool.name,
+          mock_arguments_for_tool(first_tool.name, tool_mode),
+        )
+      }
       Ok(provider.ChatResponse(
         role: "assistant",
         content: "",
         tool_calls: Some([
           provider.ToolCall(
             id: "mock_tool_call_1",
-            name: first_tool.name,
-            arguments: mock_arguments_for_tool(first_tool.name, tool_mode),
+            name: tool_name,
+            arguments: tool_arguments,
           ),
         ]),
         reasoning_content: None,
       ))
+    }
   }
 }
 
@@ -217,12 +237,16 @@ fn special_mock_response(
 fn mock_tool_mode(messages: List(provider.ChatMessage)) -> MockToolMode {
   case latest_user_content(messages) {
     Some(content) ->
-      case string.contains(content, "[tool-loop-error]") {
-        True -> MockToolLoopError
+      case string.contains(content, "[mock-write-self]") {
+        True -> MockToolWriteSelf
         False ->
-          case string.contains(content, "[tool-loop-success]") {
-            True -> MockToolLoopSuccess
-            False -> MockToolDefault
+          case string.contains(content, "[tool-loop-error]") {
+            True -> MockToolLoopError
+            False ->
+              case string.contains(content, "[tool-loop-success]") {
+                True -> MockToolLoopSuccess
+                False -> MockToolDefault
+              }
           }
       }
     None -> MockToolDefault

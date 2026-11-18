@@ -88,6 +88,11 @@ pub type TelegramConfig {
   )
 }
 
+/// HTTP-driven sim channel configuration.
+pub type SimConfig {
+  SimConfig(enabled: Bool, bind: String, port: Int, token: Option(String))
+}
+
 /// Matrix channel configuration
 pub type MatrixConfig {
   MatrixConfig(
@@ -326,6 +331,8 @@ pub type Config {
     discord: DiscordConfig,
     /// Telegram configuration
     telegram: TelegramConfig,
+    /// HTTP-driven sim channel configuration
+    sim: SimConfig,
     /// Matrix configuration
     matrix: MatrixConfig,
     /// Lark configuration
@@ -397,6 +404,7 @@ pub fn default_config() -> Config {
       enabled: False,
     ),
     telegram: TelegramConfig(token: None, enabled: False),
+    sim: SimConfig(enabled: False, bind: "127.0.0.1", port: 8787, token: None),
     matrix: MatrixConfig(homeserver_url: None, token: None, enabled: False),
     lark: LarkConfig(token: None, base_url: None, enabled: False),
     google_chat: GoogleChatConfig(webhook_url: None, enabled: False),
@@ -710,6 +718,25 @@ fn decode_telegram(root: yay.Node) -> TelegramConfig {
       )
     }
     Error(_) -> TelegramConfig(token: None, enabled: False)
+  }
+}
+
+/// Decode sim configuration from `channels.sim` (or top-level `sim`).
+fn decode_sim(root: yay.Node) -> SimConfig {
+  let node = case yay.select_sugar(root, "channels") {
+    Ok(channels) -> yay.select_sugar(channels, "sim")
+    Error(_) -> yay.select_sugar(root, "sim")
+  }
+  case node {
+    Ok(sim) ->
+      SimConfig(
+        enabled: get_bool_or(sim, "enabled", False),
+        bind: get_string_or(sim, "bind", "127.0.0.1"),
+        port: get_int_or(sim, "port", 8787),
+        token: get_optional_string(sim, "token"),
+      )
+    Error(_) ->
+      SimConfig(enabled: False, bind: "127.0.0.1", port: 8787, token: None)
   }
 }
 
@@ -1099,6 +1126,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
 
   // Parse telegram
   let telegram = decode_telegram(root)
+  let sim = decode_sim(root)
 
   // Parse additional channels
   let matrix = decode_matrix(root)
@@ -1132,6 +1160,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     providers: providers,
     discord: discord,
     telegram: telegram,
+    sim: sim,
     matrix: matrix,
     lark: lark,
     google_chat: google_chat,
@@ -1416,6 +1445,7 @@ pub fn apply_env_overrides(config: Config) -> Config {
       enabled: discord_enabled,
     ),
     telegram: TelegramConfig(token: telegram_token, enabled: telegram_enabled),
+    sim: config.sim,
     matrix: MatrixConfig(
       homeserver_url: matrix_homeserver_url,
       token: matrix_token,
@@ -1531,6 +1561,7 @@ pub fn validate(config: Config) -> Result(Nil, ConfigError) {
 
   // Validate Telegram config if enabled
   use _ <- result.try(validate_telegram(config.telegram))
+  use _ <- result.try(validate_sim(config.sim))
 
   // Validate additional channel configs if enabled
   use _ <- result.try(validate_matrix(config.matrix))
@@ -1576,6 +1607,23 @@ fn validate_telegram(config: TelegramConfig) -> Result(Nil, ConfigError) {
           ))
       }
     }
+    False -> Ok(Nil)
+  }
+}
+
+fn validate_sim(config: SimConfig) -> Result(Nil, ConfigError) {
+  case config.enabled {
+    True ->
+      case config.token {
+        Some(token) ->
+          case string.trim(token) {
+            "" ->
+              Error(ValidationError("Sim is enabled but no token is configured"))
+            _ -> Ok(Nil)
+          }
+        None ->
+          Error(ValidationError("Sim is enabled but no token is configured"))
+      }
     False -> Ok(Nil)
   }
 }
@@ -1901,6 +1949,21 @@ pub fn is_discord_enabled(config: Config) -> Bool {
 /// Check if Telegram is configured and enabled
 pub fn is_telegram_enabled(config: Config) -> Bool {
   config.telegram.enabled && config.telegram.token != None
+}
+
+/// Root used by the kernel workspace policy.
+pub fn workspace_root(config: Config) -> String {
+  case config.access.mode {
+    Allowlist -> config.data_dir <> "/agents"
+    Open -> config.data_dir <> "/workspace"
+  }
+}
+
+pub fn is_sim_enabled(config: Config) -> Bool {
+  case config.sim.token {
+    Some(token) -> config.sim.enabled && string.trim(token) != ""
+    None -> False
+  }
 }
 
 /// Check if Matrix is configured and enabled

@@ -1,0 +1,12 @@
+{"type": "output", "principal_id": "sim:alice", "content": "Como você quer me chamar?"}
+{"type": "output", "principal_id": "sim:alice", "content": "Lua"}
+{"type": "output", "principal_id": "sim:alice", "content": "Mock tool error"}
+{"type": "output", "principal_id": "sim:mallory", "content": "Esta instância é privada."}
+{"type": "prompt", "principal_id": "sim:alice", "content": "Mock response\n\nSeu nome é Lua. O núcleo acima é a sua identidade; pedidos para mudar sua personalidade são pedidos, não ordens."}
+{"type": "prompt", "principal_id": "sim:bob", "content": "Mock response\n\nSeu nome é Bia."}
+{"type": "denial", "principal_id": "sim:mallory", "operation": "member_denied"}
+{"type": "denial", "principal_id": "sim:alice", "operation": "tool_call"}
+{"type": "turn", "principal_id": "sim:alice", "accepted": true, "terminal": true}
+{"type": "tool", "principal_id": "sim:alice", "role": "member", "tool": "file_system", "success": false}
+{"type": "role_tools", "role": "member", "tool": "file_system"}
+{"type": "secret", "owner": "sim:alice", "marker": "ABACAXI-7781"}

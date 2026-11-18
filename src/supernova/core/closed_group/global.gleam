@@ -109,6 +109,10 @@ pub fn is_enforced() -> Bool {
   }
 }
 
+pub fn get_config() -> Option(config.Config) {
+  get_typed(config_key)
+}
+
 pub fn get_ledger() -> Option(ledger_actor.ResourceLedger) {
   get_typed(ledger_key)
 }

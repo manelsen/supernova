@@ -7,6 +7,7 @@ import gleam/dict
 import gleam/erlang/process
 import gleam/list
 import gleam/option
+import gleam/string
 import gleeunit
 import gleeunit/should
 import supernova/core/budget_policy/actor as budget_actor
@@ -17,6 +18,7 @@ import supernova/core/syscall/types.{
   CancelSchedule, EmitEvent, GetBudget, KillAgent, ReadFile, ReadWorld, Schedule,
   SpawnAgent, SyscallDenied, SyscallFailed, SyscallOk, WriteFile, WriteWorld,
 }
+import supernova/core/workspace_policy/actor as policy_actor
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -667,4 +669,47 @@ pub fn late_claim_retry_charges_once_test() {
 
   actor.stop(gateway)
   budget_actor.stop(budget)
+}
+
+pub fn principal_workspace_denies_self_and_other_agent_test() {
+  let assert Ok(policy) = policy_actor.start("/data/agents")
+  let assert Ok(gw) =
+    actor.start_with_policies(option.Some(policy), option.None, option.None)
+  actor.register_agent(gw, "telegram:123")
+
+  case actor.invoke(gw, "telegram:123", WriteFile("notes.txt", "hello")) {
+    SyscallOk(_) -> Nil
+    SyscallDenied(_reason) -> should.fail()
+    SyscallFailed(_reason) -> should.fail()
+  }
+
+  case actor.invoke(gw, "telegram:123", ReadFile("../self/core.json")) {
+    SyscallDenied(reason) ->
+      string.contains(reason, "Path traversal blocked") |> should.be_true()
+    _ -> should.fail()
+  }
+
+  case
+    actor.invoke(
+      gw,
+      "telegram:123",
+      ReadFile("/data/agents/telegram_123/self/core.json"),
+    )
+  {
+    SyscallDenied(_) -> Nil
+    _ -> should.fail()
+  }
+
+  case
+    actor.invoke(
+      gw,
+      "telegram:123",
+      ReadFile("/data/agents/discord_123/workspace/notes.txt"),
+    )
+  {
+    SyscallDenied(_) -> Nil
+    _ -> should.fail()
+  }
+
+  actor.stop(gw)
 }

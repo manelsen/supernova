@@ -12,6 +12,7 @@
 import gleam/dict
 import gleam/list
 import gleam/string
+import supernova/core/agent_identity
 import supernova/core/workspace_policy/types.{
   type Operation, type PolicyCommand, type PolicyRule, type WorkspacePolicyState,
   OpRead, OpShell, OpWrite, PolicyRule, WorkspacePolicyState, WriteDeniedAudit,
@@ -96,7 +97,15 @@ pub fn get_effective_workspace(
 ) -> String {
   case dict.get(state.parent_of, agent_id) {
     Ok(parent_id) -> get_effective_workspace(state, parent_id)
-    Error(_) -> state.workspace_root <> "/" <> agent_id
+    Error(_) ->
+      case string.contains(agent_id, ":") {
+        True ->
+          state.workspace_root
+          <> "/"
+          <> agent_identity.encode_principal(agent_id)
+          <> "/workspace"
+        False -> state.workspace_root <> "/" <> agent_id
+      }
   }
 }
 

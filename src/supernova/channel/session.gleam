@@ -50,8 +50,13 @@ pub fn with_manager(
 }
 
 /// Build the canonical session ID for a Telegram chat.
-pub fn telegram_session_id(channel_id: String) -> String {
-  "telegram:" <> channel_id
+pub fn telegram_session_id(channel_id: String, user_id: String) -> String {
+  "telegram:" <> channel_id <> ":" <> user_id
+}
+
+/// Build the canonical session ID for a sim participant in a chat.
+pub fn sim_session_id(channel_id: String, user_id: String) -> String {
+  "sim:" <> channel_id <> ":" <> user_id
 }
 
 /// Build the canonical session ID for a Discord participant in a channel.

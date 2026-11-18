@@ -18,6 +18,7 @@ import supernova/adapters/google_chat_adapter
 import supernova/adapters/lark_adapter
 import supernova/adapters/matrix_adapter
 import supernova/adapters/mattermost_adapter
+import supernova/adapters/sim_adapter
 import supernova/adapters/slack_adapter
 import supernova/adapters/telegram
 import supernova/adapters/wechat_work_adapter
@@ -226,6 +227,22 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("WhatsApp: failed to start - " <> reason)
+          #(channels, streams)
+        }
+      }
+    }
+    False -> #(channels, streams)
+  }
+
+  let #(channels, streams) = case config.is_sim_enabled(cfg) {
+    True -> {
+      case sim_adapter.start(cfg.sim, handler) {
+        Ok(#(adapter, _sim)) -> {
+          io.println("Sim: HTTP channel started")
+          insert_channel(channels, streams, adapter, None)
+        }
+        Error(reason) -> {
+          io.println("Sim: failed to start - " <> reason)
           #(channels, streams)
         }
       }

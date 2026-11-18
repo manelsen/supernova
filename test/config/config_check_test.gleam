@@ -1,3 +1,4 @@
+import envoy
 import gleam/list
 import gleam/string
 import gleeunit/should
@@ -117,6 +118,30 @@ pub fn unlimited_instance_budget_is_warning_test() {
   let cfg = parsed("instance_budget:\n  daily_usd: -1.0\n")
   let issues = config_check.check(cfg)
   should.be_true(has_warning(issues, "no daily spend cap"))
+}
+
+pub fn workspace_root_env_is_ignored_with_a_warning_in_closed_groups_test() {
+  envoy.set("SUPERNOVA_WORKSPACE_ROOT", "/tmp/legacy-workspaces")
+  let cfg = parsed("access:\n  mode: allowlist\n  admins: [\"telegram:123\"]\n")
+  let issues = config_check.check(cfg)
+  should.be_true(has_warning(issues, "SUPERNOVA_WORKSPACE_ROOT is ignored"))
+  envoy.unset("SUPERNOVA_WORKSPACE_ROOT")
+}
+
+pub fn workspace_root_follows_access_mode_test() {
+  let closed = parsed("data_dir: /dados\naccess:\n  mode: allowlist\n")
+  config.workspace_root(closed) |> should.equal("/dados/agents")
+  let open = parsed("data_dir: /dados\naccess:\n  mode: open\n")
+  config.workspace_root(open) |> should.equal("/dados/workspace")
+}
+
+pub fn sim_chat_id_is_a_valid_allowed_chat_test() {
+  let cfg =
+    parsed(
+      "access:\n  mode: allowlist\n  admins: [\"telegram:1\"]\n  allowed_chats: [\"sim:group-1\"]\n",
+    )
+  let issues = config_check.check(cfg)
+  has_error(issues, "allowed_chats") |> should.equal(False)
 }
 
 pub fn valid_closed_group_config_is_bootable_test() {
