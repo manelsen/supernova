@@ -97,7 +97,6 @@ pub fn with_runtime_root(cfg: config.Config, body: fn(String) -> a) -> a {
     let assert Ok(ledger) =
       ledger_actor.start_persistent_with_clock_and_day_key(
         root <> "/ledger",
-        fn() { now },
         fn() { closed_group_global.now() },
         fn(timestamp) {
           pricing.day_key(timestamp, cfg.instance_budget.timezone)
@@ -105,7 +104,8 @@ pub fn with_runtime_root(cfg: config.Config, body: fn(String) -> a) -> a {
       )
     closed_group_global.set_ledger(ledger)
 
-    let assert Ok(rate) = rate_limiter.start_with_clock(fn() { now })
+    let assert Ok(rate) =
+      rate_limiter.start_with_clock(fn() { closed_group_global.now() })
     closed_group_global.set_rate(rate)
 
     let assert Ok(audit) = audit_actor.start(root <> "/audit")
@@ -113,7 +113,7 @@ pub fn with_runtime_root(cfg: config.Config, body: fn(String) -> a) -> a {
 
     let assert Ok(instance) =
       instance_budget.start_with_clock(cfg.instance_budget.timezone, fn() {
-        now
+        closed_group_global.now()
       })
     closed_group_global.set_instance_budget(instance)
 
