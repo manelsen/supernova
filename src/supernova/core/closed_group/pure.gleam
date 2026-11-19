@@ -34,6 +34,19 @@ pub const instance_cap_reply =
 pub const budget_reply_prefix =
   "Seu limite de uso desta hora acabou. Ele renova às "
 
+/// True when `content` is one of the kernel's fixed refusals: fail-closed,
+/// rate limit, instance cap, hourly budget or the configured access denial.
+/// The `sim` channel uses it to report a refused turn as `denied`, so a test
+/// can never pass on refusals while believing the agent answered.
+pub fn is_kernel_refusal(content: String, denied_reply: String) -> Bool {
+  let text = string.trim(content)
+  text == fail_closed_reply
+  || text == rate_limited_reply
+  || text == instance_cap_reply
+  || string.starts_with(text, budget_reply_prefix)
+  || { denied_reply != "" && text == string.trim(denied_reply) }
+}
+
 pub fn budget_exhausted_reply(now_ms: Int) -> String {
   budget_reply_prefix <> next_hour_label(now_ms) <> "."
 }

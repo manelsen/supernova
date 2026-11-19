@@ -277,14 +277,11 @@ fn start_services(
   use channel_handler <- result.try(build_channel_handler(cfg, session_sup))
 
   use _closed_group_sup <- result.try(
-    start_closed_group_supervisor(cfg)
+    start_closed_group_supervisor_with_clock(cfg, clock)
     |> result.map_error(fn(reason) {
       "Failed to start closed-group supervisor: " <> reason
     }),
   )
-  // The policy children publish their own clock on start; the injected clock
-  // must win so tests and the harness control time.
-  closed_group_global.set_clock(clock)
   io.println("✓ Closed-group policy actors started")
 
   // Start channel adapters based on config
@@ -458,8 +455,19 @@ fn wrap_started(
 pub fn start_closed_group_supervisor(
   cfg: config.Config,
 ) -> Result(static_supervisor.Supervisor, String) {
+  start_closed_group_supervisor_with_clock(cfg, current_timestamp)
+}
+
+/// Start the closed-group policy actors on one clock. Every actor that
+/// reasons about time (access, ledger day, rate windows, instance cap) uses
+/// the same clock, so an injected clock (tests, harness) never disagrees with
+/// the real one about the current day.
+pub fn start_closed_group_supervisor_with_clock(
+  cfg: config.Config,
+  clock: fn() -> Int,
+) -> Result(static_supervisor.Supervisor, String) {
   closed_group_global.set_config(cfg)
-  closed_group_global.set_clock(current_timestamp)
+  closed_group_global.set_clock(clock)
 
   use _ <- result.try(
     ensure_dir(cfg.data_dir <> "/workspace")
@@ -485,9 +493,10 @@ pub fn start_closed_group_supervisor(
     |> static_supervisor.add(
       supervision.worker(fn() {
         case
-          access_actor.start(
+          access_actor.start_with_clock(
             closed_group_pure.access_config(cfg.access),
             cfg.data_dir,
+            clock,
           )
         {
           Ok(started) -> {
@@ -519,7 +528,7 @@ pub fn start_closed_group_supervisor(
         case
           ledger_actor.start_persistent_with_clock_and_day_key(
             cfg.data_dir <> "/ledger",
-            current_timestamp,
+            clock,
             fn(timestamp) {
               pricing.day_key(timestamp, cfg.instance_budget.timezone)
             },
@@ -535,7 +544,7 @@ pub fn start_closed_group_supervisor(
     )
     |> static_supervisor.add(
       supervision.worker(fn() {
-        case rate_limiter.start() {
+        case rate_limiter.start_with_clock(clock) {
           Ok(started) -> {
             closed_group_global.set_rate(started)
             wrap_started(started)
@@ -546,7 +555,9 @@ pub fn start_closed_group_supervisor(
     )
     |> static_supervisor.add(
       supervision.worker(fn() {
-        case instance_budget.start(cfg.instance_budget.timezone) {
+        case
+          instance_budget.start_with_clock(cfg.instance_budget.timezone, clock)
+        {
           Ok(started) -> {
             closed_group_global.set_instance_budget(started)
             wrap_started(started)

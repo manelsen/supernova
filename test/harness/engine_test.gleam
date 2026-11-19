@@ -143,8 +143,18 @@ pub fn advance_and_sweep_step_runs_test() {
         loaded,
       )
     file_exists(root <> "/data/.harness") |> should.equal(Ok(True))
+    // The turns reached the agent (no kernel refusal) and the daily sweep
+    // reflected them into experience.
+    let assert Ok(transcript) = read_file(root <> "/data/transcripts.jsonl")
+    string.contains(transcript, "\"outcome\":\"denied\"")
+    |> should.be_false()
+    file_exists(root <> "/data/agents/sim_bia/self/experience.jsonl")
+    |> should.equal(Ok(True))
   })
 }
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read_file(path: String) -> Result(String, String)
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")
 fn file_exists(path: String) -> Result(Bool, String)

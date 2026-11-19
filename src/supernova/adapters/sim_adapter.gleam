@@ -18,6 +18,8 @@ import supernova/channel/chunking
 import supernova/channel/port
 import supernova/channel/session
 import supernova/config
+import supernova/core/closed_group/global as closed_group_global
+import supernova/core/closed_group/pure as closed_group_pure
 
 @external(erlang, "supernova_syscall_ffi", "unique_id")
 fn unique_id() -> Int
@@ -258,7 +260,7 @@ fn handle_post(
       let outcome = case result {
         Ok(port.ImmediateReply(reply)) -> {
           append_parts(store, reply)
-          "ok"
+          reply_outcome(reply.content)
         }
         Ok(port.StreamReply(base)) -> collect_stream(events, store, base)
         Error(port.Ignored(_)) -> "denied"
@@ -276,6 +278,18 @@ fn handle_post(
 
 const stream_idle_timeout_ms = 60_000
 
+/// A kernel refusal delivered as a normal reply is still a denied turn.
+fn reply_outcome(content: String) -> String {
+  let denied_reply = case closed_group_global.get_config() {
+    Some(cfg) -> cfg.access.denied_reply
+    None -> ""
+  }
+  case closed_group_pure.is_kernel_refusal(content, denied_reply) {
+    True -> "denied"
+    False -> "ok"
+  }
+}
+
 fn collect_stream(
   events: Subject(port.ChannelStreamEvent),
   store: Subject(StoreMessage),
@@ -288,7 +302,7 @@ fn collect_stream(
     }
     Ok(port.StreamComplete(reply)) -> {
       append_parts(store, reply)
-      "ok"
+      reply_outcome(reply.content)
     }
     Ok(port.StreamFailure(_reason)) -> {
       append(store, port.ChannelReply(..base, content: "stream failed"))
