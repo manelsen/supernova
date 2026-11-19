@@ -20,7 +20,8 @@ fi
 
 for exe in omp claude; do
   path=$(sed -n "s/^[[:space:]]*executable:[[:space:]]*//p" "$CONFIG" | grep -E "(^|/)$exe$" | head -1)
-  if [ -n "${path:-}" ] && [ ! -x "$path" ]; then
+  # A bare name (claude) is looked up in PATH; a path must be executable.
+  if [ -n "${path:-}" ] && ! command -v "$path" >/dev/null 2>&1; then
     echo "executable not found: $path" >&2
     exit 1
   fi
