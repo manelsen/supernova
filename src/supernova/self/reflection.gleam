@@ -197,15 +197,26 @@ pub fn schedule(principal: String, llm_config: provider.ProviderConfig) -> Nil {
       let now = now_or(closed_group_global.now())
       case should_reflect(cfg.data_dir, principal, cfg.reflection, now) {
         False -> Nil
-        True -> {
-          let _ =
-            chat_lanes.submit("reflection:" <> principal, fn() {
-              let started = now_or(closed_group_global.now())
-              let _ = reflect(cfg.data_dir, principal, llm_config, started)
+        True ->
+          case cfg.environment {
+            // The harness drives time and shuts the runtime down between
+            // scenarios: a reflection must finish inside the turn, so it can
+            // never outlive the runtime and the turn_end that follows marks
+            // its end. Production keeps reflection off the router.
+            "harness" -> {
+              let _ = reflect(cfg.data_dir, principal, llm_config, now)
               Nil
-            })
-          Nil
-        }
+            }
+            _ -> {
+              let _ =
+                chat_lanes.submit("reflection:" <> principal, fn() {
+                  let started = now_or(closed_group_global.now())
+                  let _ = reflect(cfg.data_dir, principal, llm_config, started)
+                  Nil
+                })
+              Nil
+            }
+          }
       }
     }
   }
@@ -370,6 +381,7 @@ fn reflect_locked(
           Ok(
             executor.RunContext(
               ..context,
+              purpose: "reflection",
               call_id_override: Some(
                 "reflect:" <> principal <> ":" <> int.to_string(now),
               ),

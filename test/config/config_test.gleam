@@ -405,6 +405,7 @@ pub fn validate_sim_enabled_without_token_test() {
         bind: "127.0.0.1",
         port: 8787,
         token: None,
+        record_prompts: False,
       ),
     )
 

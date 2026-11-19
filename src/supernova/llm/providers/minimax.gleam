@@ -31,7 +31,6 @@ import gleam/dynamic/decode
 import gleam/hackney
 import gleam/http
 import gleam/http/request
-import gleam/int
 import gleam/io
 import gleam/json
 import gleam/option.{None, Some}
@@ -90,15 +89,9 @@ fn do_request(body: String, api_key: String) -> Result(String, String) {
     |> request.set_header("authorization", "Bearer " <> api_key)
     |> request.set_body(body)
 
-  let _ = io.println("[minimax] Sending request body: " <> body)
-
+  // Never log request or response bodies: they carry people's conversations.
   case hackney.send(req) {
     Ok(response) -> {
-      let _ =
-        io.println(
-          "[minimax] Response status: " <> int.to_string(response.status),
-        )
-      let _ = io.println("[minimax] Response body: " <> response.body)
       case response.status {
         200 -> Ok(response.body)
         status ->

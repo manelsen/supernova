@@ -10,6 +10,8 @@
 //// let result = client.chat(messages, config, [])
 //// ```
 
+import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
@@ -217,25 +219,194 @@ fn special_mock_response(
     |> list.filter(fn(message) { message.role == "system" })
     |> list.map(fn(message) { message.content })
     |> string.join("\n")
+  case harness_mock_response(system_text) {
+    Some(content) -> Some(content)
+    None -> reflection_or_plain(messages, config, system_text)
+  }
+}
+
+fn reflection_or_plain(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+  system_text: String,
+) -> Option(String) {
   // Reflection calls are recognized by the fixed user message the runtime
   // sends; the system prompt belongs to the maintainer and can change.
   case latest_user_content(messages) {
     Some(content) ->
-      case string.contains(content, "Reflita agora") {
-        True ->
-          case
-            string.contains(system_text, "[mock-invalid-reflection]"),
-            string.contains(system_text, "[mock-fenced-reflection]")
-          {
-            True, _ -> Some("not json")
-            False, True ->
-              Some("```json\n" <> reflection_mock_json(system_text) <> "\n```")
-            False, False -> Some(reflection_mock_json(system_text))
+      case string.contains(content, "Escreva o parágrafo agora.") {
+        True -> Some(drift_mock_addendum(system_text))
+        False ->
+          case string.contains(content, "Reflita agora") {
+            True ->
+              case
+                string.contains(system_text, "[mock-invalid-reflection]"),
+                string.contains(system_text, "[mock-fenced-reflection]")
+              {
+                True, _ -> Some("not json")
+                False, True ->
+                  Some(
+                    "```json\n" <> reflection_mock_json(system_text) <> "\n```",
+                  )
+                False, False -> Some(reflection_mock_json(system_text))
+              }
+            False -> special_mock_response_plain(messages, config)
           }
-        False -> special_mock_response_plain(messages, config)
       }
     None -> special_mock_response_plain(messages, config)
   }
+}
+
+/// Persona and judge prompts are recognized by their first line. This keeps
+/// H-05..H-10 tests entirely on the mock, with no CLI and no network.
+fn harness_mock_response(system_text: String) -> Option(String) {
+  let first_line =
+    system_text
+    |> string.split("\n")
+    |> list.first
+    |> result_unwrap("")
+  let first_line = string.trim(first_line)
+  case first_line {
+    "# harness:persona" -> Some(persona_mock_line(system_text))
+    "# harness:judge" -> Some(judge_mock_line(system_text))
+    _ -> None
+  }
+}
+
+fn result_unwrap(value: Result(a, b), default: a) -> a {
+  case value {
+    Ok(inner) -> inner
+    Error(_) -> default
+  }
+}
+
+fn persona_mock_line(system_text: String) -> String {
+  let spoken = count_occurrences(system_text, ": persona fala")
+  let limit = case string.split(system_text, "[mock-persona-turns=") {
+    [_, rest, ..] -> {
+      let digits =
+        rest
+        |> string.to_graphemes
+        |> list.take_while(fn(g) { string.contains("0123456789", g) })
+        |> string.concat
+      case int.parse(digits) {
+        Ok(value) -> value
+        Error(_) -> 999
+      }
+    }
+    _ -> 999
+  }
+  case spoken >= limit {
+    True -> "[FIM]"
+    False -> "persona fala " <> int.to_string(spoken + 1)
+  }
+}
+
+fn count_occurrences(text: String, needle: String) -> Int {
+  list.length(string.split(text, needle)) - 1
+}
+
+fn judge_mock_line(system_text: String) -> String {
+  case string.contains(system_text, "[mock-judge-invalid]") {
+    True -> "isto não é json"
+    False -> {
+      let ids =
+        system_text
+        |> string.split("\n")
+        |> list.filter_map(fn(line) {
+          // Only rubric criteria (`## C1: title`), not section headings of
+          // the judge prompt (`## Rubrica`).
+          let trimmed = string.trim(line)
+          case string.starts_with(trimmed, "## ") {
+            True ->
+              case string.split_once(string.drop_start(trimmed, 3), ":") {
+                Ok(#(id, _)) ->
+                  case id != "" && !string.contains(id, " ") {
+                    True -> Ok(criterion_id(trimmed))
+                    False -> Error(Nil)
+                  }
+                Error(_) -> Error(Nil)
+              }
+            False -> Error(Nil)
+          }
+        })
+      let failing = string.contains(system_text, "[mock-judge-fail]")
+      let bad_quote = string.contains(system_text, "[mock-judge-bad-quote]")
+      let quote = case bad_quote {
+        True -> "trecho que nao existe"
+        False -> first_transcript_quote(system_text)
+      }
+      let criteria =
+        ids
+        |> list.map(fn(id) {
+          let score = case failing {
+            True -> 0
+            False -> 2
+          }
+          json.object([
+            #("id", json.string(id)),
+            #("score", json.int(score)),
+            #(
+              "evidence",
+              json.array(
+                [
+                  json.object([
+                    #("line", json.int(1)),
+                    #("quote", json.string(quote)),
+                  ]),
+                ],
+                fn(value) { value },
+              ),
+            ),
+            #("why", json.string("mock judge")),
+          ])
+        })
+      json.to_string(
+        json.object([#("criteria", json.array(criteria, fn(v) { v }))]),
+      )
+    }
+  }
+}
+
+fn criterion_id(trimmed_heading: String) -> String {
+  let header = string.drop_start(trimmed_heading, 3)
+  case string.split(header, ":") {
+    [id, ..] -> string.trim(id)
+    [] -> header
+  }
+}
+
+fn first_transcript_quote(system_text: String) -> String {
+  let line =
+    system_text
+    |> string.split("\n")
+    |> list.find(fn(candidate) {
+      string.starts_with(string.trim(candidate), "[1] ")
+    })
+  case line {
+    Ok(found) -> {
+      let text = string.trim(string.drop_start(string.trim(found), 4))
+      case string.length(text) > 40 {
+        True -> string.slice(text, 0, 40)
+        False -> text
+      }
+    }
+    Error(_) -> "linha"
+  }
+}
+
+/// A drift addendum must be 40–120 words. Markers in the drift prompt let
+/// tests ask for an addendum that is too short or too long.
+fn drift_mock_addendum(system_text: String) -> String {
+  let words = case string.contains(system_text, "[mock-drift-200]") {
+    True -> 200
+    False ->
+      case string.contains(system_text, "[mock-drift-20]") {
+        True -> 20
+        False -> 60
+      }
+  }
+  string.join(list.repeat("convivência", words), " ")
 }
 
 fn reflection_mock_json(system_text: String) -> String {

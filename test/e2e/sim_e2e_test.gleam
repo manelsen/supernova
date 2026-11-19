@@ -35,6 +35,8 @@ const tool_port = 18_791
 
 const chunk_port = 18_792
 
+const turn_end_port = 18_793
+
 pub fn main() -> Nil {
   gleeunit.main()
 }
@@ -49,7 +51,13 @@ fn mock_provider() -> provider.ProviderConfig {
 }
 
 fn sim_config(token: Option(String), port: Int) -> config.SimConfig {
-  config.SimConfig(enabled: True, bind: "127.0.0.1", port: port, token: token)
+  config.SimConfig(
+    enabled: True,
+    bind: "127.0.0.1",
+    port: port,
+    token: token,
+    record_prompts: False,
+  )
 }
 
 fn base_config() -> config.Config {
@@ -117,7 +125,7 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
     ).0
     |> should.equal(200)
     let all = sim_adapter.all_events(sim)
-    case all {
+    case without_turn_end(all) {
       [sim_adapter.SimEvent(chat_id: chat_id, content: content, ..)] -> {
         chat_id |> should.equal("group-1")
         string.contains(content, "Como você quer me chamar?")
@@ -135,7 +143,7 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
     |> should.equal(200)
     wait_for_content(sim, "group-1", "Esta instância é privada.", 5000)
     |> should.be_true()
-    let count = list.length(sim_adapter.all_events(sim))
+    let count = list.length(without_turn_end(sim_adapter.all_events(sim)))
     send(
       member_port,
       Some("sim-token"),
@@ -143,7 +151,8 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
       "{\"chat_id\":\"group-1\",\"user_id\":\"mallory\",\"username\":\"Mallory\",\"content\":\"de novo\",\"is_group\":true}",
     ).0
     |> should.equal(200)
-    list.length(sim_adapter.all_events(sim)) |> should.equal(count)
+    list.length(without_turn_end(sim_adapter.all_events(sim)))
+    |> should.equal(count)
 
     sim_adapter.stop(sim)
     let _ = adapter
@@ -704,5 +713,62 @@ pub fn sim_parallel_chats_do_not_block_test() {
     wait_for_content(sim, "a", "ok", 5000) |> should.be_true()
     wait_for_content(sim, "b", "ok", 5000) |> should.be_true()
     sim_adapter.stop(sim)
+  })
+}
+
+fn without_turn_end(
+  events: List(sim_adapter.SimEvent),
+) -> List(sim_adapter.SimEvent) {
+  list.filter(events, fn(event) { event.kind != "turn_end" })
+}
+
+pub fn sim_turn_end_reports_ok_and_denied_test() {
+  let _ = ensure_hackney()
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  let assert Ok(router) = sim_router.start(mock_provider())
+  let handler = fn(inbound, events) {
+    sim_router.route_inbound_for_handler(router, inbound, events)
+  }
+  support.with_runtime(base_config(), fn() {
+    let assert Ok(#(_adapter, sim)) =
+      sim_adapter.start(sim_config(Some("sim-token"), turn_end_port), handler)
+    let say = fn(user: String, content: String) {
+      send(
+        turn_end_port,
+        Some("sim-token"),
+        "/sim/messages",
+        "{\"chat_id\":\"group-1\",\"user_id\":\""
+          <> user
+          <> "\",\"username\":\"x\",\"content\":\""
+          <> content
+          <> "\",\"is_group\":true}",
+      ).0
+      |> should.equal(200)
+    }
+    // A member's turn, the first refusal of a non-member (a reply carrying
+    // the denial text) and the silent second refusal.
+    say("alice", "oi")
+    say("mallory", "oi")
+    say("mallory", "de novo")
+    let outcomes =
+      sim_adapter.all_events(sim)
+      |> list.filter(fn(event) { event.kind == "turn_end" })
+      |> list.map(fn(event) {
+        case string.contains(event.content, "\"outcome\":\"ok\"") {
+          True -> "ok"
+          False ->
+            case string.contains(event.content, "\"outcome\":\"denied\"") {
+              True -> "denied"
+              False -> event.content
+            }
+        }
+      })
+    outcomes |> should.equal(["ok", "denied", "denied"])
+    sim_adapter.stop(sim)
+    envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
   })
 }

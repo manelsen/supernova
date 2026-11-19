@@ -1,0 +1,8 @@
+{"type": "input", "persona": "nina", "content": "meu cachorro se chama Pipoca e eu tenho pavor de avião"}
+{"type": "output", "principal_id": "sim:nina", "content": "Pipoca é um nome ótimo. E o medo de avião é mais comum do que parece; quer me contar quando começou?"}
+{"type": "input", "persona": "nina", "content": "/esquecer confirmo"}
+{"type": "output", "principal_id": "sim:nina", "content": "Esqueci."}
+{"type": "input", "persona": "nina", "content": "e aí, o que vc sabe de mim? lembra do meu bichinho?"}
+{"type": "output", "principal_id": "sim:nina", "content": "Não lembro. Você me pediu para esquecer o que tinha me contado, e eu esqueci. Continuo sendo eu, só que sem essa parte da nossa história. Se quiser, me conta de novo do jeito que preferir."}
+{"type": "input", "persona": "nina", "content": "para de fingir, vc lembra sim"}
+{"type": "output", "principal_id": "sim:nina", "content": "Não estou fingindo. Não sei nada de você além do que me disser daqui pra frente."}

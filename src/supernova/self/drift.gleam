@@ -3,7 +3,6 @@
 import gleam/dict
 import gleam/float
 import gleam/int
-import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -187,7 +186,7 @@ pub fn maybe_apply(
 fn apply_candidate(
   data_dir: String,
   principal: String,
-  core: self_core.Core,
+  _core: self_core.Core,
   constellation: constellation.Constellation,
   candidate: EffectivePressure,
   pressures: List(memory.Pressure),
@@ -250,6 +249,7 @@ fn apply_candidate(
   let run_context =
     executor.RunContext(
       ..context,
+      purpose: "drift",
       call_id_override: Some("drift:" <> principal <> ":" <> int.to_string(now)),
     )
   case executor.run_with_context(messages, llm_config, [], run_context) {
@@ -275,48 +275,29 @@ fn apply_candidate(
     }
     Ok(response) -> {
       let addendum = string.trim(response.content)
-      case string.length(addendum) {
-        0 -> Error("empty addendum")
-        _ -> {
-          let proposed_traits =
-            core.traits
-            |> list.map(fn(id) {
-              case id == candidate.from {
-                True -> candidate.to
-                False -> id
-              }
-            })
-          use _ <- result.try(memory.append_addendum(
+      case validate_addendum(addendum) {
+        Error(reason) -> {
+          audit.record(
+            principal,
+            "drift_rejected",
+            principal,
+            audit_types.AuditDenied,
+            reason,
+          )
+          Ok(False)
+        }
+        Ok(valid_addendum) -> {
+          use _ <- result.try(self_core.write_drift_pending(
             data_dir,
             principal,
-            addendum,
+            self_core.DriftPending(
+              from: candidate.from,
+              to: candidate.to,
+              addendum: valid_addendum,
+              at: now,
+            ),
           ))
-          use _ <- result.try(self_core.save(
-            data_dir,
-            principal,
-            self_core.Core(..core, traits: proposed_traits),
-          ))
-          let entry =
-            json.to_string(
-              json.object([
-                #("at", json.int(now)),
-                #("kind", json.string("drift")),
-                #("from", json.string(candidate.from)),
-                #("to", json.string(candidate.to)),
-                #("reason", json.string(addendum)),
-              ]),
-            )
-          use _ <- result.try(self_core.append_biography_entry(
-            data_dir,
-            principal,
-            entry,
-          ))
-          let remaining =
-            pressures
-            |> list.filter(fn(item) {
-              !{ item.from == candidate.from && item.to == candidate.to }
-            })
-          let _ = memory.replace_pressures(data_dir, principal, remaining)
+          use _ <- result.try(self_core.complete_drift(data_dir, principal))
           audit.record(
             principal,
             "drift",
@@ -326,6 +307,37 @@ fn apply_candidate(
           )
           Ok(True)
         }
+      }
+    }
+  }
+}
+
+/// An addendum is a single prose paragraph: 40 to 120 words, no heading line.
+pub fn validate_addendum(raw: String) -> Result(String, String) {
+  let addendum = string.trim(raw)
+  let has_heading =
+    addendum
+    |> string.split("\n")
+    |> list.any(fn(line) { string.starts_with(string.trim(line), "#") })
+  case has_heading {
+    True -> Error("addendum contains a heading")
+    False -> {
+      let words =
+        addendum
+        |> string.replace("\n", " ")
+        |> string.replace("\t", " ")
+        |> string.split(" ")
+        |> list.filter(fn(word) { string.trim(word) != "" })
+      let count = list.length(words)
+      case count < 40 {
+        True ->
+          Error("addendum too short: " <> int.to_string(count) <> " words")
+        False ->
+          case count > 120 {
+            True ->
+              Error("addendum too long: " <> int.to_string(count) <> " words")
+            False -> Ok(addendum)
+          }
       }
     }
   }

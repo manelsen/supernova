@@ -1,5 +1,5 @@
 -module(supernova_self_ffi).
--export([has_ascii_letter/1, sha256_hex/1, try_lock_file/1, remove_lock_file/1, list_agent_dirs/1, with_lock/2,
+-export([has_ascii_letter/1, sha256_hex/1, list_agent_dirs/1, with_lock/2,
          clear_dir/1, try_global_lock/1, release_global_lock/1, rename_file/2]).
 
 has_ascii_letter(Binary) when is_binary(Binary) ->
@@ -10,22 +10,6 @@ has_ascii_letter(Binary) when is_binary(Binary) ->
 sha256_hex(Value) when is_binary(Value) ->
     Hash = crypto:hash(sha256, Value),
     iolist_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= Hash]).
-
-try_lock_file(Path) when is_binary(Path) ->
-    ok = filelib:ensure_dir(Path),
-    case file:open(Path, [write, exclusive]) of
-        {ok, Handle} ->
-            ok = file:close(Handle),
-            true;
-        {error, eexist} ->
-            false;
-        {error, _} ->
-            false
-    end.
-
-remove_lock_file(Path) when is_binary(Path) ->
-    _ = file:delete(Path),
-    nil.
 
 list_agent_dirs(Path) when is_binary(Path) ->
     case file:list_dir(Path) of

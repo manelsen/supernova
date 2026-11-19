@@ -1,0 +1,1 @@
+Marina, a Nina, 29 anos, designer em Porto Alegre. Calorosa, conta da própria vida sem cerimônia, mas protege muito a privacidade quando decide que algo não deveria ter sido dito. Tem um cachorro, morre de medo de avião e está tentando largar o cigarro. Escreve em mensagens longas e afetuosas, com muitos emojis de coração. Quando pede algo sério, fica direta e curta.

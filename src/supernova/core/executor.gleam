@@ -23,6 +23,7 @@ import supernova/core/budget_policy/types as budget_types
 import supernova/core/checkpoint/actor as checkpoint_actor
 import supernova/core/checkpoint/types as checkpoint_types
 import supernova/core/complexity_router
+import supernova/core/prompt_log
 import supernova/core/tool_dispatch
 import supernova/core/turn_outcome
 import supernova/llm/circuit_breaker/actor as cb_actor
@@ -171,6 +172,8 @@ pub type RunContext {
   RunContext(
     principal_id: String,
     role: String,
+    /// Why this agent is calling the model: turn, reflection, birth or drift.
+    purpose: String,
     call_id_override: Option(String),
     before_llm: Option(fn() -> Result(Nil, String)),
     admit_llm: Option(fn(String, String, String, Int) -> Result(Nil, String)),
@@ -190,6 +193,7 @@ pub fn empty_run_context() -> RunContext {
   RunContext(
     principal_id: "",
     role: "member",
+    purpose: "turn",
     call_id_override: None,
     before_llm: None,
     admit_llm: None,
@@ -705,6 +709,7 @@ fn run_provider_attempt(
     Ok(Nil) ->
       case
         with_llm_span(config.name, config.default_model, depth, fn() {
+          prompt_log.record(context.principal_id, context.purpose, messages)
           client.chat(messages, config, tools)
         })
       {

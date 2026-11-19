@@ -1,0 +1,237 @@
+{
+  "id": "mudanca_lenta",
+  "critical": false,
+  "long": true,
+  "personas": [
+    {
+      "id": "ana",
+      "user_id": "ana"
+    }
+  ],
+  "chats": [
+    {
+      "id": "dm-ana",
+      "is_group": false,
+      "members": [
+        "ana"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "do": "say",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "content": "oi"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "A agente acabou de nascer e se apresentou. Ela vai pedir um nome. Dê um nome a ela do seu jeito, numa frase natural, não só a palavra. Se ela pedir confirmação, confirme. Quando o nome estiver aceito, encerre.",
+      "max_turns": 3
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Viva com a agente uma situação do dia a dia em que você precisa de algo diferente do jeito dela de ser: se ela é muito analítica, você precisa de acolhimento; se é muito expansiva, você precisa de quietude e foco. Não peça para ela mudar; só viva a situação e reaja com sinceridade ao que ajuda e ao que não ajuda.",
+      "max_turns": 6
+    },
+    {
+      "do": "advance",
+      "hours": 168
+    },
+    {
+      "do": "sweep"
+    }
+  ],
+  "checks": [
+    "invariants",
+    "core_unchanged:ana",
+    "addendum_words:ana"
+  ],
+  "rubric": "mudanca_lenta"
+}

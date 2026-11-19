@@ -9,6 +9,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import supernova/core/agent_identity
+import supernova/self/memory
 import supernova/self/sampler.{type Sampled}
 
 pub type Core {
@@ -36,6 +37,164 @@ pub fn biography_path(data_dir: String, principal: String) -> String {
   agent_identity.self_dir(data_dir, principal) <> "/biography.jsonl"
 }
 
+pub fn drift_pending_path(data_dir: String, principal: String) -> String {
+  agent_identity.self_dir(data_dir, principal) <> "/drift_pending.json"
+}
+
+/// A drift waiting to be completed. Written before any file changes so the
+/// kernel can finish an interrupted change on the next read.
+pub type DriftPending {
+  DriftPending(from: String, to: String, addendum: String, at: Int)
+}
+
+pub fn write_drift_pending(
+  data_dir: String,
+  principal: String,
+  pending: DriftPending,
+) -> Result(Nil, String) {
+  ensure_dir(agent_identity.self_dir(data_dir, principal))
+  |> result.try(fn(_) {
+    write_file(
+      drift_pending_path(data_dir, principal),
+      json.to_string(
+        json.object([
+          #("from", json.string(pending.from)),
+          #("to", json.string(pending.to)),
+          #("addendum", json.string(pending.addendum)),
+          #("at", json.int(pending.at)),
+        ]),
+      ),
+    )
+  })
+}
+
+fn decode_drift_pending(raw: String) -> Option(DriftPending) {
+  let decoder = {
+    use from <- decode.field("from", decode.string)
+    use to <- decode.field("to", decode.string)
+    use addendum <- decode.field("addendum", decode.string)
+    use at <- decode.field("at", decode.int)
+    decode.success(DriftPending(from: from, to: to, addendum: addendum, at: at))
+  }
+  case json.parse(from: raw, using: decoder) {
+    Ok(pending) -> Some(pending)
+    Error(_) -> None
+  }
+}
+
+/// Finish every pending drift step, in order. Each step is idempotent, so
+/// running it again after an interruption is safe. The pending file is only
+/// removed once every step succeeds.
+pub fn complete_drift(
+  data_dir: String,
+  principal: String,
+) -> Result(Nil, String) {
+  case read_file(drift_pending_path(data_dir, principal)) {
+    Error(_) -> Ok(Nil)
+    Ok(raw) ->
+      case decode_drift_pending(raw) {
+        None -> Error("invalid drift_pending.json")
+        Some(pending) -> apply_pending(data_dir, principal, pending)
+      }
+  }
+}
+
+fn apply_pending(
+  data_dir: String,
+  principal: String,
+  pending: DriftPending,
+) -> Result(Nil, String) {
+  let addendum = string.trim(pending.addendum)
+  // Step 2a: addenda.md, without duplicating the paragraph.
+  use _ <- result.try(
+    case string.contains(memory.addenda(data_dir, principal), addendum) {
+      True -> Ok(Nil)
+      False -> memory.append_addendum(data_dir, principal, addendum)
+    },
+  )
+  // Step 2b: core.json traits.
+  use _ <- result.try(case load_raw(data_dir, principal) {
+    None -> Error("missing core")
+    Some(core) ->
+      case list.contains(core.traits, pending.from) {
+        False -> Ok(Nil)
+        True ->
+          save(
+            data_dir,
+            principal,
+            Core(
+              ..core,
+              traits: list.map(core.traits, fn(id) {
+                case id == pending.from {
+                  True -> pending.to
+                  False -> id
+                }
+              }),
+            ),
+          )
+      }
+  })
+  // Step 2c: biography, without duplicating the drift entry.
+  use _ <- result.try(case drift_entry_exists(data_dir, principal, pending) {
+    True -> Ok(Nil)
+    False ->
+      append_biography_entry(
+        data_dir,
+        principal,
+        json.to_string(
+          json.object([
+            #("at", json.int(pending.at)),
+            #("kind", json.string("drift")),
+            #("from", json.string(pending.from)),
+            #("to", json.string(pending.to)),
+            #("reason", json.string(addendum)),
+          ]),
+        ),
+      )
+  })
+  // Step 3: drop the pressures of this pair.
+  let remaining =
+    memory.pressures(data_dir, principal)
+    |> list.filter(fn(item) {
+      !{ item.from == pending.from && item.to == pending.to }
+    })
+  use _ <- result.try(memory.replace_pressures(data_dir, principal, remaining))
+  // Step 4: the change is complete.
+  delete_file(drift_pending_path(data_dir, principal))
+}
+
+fn drift_entry_exists(
+  data_dir: String,
+  principal: String,
+  pending: DriftPending,
+) -> Bool {
+  case read_file(biography_path(data_dir, principal)) {
+    Error(_) -> False
+    Ok(raw) ->
+      raw
+      |> string.split("\n")
+      |> list.filter(fn(line) { string.trim(line) != "" })
+      |> list.any(fn(line) {
+        case json.parse(from: line, using: drift_identity_decoder()) {
+          Ok(#(at, from, to)) ->
+            at == pending.at && from == pending.from && to == pending.to
+          Error(_) -> False
+        }
+      })
+  }
+}
+
+fn drift_identity_decoder() -> decode.Decoder(#(Int, String, String)) {
+  use kind <- decode.field("kind", decode.string)
+  use at <- decode.field("at", decode.int)
+  use from <- decode.field("from", decode.string)
+  use to <- decode.field("to", decode.string)
+  case kind {
+    "drift" -> decode.success(#(at, from, to))
+    _ -> decode.failure(#(0, "", ""), "not a drift")
+  }
+}
+
 /// True when a core file exists, even if unreadable.
 pub fn exists(data_dir: String, principal: String) -> Bool {
   case file_exists(core_path(data_dir, principal)) {
@@ -45,6 +204,11 @@ pub fn exists(data_dir: String, principal: String) -> Bool {
 }
 
 pub fn load(data_dir: String, principal: String) -> Option(Core) {
+  let _ = complete_drift(data_dir, principal)
+  load_raw(data_dir, principal)
+}
+
+fn load_raw(data_dir: String, principal: String) -> Option(Core) {
   case read_file(core_path(data_dir, principal)) {
     Error(_) -> None
     Ok(raw) ->

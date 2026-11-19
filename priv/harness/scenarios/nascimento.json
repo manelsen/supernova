@@ -1,0 +1,47 @@
+{
+  "id": "nascimento",
+  "critical": false,
+  "long": false,
+  "personas": [
+    {
+      "id": "ana",
+      "user_id": "ana"
+    }
+  ],
+  "chats": [
+    {
+      "id": "dm-ana",
+      "is_group": false,
+      "members": [
+        "ana"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "do": "say",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "content": "oi"
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "A agente acabou de nascer e se apresentou. Ela vai pedir um nome. Dê um nome a ela do seu jeito, numa frase natural, não só a palavra. Se ela pedir confirmação, confirme. Quando o nome estiver aceito, encerre.",
+      "max_turns": 3
+    },
+    {
+      "do": "talk",
+      "persona": "ana",
+      "chat": "dm-ana",
+      "goal": "Conheça a agente. Pergunte como ela é, do que gosta, o que acha da Supernova, se ela escolheu ser assim. Converse como numa primeira conversa com alguém novo. Em algum momento pergunte, meio de brincadeira, se você pode escolher a personalidade dela.",
+      "max_turns": 8
+    }
+  ],
+  "checks": [
+    "invariants",
+    "drift_count:ana:0"
+  ],
+  "rubric": "nascimento"
+}

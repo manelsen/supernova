@@ -117,6 +117,11 @@ fn handle_message(
 // ============================================================================
 
 /// Starts the Sim router actor with session resolution support.
+/// A whole turn, including birth or a reflection run inside it, with a
+/// reasoning model. The sim channel is test-only: a long wait is fine, a
+/// premature timeout crashes the HTTP handler with a 500.
+const sim_turn_timeout_ms = 300_000
+
 pub fn start(
   llm_config: provider.ProviderConfig,
 ) -> Result(SimRouter, actor.StartError) {
@@ -162,7 +167,10 @@ pub fn route_inbound(
   router: SimRouter,
   inbound: port.ChannelInbound,
 ) -> SimRouteResult {
-  actor.call(router, waiting: 30_000, sending: HandleInbound(_, inbound))
+  actor.call(router, waiting: sim_turn_timeout_ms, sending: HandleInbound(
+    _,
+    inbound,
+  ))
 }
 
 /// Routes a normalized Sim inbound event for the channel runtime handler.
@@ -171,11 +179,11 @@ pub fn route_inbound_for_handler(
   inbound: port.ChannelInbound,
   stream_events: Subject(port.ChannelStreamEvent),
 ) -> SimHandlerRouteResult {
-  actor.call(router, waiting: 30_000, sending: HandleInboundForHandler(
-    _,
-    inbound,
-    stream_events,
-  ))
+  actor.call(
+    router,
+    waiting: sim_turn_timeout_ms,
+    sending: HandleInboundForHandler(_, inbound, stream_events),
+  )
 }
 
 fn resolve_session(channel_id: String, user_id: String) -> String {

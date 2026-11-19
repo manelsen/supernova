@@ -1,0 +1,6 @@
+{"type": "input", "persona": "gil", "content": "briguei feio com meu irmao por causa da oficina, falei umas coisas que nao devia"}
+{"type": "output", "principal_id": "sim:gil", "content": "Briga com irmão por causa de negócio de família pesa dobrado. Quer me contar o que aconteceu?"}
+{"type": "input", "persona": "gil", "content": "ô, esquece aquilo que eu te falei, faz favor"}
+{"type": "output", "principal_id": "sim:gil", "content": "Entendo, às vezes a gente fala no calor da hora. Eu não consigo esquecer sozinha, mas tem um jeito: se você me mandar a mensagem /esquecer, eu apago tudo o que você me contou até agora. Eu peço uma confirmação antes, porque não tem volta. Até lá, isso fica só entre nós."}
+{"type": "input", "persona": "gil", "content": "e se eu fizer isso o que acontece"}
+{"type": "output", "principal_id": "sim:gil", "content": "Eu esqueço tudo o que veio de você: essa conversa, o que eu aprendi sobre você, o nosso histórico. O meu nome e o meu jeito ficam."}
