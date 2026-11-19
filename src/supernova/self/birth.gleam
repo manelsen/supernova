@@ -152,10 +152,16 @@ fn arrange_name(
                   clear_name_pending(data_dir, principal)
                   NameRejected(declined_message())
                 }
-                False -> {
-                  clear_name_pending(data_dir, principal)
-                  propose_name(data_dir, principal, content, now, extract)
-                }
+                False ->
+                  resolve_free_reply(
+                    data_dir,
+                    principal,
+                    existing,
+                    pending,
+                    content,
+                    now,
+                    extract,
+                  )
               }
           }
         False -> {
@@ -196,6 +202,73 @@ fn keep_pending_name(
   }
 }
 
+/// A reply to "Então meu nome é X?" that is not a bare yes or no. People
+/// answer "Sim, Vera. Fechado." or "sim kkk líquen combina": requiring an
+/// exact "sim" looped forever in the first real battery.
+/// - the same name again: accept it;
+/// - another name: that one becomes the pending candidate;
+/// - no name, but the reply opens with a yes ("sim kkk"): accept;
+/// - otherwise: not understood.
+fn resolve_free_reply(
+  data_dir: String,
+  principal: String,
+  existing: core.Core,
+  pending: NamePending,
+  content: String,
+  now: Int,
+  extract: fn(String) -> Result(String, String),
+) -> Step {
+  case name_candidate(content, extract) {
+    Ok(name) ->
+      case same_name(name, pending.candidate) {
+        True -> keep_pending_name(data_dir, principal, existing, pending, now)
+        False -> {
+          clear_name_pending(data_dir, principal)
+          propose_name(data_dir, principal, content, now, extract)
+        }
+      }
+    Error(_) ->
+      case opens_with_affirmation(content) {
+        True -> keep_pending_name(data_dir, principal, existing, pending, now)
+        False -> {
+          clear_name_pending(data_dir, principal)
+          NameRejected(rejected_message())
+        }
+      }
+  }
+}
+
+fn same_name(a: String, b: String) -> Bool {
+  string.lowercase(string.trim(a)) == string.lowercase(string.trim(b))
+}
+
+/// The first word of the reply, without punctuation, is a yes.
+pub fn opens_with_affirmation(text: String) -> Bool {
+  let first =
+    normalize_reply(text)
+    |> string.replace(",", " ")
+    |> string.replace(".", " ")
+    |> string.replace("!", " ")
+    |> string.split(" ")
+    |> list.filter(fn(word) { word != "" })
+    |> list.first
+  case first {
+    Ok(word) -> list.contains(affirmations, word)
+    Error(_) -> False
+  }
+}
+
+fn name_candidate(
+  content: String,
+  extract: fn(String) -> Result(String, String),
+) -> Result(String, Nil) {
+  let trimmed = string.trim(content)
+  case !string.contains(trimmed, " ") && core.valid_name(trimmed) {
+    True -> Ok(trimmed)
+    False -> extract_name(trimmed, extract)
+  }
+}
+
 fn propose_name(
   data_dir: String,
   principal: String,
@@ -203,13 +276,7 @@ fn propose_name(
   now: Int,
   extract: fn(String) -> Result(String, String),
 ) -> Step {
-  let trimmed = string.trim(content)
-  let candidate = case
-    !string.contains(trimmed, " ") && core.valid_name(trimmed)
-  {
-    True -> Ok(trimmed)
-    False -> extract_name(trimmed, extract)
-  }
+  let candidate = name_candidate(content, extract)
   case candidate {
     Ok(name) ->
       case write_name_pending(data_dir, principal, name, now) {

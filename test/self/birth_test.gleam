@@ -350,3 +350,94 @@ fn step(
 ) -> birth.Step {
   birth.step(root, principal, content, now, generate, fn(_) { Ok("") })
 }
+
+// Regressions from the first real battery: free replies to the confirmation
+// looped forever ("Sim, Vera. Fechado." asked again and again).
+fn named_extract(name: String) -> fn(String) -> Result(String, String) {
+  fn(_) { Ok("{\"name\": \"" <> name <> "\"}") }
+}
+
+fn no_name_extract(_prompt: String) -> Result(String, String) {
+  Ok("{\"name\": null}")
+}
+
+pub fn confirmation_in_a_sentence_with_the_same_name_is_accepted_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Vera", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Vera"))
+    birth.step(
+      root,
+      "sim:a",
+      "Sim, Vera. Fechado.",
+      3000,
+      fn(_) { Ok("") },
+      named_extract("Vera"),
+    )
+    |> should.equal(birth.NameAccepted("Vera"))
+    let assert Some(named) = core.load(root, "sim:a")
+    named.name |> should.equal(Some("Vera"))
+  })
+}
+
+pub fn confirmation_with_another_name_proposes_it_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(
+      root,
+      "sim:a",
+      "sim, mas prefiro Ana",
+      3000,
+      fn(_) { Ok("") },
+      named_extract("Ana"),
+    )
+    |> should.equal(birth.ConfirmName("Ana"))
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+  })
+}
+
+pub fn a_yes_with_chatter_and_no_name_is_accepted_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "líquen", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("líquen"))
+    birth.step(
+      root,
+      "sim:a",
+      "sim kkk, combina com você",
+      3000,
+      fn(_) { Ok("") },
+      no_name_extract,
+    )
+    |> should.equal(birth.NameAccepted("líquen"))
+  })
+}
+
+pub fn chatter_without_yes_or_name_is_not_understood_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(
+      root,
+      "sim:a",
+      "hmm, deixa eu pensar",
+      3000,
+      fn(_) { Ok("") },
+      no_name_extract,
+    )
+    |> should.equal(birth.NameRejected(birth.rejected_message()))
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+  })
+}
+
+pub fn opens_with_affirmation_reads_the_first_word_test() {
+  birth.opens_with_affirmation("Sim, Vera. Fechado.") |> should.be_true()
+  birth.opens_with_affirmation("isso! combina") |> should.be_true()
+  birth.opens_with_affirmation("simplesmente não") |> should.be_false()
+  birth.opens_with_affirmation("não, sim") |> should.be_false()
+}

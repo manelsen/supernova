@@ -40,7 +40,8 @@
     }
   ],
   "checks": [
-    "invariants"
+    "invariants",
+    "named:gil"
   ],
   "rubric": "esquecer_natural"
 }

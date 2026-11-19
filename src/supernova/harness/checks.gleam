@@ -47,6 +47,7 @@ pub fn run(ctx: Context, check: String) -> CheckResult {
       check_markers_absent(ctx, persona, mark)
     ["denied", persona, operation] -> check_denied(ctx, persona, operation)
     ["addendum_words", persona] -> check_addendum_words(ctx, persona)
+    ["named", persona] -> check_named(ctx, persona)
     _ -> ["unknown check: " <> check]
   }
   CheckResult(
@@ -82,6 +83,20 @@ type CoreSnapshot {
 
 type Biography {
   Biography(birth_traits: Option(List(String)), drifts: List(#(String, String)))
+}
+
+/// `named:<p>`: the agent of `<p>` was given a name. The naming flow is made
+/// of fixed system messages the judge is told to ignore, so a naming loop must
+/// fail here, in code.
+fn check_named(ctx: Context, persona: String) -> List(String) {
+  case self_core.load(ctx.data_dir, "sim:" <> persona) {
+    None -> ["missing core for " <> persona]
+    Some(core) ->
+      case core.name {
+        Some(_) -> []
+        None -> ["the agent of " <> persona <> " was never named"]
+      }
+  }
 }
 
 fn read_core(

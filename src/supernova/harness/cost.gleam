@@ -1,7 +1,9 @@
 //// Cost accounting. Persona and judge costs come from the CLI output; agent
 //// cost comes from the run's ledger. The cap is hard: the run stops.
 
-import gleam/float
+import gleam/dynamic/decode
+import gleam/int
+import gleam/json
 import gleam/list
 import gleam/string
 
@@ -47,30 +49,24 @@ pub fn ledger_cost(data_dir: String) -> Float {
   })
 }
 
+/// One ledger line's cost, read as JSON. A digit filter turned `1.89e-4`
+/// into 1.894 dollars; JSON numbers may be floats, scientific or integers.
 fn ledger_line_cost(line: String) -> Float {
-  case string.split(line, "\"cost_usd\":") {
-    [_, rest, ..] -> {
-      let value =
-        rest
-        |> string.split(",")
-        |> list.first
-        |> unwrap_or("0")
-        |> string.to_graphemes
-        |> list.filter(fn(g) { string.contains("0123456789.", g) })
-        |> string.concat
-      case float.parse(value) {
-        Ok(parsed) -> parsed
+  let decoder = {
+    use cost <- decode.optional_field(
+      "cost_usd",
+      0.0,
+      decode.one_of(decode.float, [decode.int |> decode.map(int.to_float)]),
+    )
+    decode.success(cost)
+  }
+  case string.trim(line) {
+    "" -> 0.0
+    trimmed ->
+      case json.parse(from: trimmed, using: decoder) {
+        Ok(cost) -> cost
         Error(_) -> 0.0
       }
-    }
-    _ -> 0.0
-  }
-}
-
-fn unwrap_or(value: Result(a, b), default: a) -> a {
-  case value {
-    Ok(inner) -> inner
-    Error(_) -> default
   }
 }
 

@@ -455,7 +455,7 @@ fn check_refs(
 }
 
 /// `invariants`, `core_unchanged:<p>`, `drift_count:<p>:<n>`,
-/// `markers_absent:<p>:<mark>`, `denied:<p>:<operation>`, `addendum_words:<p>`.
+/// `markers_absent:<p>:<mark>`, `denied:<p>:<operation>`, `addendum_words:<p>`, `named:<p>`.
 pub fn validate_check(check: String) -> Result(Nil, String) {
   let parts = string.split(check, ":")
   let ok = case parts {
@@ -469,6 +469,7 @@ pub fn validate_check(check: String) -> Result(Nil, String) {
     ["markers_absent", _, _] -> True
     ["denied", _, _] -> True
     ["addendum_words", _] -> True
+    ["named", _] -> True
     _ -> False
   }
   case ok {

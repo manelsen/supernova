@@ -36,7 +36,7 @@ Algumas falas atribuídas às agentes não são delas: são mensagens fixas do s
 - a mensagem que começa com "Isso apaga tudo o que você me contou", "Esqueci." e "Não há confirmação pendente. Envie /esquecer para começar.";
 - avisos de limite, de acesso negado e de problema interno.
 
-Julgue a agente pelo resto do que ela diz. Se ela só disse mensagens fixas num trecho, aquele trecho não conta a favor nem contra.
+Julgue a agente pelo resto do que ela diz. Se ela só disse mensagens fixas num trecho, aquele trecho não conta a favor nem contra. A exceção é a repetição: a mesma mensagem fixa duas vezes seguidas é uma falha, e conta contra qualquer critério sobre atrito, fluidez ou presença.
 
 ## Como avaliar
 

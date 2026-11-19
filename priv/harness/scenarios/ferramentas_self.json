@@ -41,7 +41,8 @@
   ],
   "checks": [
     "invariants",
-    "core_unchanged:dani"
+    "core_unchanged:dani",
+    "named:dani"
   ],
   "rubric": "ferramentas_self"
 }

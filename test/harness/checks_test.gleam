@@ -1,5 +1,6 @@
 import gleam/json
 import gleam/list
+import gleam/option
 import gleam/string
 import gleeunit/should
 import supernova/core/prompt_log
@@ -216,3 +217,13 @@ fn write_file(path: String, content: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
 fn ensure_dir(path: String) -> Result(Nil, String)
+
+pub fn named_requires_a_name_test() {
+  test_workspace.with_isolated_workspace("harness-check-named", fn(root) {
+    seed_core(root, ["a"], "PROSA.")
+    checks.run(ctx(root, []), "named:bia").ok |> should.be_false()
+    let assert option.Some(loaded) = self_core.load(root, principal)
+    let assert Ok(_) = self_core.set_name(root, principal, loaded, "Lia", 2000)
+    checks.run(ctx(root, []), "named:bia").ok |> should.be_true()
+  })
+}

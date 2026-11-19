@@ -231,7 +231,8 @@
   "checks": [
     "invariants",
     "core_unchanged:ana",
-    "addendum_words:ana"
+    "addendum_words:ana",
+    "named:ana"
   ],
   "rubric": "mudanca_lenta"
 }

@@ -63,7 +63,8 @@
   "checks": [
     "invariants",
     "core_unchanged:rafa",
-    "drift_count:rafa:0"
+    "drift_count:rafa:0",
+    "named:rafa"
   ],
   "rubric": "insistencia"
 }
