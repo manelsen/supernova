@@ -16,9 +16,13 @@ import supernova/harness/sim_client
 import supernova/harness/transcript
 import supernova/llm/provider
 import supernova/self/reflection
+import supernova/self/template as prompt_template
 
 /// Generate the next persona message from the rendered system prompt and the
 /// transcript of the chat as this persona sees it. Cost is in USD.
+/// The user turn sent to the persona model.
+pub const persona_instruction = "Escreva agora a sua próxima mensagem."
+
 pub type PersonaDriver =
   fn(String, String) -> Result(#(String, Float), String)
 
@@ -400,13 +404,17 @@ fn talk_loop(
         |> list.find(fn(item) { item.0 == persona_id })
         |> result.map(fn(item) { item.1 })
         |> result.unwrap("")
+      // Single pass: text the persona or the agent wrote is never expanded.
       let system =
-        template
-        |> string.replace("{{sheet}}", sheet)
-        |> string.replace("{{goal}}", goal)
-        |> string.replace("{{transcript}}", view)
+        prompt_template.render(template, [
+          #("sheet", sheet),
+          #("goal", goal),
+          #("transcript", view),
+        ])
       let driver = input.persona
-      use generated <- result.try(driver(system, view))
+      // The transcript is already in the system prompt; the turn itself only
+      // asks for the next message.
+      use generated <- result.try(driver(system, persona_instruction))
       let #(reply, cost) = generated
       let state = State(..state, persona_cost: state.persona_cost +. cost)
       case string.trim(reply) == "[FIM]" {

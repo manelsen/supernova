@@ -108,7 +108,10 @@ pub fn each_persona_sees_only_her_own_exchange_test() {
         True -> "bia"
         False -> "caio"
       }
-      process.send(recorder, #(name, transcript_text))
+      // The persona's view of the chat lives in the system prompt; the turn
+      // itself is a fixed instruction.
+      transcript_text |> should.equal(engine.persona_instruction)
+      process.send(recorder, #(name, system))
       mock_persona(system, transcript_text)
     }
     let assert Ok(loaded) = scenario.load("priv/harness", "provisorio_grupo")
