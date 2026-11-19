@@ -127,10 +127,7 @@ pub fn get_effective_workspace(
 }
 
 /// Check if an agent has external read access.
-pub fn has_external_read(
-  state: WorkspacePolicyState,
-  agent_id: String,
-) -> Bool {
+pub fn has_external_read(state: WorkspacePolicyState, agent_id: String) -> Bool {
   let rule = get_rule(state, agent_id)
   rule.external_read_allowed
 }
@@ -182,17 +179,30 @@ fn reaches_kernel_state(
   case string.contains(root_agent(state, agent_id), ":") {
     False -> False
     True -> {
-      let workspace = get_effective_workspace(state, agent_id)
-      let inside = case string.starts_with(path, workspace <> "/") {
-        True -> string.drop_start(path, string.length(workspace) + 1)
-        False ->
-          case string.starts_with(path, "/") {
-            True -> ""
-            False -> path
+      // `..` is rejected earlier, so dropping empty and `.` segments makes
+      // every spelling of an absolute path compare equal.
+      let workspace = normalize(get_effective_workspace(state, agent_id))
+      let inside = case string.starts_with(path, "/") {
+        False -> path
+        True -> {
+          let absolute = normalize(path)
+          case string.starts_with(absolute, workspace <> "/") {
+            True -> string.drop_start(absolute, string.length(workspace) + 1)
+            False -> ""
           }
+        }
       }
       string.split(inside, "/") |> list.contains(".supernova")
     }
+  }
+}
+
+fn normalize(path: String) -> String {
+  "/"
+  <> {
+    string.split(path, "/")
+    |> list.filter(fn(segment) { segment != "" && segment != "." })
+    |> string.join("/")
   }
 }
 

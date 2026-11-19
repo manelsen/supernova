@@ -532,6 +532,22 @@ pub fn principal_cannot_touch_kernel_state_test() {
   denied(types.OpRead, ".supernova/LESSONS.json") |> should.be_true()
   denied(types.OpWrite, ".supernova") |> should.be_true()
   denied(types.OpWrite, ws <> "/.supernova/LESSONS.json") |> should.be_true()
+  // aliases of an absolute path get the same decision, even with external reads
+  let alias =
+    "/home/u/./.supernova//agents/sim_alice/workspace/./.supernova/LESSONS.json"
+  denied(types.OpWrite, alias) |> should.be_true()
+  let reader =
+    pure.set_rule(
+      state,
+      "sim:alice",
+      types.PolicyRule(
+        ..pure.get_rule(state, "sim:alice"),
+        external_read_allowed: True,
+      ),
+    )
+  let #(_, alias_read, _) =
+    pure.authorize(reader, "sim:alice", types.OpRead, alias, 1)
+  alias_read |> should.be_error()
   // ordinary files, and a data_dir that itself lives under .supernova, stay allowed
   denied(types.OpWrite, "notes.txt") |> should.be_false()
   denied(types.OpWrite, ws <> "/notes.txt") |> should.be_false()
