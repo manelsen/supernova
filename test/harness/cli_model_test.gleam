@@ -309,3 +309,20 @@ pub fn oversized_argument_is_refused_test() {
     })
   })
 }
+
+// The CLI working directory is private (0700) and outside the checkout, so
+// no project instructions are loaded and no other user can plant files in it.
+pub fn scratch_dir_is_private_and_outside_checkout_test() {
+  let dir = scratch_dir()
+  string.starts_with(dir, "/tmp/supernova-harness-") |> should.be_true()
+  string.starts_with(dir, cwd()) |> should.be_false()
+  mode(dir) |> should.equal(0o700)
+  // Created once per VM.
+  scratch_dir() |> should.equal(dir)
+}
+
+@external(erlang, "supernova_harness_ffi", "scratch_dir")
+fn scratch_dir() -> String
+
+@external(erlang, "harness_test_ffi", "mode")
+fn mode(path: String) -> Int

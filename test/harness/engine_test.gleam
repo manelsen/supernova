@@ -148,8 +148,11 @@ pub fn advance_and_sweep_step_runs_test() {
     let assert Ok(transcript) = read_file(root <> "/data/transcripts.jsonl")
     string.contains(transcript, "\"outcome\":\"denied\"")
     |> should.be_false()
-    file_exists(root <> "/data/agents/sim_bia/self/experience.jsonl")
-    |> should.equal(Ok(True))
+    string.contains(transcript, "\"outcome\":\"ok\"")
+    |> should.be_true()
+    let assert Ok(experience) =
+      read_file(root <> "/data/agents/sim_bia/self/experience.jsonl")
+    string.contains(experience, "\"text\":") |> should.be_true()
   })
 }
 

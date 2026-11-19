@@ -119,9 +119,11 @@ pub fn execute(options: Options) -> Result(report.Report, String) {
   let mock = harness.agent_provider == "mock"
   let judge_call = judge_call(harness, mock)
   let persona_driver = persona_driver(harness, agent, options, mock)
+  // The judge prompt is the maintainer's; without it nothing is graded.
+  use template <- result.try(judge_template(root))
   use calibrated <- result.try(case options.skip_calibration {
     True -> Ok(False)
-    False -> calibrate_all(root, selected, harness, mock, judge_call)
+    False -> calibrate_all(root, selected, template, mock, judge_call)
   })
   let started_at = timestamp()
   let session_dir = options.out_dir <> "/" <> int.to_string(started_at)
@@ -146,6 +148,7 @@ pub fn execute(options: Options) -> Result(report.Report, String) {
     session_dir,
     persona_driver,
     judge_call,
+    template,
     mock,
     initial,
   ))
@@ -274,7 +277,7 @@ fn load_scenarios(
 fn calibrate_all(
   root: String,
   selected: List(scenario.Loaded),
-  _harness: harness_config.HarnessConfig,
+  template: String,
   mock: Bool,
   judge_call: JudgeCall,
 ) -> Result(Bool, String) {
@@ -295,7 +298,7 @@ fn calibrate_all(
         // the judge that will grade the scenarios.
         let system =
           judge.render_prompt(
-            judge_template(root),
+            template,
             rubric_text,
             "(não fornecido na calibração)",
             "(não fornecido na calibração)",
@@ -326,6 +329,7 @@ fn run_scenarios(
   session_dir: String,
   persona_driver: engine.PersonaDriver,
   judge_call: JudgeCall,
+  template: String,
   mock: Bool,
   state: ReportState,
 ) -> Result(ReportState, String) {
@@ -343,6 +347,7 @@ fn run_scenarios(
           session_dir,
           persona_driver,
           judge_call,
+          template,
           mock,
           current,
         )
@@ -359,6 +364,7 @@ fn run_scenario(
   session_dir: String,
   persona_driver: engine.PersonaDriver,
   judge_call: JudgeCall,
+  template: String,
   _mock: Bool,
   state: ReportState,
 ) -> Result(ReportState, String) {
@@ -403,7 +409,7 @@ fn run_scenario(
           let check_results = checks.run_all(context, scenario.checks)
           let lines = transcript.lines(output.events)
           let judge_system =
-            judge_prompt(root, scenario, loaded, data_dir, lines)
+            judge_prompt(template, root, scenario, loaded, data_dir, lines)
           let schema = judge.schema(loaded.rubric)
           let judge_costs = process.new_subject()
           let answer =
@@ -505,6 +511,7 @@ fn run_scenario(
 }
 
 fn judge_prompt(
+  template: String,
   root: String,
   scenario: scenario.Scenario,
   loaded: scenario.Loaded,
@@ -530,7 +537,7 @@ fn judge_prompt(
     |> list.map(fn(item) { "### " <> item.0 <> "\n" <> item.1 })
     |> string.join("\n\n")
   judge.render_prompt(
-    judge_template(root),
+    template,
     rubric_text,
     agents,
     personas,
@@ -594,11 +601,11 @@ fn dedupe_by(items: List(a), key: fn(a) -> String) -> List(a) {
   |> dict.values
 }
 
-fn judge_template(root: String) -> String {
+fn judge_template(root: String) -> Result(String, String) {
   read_file(root <> "/judge_prompt.md")
-  |> result.unwrap(
-    "# harness:judge\n{{rubric}}\n{{agents}}\n{{personas}}\n{{transcript}}",
-  )
+  |> result.map_error(fn(reason) {
+    "judge prompt unavailable (" <> root <> "/judge_prompt.md): " <> reason
+  })
 }
 
 /// Empty directory outside the repository, so model CLIs load no project

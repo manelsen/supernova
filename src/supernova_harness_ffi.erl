@@ -107,21 +107,32 @@ remove_dir(Path) ->
     ok.
 
 %% An empty working directory for model CLIs, outside any repository, so no
-%% AGENTS.md or CLAUDE.md is picked up. Created once per VM.
+%% AGENTS.md or CLAUDE.md is picked up. Created once per VM under /tmp (not
+%% TMPDIR, which may point inside a checkout), with an unpredictable name,
+%% exclusively (make_dir fails if the name exists) and mode 0700, so another
+%% local user cannot pre-create it or plant symlinks in it.
 scratch_dir() ->
     case persistent_term:get({supernova_harness, scratch_dir}, undefined) of
         undefined ->
-            Base = case os:getenv("TMPDIR") of
-                false -> "/tmp";
-                "" -> "/tmp";
-                T -> T
-            end,
-            Dir = filename:join(Base, "supernova-harness-" ++ os:getpid() ++ "-"
-                ++ integer_to_list(erlang:unique_integer([positive]))),
-            ok = filelib:ensure_path(Dir),
+            Dir = make_private_dir(10),
             Bin = unicode:characters_to_binary(Dir),
             persistent_term:put({supernova_harness, scratch_dir}, Bin),
             Bin;
         Dir ->
             Dir
+    end.
+
+make_private_dir(0) ->
+    erlang:error(scratch_dir_unavailable);
+make_private_dir(Tries) ->
+    Suffix = [io_lib:format("~2.16.0b", [B]) || <<B>> <= crypto:strong_rand_bytes(16)],
+    Dir = lists:flatten(["/tmp/supernova-harness-", Suffix]),
+    case file:make_dir(Dir) of
+        ok ->
+            ok = file:change_mode(Dir, 8#700),
+            Dir;
+        {error, eexist} ->
+            make_private_dir(Tries - 1);
+        {error, Reason} ->
+            erlang:error({scratch_dir_unavailable, Reason})
     end.
