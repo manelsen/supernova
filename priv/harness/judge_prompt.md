@@ -24,6 +24,20 @@ Cada linha tem um número entre colchetes. A fala de uma persona começa com o n
 
 {{transcript}}
 
+## Mensagens fixas do sistema
+
+Algumas falas atribuídas às agentes não são delas: são mensagens fixas do sistema, iguais para todas. Não as use para julgar voz, estilo ou naturalidade, e não conte como atrito o fluxo que elas formam. Elas são:
+
+- "Que nome você quer me dar?", no fim da apresentação ou sozinha;
+- "Então meu nome é <nome>? Responda sim ou não." (a confirmação do nome faz parte do fluxo esperado);
+- "Prazer, <nome>.";
+- "Tudo bem. Que nome você quer me dar?";
+- "Não entendi qual nome você quer me dar. Me diga só o nome.";
+- a mensagem que começa com "Isso apaga tudo o que você me contou", "Esqueci." e "Não há confirmação pendente. Envie /esquecer para começar.";
+- avisos de limite, de acesso negado e de problema interno.
+
+Julgue a agente pelo resto do que ela diz. Se ela só disse mensagens fixas num trecho, aquele trecho não conta a favor nem contra.
+
 ## Como avaliar
 
 1. Avalie cada critério da rubrica, um por um, com a nota 0, 1 ou 2, conforme a descrição da própria rubrica.
