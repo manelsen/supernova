@@ -28,7 +28,7 @@ remove_lock_file(Path) when is_binary(Path) ->
 
 list_agent_dirs(Path) when is_binary(Path) ->
     case file:list_dir(Path) of
-        {ok, Names} -> lists:sort([Name || Name <- Names, filelib:is_dir(filename:join(Path, Name))]);
+        {ok, Names} -> lists:sort([list_to_binary(Name) || Name <- Names, filelib:is_dir(filename:join(Path, Name))]);
         {error, _} -> []
     end.
 

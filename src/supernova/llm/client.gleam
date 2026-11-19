@@ -223,13 +223,62 @@ fn special_mock_response(
     True, Some(content) ->
       case string.contains(content, "Reflita agora") {
         True ->
-          Some(
-            "{\"experiences\":[{\"text\":\"Aprendi a confiar no que foi vivido.\"}],"
-            <> "\"pressures\":[]}",
-          )
+          case string.contains(system_text, "[mock-invalid-reflection]") {
+            True -> Some("not json")
+            False -> Some(reflection_mock_json(system_text))
+          }
         False -> special_mock_response_plain(messages, config)
       }
     _, _ -> special_mock_response_plain(messages, config)
+  }
+}
+
+fn reflection_mock_json(system_text: String) -> String {
+  let experiences =
+    "{\"experiences\":[{\"text\":\"Aprendi a confiar no que foi vivido.\"}],"
+  case reflection_neighbor(system_text) {
+    Some(#(from, to)) ->
+      experiences
+      <> "\"pressures\":[{\"from\":\""
+      <> from
+      <> "\",\"to\":\""
+      <> to
+      <> "\",\"strength\":0.9,\"reason\":\"Aprendi com a convivência.\"}]}"
+    None -> experiences <> "\"pressures\":[]}"
+  }
+}
+
+fn reflection_neighbor(system_text: String) -> Option(#(String, String)) {
+  case string.split(system_text, "Vizinhos coerentes:\n") {
+    [_, rest] -> {
+      let found =
+        rest
+        |> string.split("\n")
+        |> list.find_map(fn(line) {
+          let stripped = string.trim(line)
+          case string.starts_with(stripped, "- ") {
+            False -> Error(Nil)
+            True -> {
+              let body = string.drop_start(stripped, 2)
+              case string.split(body, " -> ") {
+                [from, target] -> {
+                  let to = case string.split(target, " — ") {
+                    [id, ..] -> id
+                    _ -> target
+                  }
+                  Ok(#(from, string.trim(to)))
+                }
+                _ -> Error(Nil)
+              }
+            }
+          }
+        })
+      case found {
+        Ok(pair) -> Some(pair)
+        Error(_) -> None
+      }
+    }
+    _ -> None
   }
 }
 

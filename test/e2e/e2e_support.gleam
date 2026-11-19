@@ -98,6 +98,7 @@ pub fn with_runtime_root(cfg: config.Config, body: fn(String) -> a) -> a {
       ledger_actor.start_persistent_with_clock_and_day_key(
         root <> "/ledger",
         fn() { now },
+        fn() { closed_group_global.now() },
         fn(timestamp) {
           pricing.day_key(timestamp, cfg.instance_budget.timezone)
         },

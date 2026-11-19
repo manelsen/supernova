@@ -386,17 +386,22 @@ fn build_prompt(
     |> string.join("\n")
   let neighbors =
     traits
-    |> list.flat_map(fn(id) {
-      let dimension = trait_dimension(constellation, id)
+    |> list.flat_map(fn(from) {
+      let dimension = trait_dimension(constellation, from)
+      let remaining = list.filter(traits, fn(id) { id != from })
       constellation.traits
       |> list.filter(fn(trait) {
+        let proposed = list.append(remaining, [trait.id])
         trait.dimension == dimension
-        && trait.id != id
+        && trait.id != from
         && !list.contains(traits, trait.id)
-        && constellation.affinity_weight(constellation, id, trait.id) >. 0.0
+        && !has_absolute_incompatibility(constellation, proposed)
+        && list.any(remaining, fn(id) {
+          constellation.affinity_weight(constellation, trait.id, id) >. 0.0
+        })
       })
       |> list.map(fn(trait) {
-        "- " <> id <> " -> " <> describe_trait(constellation, trait.id)
+        "- " <> from <> " -> " <> describe_trait(constellation, trait.id)
       })
     })
     |> string.join("\n")
