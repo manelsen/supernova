@@ -287,6 +287,22 @@ fn run_executor_for_context(
   tools: List(provider.ToolDefinition),
   context: Option(closed_group_types.PrincipalContext),
 ) -> Result(provider.ChatResponse, executor.ExecutorError) {
+  run_executor_for_context_with_purpose(
+    messages,
+    llm_config,
+    tools,
+    context,
+    "turn",
+  )
+}
+
+fn run_executor_for_context_with_purpose(
+  messages: List(provider.ChatMessage),
+  llm_config: provider.ProviderConfig,
+  tools: List(provider.ToolDefinition),
+  context: Option(closed_group_types.PrincipalContext),
+  purpose: String,
+) -> Result(provider.ChatResponse, executor.ExecutorError) {
   case context, closed_group_global.get_runtime() {
     Some(turn), Some(runtime) -> {
       let filtered = closed_group_runtime.tools_for(runtime, turn.role, tools)
@@ -294,7 +310,10 @@ fn run_executor_for_context(
         messages,
         llm_config,
         filtered,
-        closed_group_runtime.run_context(runtime, turn),
+        executor.RunContext(
+          ..closed_group_runtime.run_context(runtime, turn),
+          purpose: purpose,
+        ),
       )
     }
     _, _ -> executor.run(messages, llm_config, tools)

@@ -94,7 +94,7 @@ pub fn main() -> Nil {
         True -> {
           io.println(config_check.format_issues(issues))
           // Start core services
-          case start_services(cfg) {
+          case boot(cfg, current_timestamp) {
             Ok(services) -> {
               io.println("✓ All services started")
               io.println("✓ Supernova is running...")
@@ -105,7 +105,7 @@ pub fn main() -> Nil {
               wait_for_shutdown()
 
               // Graceful shutdown
-              shutdown_services(services)
+              shutdown(services)
             }
             Error(reason) -> {
               io.println("❌ Failed to start services: " <> reason)
@@ -185,8 +185,8 @@ fn config_error_to_string(error: config.ConfigError) -> String {
 // ============================================================================
 
 /// Container for all running services
-pub type Services {
-  Services(
+pub type Runtime {
+  Runtime(
     session_supervisor: supervisor.SessionSupervisor,
     mcp_manager: mcp_manager.MCPManager,
     channel_registry: registry.ChannelRegistry,
@@ -195,9 +195,23 @@ pub type Services {
   )
 }
 
+/// Boot every service that `main` starts, with an injectable clock.
+///
+/// The harness passes a controllable clock and sets `environment` to
+/// `"harness"`: in that mode the hourly reflection sweeper is not started
+/// (the harness sweeps explicitly) and the health server binds an ephemeral
+/// port, so repeated boots do not collide.
+pub fn boot(cfg: config.Config, clock: fn() -> Int) -> Result(Runtime, String) {
+  start_services(cfg, clock)
+}
+
 /// Start all core services
-fn start_services(cfg: config.Config) -> Result(Services, String) {
+fn start_services(
+  cfg: config.Config,
+  clock: fn() -> Int,
+) -> Result(Runtime, String) {
   browser.set_evaluate_allowed(cfg.tools.browser.allow_evaluate)
+  closed_group_global.set_clock(clock)
 
   // Start Session Supervisor
   use session_sup <- result.try(
@@ -311,24 +325,40 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
     }
   })
 
-  // Start the hourly reflection sweeper outside the router.
-  case default_channel_llm_config(cfg) {
-    Ok(llm_config) -> reflection.start_sweeper(cfg.data_dir, llm_config)
-    Error(_) -> Nil
+  // Start the hourly reflection sweeper outside the router. A controllable
+  // clock (harness mode) means the harness triggers sweeps explicitly.
+  case cfg.environment == "harness" {
+    True -> Nil
+    False ->
+      case default_channel_llm_config(cfg) {
+        Ok(llm_config) -> reflection.start_sweeper(cfg.data_dir, llm_config)
+        Error(_) -> Nil
+      }
   }
 
   // Start health server with real channel state callback
   let get_ready_channels = fn() { dict.keys(channel_reg.channels) }
-  let health_srv = health_server.start(health_port, metrics, get_ready_channels)
-  io.println("✓ Health server started on port " <> int.to_string(health_port))
+  let health_srv =
+    health_server.start(health_port(cfg), metrics, get_ready_channels)
+  io.println(
+    "✓ Health server started on port " <> int.to_string(health_port(cfg)),
+  )
 
-  Ok(Services(
+  Ok(Runtime(
     session_supervisor: session_sup,
     mcp_manager: mcp_mgr,
     channel_registry: channel_reg,
     health_server: health_srv,
     metrics: metrics,
   ))
+}
+
+fn health_port(cfg: config.Config) -> Int {
+  case cfg.environment {
+    "harness" -> 0
+    "test" -> 0
+    _ -> 8080
+  }
 }
 
 // Wait for metrics actor to register in global with retry (up to 2s)
@@ -761,11 +791,11 @@ fn provider_config_to_runtime(
 pub fn wait_for_shutdown() -> Nil
 
 /// Graceful shutdown of all services
-fn shutdown_services(services: Services) -> Nil {
+pub fn shutdown(services: Runtime) -> Nil {
   io.println("")
   io.println("🛑 Shutting down...")
 
-  // 1. Stop channels first (no new messages)
+  // 1. Stop channels first (no new messages, releases the sim port)
   registry.stop_channels(services.channel_registry)
 
   // 2. Stop sessions (complete ongoing conversations)
@@ -781,6 +811,9 @@ fn shutdown_services(services: Services) -> Nil {
 
   // 5. Stop metrics actor
   metrics_actor.reset(services.metrics)
+
+  // 6. Unpublish the closed-group runtime so a later boot starts clean.
+  closed_group_global.clear_runtime()
 
   io.println("✓ Shutdown complete")
 }

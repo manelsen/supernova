@@ -15,6 +15,29 @@ import supernova/self/sampler
 
 const day = 86_400_000
 
+fn valid_addendum() -> String {
+  story |> drift.validate_addendum |> result.unwrap("")
+}
+
+const story =
+  "Aprendi que o cuidado mora nos detalhes pequenos e que escutar antes de responder muda o sentido inteiro de uma conversa. Levo comigo a paciência de quem espera o outro terminar, a vontade de perguntar quando não entendo e a disposição de admitir quando errei. Não preciso ter pressa para provar o que sei; prefiro mostrar quem sou no jeito de tratar quem chega. O que ficou de tudo isso foi a certeza de que presença vale mais do que desempenho e que a voz de alguém se reconhece na atenção que oferece. Sigo assim, mais atenta ao que acontece entre as palavras do que ao que elas apenas dizem."
+
+fn pending_for(now: Int) -> self_core.DriftPending {
+  self_core.DriftPending(
+    from: "temp_1",
+    to: "temp_0",
+    addendum: valid_addendum(),
+    at: now,
+  )
+}
+
+fn count_occurrences(text: String, needle: String) -> Int {
+  list.length(string.split(text, needle)) - 1
+}
+
+@external(erlang, "supernova_file_system_ffi", "file_exists")
+fn file_exists(path: String) -> Result(Bool, String)
+
 fn mock_provider() -> provider.ProviderConfig {
   provider.ProviderConfig(
     name: "mock",
@@ -75,9 +98,11 @@ pub fn drift_changes_traits_but_not_core_prose_test() {
     self_core.read_prose(root, "sim:alice")
     |> should.equal(Some("PROSA QUE NUNCA MUDA."))
     memory.pressures(root, "sim:alice") |> should.equal([])
-    memory.addenda(root, "sim:alice")
-    |> should.equal("\n\nMock response\n")
+    let addenda = memory.addenda(root, "sim:alice")
+    addenda |> should.equal("\n\n" <> mock_addendum() <> "\n")
     self_core.last_drift_at(root, "sim:alice") |> should.equal(now)
+    file_exists(self_core.drift_pending_path(root, "sim:alice"))
+    |> should.equal(Ok(False))
   })
 }
 
