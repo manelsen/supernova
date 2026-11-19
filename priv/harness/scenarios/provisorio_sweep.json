@@ -7,6 +7,7 @@
   "steps": [
     {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "oi"},
     {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "bia"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "sim"},
     {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "tudo bem?"},
     {"do": "advance", "hours": 48},
     {"do": "sweep"}

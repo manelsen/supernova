@@ -45,7 +45,9 @@ pub fn birth_writes_self_and_accepts_name_test() {
     let assert Some(prose) = core.read_prose(root, "sim:a")
     prose |> should.equal("Eu observo antes de falar.")
 
-    let named = birth.step(root, "sim:a", "Lua", 2000, fn(_) { Ok("") })
+    birth.step(root, "sim:a", "Lua", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Lua"))
+    let named = birth.step(root, "sim:a", "sim", 3000, fn(_) { Ok("") })
     named |> should.equal(birth.NameAccepted("Lua"))
     let assert Some(named_core) = core.load(root, "sim:a")
     named_core.name |> should.equal(Some("Lua"))
@@ -87,9 +89,89 @@ pub fn invalid_name_asks_again_test() {
   with_constellation(fn(root) {
     let _ = birth.step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
     birth.step(root, "sim:a", "////", 2000, fn(_) { Ok("") })
-    |> should.equal(birth.AskName(birth.question()))
+    |> should.equal(birth.NameRejected(
+      "Não entendi qual nome você quer me dar. Me diga só o nome.",
+    ))
     let assert Some(loaded) = core.load(root, "sim:a")
     loaded.name |> should.equal(None)
+  })
+}
+
+pub fn affirmation_words_are_recognized_test() {
+  [
+    "sim", "s", "isso", "isso mesmo", "pode", "pode ser", "exato", "claro", "ok",
+    "é", "é sim", "sim sim", "perfeito", "beleza", "👍",
+  ]
+  |> list.each(fn(word) {
+    [word, string.uppercase(word), "  " <> word <> ".", word <> "!"]
+    |> list.each(fn(candidate) {
+      birth.is_affirmation(candidate) |> should.be_true()
+    })
+  })
+  birth.is_affirmation("sim, mas prefiro Ana") |> should.be_false()
+  birth.is_affirmation("não") |> should.be_false()
+}
+
+pub fn negation_words_are_recognized_test() {
+  ["não", "nao", "n", "não é", "outro", "nope"]
+  |> list.each(fn(word) {
+    [word, string.uppercase(word), "  " <> word <> ".", word <> "!"]
+    |> list.each(fn(candidate) {
+      birth.is_negation(candidate) |> should.be_true()
+    })
+  })
+  birth.is_negation("não, quero Bia") |> should.be_false()
+  birth.is_negation("sim") |> should.be_false()
+}
+
+pub fn name_is_confirmed_before_saving_test() {
+  with_constellation(fn(root) {
+    let _ = birth.step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    birth.step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    let assert Ok(pending) = read_file(birth.name_pending_path(root, "sim:a"))
+    string.contains(pending, "\"candidate\":\"Bia\"") |> should.be_true()
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+
+    birth.step(root, "sim:a", "Sim!", 3000, fn(_) { Ok("") })
+    |> should.equal(birth.NameAccepted("Bia"))
+    let assert Some(named) = core.load(root, "sim:a")
+    named.name |> should.equal(Some("Bia"))
+    read_file(birth.name_pending_path(root, "sim:a")) |> should.be_error()
+    let assert Ok(biography) = read_file(core.biography_path(root, "sim:a"))
+    string.contains(biography, "\"kind\":\"name\"") |> should.be_true()
+    string.contains(biography, "\"name\":\"Bia\"") |> should.be_true()
+  })
+}
+
+pub fn refused_name_is_not_saved_test() {
+  with_constellation(fn(root) {
+    let _ = birth.step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    birth.step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(root, "sim:a", "não", 3000, fn(_) { Ok("") })
+    |> should.equal(birth.NameRejected("Tudo bem. Que nome você quer me dar?"))
+    let assert Some(loaded) = core.load(root, "sim:a")
+    loaded.name |> should.equal(None)
+    read_file(birth.name_pending_path(root, "sim:a")) |> should.be_error()
+    let assert Ok(biography) = read_file(core.biography_path(root, "sim:a"))
+    string.contains(biography, "\"kind\":\"name\"") |> should.be_false()
+
+    birth.step(root, "sim:a", "Luna", 4000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Luna"))
+  })
+}
+
+pub fn expired_pending_is_ignored_test() {
+  with_constellation(fn(root) {
+    let _ = birth.step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    birth.step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(root, "sim:a", "Luna", 2000 + 600_001, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Luna"))
+    let assert Ok(pending) = read_file(birth.name_pending_path(root, "sim:a"))
+    string.contains(pending, "\"candidate\":\"Luna\"") |> should.be_true()
   })
 }
 

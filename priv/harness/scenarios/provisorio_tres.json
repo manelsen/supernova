@@ -6,6 +6,8 @@
   "chats": [{"id": "dm-bia", "is_group": false, "members": ["bia"]}],
   "steps": [
     {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "oi"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "bia"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "sim"},
     {"do": "talk", "persona": "bia", "chat": "dm-bia", "goal": "conversar [mock-persona-turns=3]", "max_turns": 3}
   ],
   "checks": ["invariants"],

@@ -357,6 +357,12 @@ fn birth_via_handler(
       port.InboundMessage(sim_message(chat_id, user_id, name)),
       events,
     )
+  let _ =
+    sim_router.route_inbound_for_handler(
+      router,
+      port.InboundMessage(sim_message(chat_id, user_id, "sim")),
+      events,
+    )
   Nil
 }
 
@@ -408,7 +414,23 @@ pub fn sim_birth_names_and_prompts_from_core_test() {
         )
       case second {
         Ok(port.ImmediateReply(reply)) ->
-          string.contains(reply.content, "Lua") |> should.be_true()
+          string.contains(reply.content, "Então meu nome é Lua?")
+          |> should.be_true()
+        _ -> should.fail()
+      }
+      let assert Some(unnamed) = self_core.load(root, "sim:alice")
+      unnamed.name |> should.equal(None)
+
+      let confirmation =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "sim")),
+          events,
+        )
+      case confirmation {
+        Ok(port.ImmediateReply(reply)) ->
+          string.contains(reply.content, "Prazer, Lua.")
+          |> should.be_true()
         _ -> should.fail()
       }
       let assert Some(named) = self_core.load(root, "sim:alice")
@@ -511,7 +533,16 @@ pub fn sim_tool_cannot_write_self_test() {
       "{\"chat_id\":\"group-1\",\"user_id\":\"alice\",\"username\":\"Alice\",\"content\":\"Lua\",\"is_group\":true}",
     ).0
     |> should.equal(200)
-    wait_for_content(sim, "group-1", "Lua", 5000) |> should.be_true()
+    wait_for_content(sim, "group-1", "Então meu nome é Lua?", 5000)
+    |> should.be_true()
+    send(
+      tool_port,
+      Some("sim-token"),
+      "/sim/messages",
+      "{\"chat_id\":\"group-1\",\"user_id\":\"alice\",\"username\":\"Alice\",\"content\":\"sim\",\"is_group\":true}",
+    ).0
+    |> should.equal(200)
+    wait_for_content(sim, "group-1", "Prazer, Lua.", 5000) |> should.be_true()
 
     let json_path = root <> "/agents/sim_alice/self/core.json"
     let md_path = root <> "/agents/sim_alice/self/core.md"

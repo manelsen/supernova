@@ -1203,6 +1203,9 @@ fn maybe_handle_birth(
             )
           case step {
             birth.AskName(text) -> Some(port.reply(to: msg, content: text))
+            birth.ConfirmName(name) ->
+              Some(port.reply(to: msg, content: birth.confirm_message(name)))
+            birth.NameRejected(text) -> Some(port.reply(to: msg, content: text))
             birth.NameAccepted(name) ->
               Some(port.reply(to: msg, content: "Prazer, " <> name <> "."))
             birth.Unavailable -> {

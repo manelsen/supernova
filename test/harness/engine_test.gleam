@@ -76,14 +76,14 @@ pub fn say_and_three_talk_turns_produce_four_messages_test() {
         _ -> False
       }
     })
-    |> should.equal(4)
+    |> should.equal(6)
     count(output.events, fn(event) {
       case event {
         transcript.Output(..) -> True
         _ -> False
       }
     })
-    |> should.equal(4)
+    |> should.equal(6)
   })
 }
 
@@ -96,7 +96,7 @@ pub fn persona_stops_on_fim_test() {
         _ -> False
       }
     })
-    |> should.equal(3)
+    |> should.equal(5)
   })
 }
 
