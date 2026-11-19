@@ -21,6 +21,7 @@ These rules apply to every contributor, human or automated (executor agents, Cod
 ### Workflow
 
 - **TDD:** write the test, confirm it fails, then implement. Record the failing run in the commit message.
+- **Fast loop:** while working on a story, run only the affected test modules with `make test-only T="test/path/to_test.gleam test/some_dir"` (seconds, not minutes). Run the full gates below before each commit.
 - One commit per story when working from a PRD, with the commit message the PRD gives.
 - Pull before committing on a shared branch: executor agents and CodeRabbit Autofix may both commit to the same PR branch.
 - **Never merge, tag, publish a release or push images.** The maintainer does that after review.
@@ -116,6 +117,9 @@ gleam run -m supernova/wizard_main
 
 # Run tests
 gleam test
+
+# Run only some test modules (fast TDD loop)
+make test-only T="test/self/drift_apply_test.gleam test/sim"
 
 # Format code (Gleam 1.19.2 only, see Hard Rules)
 gleam format src test
@@ -310,14 +314,15 @@ Before opening a PR, ensure:
 gleam --version                     # Must be 1.19.2
 gleam format --check src test       # Must pass
 gleam build --warnings-as-errors    # No warnings
-gleam test                          # All tests green
-make coverage                       # Line coverage gate (75%)
+make coverage                       # Whole suite, once, instrumented: all green and line coverage >= 75%
 ```
+
+`make coverage` already runs every test module and fails on any failing test, so there is no need to run `gleam test` before it.
 
 CI enforces:
 - Format checking with Gleam 1.19.2
 - Build with warnings as errors
-- Full test suite execution and the coverage gate
+- One instrumented run of the full suite with the coverage gate
 
 ## Adding New Channels
 
