@@ -3,6 +3,9 @@
 Baseline em `28cf907` (Gleam 1.19.2, Erlang 28.5.0.8): **2351 testes**,
 cobertura **75.67%** (`10208/13491` linhas, `STATUS.md`).
 
+Final (`feat/harness`): **2394 testes**, cobertura **77.88%**
+(`13346/17136` linhas, `make coverage`), sem falhas.
+
 ## História → testes
 
 | História | Testes |
