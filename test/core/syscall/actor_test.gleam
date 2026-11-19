@@ -10,6 +10,8 @@ import gleam/option
 import gleam/string
 import gleeunit
 import gleeunit/should
+import supernova/core/audit_log/actor as audit_actor
+import supernova/core/audit_log/types as audit_types
 import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/budget_policy/types as budget_types
 import supernova/core/capability_manifest/types as cap_types
@@ -19,6 +21,7 @@ import supernova/core/syscall/types.{
   SpawnAgent, SyscallDenied, SyscallFailed, SyscallOk, WriteFile, WriteWorld,
 }
 import supernova/core/workspace_policy/actor as policy_actor
+import test_workspace
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -712,4 +715,36 @@ pub fn principal_workspace_denies_self_and_other_agent_test() {
   }
 
   actor.stop(gw)
+}
+
+pub fn tool_completion_audits_the_authorized_path_test() {
+  use root <- test_workspace.with_isolated_workspace("syscall-audit")
+  let assert Ok(log) = audit_actor.start(root)
+  let assert Ok(gw) =
+    actor.start_with_capabilities(
+      option.None,
+      option.None,
+      option.Some(log),
+      dict.new(),
+      fn(_, _) { Ok("ran") },
+    )
+  let path = "agents/sim_alice/self/state.json"
+  actor.invoke_tool(
+    gw,
+    "sim:alice",
+    "admin",
+    "file_system",
+    "{\"action\":\"read\",\"path\":\"" <> path <> "\"}",
+  )
+  |> should.equal(Ok("ran"))
+  process.sleep(50)
+  audit_actor.get_all(log)
+  |> list.any(fn(entry) {
+    entry.operation == "tool_call"
+    && entry.target == path
+    && entry.result == audit_types.AuditSuccess
+  })
+  |> should.be_true()
+  actor.stop(gw)
+  audit_actor.stop(log)
 }

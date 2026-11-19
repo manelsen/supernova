@@ -241,3 +241,54 @@ pub fn missing_runtime_does_not_change_test() {
 
 @external(erlang, "erlang", "unique_integer")
 fn unique_integer() -> Int
+
+pub fn stale_source_pressure_does_not_drift_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
+  support.with_runtime_root(cfg(), fn(root) {
+    let now = 1_700_000_000_000
+    let assert Ok(_) =
+      self_core.save_birth(
+        root,
+        "sim:alice",
+        sampler.Sampled(traits: ["temp_1", "voz_0"], seed: 1, attempts: 1),
+        1,
+        "PROSA.",
+        now - 100 * day,
+      )
+    let first =
+      memory.Pressure(
+        at: now,
+        origin: "sim:alice",
+        from: "temp_1",
+        to: "temp_0",
+        strength: 1.0,
+        reason: "convivência",
+      )
+    let assert Ok(_) =
+      memory.append_pressures(root, "sim:alice", list.repeat(first, 20))
+    let assert Ok(True) =
+      drift.maybe_apply(root, "sim:alice", mock_provider(), now)
+    let later = now + 90 * day
+    let stale =
+      memory.Pressure(
+        at: later,
+        origin: "sim:alice",
+        from: "temp_1",
+        to: "temp_2",
+        strength: 1.0,
+        reason: "pressão antiga",
+      )
+    let assert Ok(_) =
+      memory.append_pressures(root, "sim:alice", list.repeat(stale, 20))
+    let assert Ok(False) =
+      drift.maybe_apply(root, "sim:alice", mock_provider(), later)
+    let assert Some(core) = self_core.load(root, "sim:alice")
+    core.traits |> should.equal(["temp_0", "voz_0"])
+    memory.pressures(root, "sim:alice") |> list.length |> should.equal(20)
+  })
+}

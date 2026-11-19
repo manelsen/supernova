@@ -308,3 +308,64 @@ pub fn rendered_json_and_exit_code_test() {
   invariants.exit_code([]) |> should.equal(0)
   invariants.exit_code([invariants.Violation("I1", "x")]) |> should.equal(1)
 }
+
+pub fn core_integrity_replays_drift_history_test() {
+  let bad =
+    invariants.Dataset(..base(), core_docs: [
+      invariants.CoreDoc(
+        principal_id: "sim:d",
+        traits: ["cauta", "serena"],
+        prose_sha256: None,
+        actual_prose_sha256: "x",
+        birth_traits: Some(["curiosa", "serena"]),
+        drifts: [
+          invariants.Drift(from: "curiosa", to: "gentil"),
+          invariants.Drift(from: "ausente", to: "cauta"),
+        ],
+      ),
+    ])
+  invariants.check(bad)
+  |> should.equal([
+    invariants.Violation("I7", "drift from absent trait ausente of sim:d"),
+  ])
+}
+
+pub fn unreadable_core_evidence_is_a_violation_test() {
+  let data =
+    invariants.Dataset(..base(), core_docs: [
+      invariants.CoreDoc(
+        principal_id: "sim:x",
+        traits: [],
+        prose_sha256: None,
+        actual_prose_sha256: "",
+        birth_traits: None,
+        drifts: [],
+      ),
+    ])
+  invariants.check(data)
+  |> should.equal([
+    invariants.Violation("I7", "core evidence unavailable for sim:x"),
+  ])
+}
+
+pub fn unreadable_memory_is_a_violation_after_forget_test() {
+  let data =
+    invariants.Dataset(
+      ..base(),
+      forget_audits: [invariants.ForgetAudit(principal_id: "sim:a", at: 1000)],
+      memories: [
+        invariants.Memory(
+          kind: invariants.UnreadableMemory,
+          origin: "sim:a",
+          at: 0,
+        ),
+      ],
+    )
+  invariants.check(data)
+  |> should.equal([
+    invariants.Violation(
+      "I9",
+      "unreadable memory entry from sim:a survived forget at 1000",
+    ),
+  ])
+}

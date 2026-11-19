@@ -3,6 +3,7 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleeunit/should
 import supernova/config
+import supernova/core/agent_identity
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/introspection/lesson
@@ -89,6 +90,14 @@ fn seed(root: String) -> Nil {
         last_reflection: "segredo",
       ),
     )
+  let workspace = agent_identity.workspace_dir(root, "sim:alice")
+  let assert Ok(_) =
+    lesson.append(
+      workspace,
+      lesson.make_success_lesson("legado", "licao legada", "teste"),
+    )
+  let assert Ok(_) =
+    relationship.save(workspace, relationship.load(workspace, "alice"))
   Nil
 }
 
@@ -108,6 +117,16 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
     memory.experiences(root, "sim:alice") |> should.equal([])
     memory.pressures(root, "sim:alice") |> should.equal([])
     memory.addenda(root, "sim:alice") |> should.equal("\n\nAdendo que fica.\n")
+    file_exists(
+      agent_identity.workspace_dir(root, "sim:alice")
+      <> "/.supernova/LESSONS.json",
+    )
+    |> should.equal(Ok(False))
+    file_exists(
+      agent_identity.workspace_dir(root, "sim:alice")
+      <> "/.supernova/RELATIONSHIP.json",
+    )
+    |> should.equal(Ok(False))
     let assert Some(core) = self_core.load(root, "sim:alice")
     core.traits |> should.equal(["curiosa"])
     let state = self_state.from_dir(self_dir)
@@ -196,3 +215,6 @@ pub fn forgetting_alice_does_not_touch_bob_test() {
     core.traits |> should.equal(["curiosa"])
   })
 }
+
+@external(erlang, "supernova_file_system_ffi", "file_exists")
+fn file_exists(path: String) -> Result(Bool, String)

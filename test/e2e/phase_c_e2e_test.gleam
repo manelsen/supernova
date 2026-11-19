@@ -398,3 +398,37 @@ pub fn forget_after_deadline_does_not_delete_test() {
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")
 fn file_exists(path: String) -> Result(Bool, String)
+
+pub fn forget_command_ignores_exhausted_model_budget_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
+  let cfg =
+    config.Config(
+      ..cfg(500),
+      instance_budget: config.InstanceBudgetConfig(
+        ..config.default_instance_budget_config(),
+        daily_usd: 0.0,
+      ),
+    )
+  let assert Ok(router) = sim_router.start(mock_provider())
+  support.with_runtime_root(cfg, fn(root) {
+    support.seed_core(root, "sim:alice", "Núcleo.")
+    let assert Ok(_) =
+      memory.append_experiences(root, "sim:alice", [
+        memory.Experience(
+          at: support.now,
+          origin: "sim:alice",
+          text: "lembrança",
+        ),
+      ])
+    case route_result(router, "alice", "/esquecer") {
+      Ok(port.ImmediateReply(reply)) ->
+        string.contains(reply.content, "1 lembranças") |> should.be_true()
+      _ -> should.fail()
+    }
+  })
+}
