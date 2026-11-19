@@ -8,6 +8,7 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/introspection/lesson
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
+import supernova/core/session/supervisor as session_supervisor
 import supernova/self/core as self_core
 import supernova/self/forget
 import supernova/self/journal
@@ -125,5 +126,24 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
         |> should.be_true()
       None -> should.fail()
     }
+  })
+}
+
+pub fn forget_stops_sessions_of_the_owner_test() {
+  support.with_runtime_root(cfg(), fn(root) {
+    seed(root)
+    let assert Ok(sup) = session_supervisor.start()
+    let assert Ok(_) =
+      session_supervisor.start_session(sup, "sim:group-1:alice")
+    let assert Ok(_) = session_supervisor.start_session(sup, "sim:group-1:bob")
+    let assert Ok(forget.Counts(sessions: 1, ..)) =
+      forget.forget(root, "sim:alice", Some(sup))
+    session_supervisor.list_sessions(sup)
+    |> list.contains("sim:group-1:alice")
+    |> should.equal(False)
+    session_supervisor.list_sessions(sup)
+    |> list.contains("sim:group-1:bob")
+    |> should.equal(True)
+    session_supervisor.stop(sup)
   })
 }

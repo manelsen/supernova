@@ -685,7 +685,11 @@ fn run_provider_attempt(
   attempt: Int,
 ) -> Result(provider.ChatResponse, ExecutorError) {
   let call_id = case context.call_id_override {
-    Some(_) -> base_call_id
+    Some(_) ->
+      case attempt {
+        1 -> base_call_id
+        _ -> base_call_id <> ":a" <> int.to_string(attempt)
+      }
     None -> base_call_id <> ":a" <> int.to_string(attempt)
   }
   case

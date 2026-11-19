@@ -307,11 +307,7 @@ fn reflect_locked(
                 |> list.filter_map(valid_experience)
                 |> list.take(5)
               let pressures =
-                raw_pressures
-                |> list.filter(fn(item) {
-                  valid_pressure(item, core.traits, constellation)
-                })
-                |> list.take(2)
+                valid_pressures(raw_pressures, core.traits, constellation)
               let origin = case entries {
                 [first, ..] -> first.origin
                 [] -> principal
@@ -504,6 +500,16 @@ fn valid_experience(item: Dynamic) -> Result(String, Nil) {
       }
     }
   }
+}
+
+pub fn valid_pressures(
+  pressures: List(RawPressure),
+  traits: List(String),
+  constellation: constellation.Constellation,
+) -> List(RawPressure) {
+  pressures
+  |> list.filter(fn(item) { valid_pressure(item, traits, constellation) })
+  |> list.take(2)
 }
 
 fn valid_pressure(

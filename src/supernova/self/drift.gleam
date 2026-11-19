@@ -60,7 +60,7 @@ pub fn effective_pressures(
   contributions
   |> list.fold(dict.new(), fn(acc, item) {
     let #(from, to, value) = item
-    let key = from <> "|" <> to
+    let key = #(from, to)
     case dict.get(acc, key) {
       Ok(existing) -> dict.insert(acc, key, existing +. value)
       Error(_) -> dict.insert(acc, key, value)
@@ -68,8 +68,7 @@ pub fn effective_pressures(
   })
   |> dict.to_list
   |> list.map(fn(pair) {
-    let #(key, value) = pair
-    let assert [from, to] = string.split(key, "|")
+    let #(#(from, to), value) = pair
     EffectivePressure(from: from, to: to, value: value)
   })
   |> list.sort(fn(a, b) { float.compare(a.value, b.value) })

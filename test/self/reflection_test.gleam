@@ -177,3 +177,55 @@ pub fn trigger_count_and_time_test() {
 pub fn invalid_json_is_rejected_test() {
   let assert Error(_) = reflection.parse_response("not json")
 }
+
+pub fn sweep_without_agents_is_a_noop_test() {
+  support.with_runtime_root(cfg(), fn(root) {
+    reflection.sweep(root, mock_provider())
+  })
+}
+
+pub fn missing_runtime_keeps_journal_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
+  closed_group_global.clear_runtime()
+  let root =
+    "/tmp/supernova-reflection-no-runtime-" <> int.to_string(unique_integer())
+  let assert Ok(_) =
+    self_core.save_birth(
+      root,
+      "sim:alice",
+      sampler.Sampled(traits: ["temp_0"], seed: 1, attempts: 1),
+      1,
+      "Núcleo.",
+      1_700_000_000_000,
+    )
+  let at = 1_700_000_000_000
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  |> list.each(fn(index) {
+    let assert Ok(_) =
+      journal.append(
+        root,
+        "sim:alice",
+        journal.Entry(
+          at: at + index,
+          origin: "sim:alice",
+          session: "s",
+          user: "oi",
+          agent: "olá",
+        ),
+        100,
+      )
+    Nil
+  })
+  let assert Error("runtime unavailable") =
+    reflection.reflect(root, "sim:alice", mock_provider(), at + 100)
+  journal.load(root, "sim:alice") |> list.length |> should.equal(20)
+  memory.experiences(root, "sim:alice") |> should.equal([])
+}
+
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
