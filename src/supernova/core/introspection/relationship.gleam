@@ -20,13 +20,28 @@ pub type RelationshipEvent {
   UserFrustrated
 }
 
+/// Legacy workspace location, still used in open mode.
 pub fn relationship_path(workspace_path: String) -> String {
   workspace_path <> "/.supernova/RELATIONSHIP.json"
 }
 
+/// Relationship file inside a caller-supplied state directory.
+pub fn relationship_path_in(state_dir: String) -> String {
+  state_dir <> "/relationship.json"
+}
+
 pub fn load(workspace_path: String, user_id: String) -> RelationshipState {
+  load_from_path(relationship_path(workspace_path), user_id)
+}
+
+/// Load the relationship from a caller-supplied state directory.
+pub fn load_in(state_dir: String, user_id: String) -> RelationshipState {
+  load_from_path(relationship_path_in(state_dir), user_id)
+}
+
+fn load_from_path(file_path: String, user_id: String) -> RelationshipState {
   let now = now_ms()
-  let base = case ffi_read_file(relationship_path(workspace_path)) {
+  let base = case ffi_read_file(file_path) {
     Error(_) -> default(user_id, now)
     Ok(content) ->
       case json.parse(from: content, using: relationship_decoder()) {
@@ -42,8 +57,28 @@ pub fn save(
   workspace_path: String,
   state: RelationshipState,
 ) -> Result(Nil, String) {
-  use _ <- result.try(ffi_ensure_dir(workspace_path <> "/.supernova"))
-  ffi_write_file(relationship_path(workspace_path), encode(state))
+  save_at(
+    workspace_path <> "/.supernova",
+    relationship_path(workspace_path),
+    state,
+  )
+}
+
+/// Save to a caller-supplied state directory.
+pub fn save_in(
+  state_dir: String,
+  state: RelationshipState,
+) -> Result(Nil, String) {
+  save_at(state_dir, relationship_path_in(state_dir), state)
+}
+
+fn save_at(
+  directory: String,
+  file_path: String,
+  state: RelationshipState,
+) -> Result(Nil, String) {
+  use _ <- result.try(ffi_ensure_dir(directory))
+  ffi_write_file(file_path, encode(state))
 }
 
 pub fn apply_event(

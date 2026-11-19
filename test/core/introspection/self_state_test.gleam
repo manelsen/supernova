@@ -50,3 +50,30 @@ pub fn prompt_block_contains_portuguese_humor_label_test() {
   string.contains(block, "Humor: Frustrado")
   |> should.equal(True)
 }
+
+pub fn base_dir_paths_and_round_trip_test() {
+  let state_dir = unique_workspace("state-dir") <> "/self"
+  self_state.state_path_in(state_dir)
+  |> should.equal(state_dir <> "/state.json")
+
+  let state =
+    SelfState(
+      mood: mood.Mood(valence: 0.1, arousal: 0.5),
+      mood_cause: "self_dir",
+      wakefulness: 0.7,
+      concerns: ["self_dir"],
+      open_questions: [],
+      last_reflection: "Estado no diretorio self.",
+      preferences: default_preferences(),
+    )
+
+  let assert Ok(_) = self_state.save_in(state_dir, state)
+  let loaded = self_state.from_dir(state_dir)
+  loaded.mood_cause |> should.equal("self_dir")
+  loaded.concerns |> should.equal(["self_dir"])
+}
+
+pub fn workspace_path_is_unchanged_test() {
+  self_state.self_state_path("/tmp/ws")
+  |> should.equal("/tmp/ws/.supernova/SELF_STATE.json")
+}

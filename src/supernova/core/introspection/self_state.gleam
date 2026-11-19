@@ -58,13 +58,27 @@ pub fn default() -> SelfState {
   )
 }
 
+/// Legacy workspace location, still used in open mode.
 pub fn self_state_path(workspace_path: String) -> String {
   workspace_path <> "/.supernova/SELF_STATE.json"
 }
 
+/// Self-state file inside a caller-supplied state directory (closed-group mode).
+pub fn state_path_in(state_dir: String) -> String {
+  state_dir <> "/state.json"
+}
+
 pub fn from_workspace(workspace_path: String) -> SelfState {
-  let path = self_state_path(workspace_path)
-  case ffi_read_file(path) {
+  load_from_path(self_state_path(workspace_path))
+}
+
+/// Load state from a caller-supplied state directory.
+pub fn from_dir(state_dir: String) -> SelfState {
+  load_from_path(state_path_in(state_dir))
+}
+
+fn load_from_path(file_path: String) -> SelfState {
+  case ffi_read_file(file_path) {
     Error(_) -> default()
     Ok(content) ->
       case json.parse(from: content, using: self_state_decoder()) {
@@ -75,9 +89,25 @@ pub fn from_workspace(workspace_path: String) -> SelfState {
 }
 
 pub fn save(workspace_path: String, state: SelfState) -> Result(Nil, String) {
-  let dir = workspace_path <> "/.supernova"
-  use _ <- result.try(ffi_ensure_dir(dir))
-  ffi_write_file(self_state_path(workspace_path), encode(state))
+  save_at(
+    workspace_path <> "/.supernova",
+    self_state_path(workspace_path),
+    state,
+  )
+}
+
+/// Save to a caller-supplied state directory.
+pub fn save_in(state_dir: String, state: SelfState) -> Result(Nil, String) {
+  save_at(state_dir, state_path_in(state_dir), state)
+}
+
+fn save_at(
+  directory: String,
+  file_path: String,
+  state: SelfState,
+) -> Result(Nil, String) {
+  use _ <- result.try(ffi_ensure_dir(directory))
+  ffi_write_file(file_path, encode(state))
 }
 
 pub fn apply_outcome(
