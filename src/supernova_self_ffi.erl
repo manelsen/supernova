@@ -1,6 +1,6 @@
 -module(supernova_self_ffi).
 -export([has_ascii_letter/1, sha256_hex/1, try_lock_file/1, remove_lock_file/1, list_agent_dirs/1, with_lock/2,
-         clear_dir/1, try_global_lock/1, release_global_lock/1]).
+         clear_dir/1, try_global_lock/1, release_global_lock/1, rename_file/2]).
 
 has_ascii_letter(Binary) when is_binary(Binary) ->
     lists:any(fun(C) ->
@@ -38,8 +38,9 @@ with_lock(Key, Fun) when is_function(Fun, 0) ->
 
 %% Remove everything inside Dir but keep Dir. Returns the number of regular
 %% files removed. A missing directory counts as empty.
-clear_dir(Dir0) when is_binary(Dir0) ->
-    Dir = binary_to_list(Dir0),
+%% The path stays a binary: binary_to_list would split UTF-8 bytes into
+%% separate characters and point at a different directory.
+clear_dir(Dir) when is_binary(Dir) ->
     case file:list_dir(Dir) of
         {error, enoent} -> {ok, 0};
         {error, Reason} -> {error, list_to_binary(file:format_error(Reason))};
@@ -61,3 +62,9 @@ try_global_lock(Key) ->
 release_global_lock(Key) ->
     _ = global:del_lock({{supernova_reflection, Key}, self()}, [node()]),
     nil.
+
+rename_file(From, To) ->
+    case file:rename(From, To) of
+        ok -> {ok, nil};
+        {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
+    end.

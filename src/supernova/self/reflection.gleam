@@ -31,6 +31,7 @@ import supernova/self/drift
 import supernova/self/epoch
 import supernova/self/journal
 import supernova/self/memory
+import supernova/self/template as prompt_template
 
 const prompt_path = "priv/reflection/reflection_prompt.md"
 
@@ -248,12 +249,12 @@ pub fn reflect_from_epoch(
         True -> {
           let result =
             reflect_locked(data_dir, principal, llm_config, now, cfg, started)
-          release_lock(data_dir, principal)
           case result {
             Error("forgotten during reflection") -> Nil
             Error(_) -> record_attempt(data_dir, principal, now, False)
             Ok(_) -> record_attempt(data_dir, principal, now, True)
           }
+          release_lock(data_dir, principal)
           result
         }
       }
@@ -536,13 +537,14 @@ fn build_prompt(
       "pessoa: " <> entry.user <> "\nagente: " <> entry.agent
     })
     |> string.join("\n---\n")
-  template
-  |> string.replace("{{core}}", prose)
-  |> string.replace("{{addenda}}", addenda)
-  |> string.replace("{{traits}}", trait_lines)
-  |> string.replace("{{neighbors}}", neighbors)
-  |> string.replace("{{experience}}", experiences)
-  |> string.replace("{{journal}}", journal_text)
+  prompt_template.render(template, [
+    #("core", prose),
+    #("addenda", addenda),
+    #("traits", trait_lines),
+    #("neighbors", neighbors),
+    #("experience", experiences),
+    #("journal", journal_text),
+  ])
 }
 
 fn describe_trait(

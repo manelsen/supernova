@@ -20,6 +20,7 @@ import supernova/self/constellation
 import supernova/self/core as self_core
 import supernova/self/memory
 import supernova/self/sampler
+import supernova/self/template as prompt_template
 
 const day_ms = 86_400_000
 
@@ -214,18 +215,16 @@ fn apply_candidate(
     |> list.map(fn(item) { "- " <> item.reason })
     |> string.join("\n")
   let prompt =
-    template
-    |> string.replace(
-      "{{core}}",
-      case self_core.read_prose(data_dir, principal) {
+    prompt_template.render(template, [
+      #("core", case self_core.read_prose(data_dir, principal) {
         Some(text) -> text
         None -> ""
-      },
-    )
-    |> string.replace("{{addenda}}", memory.addenda(data_dir, principal))
-    |> string.replace("{{from}}", describe(constellation, candidate.from))
-    |> string.replace("{{to}}", describe(constellation, candidate.to))
-    |> string.replace("{{reasons}}", reasons)
+      }),
+      #("addenda", memory.addenda(data_dir, principal)),
+      #("from", describe(constellation, candidate.from)),
+      #("to", describe(constellation, candidate.to)),
+      #("reasons", reasons),
+    ])
   let messages = [
     provider.system_message(prompt),
     provider.user_message("Escreva o parágrafo agora."),

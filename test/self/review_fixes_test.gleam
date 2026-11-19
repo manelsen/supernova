@@ -25,6 +25,7 @@ import supernova/self/journal
 import supernova/self/memory
 import supernova/self/reflection
 import supernova/self/sampler
+import supernova/self/template
 
 fn mock_provider() -> provider.ProviderConfig {
   provider.ProviderConfig(
@@ -351,6 +352,51 @@ pub fn drift_prompt_describes_traits_test() {
     clear_prompts()
   })
 }
+
+// 13. Placeholders are filled in one pass; inserted text is not rescanned.
+pub fn template_renders_in_one_pass_test() {
+  template.render("a {{from}} b {{to}} c {{from}}", [
+    #("from", "x {{to}}"),
+    #("to", "y"),
+  ])
+  |> should.equal("a x {{to}} b y c x {{to}}")
+  template.render("{{unknown}} {{", [#("from", "x")])
+  |> should.equal("{{unknown}} {{")
+}
+
+// 14. An unreadable epoch fails closed; a missing one is epoch 0.
+pub fn unreadable_epoch_fails_closed_test() {
+  support.with_runtime_root(cfg(), fn(root) {
+    born(root, "sim:alice", at)
+    epoch.read(root, "sim:alice") |> should.equal(Ok(0))
+    epoch.unchanged(root, "sim:alice", 0) |> should.be_true()
+    let assert Ok(1) = epoch.bump(root, "sim:alice")
+    epoch.read(root, "sim:alice") |> should.equal(Ok(1))
+    file_exists(root <> "/agents/sim_alice/self/forget_epoch.tmp")
+    |> should.equal(Ok(False))
+    let assert Ok(_) =
+      write_file(root <> "/agents/sim_alice/self/forget_epoch", "garbage")
+    epoch.read(root, "sim:alice") |> should.be_error()
+    epoch.unchanged(root, "sim:alice", 0) |> should.be_false()
+    epoch.unchanged(root, "sim:alice", 1) |> should.be_false()
+  })
+}
+
+// 15. Clearing a workspace works under a non-ASCII data dir.
+pub fn clear_dir_handles_non_ascii_paths_test() {
+  support.with_runtime_root(cfg(), fn(root) {
+    let dir = root <> "/ação/workspace"
+    let assert Ok(_) = ensure_dir(dir <> "/pasta")
+    let assert Ok(_) = write_file(dir <> "/notas.md", "x")
+    let assert Ok(_) = write_file(dir <> "/pasta/b.md", "y")
+    clear_dir(dir) |> should.equal(Ok(2))
+    file_exists(dir <> "/notas.md") |> should.equal(Ok(False))
+    file_exists(dir) |> should.equal(Ok(True))
+  })
+}
+
+@external(erlang, "supernova_self_ffi", "clear_dir")
+fn clear_dir(path: String) -> Result(Int, String)
 
 @external(erlang, "supernova_mock_ffi", "clear_prompts")
 fn clear_prompts() -> Nil

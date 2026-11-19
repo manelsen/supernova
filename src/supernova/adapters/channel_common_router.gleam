@@ -867,7 +867,14 @@ fn forget_epoch_for(agent_id: String) -> Int {
 
 /// False when the owner forgot while this turn was running.
 fn turn_still_current(profile: SessionProfile) -> Bool {
-  forget_epoch_for(profile.agent_id) == profile.turn_epoch
+  case
+    closed_self_dir_for_agent(profile.agent_id),
+    closed_group_global.get_config()
+  {
+    Some(_), Some(cfg) ->
+      epoch.unchanged(cfg.data_dir, profile.agent_id, profile.turn_epoch)
+    _, _ -> True
+  }
 }
 
 fn put_session_profile(
