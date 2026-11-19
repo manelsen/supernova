@@ -268,7 +268,7 @@ Each adapter:
 
 - **Platform**: Erlang/OTP (BEAM)
 - **Package Manager**: Gleam native (gleam.toml)
-- **Docker Base**: erlang:28-alpine
+- **Docker Base**: erlang:28.5.0.8-alpine
 
 ## Testing & QA
 
