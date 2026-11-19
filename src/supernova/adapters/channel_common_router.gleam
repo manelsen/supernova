@@ -320,6 +320,28 @@ fn run_executor_for_context_with_purpose(
   }
 }
 
+fn run_executor_for_name(
+  messages: List(provider.ChatMessage),
+  llm_config: provider.ProviderConfig,
+  context: closed_group_types.PrincipalContext,
+  call_id: String,
+) -> Result(provider.ChatResponse, executor.ExecutorError) {
+  case closed_group_global.get_runtime() {
+    Some(runtime) ->
+      executor.run_with_context(
+        messages,
+        llm_config,
+        [],
+        executor.RunContext(
+          ..closed_group_runtime.run_context(runtime, context),
+          purpose: "name",
+          call_id_override: Some(call_id),
+        ),
+      )
+    None -> executor.run(messages, llm_config, [])
+  }
+}
+
 fn handle_inbound_message_for_handler(
   expected_channel: String,
   msg: port.ChannelMessage,
@@ -1175,10 +1197,11 @@ fn maybe_handle_birth(
   context: Option(closed_group_types.PrincipalContext),
 ) -> Option(port.ChannelReply) {
   case closed_group_global.get_config(), context {
-    Some(cfg), Some(_) ->
+    Some(cfg), Some(turn_context) ->
       case cfg.access.mode {
         config.Allowlist -> {
           let principal_id = msg.channel <> ":" <> msg.user_id
+          let now = closed_group_global.now()
           let generate = fn(prompt: String) {
             case
               run_executor_for_context_with_purpose(
@@ -1193,13 +1216,27 @@ fn maybe_handle_birth(
               Error(_) -> Error("birth generation failed")
             }
           }
+          let extract = fn(prompt: String) {
+            case
+              run_executor_for_name(
+                [provider.user_message(prompt)],
+                llm_config,
+                turn_context,
+                "name:" <> principal_id <> ":" <> int.to_string(now),
+              )
+            {
+              Ok(response) -> Ok(response.content)
+              Error(_) -> Error("name extraction failed")
+            }
+          }
           let step =
             birth.step(
               cfg.data_dir,
               principal_id,
               msg.content,
-              closed_group_global.now(),
+              now,
               generate,
+              extract,
             )
           case step {
             birth.AskName(text) -> Some(port.reply(to: msg, content: text))

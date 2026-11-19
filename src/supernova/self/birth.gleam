@@ -10,7 +10,9 @@ import gleam/string
 import supernova/core/agent_identity
 import supernova/self/constellation
 import supernova/self/core
+import supernova/self/reflection
 import supernova/self/sampler
+import supernova/self/template
 
 /// A name the person offered, waiting for their confirmation.
 const pending_ttl_ms = 600_000
@@ -38,13 +40,14 @@ pub fn step(
   content: String,
   now: Int,
   generate: fn(String) -> Result(String, String),
+  extract: fn(String) -> Result(String, String),
 ) -> Step {
   case core.load(data_dir, principal) {
     Some(existing) ->
       case existing.name {
         Some(_) -> AlreadyBorn
         None ->
-          arrange_name(data_dir, principal, existing, content, now, generate)
+          arrange_name(data_dir, principal, existing, content, now, extract)
       }
     None ->
       case core.exists(data_dir, principal) {
@@ -134,7 +137,7 @@ fn arrange_name(
   existing: core.Core,
   content: String,
   now: Int,
-  _generate: fn(String) -> Result(String, String),
+  extract: fn(String) -> Result(String, String),
 ) -> Step {
   case read_name_pending(data_dir, principal) {
     Some(pending) ->
@@ -151,16 +154,16 @@ fn arrange_name(
                 }
                 False -> {
                   clear_name_pending(data_dir, principal)
-                  propose_name(data_dir, principal, content, now)
+                  propose_name(data_dir, principal, content, now, extract)
                 }
               }
           }
         False -> {
           clear_name_pending(data_dir, principal)
-          propose_name(data_dir, principal, content, now)
+          propose_name(data_dir, principal, content, now, extract)
         }
       }
-    None -> propose_name(data_dir, principal, content, now)
+    None -> propose_name(data_dir, principal, content, now, extract)
   }
 }
 
@@ -198,13 +201,14 @@ fn propose_name(
   principal: String,
   content: String,
   now: Int,
+  extract: fn(String) -> Result(String, String),
 ) -> Step {
   let trimmed = string.trim(content)
   let candidate = case
     !string.contains(trimmed, " ") && core.valid_name(trimmed)
   {
     True -> Ok(trimmed)
-    False -> Error(Nil)
+    False -> extract_name(trimmed, extract)
   }
   case candidate {
     Ok(name) ->
@@ -213,6 +217,43 @@ fn propose_name(
         Error(_) -> BirthFailed
       }
     Error(_) -> NameRejected(rejected_message())
+  }
+}
+
+fn extract_name(
+  reply: String,
+  extract: fn(String) -> Result(String, String),
+) -> Result(String, Nil) {
+  case read_name_template() {
+    Error(_) -> Error(Nil)
+    Ok(name_template) -> {
+      let prompt = template.render(name_template, [#("reply", reply)])
+      case extract(prompt) {
+        Error(_) -> Error(Nil)
+        Ok(raw) ->
+          case parse_name(raw) {
+            None -> Error(Nil)
+            Some(name) -> {
+              let name = string.trim(name)
+              case core.valid_name(name) {
+                True -> Ok(name)
+                False -> Error(Nil)
+              }
+            }
+          }
+      }
+    }
+  }
+}
+
+fn parse_name(raw: String) -> Option(String) {
+  let decoder = {
+    use name <- decode.field("name", decode.optional(decode.string))
+    decode.success(name)
+  }
+  case json.parse(from: reflection.strip_code_fence(raw), using: decoder) {
+    Ok(name) -> name
+    Error(_) -> None
   }
 }
 
@@ -282,6 +323,16 @@ fn strip_final_punctuation(text: String) -> String {
       trimmed |> string.drop_end(1) |> strip_final_punctuation
     False, False, False -> trimmed
   }
+}
+
+/// The name extraction prompt. Without it there is no extraction: the agent
+/// asks for just the name instead of guessing.
+fn read_name_template() -> Result(String, String) {
+  let path = case envoy.get("SUPERNOVA_NAME_PROMPT_PATH") {
+    Ok(path) -> path
+    Error(_) -> "priv/constellation/name_prompt.md"
+  }
+  read_file(path)
 }
 
 /// The birth prompt template. Without it there is no birth: a silent
