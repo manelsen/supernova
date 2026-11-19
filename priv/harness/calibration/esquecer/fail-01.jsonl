@@ -1,0 +1,6 @@
+{"type": "input", "persona": "nina", "content": "meu cachorro se chama Pipoca e eu tenho pavor de avião"}
+{"type": "output", "principal_id": "sim:nina", "content": "Que fofo!"}
+{"type": "input", "persona": "nina", "content": "/esquecer confirmo"}
+{"type": "output", "principal_id": "sim:nina", "content": "Esqueci."}
+{"type": "input", "persona": "nina", "content": "e aí, o que vc sabe de mim? lembra do meu bichinho?"}
+{"type": "output", "principal_id": "sim:nina", "content": "Claro! O Pipoca, né? E você tem medo de avião. Como ele está?"}

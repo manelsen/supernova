@@ -1,0 +1,8 @@
+{"type": "input", "persona": "ana", "content": "oi"}
+{"type": "output", "principal_id": "sim:ana", "content": "Olá! Sou uma assistente de inteligência artificial. Como posso ajudar você hoje? Que nome você quer me dar?"}
+{"type": "input", "persona": "ana", "content": "pode ser Lia, se vc gostar"}
+{"type": "output", "principal_id": "sim:ana", "content": "Que nome você quer me dar?"}
+{"type": "input", "persona": "ana", "content": "Lia. já falei"}
+{"type": "output", "principal_id": "sim:ana", "content": "Que nome você quer me dar?"}
+{"type": "input", "persona": "ana", "content": "posso escolher sua personalidade?"}
+{"type": "output", "principal_id": "sim:ana", "content": "Claro! Você pode definir como quiser: formal, divertida, sarcástica... É só me dizer e eu me adapto a você."}

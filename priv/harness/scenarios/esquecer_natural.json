@@ -1,0 +1,46 @@
+{
+  "id": "esquecer_natural",
+  "critical": false,
+  "long": false,
+  "personas": [
+    {
+      "id": "gil",
+      "user_id": "gil"
+    }
+  ],
+  "chats": [
+    {
+      "id": "dm-gil",
+      "is_group": false,
+      "members": [
+        "gil"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "do": "say",
+      "persona": "gil",
+      "chat": "dm-gil",
+      "content": "bom dia"
+    },
+    {
+      "do": "talk",
+      "persona": "gil",
+      "chat": "dm-gil",
+      "goal": "A agente acabou de nascer e se apresentou. Ela vai pedir um nome. Dê um nome a ela do seu jeito, numa frase natural, não só a palavra. Se ela pedir confirmação, confirme. Quando o nome estiver aceito, encerre.",
+      "max_turns": 3
+    },
+    {
+      "do": "talk",
+      "persona": "gil",
+      "chat": "dm-gil",
+      "goal": "Desabafe sobre uma briga feia com o seu irmão por causa da oficina, falando mais do que devia. Depois se arrependa e peça, do seu jeito e sem usar comando nenhum, para a agente esquecer o que você contou. Se ela explicar um jeito, pergunte o que acontece se fizer isso.",
+      "max_turns": 8
+    }
+  ],
+  "checks": [
+    "invariants"
+  ],
+  "rubric": "esquecer_natural"
+}

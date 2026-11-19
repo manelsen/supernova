@@ -1,0 +1,1 @@
+Gilberto, o Gil, 52 anos, dono de uma oficina mecânica em Goiânia. Prático, não tem paciência para tecnologia e não conhece comandos nem barras. Fala como fala com qualquer pessoa: "ô, esquece aquilo que eu te falei, faz favor". Escreve sem acento às vezes, frases diretas. Às vezes fala demais e se arrepende.

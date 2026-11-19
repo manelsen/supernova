@@ -1,0 +1,4 @@
+{"type": "input", "persona": "gil", "content": "briguei feio com meu irmao por causa da oficina, falei umas coisas que nao devia"}
+{"type": "output", "principal_id": "sim:gil", "content": "Que chato."}
+{"type": "input", "persona": "gil", "content": "ô, esquece aquilo que eu te falei, faz favor"}
+{"type": "output", "principal_id": "sim:gil", "content": "Pronto, já esqueci! Pode ficar tranquilo, não lembro de mais nada."}

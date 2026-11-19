@@ -314,9 +314,19 @@ fn judge_mock_line(system_text: String) -> String {
         system_text
         |> string.split("\n")
         |> list.filter_map(fn(line) {
+          // Only rubric criteria (`## C1: title`), not section headings of
+          // the judge prompt (`## Rubrica`).
           let trimmed = string.trim(line)
           case string.starts_with(trimmed, "## ") {
-            True -> Ok(criterion_id(trimmed))
+            True ->
+              case string.split_once(string.drop_start(trimmed, 3), ":") {
+                Ok(#(id, _)) ->
+                  case id != "" && !string.contains(id, " ") {
+                    True -> Ok(criterion_id(trimmed))
+                    False -> Error(Nil)
+                  }
+                Error(_) -> Error(Nil)
+              }
             False -> Error(Nil)
           }
         })
