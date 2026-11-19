@@ -106,3 +106,10 @@ Riscos aceitos e documentados:
 - Fase A: run `44386776428` (`Test Suite`), verde.
 - Fase B: run `44386882405` (`Test Suite`, `workflow_dispatch`), verde.
 - O workflow de CI só dispara automaticamente em PRs com base `master`; a Fase B foi verificada por dispatch manual no branch `feat/b2-fase-b`.
+
+## Revisão do mantenedor (pós-merge)
+
+- **Núcleo contornável pelo workspace:** lições (`.supernova/LESSONS.json`) e estado (`.supernova/SELF_STATE.json`) ficam no workspace da agente e entram no prompt de sistema. A ferramenta `file_system` podia escrevê-los, o que deixava o dono reescrever a personalidade por "salva como lição". Agora a política de workspace nega qualquer operação de ferramenta em `.supernova/` no workspace de um principal, inclusive por subagentes que herdam esse workspace. Teste: `principal_cannot_touch_kernel_state_test`. Na Fase C, esses dados vão para `self/`.
+- **Prompt de nascimento:** `{{traits}}` no template é substituído pela lista de traços; sem o marcador, a lista continua anexada ao fim. Sem o arquivo do template não há nascimento: a resposta é a de "ainda não está pronta" e a auditoria `birth_unavailable`, em vez de um prompt provisório silencioso.
+- **Conteúdo real instalado:** `priv/constellation/constellation.json` (v1, 49 traços em 5 dimensões, 200 afinidades) e `priv/constellation/birth_prompt.md`. Simulação com o sorteador real: 600 nascimentos, 0 falhas, 1,32 tentativas em média, 600 constelações distintas; traços mais raros `discorda_em_silencio` (4,6% das agentes) e `voz_ironica` (5,5%).
+- **Pendências baixas:** `uniform_index` dá metade da chance ao primeiro e ao último traço como semente; semente 0 é ponto fixo do gerador; o gravador de prompts do mock cresce sem limite em `persistent_term`.

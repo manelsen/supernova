@@ -48,13 +48,30 @@ pub fn authorize(
       ]
       #(state, Error(reason), commands)
     }
-    False -> {
-      // Check if path is absolute
-      case string.starts_with(path, "/") {
-        True -> authorize_absolute(state, agent_id, operation, path, timestamp)
-        False -> authorize_relative(state, agent_id, operation, path, timestamp)
+    False ->
+      case reaches_kernel_state(state, agent_id, path) {
+        True -> {
+          let reason = "Kernel state is not reachable by tools: " <> path
+          let commands = [
+            WriteDeniedAudit(
+              agent_id,
+              op_to_string(operation),
+              path,
+              reason,
+              timestamp,
+            ),
+          ]
+          #(state, Error(reason), commands)
+        }
+        False ->
+          // Check if path is absolute
+          case string.starts_with(path, "/") {
+            True ->
+              authorize_absolute(state, agent_id, operation, path, timestamp)
+            False ->
+              authorize_relative(state, agent_id, operation, path, timestamp)
+          }
       }
-    }
   }
 }
 
@@ -110,10 +127,7 @@ pub fn get_effective_workspace(
 }
 
 /// Check if an agent has external read access.
-pub fn has_external_read(
-  state: WorkspacePolicyState,
-  agent_id: String,
-) -> Bool {
+pub fn has_external_read(state: WorkspacePolicyState, agent_id: String) -> Bool {
   let rule = get_rule(state, agent_id)
   rule.external_read_allowed
 }
@@ -151,6 +165,53 @@ pub fn deny_path(
 // ============================================================================
 // Internal Helpers
 // ============================================================================
+
+/// A principal agent's `.supernova/` holds kernel state (lessons, self state)
+/// that feeds its system prompt, so its tools may not read or write it.
+/// Only the part of the path inside the workspace is inspected, because the
+/// data dir itself may live under a `.supernova` directory.
+fn reaches_kernel_state(
+  state: WorkspacePolicyState,
+  agent_id: String,
+  path: String,
+) -> Bool {
+  // Sub-agents inherit the parent's workspace, so look at the root agent.
+  case string.contains(root_agent(state, agent_id), ":") {
+    False -> False
+    True -> {
+      // `..` is rejected earlier, so dropping empty and `.` segments makes
+      // every spelling of an absolute path compare equal.
+      let workspace = normalize(get_effective_workspace(state, agent_id))
+      let inside = case string.starts_with(path, "/") {
+        False -> path
+        True -> {
+          let absolute = normalize(path)
+          case string.starts_with(absolute, workspace <> "/") {
+            True -> string.drop_start(absolute, string.length(workspace) + 1)
+            False -> ""
+          }
+        }
+      }
+      string.split(inside, "/") |> list.contains(".supernova")
+    }
+  }
+}
+
+fn normalize(path: String) -> String {
+  "/"
+  <> {
+    string.split(path, "/")
+    |> list.filter(fn(segment) { segment != "" && segment != "." })
+    |> string.join("/")
+  }
+}
+
+fn root_agent(state: WorkspacePolicyState, agent_id: String) -> String {
+  case dict.get(state.parent_of, agent_id) {
+    Ok(parent_id) -> root_agent(state, parent_id)
+    Error(_) -> agent_id
+  }
+}
 
 /// Check if a path contains traversal patterns.
 fn contains_traversal(path: String) -> Bool {

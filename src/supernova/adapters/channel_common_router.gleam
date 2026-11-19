@@ -1046,7 +1046,7 @@ fn audit_birth_unavailable(principal_id: String) -> Nil {
           operation: "birth_unavailable",
           target: "constellation",
           result: audit_types.AuditFailure,
-          details: "missing constellation",
+          details: "missing constellation or birth prompt",
         ),
       )
     None -> Nil

@@ -513,3 +513,48 @@ pub fn allowed_access_generates_no_commands_test() {
   list.length(commands)
   |> should.equal(0)
 }
+
+// B2 fix: kernel state under `.supernova/` (lessons, self state) feeds the
+// system prompt, so tools of a principal agent must not reach it.
+pub fn principal_cannot_touch_kernel_state_test() {
+  let state = types.initial_state("/home/u/.supernova/agents")
+  let ws = "/home/u/.supernova/agents/sim_alice/workspace"
+  let denied = fn(op, path) {
+    let #(_, result, _) = pure.authorize(state, "sim:alice", op, path, 1)
+    case result {
+      Error(_) -> True
+      Ok(_) -> False
+    }
+  }
+  denied(types.OpWrite, ".supernova/LESSONS.json") |> should.be_true()
+  denied(types.OpWrite, "./.supernova/SELF_STATE.json") |> should.be_true()
+  denied(types.OpWrite, "notes//.supernova/x") |> should.be_true()
+  denied(types.OpRead, ".supernova/LESSONS.json") |> should.be_true()
+  denied(types.OpWrite, ".supernova") |> should.be_true()
+  denied(types.OpWrite, ws <> "/.supernova/LESSONS.json") |> should.be_true()
+  // aliases of an absolute path get the same decision, even with external reads
+  let alias =
+    "/home/u/./.supernova//agents/sim_alice/workspace/./.supernova/LESSONS.json"
+  denied(types.OpWrite, alias) |> should.be_true()
+  let reader =
+    pure.set_rule(
+      state,
+      "sim:alice",
+      types.PolicyRule(
+        ..pure.get_rule(state, "sim:alice"),
+        external_read_allowed: True,
+      ),
+    )
+  let #(_, alias_read, _) =
+    pure.authorize(reader, "sim:alice", types.OpRead, alias, 1)
+  alias_read |> should.be_error()
+  // ordinary files, and a data_dir that itself lives under .supernova, stay allowed
+  denied(types.OpWrite, "notes.txt") |> should.be_false()
+  denied(types.OpWrite, ws <> "/notes.txt") |> should.be_false()
+  denied(types.OpWrite, ".supernovas/x") |> should.be_false()
+  // a sub-agent shares the principal's workspace and the same limit
+  let child = pure.set_parent(state, "sub_1", "sim:alice")
+  let #(_, child_result, _) =
+    pure.authorize(child, "sub_1", types.OpWrite, ".supernova/LESSONS.json", 1)
+  child_result |> should.be_error()
+}

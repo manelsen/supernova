@@ -1,5 +1,6 @@
 import e2e/e2e_support as support
 import envoy
+import exception
 import gleam/dict
 import gleam/erlang/process
 import gleam/io
@@ -594,7 +595,11 @@ fn read_file(path: String) -> Result(String, String)
 fn write_file(path: String, content: String) -> Result(Nil, String)
 
 pub fn sim_birth_unavailable_without_constellation_test() {
-  envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
+  envoy.set(
+    "SUPERNOVA_CONSTELLATION_PATH",
+    "test/fixtures/does_not_exist/constellation.json",
+  )
+  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
   let assert Ok(router) = sim_router.start(mock_provider())
   support.with_runtime_root(base_config(), fn(_root) {
     let events = process.new_subject()
