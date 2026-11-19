@@ -1,4 +1,5 @@
 import gleam/int
+import gleam/list
 import gleam/string
 import gleeunit/should
 import supernova/core/introspection/lesson
@@ -45,3 +46,36 @@ pub fn prompt_item_formats_type_and_context_test() {
   string.contains(item, "[Sucesso]") |> should.equal(True)
   string.contains(item, "Contexto: Planejamento") |> should.equal(True)
 }
+
+pub fn base_dir_paths_and_round_trip_test() {
+  let state_dir = unique_workspace("state-dir") <> "/self"
+  lesson.lessons_path_in(state_dir)
+  |> should.equal(state_dir <> "/lessons.json")
+
+  let entry =
+    lesson.make_error_lesson("session-3", "Falha ao ler arquivo.", "IO")
+  let assert Ok(_) = lesson.append_in(state_dir, entry)
+
+  let assert Ok(content) = read_file(lesson.lessons_path_in(state_dir))
+  string.contains(content, "Falha ao ler arquivo.") |> should.equal(True)
+  lesson.load_recent_in(state_dir, 5)
+  |> list.length
+  |> should.equal(1)
+}
+
+pub fn workspace_paths_are_unchanged_test() {
+  lesson.lessons_path("/tmp/ws")
+  |> should.equal("/tmp/ws/.supernova/LESSONS.json")
+
+  let workspace = unique_workspace("legacy")
+  let entry = lesson.make_success_lesson("session-4", "Modo aberto.", "legado")
+  let assert Ok(_) = lesson.append(workspace, entry)
+
+  let assert Ok(_) = read_file(lesson.lessons_path(workspace))
+  lesson.load_recent(workspace, 5)
+  |> list.length
+  |> should.equal(1)
+}
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read_file(path: String) -> Result(String, String)

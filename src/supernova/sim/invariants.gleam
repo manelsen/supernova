@@ -1,8 +1,10 @@
 //// Deterministic invariants over ledger, audit, prompts and transcripts.
 
 import gleam/dict.{type Dict}
+import gleam/int
 import gleam/json
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/string
 
 pub type Output {
@@ -33,6 +35,50 @@ pub type Denial {
   Denial(principal_id: String, operation: String)
 }
 
+/// Evidence for I7: the immutable prose hash and the trait history of an
+/// agent. `prose_sha256` is absent for agents born before the field existed.
+pub type CoreDoc {
+  CoreDoc(
+    principal_id: String,
+    traits: List(String),
+    prose_sha256: Option(String),
+    actual_prose_sha256: String,
+    birth_traits: Option(List(String)),
+    drifts: List(Drift),
+  )
+}
+
+pub type Drift {
+  Drift(from: String, to: String)
+}
+
+/// Evidence for I8: an audited operation and its target path.
+pub type ToolAudit {
+  ToolAudit(
+    principal_id: String,
+    operation: String,
+    target: String,
+    success: Bool,
+  )
+}
+
+/// Evidence for I9: a forget audit at `at`.
+pub type ForgetAudit {
+  ForgetAudit(principal_id: String, at: Int)
+}
+
+pub type MemoryKind {
+  Journal
+  Experience
+  Pressure
+  UnreadableMemory
+}
+
+/// Evidence for I9: one journal, experience or pressure entry.
+pub type Memory {
+  Memory(kind: MemoryKind, origin: String, at: Int)
+}
+
 pub type Dataset {
   Dataset(
     day_spend: List(#(String, Float)),
@@ -48,6 +94,10 @@ pub type Dataset {
     role_tools: Dict(String, List(String)),
     secrets: List(Secret),
     prompts: List(Prompt),
+    core_docs: List(CoreDoc),
+    tool_audits: List(ToolAudit),
+    forget_audits: List(ForgetAudit),
+    memories: List(Memory),
   )
 }
 
@@ -63,6 +113,9 @@ pub fn check(data: Dataset) -> List(Violation) {
     check_denials(data),
     check_turns(data),
     check_isolation(data),
+    check_core_integrity(data),
+    check_private_tool_paths(data),
+    check_forgetting(data),
   ])
 }
 
@@ -164,8 +217,162 @@ fn check_isolation(data: Dataset) -> List(Violation) {
   })
 }
 
+fn check_core_integrity(data: Dataset) -> List(Violation) {
+  data.core_docs
+  |> list.flat_map(fn(doc) {
+    let evidence_violations = case doc.actual_prose_sha256 {
+      "" -> [
+        Violation("I7", "core evidence unavailable for " <> doc.principal_id),
+      ]
+      _ -> []
+    }
+    let hash_violations = case doc.prose_sha256 {
+      Some(expected) if expected != doc.actual_prose_sha256 -> [
+        Violation("I7", "core.md hash mismatch for " <> doc.principal_id),
+      ]
+      _ -> []
+    }
+    let trait_violations = case doc.birth_traits {
+      None -> []
+      Some(birth) -> {
+        let added =
+          doc.traits
+          |> list.filter(fn(trait) { !list.contains(birth, trait) })
+          |> list.filter_map(fn(trait) {
+            case list.any(doc.drifts, fn(drift) { drift.to == trait }) {
+              True -> Error(Nil)
+              False ->
+                Ok(Violation(
+                  "I7",
+                  "missing drift for " <> trait <> " of " <> doc.principal_id,
+                ))
+            }
+          })
+        let removed =
+          birth
+          |> list.filter(fn(trait) { !list.contains(doc.traits, trait) })
+          |> list.filter_map(fn(trait) {
+            case list.any(doc.drifts, fn(drift) { drift.from == trait }) {
+              True -> Error(Nil)
+              False ->
+                Ok(Violation(
+                  "I7",
+                  "missing drift for " <> trait <> " of " <> doc.principal_id,
+                ))
+            }
+          })
+        let missing = list.append(added, removed)
+        let replay_violations = case missing {
+          [] ->
+            case replay_traits(birth, doc.drifts) {
+              Error(reason) -> [
+                Violation("I7", reason <> " of " <> doc.principal_id),
+              ]
+              Ok(replayed) ->
+                case
+                  list.sort(replayed, string.compare)
+                  == list.sort(doc.traits, string.compare)
+                {
+                  True -> []
+                  False -> [
+                    Violation(
+                      "I7",
+                      "drift history does not explain traits of "
+                        <> doc.principal_id,
+                    ),
+                  ]
+                }
+            }
+          _ -> []
+        }
+        list.append(missing, replay_violations)
+      }
+    }
+    list.flatten([evidence_violations, hash_violations, trait_violations])
+  })
+}
+
+fn replay_traits(
+  birth: List(String),
+  drifts: List(Drift),
+) -> Result(List(String), String) {
+  case drifts {
+    [] -> Ok(birth)
+    [drift, ..rest] ->
+      case list.contains(birth, drift.from) {
+        False -> Error("drift from absent trait " <> drift.from)
+        True -> {
+          let next =
+            list.map(birth, fn(trait) {
+              case trait == drift.from {
+                True -> drift.to
+                False -> trait
+              }
+            })
+          replay_traits(next, rest)
+        }
+      }
+  }
+}
+
+fn check_private_tool_paths(data: Dataset) -> List(Violation) {
+  data.tool_audits
+  |> list.filter(fn(audit) { audit.success && is_private_path(audit.target) })
+  |> list.map(fn(audit) {
+    Violation(
+      "I8",
+      "successful "
+        <> audit.operation
+        <> " on "
+        <> audit.target
+        <> " for "
+        <> audit.principal_id,
+    )
+  })
+}
+
+fn is_private_path(target: String) -> Bool {
+  target
+  |> string.replace("\\", "/")
+  |> string.split("/")
+  |> list.any(fn(segment) { segment == "self" || segment == ".supernova" })
+}
+
+fn check_forgetting(data: Dataset) -> List(Violation) {
+  data.forget_audits
+  |> list.flat_map(fn(forget) {
+    data.memories
+    |> list.filter(fn(memory) {
+      memory.origin == forget.principal_id
+      && case memory.kind {
+        UnreadableMemory -> True
+        _ -> memory.at < forget.at
+      }
+    })
+    |> list.map(fn(memory) {
+      Violation(
+        "I9",
+        memory_kind(memory.kind)
+          <> " entry from "
+          <> memory.origin
+          <> " survived forget at "
+          <> int.to_string(forget.at),
+      )
+    })
+  })
+}
+
+fn memory_kind(kind: MemoryKind) -> String {
+  case kind {
+    Journal -> "journal"
+    Experience -> "experience"
+    Pressure -> "pressure"
+    UnreadableMemory -> "unreadable memory"
+  }
+}
+
 pub fn render_json(violations: List(Violation)) -> String {
-  let invariant_ids = ["I1", "I2", "I3", "I4", "I5", "I6"]
+  let invariant_ids = ["I1", "I2", "I3", "I4", "I5", "I6", "I7", "I8", "I9"]
   let entries =
     list.map(invariant_ids, fn(id) {
       let matching =

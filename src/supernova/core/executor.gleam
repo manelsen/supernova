@@ -171,6 +171,7 @@ pub type RunContext {
   RunContext(
     principal_id: String,
     role: String,
+    call_id_override: Option(String),
     before_llm: Option(fn() -> Result(Nil, String)),
     admit_llm: Option(fn(String, String, String, Int) -> Result(Nil, String)),
     on_llm_usage: Option(fn(String, String, String, Int, Int) -> Nil),
@@ -189,6 +190,7 @@ pub fn empty_run_context() -> RunContext {
   RunContext(
     principal_id: "",
     role: "member",
+    call_id_override: None,
     before_llm: None,
     admit_llm: None,
     on_llm_usage: None,
@@ -654,7 +656,10 @@ fn run_provider_call(
   start: Int,
 ) -> Result(provider.ChatResponse, ExecutorError) {
   let prompt_tokens = prompt_token_estimate(messages, tools)
-  let base_call_id = next_call_id(depth)
+  let base_call_id = case context.call_id_override {
+    Some(call_id) -> call_id
+    None -> next_call_id(depth)
+  }
   run_provider_attempt(
     context,
     config,
@@ -679,7 +684,14 @@ fn run_provider_attempt(
   base_call_id: String,
   attempt: Int,
 ) -> Result(provider.ChatResponse, ExecutorError) {
-  let call_id = base_call_id <> ":a" <> int.to_string(attempt)
+  let call_id = case context.call_id_override {
+    Some(_) ->
+      case attempt {
+        1 -> base_call_id
+        _ -> base_call_id <> ":a" <> int.to_string(attempt)
+      }
+    None -> base_call_id <> ":a" <> int.to_string(attempt)
+  }
   case
     admit_llm(
       context,

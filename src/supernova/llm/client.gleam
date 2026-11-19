@@ -212,6 +212,79 @@ fn special_mock_response(
   messages: List(provider.ChatMessage),
   config: provider.ProviderConfig,
 ) -> Option(String) {
+  let system_text =
+    messages
+    |> list.filter(fn(message) { message.role == "system" })
+    |> list.map(fn(message) { message.content })
+    |> string.join("\n")
+  // Reflection calls are recognized by the fixed user message the runtime
+  // sends; the system prompt belongs to the maintainer and can change.
+  case latest_user_content(messages) {
+    Some(content) ->
+      case string.contains(content, "Reflita agora") {
+        True ->
+          case
+            string.contains(system_text, "[mock-invalid-reflection]"),
+            string.contains(system_text, "[mock-fenced-reflection]")
+          {
+            True, _ -> Some("not json")
+            False, True ->
+              Some("```json\n" <> reflection_mock_json(system_text) <> "\n```")
+            False, False -> Some(reflection_mock_json(system_text))
+          }
+        False -> special_mock_response_plain(messages, config)
+      }
+    None -> special_mock_response_plain(messages, config)
+  }
+}
+
+fn reflection_mock_json(system_text: String) -> String {
+  let experiences =
+    "{\"experiences\":[{\"text\":\"Aprendi a confiar no que foi vivido.\"}],"
+  case reflection_neighbor(system_text) {
+    Some(#(from, to)) ->
+      experiences
+      <> "\"pressures\":[{\"from\":\""
+      <> from
+      <> "\",\"to\":\""
+      <> to
+      <> "\",\"strength\":0.9,\"reason\":\"Aprendi com a convivência.\"}]}"
+    None -> experiences <> "\"pressures\":[]}"
+  }
+}
+
+/// First "- from -> to — description" line of the neighbor list.
+fn reflection_neighbor(system_text: String) -> Option(#(String, String)) {
+  let found =
+    system_text
+    |> string.split("\n")
+    |> list.find_map(fn(line) {
+      let stripped = string.trim(line)
+      case string.starts_with(stripped, "- ") {
+        False -> Error(Nil)
+        True ->
+          case string.split(string.drop_start(stripped, 2), " -> ") {
+            [from, target] -> {
+              let to = case string.split(target, " — ") {
+                [id, ..] -> id
+                _ -> target
+              }
+              Ok(#(from, string.trim(to)))
+            }
+            _ -> Error(Nil)
+          }
+      }
+    })
+  case found {
+    Ok(pair) -> Some(pair)
+    Error(_) -> None
+  }
+}
+
+fn special_mock_response_plain(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+) -> Option(String) {
   case latest_user_content(messages) {
     Some(content) ->
       case string.contains(content, "[stream-error]") {

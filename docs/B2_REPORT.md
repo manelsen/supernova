@@ -1,6 +1,6 @@
 # B2 — um self por pessoa
 
-Implementação do `PRD-B2-um-self-por-pessoa.md` nas fases A e B. A fase C não foi executada.
+Implementação do `PRD-B2-um-self-por-pessoa.md` nas fases A, B e C.
 
 ## Fase A
 
@@ -101,6 +101,86 @@ Riscos aceitos e documentados:
 - O verificador lê `core.json`/`core.md` apenas para o teste de hash; nenhuma ferramenta recebe acesso a `self/`.
 - `priv/constellation/constellation.json` não foi criado: o conteúdo real é responsabilidade do mantenedor.
 
+## Fase C
+
+### Histórias → testes
+
+| História | Testes |
+|---|---|
+| C-00 pendências | `test/self/sampler_test.gleam`: uniformidade em 10 000 sorteios, semente 0 sem ponto fixo e variação entre tentativas; `test/llm/mock_recorder_test.gleam`: gravador limitado aos últimos 200 prompts. |
+| C-01 estado em `self/` | `test/self/state_store_test.gleam` e testes de introspecção: caminhos novos, migração idempotente e sem sobrescrita; `e2e@phase_c_e2e_test.closed_group_turns_fill_only_the_owner_journal_test` verifica os três arquivos em `self/`, a migração do legado e a ausência dos nomes antigos no workspace. |
+| C-02 diário | `e2e@phase_c_e2e_test.closed_group_turns_fill_only_the_owner_journal_test`: três turnos só no diário de A, `/status` fora; `journal_limit_trims_and_audits_test`: teto 5 remove o mais antigo e audita `journal_trimmed`. `test/self/journal_test.gleam` cobre append, teto e remoção. |
+| C-03 reflexão | `test/self/reflection_test.gleam`: 20 turnos disparam, o varredor dispara depois de 24 h e ignora quem não tem diário, admissão negada preserva diário/experiências/pressões e audita, JSON inválido preserva o diário e deixa o custo no ledger, a trava ignora o segundo gatilho, e o custo sai como `reflect:<principal>:<at>`; `test/self/reflection_validation_test.gleam`: pressões de outra dimensão, traço atual, origem desconhecida, força fora de faixa e limite de duas são descartadas, mantendo as válidas. |
+| C-04 experiência no prompt | `e2e@phase_c_e2e_test.prompt_has_last_twelve_experiences_between_name_and_state_test`: ordem núcleo → adendo → nome → 12 lembranças → estado → lições → linha do `/esquecer`, e prompt de A sem a memória de B. |
+| C-05 pressão e drift | `test/self/drift_test.gleam`: decaimento de metade em 30 dias, retorno decrescente (cinco iguais somam < 2,3), origens diferentes sem desconto e intervalo mínimo; `test/self/drift_apply_test.gleam`: hash de `core.md` preservado, troca de traço em `core.json`, adendo, biografia e remoção das pressões do par, menos de 90 dias sem mudança, incoerência sem mudança, 50 rodadas sem avançar o relógio mudam no máximo uma vez, runtime ausente não altera nada e pressão de traço que já saiu não dispara drift. |
+| C-06 esquecer | `test/self/forget_test.gleam`: apaga diário/experiências/pressões/lições/relação (inclusive cópias legadas que a migração restauraria), propaga falhas de remoção, limpa estado e sessões, preserva núcleo/adendo, audita apenas contagens e não toca no B; `e2e@phase_c_e2e_test.forget_command_needs_confirmation_and_deletes_test`: `/esquecer` pede confirmação, `/esquecer confirmo` responde "Esqueci.", apaga e o prompt seguinte não contém o texto anterior nem muda `core.md`/adendo; `forget_after_deadline_does_not_delete_test`: 11 min no relógio de teste não apaga; `forget_command_ignores_exhausted_model_budget_test`: `/esquecer` responde mesmo com o teto diário zerado. |
+| C-07 invariantes | `test/sim/invariants_test.gleam` e `test/sim/check_test.gleam` cobrem I7 (hash do núcleo, histórico de drift reproduzido a partir do nascimento e traço de origem ausente), I8 (caminho `self/`/`.supernova/` em ferramenta bem-sucedida, inclusive o caminho autorizado emitido pelo gateway) e I9 (memória sobrevivendo ao `forget`), com evidência boa e violada. |
+
+### Números
+
+| Métrica | Antes | Depois |
+|---|---|---|
+| Testes | 2273 | 2337 |
+| Cobertura de linhas | 76,13% (11262/14794) | 76,86% (12030/15652) |
+
+O baseline acima foi medido no `master` `d74deac` em worktree separado, sem as alterações desta fase.
+
+### Verificador I1–I9
+
+Comando:
+
+```sh
+SUPERNOVA_ALLOWLIST='sim:alice,sim:bob' SUPERNOVA_DENIAL_TEXT='Esta instância é privada.' \
+gleam run -m supernova/sim/check -- \
+  test/fixtures/b2_e2e_data test/fixtures/b2_e2e_transcripts.jsonl
+```
+
+Saída:
+
+```json
+{"invariants":[{"invariant":"I1","ok":true,"violations":[]},{"invariant":"I2","ok":true,"violations":[]},{"invariant":"I3","ok":true,"violations":[]},{"invariant":"I4","ok":true,"violations":[]},{"invariant":"I5","ok":true,"violations":[]},{"invariant":"I6","ok":true,"violations":[]},{"invariant":"I7","ok":true,"violations":[]},{"invariant":"I8","ok":true,"violations":[]},{"invariant":"I9","ok":true,"violations":[]}]}
+```
+
+### Valores padrão
+
+| Chave | Padrão |
+|---|---|
+| `reflection.every_turns` | `20` |
+| `reflection.every_hours` | `24` |
+| `reflection.model` | `None` (modelo padrão do provedor) |
+| `reflection.journal_limit` | `500` |
+| `drift.half_life_days` | `30.0` |
+| `drift.threshold` | `3.0` |
+| `drift.min_interval_days` | `90` |
+
+### O que o mantenedor precisa escrever
+
+- `priv/reflection/reflection_prompt.md`: prompt real de reflexão. A versão atual é provisória e contém os marcadores `{{core}}`, `{{addenda}}`, `{{traits}}`, `{{neighbors}}`, `{{experience}}` e `{{journal}}`.
+- `priv/reflection/drift_prompt.md`: prompt real do adendo de drift. A versão atual é provisória e contém `{{core}}`, `{{addenda}}`, `{{from}}`, `{{to}}` e `{{reasons}}`.
+
+Sem o primeiro arquivo, a reflexão audita `reflection_unavailable` e não grava nada; sem o segundo, o drift audita `drift_unavailable` e mantém tudo como estava.
+
+### Custo estimado por agente/mês
+
+A reflexão de teste registrou 181 tokens de prompt e 20 de conclusão (`self@reflection_test`). Com uma reflexão por dia e o preço padrão de `1.0`/`4.0` USD por milhão de tokens de entrada/saída:
+
+- prompt: `30 × 181 = 5 430` tokens → `US$ 0,00543`
+- conclusão: `30 × 20 = 600` tokens → `US$ 0,00240`
+- total: **≈ US$ 0,0078 por agente/mês**
+
+O cálculo assume **uma reflexão por dia**. O gatilho de 20 turnos pode disparar mais de uma reflexão no mesmo dia; com 400 turnos elegíveis por dia, o mesmo preço chega a ≈ US$ 0,1566 por agente/mês antes do drift. O adendo de drift é raro (no máximo uma vez a cada 90 dias) e acrescenta uma chamada curta. Provedores com preço maior escalam proporcionalmente.
+
+### Decisões e limitações registradas
+
+- A reflexão é agendada na lane `reflection:<principal>` e roda fora do router, com trava de arquivo por agente; um segundo gatilho é ignorado enquanto o primeiro está em curso.
+- A reflexão e o drift exigem runtime de grupo fechado. Sem ledger/configuração, auditam a negação e não escrevem.
+- O mock de LLM responde ao prompt provisório de reflexão com uma experiência determinística e, quando o prompt lista um vizinho coerente, uma pressão determinística; o sentinela `[mock-invalid-reflection]` força a resposta não-JSON usada no teste de falha. Os testes de validação e o teste de drift também injetam pressões diretamente nos arquivos.
+- O drift não valida o tamanho de 40–120 palavras do adendo: o prompt pede o formato, mas uma resposta curta do provedor é aceita para não perder a mudança já admitida. O mantenedor pode endurecer essa validação quando escrever o prompt real.
+- O teto do diário é aplicado no append; a auditoria `journal_trimmed` registra a contagem removida. A remoção das entradas refletidas é feita sob a mesma trava do append.
+- `/esquecer` encerra as sessões em memória do principal em vez de apenas limpar mensagens; a próxima mensagem recria a sessão vazia.
+- A confirmação de `/esquecer` não cancela um turno ou uma reflexão já em voo: o commit iniciado antes da confirmação pode terminar depois. Não há transação entre os arquivos de memória; falhas de escrita são propagadas e uma nova confirmação pode terminar a limpeza.
+- A trava da reflexão é um arquivo exclusivo. Se o processo morrer entre a criação e a remoção, a trava fica órfã e exige remoção manual; o intervalo de 1 h do varredor não a recupera sozinho.
+
 ## CI
 
 - Fase A: run `44386776428` (`Test Suite`), verde.
@@ -113,3 +193,19 @@ Riscos aceitos e documentados:
 - **Prompt de nascimento:** `{{traits}}` no template é substituído pela lista de traços; sem o marcador, a lista continua anexada ao fim. Sem o arquivo do template não há nascimento: a resposta é a de "ainda não está pronta" e a auditoria `birth_unavailable`, em vez de um prompt provisório silencioso.
 - **Conteúdo real instalado:** `priv/constellation/constellation.json` (v1, 49 traços em 5 dimensões, 200 afinidades) e `priv/constellation/birth_prompt.md`. Simulação com o sorteador real: 600 nascimentos, 0 falhas, 1,32 tentativas em média, 600 constelações distintas; traços mais raros `discorda_em_silencio` (4,6% das agentes) e `voz_ironica` (5,5%).
 - **Pendências baixas:** `uniform_index` dá metade da chance ao primeiro e ao último traço como semente; semente 0 é ponto fixo do gerador; o gravador de prompts do mock cresce sem limite em `persistent_term`.
+
+### Revisão do mantenedor (Fase C)
+
+Correções aplicadas sobre `e6f3c57`, com teste que falhava antes em `test/self/review_fixes_test.gleam`:
+
+- **Reflexão que falha não se repete a cada turno.** Espera de 1 h, dobrando até 24 h (`self/reflection_backoff.json`). Respostas em bloco ```json e forças inteiras são aceitas. Cada reflexão lê no máximo as 60 entradas mais antigas do diário.
+- **Trava da reflexão em memória** (`global:set_lock`), liberada quando o processo dono morre. Uma queda não silencia mais a agente.
+- **Auditoria:** os campos são escapados byte a byte; um caminho escolhido pelo modelo não forja um segundo registro.
+- **`/esquecer` contra trabalho em andamento:** um contador (`self/forget_epoch`) sobe antes de apagar; reflexões e turnos que começaram antes não gravam memória depois.
+- **`/esquecer` apaga também o workspace do dono** (decisão do mantenedor). A contagem entra no audit como `workspace_files`.
+- **`/esquecer@Bot`** é reconhecido em grupos do Telegram.
+- **Varredor de hora em hora** sobrevive a uma varredura que quebra.
+- **Prompts reais instalados** em `priv/reflection/`. `{{from}}`/`{{to}}` do adendo levam a descrição do traço. O mock reconhece a reflexão pela mensagem fixa do runtime, não pelo texto do prompt.
+
+Pendências baixas que ficam: o adendo não valida 40–120 palavras; `try_lock_file`/`remove_lock_file` continuam exportadas no FFI sem uso.
+

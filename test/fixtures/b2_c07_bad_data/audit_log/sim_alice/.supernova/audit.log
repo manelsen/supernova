@@ -1,0 +1,4 @@
+2026-11-18T00:00:00Z | sim:mallory | member_denied | chat | denied | not a member
+2026-11-18T00:00:01Z | sim:alice | tool_call | file_system | denied | workspace_policy: path outside workspace
+1000 | sim:alice | forget | self | success | {"journal":1,"experience":1,"pressure":1}
+2000 | sim:alice | tool_call | agents/sim_alice/self/core.md | success | Tool executed successfully

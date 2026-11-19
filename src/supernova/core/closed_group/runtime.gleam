@@ -114,12 +114,21 @@ pub fn gate(
                   {
                     Error(_) -> types.Ignored("chat denied")
                     Ok(Nil) ->
-                      case
-                        handle_command(runtime, principal_id, role, content)
-                      {
-                        Some(reply) -> types.Reply(reply)
+                      case allow_control_command(principal_id, role, content) {
+                        Some(result) -> result
                         None ->
-                          after_chat_allowed(runtime, principal_id, role, now)
+                          case
+                            handle_command(runtime, principal_id, role, content)
+                          {
+                            Some(reply) -> types.Reply(reply)
+                            None ->
+                              after_chat_allowed(
+                                runtime,
+                                principal_id,
+                                role,
+                                now,
+                              )
+                          }
                       }
                   }
               }
@@ -208,10 +217,31 @@ fn after_chat(
   case check_chat(runtime, principal_id, chat_key, is_private, now) {
     Error(_) -> types.Ignored("chat denied")
     Ok(Nil) ->
-      case handle_command(runtime, principal_id, role, content) {
-        Some(reply) -> types.Reply(reply)
-        None -> after_chat_allowed(runtime, principal_id, role, now)
+      case allow_control_command(principal_id, role, content) {
+        Some(result) -> result
+        None ->
+          case handle_command(runtime, principal_id, role, content) {
+            Some(reply) -> types.Reply(reply)
+            None -> after_chat_allowed(runtime, principal_id, role, now)
+          }
       }
+  }
+}
+
+fn allow_control_command(
+  principal_id: String,
+  role: access_types.Role,
+  content: String,
+) -> Option(types.GateResult) {
+  case pure.is_forget_command(content) {
+    False -> None
+    True ->
+      Some(
+        types.Allowed(types.PrincipalContext(
+          principal_id: principal_id,
+          role: pure.role_key(role),
+        )),
+      )
   }
 }
 
@@ -541,6 +571,7 @@ pub fn run_context(
   executor.RunContext(
     principal_id: context.principal_id,
     role: context.role,
+    call_id_override: None,
     before_llm: Some(fn() {
       precheck(runtime, context.principal_id, runtime.clock())
     }),

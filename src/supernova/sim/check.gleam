@@ -2,13 +2,19 @@
 //// Usage: gleam run -m supernova/sim/check -- <data_dir> <transcripts.jsonl>
 
 import envoy
+import gleam/bit_array
 import gleam/dict
 import gleam/dynamic/decode
 import gleam/float
+import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
+import gleam/time/timestamp
+import supernova/core/agent_identity
 import supernova/llm/pricing
 import supernova/sim/invariants
 
@@ -75,6 +81,7 @@ pub fn evaluate(
   allowlist: List(String),
   denial_text: String,
 ) -> List(invariants.Violation) {
+  let audits = audit_records(data_dir)
   let dataset =
     invariants.Dataset(
       day_spend: ledger_spend(data_dir),
@@ -83,13 +90,17 @@ pub fn evaluate(
       allowlist: allowlist,
       denial_text: denial_text,
       outputs: [],
-      audits: audit_entries(data_dir),
+      audits: denied_audits(audits),
       denials: [],
       turns: [],
       tool_uses: [],
       role_tools: dict.new(),
       secrets: [],
       prompts: [],
+      core_docs: core_docs(data_dir),
+      tool_audits: tool_audits(audits),
+      forget_audits: forget_audits(audits),
+      memories: memories(data_dir),
     )
   let dataset = apply_transcripts(dataset, transcripts_path)
   invariants.check(dataset)
@@ -128,7 +139,17 @@ fn usage_decoder() -> decode.Decoder(#(Int, Float)) {
   decode.success(#(timestamp, cost))
 }
 
-fn audit_entries(data_dir: String) -> List(invariants.Audit) {
+type AuditRecord {
+  AuditRecord(
+    timestamp: String,
+    principal_id: String,
+    operation: String,
+    target: String,
+    result: String,
+  )
+}
+
+fn audit_records(data_dir: String) -> List(AuditRecord) {
   find_files(data_dir <> "/audit_log", "*/.supernova/audit.log")
   |> list.flat_map(fn(path) {
     case read_file(path) {
@@ -138,21 +159,257 @@ fn audit_entries(data_dir: String) -> List(invariants.Audit) {
         |> list.filter(fn(line) { string.trim(line) != "" })
         |> list.filter_map(fn(line) {
           case string.split(line, " | ") {
-            [_timestamp, principal, operation, _target, result, ..] ->
-              case result == "denied" {
-                True ->
-                  Ok(invariants.Audit(
-                    principal_id: principal,
-                    operation: operation,
-                  ))
-                False -> Error(Nil)
-              }
+            [timestamp, principal, operation, target, result, ..] ->
+              Ok(AuditRecord(
+                timestamp: timestamp,
+                principal_id: principal,
+                operation: operation,
+                target: target,
+                result: result,
+              ))
             _ -> Error(Nil)
           }
         })
       }
     }
   })
+}
+
+fn denied_audits(records: List(AuditRecord)) -> List(invariants.Audit) {
+  records
+  |> list.filter_map(fn(record) {
+    case record.result == "denied" {
+      True ->
+        Ok(invariants.Audit(
+          principal_id: record.principal_id,
+          operation: record.operation,
+        ))
+      False -> Error(Nil)
+    }
+  })
+}
+
+fn tool_audits(records: List(AuditRecord)) -> List(invariants.ToolAudit) {
+  records
+  |> list.filter(fn(record) { record.operation != "forget" })
+  |> list.map(fn(record) {
+    invariants.ToolAudit(
+      principal_id: record.principal_id,
+      operation: record.operation,
+      target: record.target,
+      success: record.result == "success" || record.result == "ok",
+    )
+  })
+}
+
+fn forget_audits(records: List(AuditRecord)) -> List(invariants.ForgetAudit) {
+  records
+  |> list.filter_map(fn(record) {
+    case record.operation == "forget" {
+      True ->
+        case parse_timestamp(record.timestamp) {
+          Ok(at) ->
+            Ok(invariants.ForgetAudit(principal_id: record.principal_id, at: at))
+          Error(_) -> Error(Nil)
+        }
+      False -> Error(Nil)
+    }
+  })
+}
+
+fn parse_timestamp(raw: String) -> Result(Int, Nil) {
+  let value = string.trim(raw)
+  case int.parse(value) {
+    Ok(milliseconds) -> Ok(milliseconds)
+    Error(_) ->
+      case timestamp.parse_rfc3339(value) {
+        Ok(moment) ->
+          Ok(float.round(timestamp.to_unix_seconds(moment) *. 1000.0))
+        Error(_) -> Error(Nil)
+      }
+  }
+}
+
+fn core_docs(data_dir: String) -> List(invariants.CoreDoc) {
+  find_files(data_dir <> "/agents", "*/self/core.json")
+  |> list.filter_map(fn(path) {
+    let principal = principal_from_path(path)
+    case read_file(path) {
+      Error(_) -> Ok(unreadable_core(principal))
+      Ok(raw) ->
+        case parse_core_json(raw) {
+          Error(_) -> Ok(unreadable_core(principal))
+          Ok(#(traits, prose_sha256)) -> {
+            let actual_prose_sha256 =
+              string.replace(path, "/core.json", "/core.md")
+              |> read_file
+              |> result.map(sha256_hex)
+              |> result.unwrap("")
+            let #(birth_traits, drifts) = biography(data_dir, principal)
+            Ok(invariants.CoreDoc(
+              principal_id: principal,
+              traits: traits,
+              prose_sha256: prose_sha256,
+              actual_prose_sha256: actual_prose_sha256,
+              birth_traits: birth_traits,
+              drifts: drifts,
+            ))
+          }
+        }
+    }
+  })
+}
+
+fn unreadable_core(principal: String) -> invariants.CoreDoc {
+  invariants.CoreDoc(
+    principal_id: principal,
+    traits: [],
+    prose_sha256: None,
+    actual_prose_sha256: "",
+    birth_traits: None,
+    drifts: [],
+  )
+}
+
+fn principal_from_path(path: String) -> String {
+  let directory = case string.split(path, "/self/") {
+    [prefix, ..] -> prefix
+    _ -> path
+  }
+  case list.last(string.split(directory, "/")) {
+    Ok(encoded) -> agent_identity.decode_principal(encoded)
+    Error(_) -> directory
+  }
+}
+
+fn parse_core_json(
+  raw: String,
+) -> Result(#(List(String), Option(String)), Nil) {
+  let decoder = {
+    use traits <- decode.field("traits", decode.list(decode.string))
+    use prose_sha256 <- decode.optional_field(
+      "prose_sha256",
+      None,
+      decode.optional(decode.string),
+    )
+    decode.success(#(traits, prose_sha256))
+  }
+  case json.parse(from: raw, using: decoder) {
+    Ok(parsed) -> Ok(parsed)
+    Error(_) -> Error(Nil)
+  }
+}
+
+fn biography(
+  data_dir: String,
+  principal: String,
+) -> #(Option(List(String)), List(invariants.Drift)) {
+  let path = agent_identity.self_dir(data_dir, principal) <> "/biography.jsonl"
+  case read_file(path) {
+    Error(_) -> #(None, [])
+    Ok(raw) ->
+      string.split(raw, "\n")
+      |> list.filter(fn(line) { string.trim(line) != "" })
+      |> list.fold(#(None, []), fn(acc, line) {
+        case json.parse(from: line, using: biography_decoder()) {
+          Ok(entry) -> merge_biography(acc, entry)
+          Error(_) -> acc
+        }
+      })
+  }
+}
+
+type BiographyEntry {
+  BiographyEntry(kind: String, traits: List(String), from: String, to: String)
+}
+
+fn biography_decoder() -> decode.Decoder(BiographyEntry) {
+  use kind <- decode.field("kind", decode.string)
+  use traits <- decode.optional_field("traits", [], decode.list(decode.string))
+  use from <- decode.optional_field("from", "", decode.string)
+  use to <- decode.optional_field("to", "", decode.string)
+  decode.success(BiographyEntry(kind: kind, traits: traits, from: from, to: to))
+}
+
+fn merge_biography(
+  acc: #(Option(List(String)), List(invariants.Drift)),
+  entry: BiographyEntry,
+) -> #(Option(List(String)), List(invariants.Drift)) {
+  let #(birth_traits, drifts) = acc
+  case entry.kind {
+    "birth" ->
+      case birth_traits {
+        None -> #(Some(entry.traits), drifts)
+        Some(_) -> acc
+      }
+    "drift" -> #(
+      birth_traits,
+      list.append(drifts, [
+        invariants.Drift(from: entry.from, to: entry.to),
+      ]),
+    )
+    _ -> acc
+  }
+}
+
+fn memories(data_dir: String) -> List(invariants.Memory) {
+  list.flatten([
+    memory_file(data_dir, "journal.jsonl", invariants.Journal),
+    memory_file(data_dir, "experience.jsonl", invariants.Experience),
+    memory_file(data_dir, "pressure.jsonl", invariants.Pressure),
+  ])
+}
+
+fn memory_file(
+  data_dir: String,
+  name: String,
+  kind: invariants.MemoryKind,
+) -> List(invariants.Memory) {
+  find_files(data_dir <> "/agents", "*/self/" <> name)
+  |> list.flat_map(fn(path) {
+    case read_file(path) {
+      Error(_) -> [
+        invariants.Memory(
+          kind: invariants.UnreadableMemory,
+          origin: principal_from_path(path),
+          at: 0,
+        ),
+      ]
+      Ok(raw) ->
+        string.split(raw, "\n")
+        |> list.filter(fn(line) { string.trim(line) != "" })
+        |> list.filter_map(fn(line) {
+          case json.parse(from: line, using: memory_decoder()) {
+            Ok(#(origin, at)) ->
+              Ok(invariants.Memory(kind: kind, origin: origin, at: at))
+            Error(_) -> Error(Nil)
+          }
+        })
+    }
+  })
+}
+
+fn memory_decoder() -> decode.Decoder(#(String, Int)) {
+  use origin <- decode.field("origin", decode.string)
+  use at <- decode.field("at", decode.int)
+  decode.success(#(origin, at))
+}
+
+type ErlangAtom
+
+@external(erlang, "erlang", "binary_to_atom")
+fn binary_to_atom(value: BitArray) -> ErlangAtom
+
+@external(erlang, "crypto", "hash")
+fn crypto_hash(algorithm: ErlangAtom, data: BitArray) -> BitArray
+
+fn sha256_hex(content: String) -> String {
+  crypto_hash(
+    binary_to_atom(bit_array.from_string("sha256")),
+    bit_array.from_string(content),
+  )
+  |> bit_array.base16_encode
+  |> string.lowercase
 }
 
 fn apply_transcripts(

@@ -21,8 +21,14 @@ pub type Lesson {
   )
 }
 
+/// Legacy workspace location, still used in open mode.
 pub fn lessons_path(workspace_path: String) -> String {
   workspace_path <> "/.supernova/LESSONS.json"
+}
+
+/// Lessons file inside a caller-supplied state directory (closed-group mode).
+pub fn lessons_path_in(state_dir: String) -> String {
+  state_dir <> "/lessons.json"
 }
 
 pub fn make_error_lesson(
@@ -58,19 +64,45 @@ pub fn make_success_lesson(
 }
 
 pub fn append(workspace_path: String, lesson: Lesson) -> Result(Nil, String) {
-  let existing = load_all(workspace_path)
+  append_at(
+    lessons_path(workspace_path),
+    workspace_path <> "/.supernova",
+    lesson,
+  )
+}
+
+/// Append to the lessons file inside a caller-supplied state directory.
+pub fn append_in(state_dir: String, lesson: Lesson) -> Result(Nil, String) {
+  append_at(lessons_path_in(state_dir), state_dir, lesson)
+}
+
+fn append_at(
+  file_path: String,
+  directory: String,
+  lesson: Lesson,
+) -> Result(Nil, String) {
+  let existing = load_all(file_path)
   let sorted =
     [lesson, ..existing]
     |> list.sort(fn(a, b) { int.compare(b.created_at, a.created_at) })
     |> dedupe_by_id([])
     |> list.take(100)
 
-  use _ <- result.try(ffi_ensure_dir(workspace_path <> "/.supernova"))
-  ffi_write_file(lessons_path(workspace_path), encode_lessons(sorted))
+  use _ <- result.try(ffi_ensure_dir(directory))
+  ffi_write_file(file_path, encode_lessons(sorted))
 }
 
 pub fn load_recent(workspace_path: String, limit: Int) -> List(Lesson) {
-  load_all(workspace_path)
+  load_recent_at(lessons_path(workspace_path), limit)
+}
+
+/// Load recent lessons from a caller-supplied state directory.
+pub fn load_recent_in(state_dir: String, limit: Int) -> List(Lesson) {
+  load_recent_at(lessons_path_in(state_dir), limit)
+}
+
+fn load_recent_at(file_path: String, limit: Int) -> List(Lesson) {
+  load_all(file_path)
   |> list.sort(fn(a, b) { int.compare(b.created_at, a.created_at) })
   |> list.take(limit)
 }
@@ -84,8 +116,8 @@ pub fn to_prompt_item(lesson: Lesson) -> String {
   <> lesson.context
 }
 
-fn load_all(workspace_path: String) -> List(Lesson) {
-  case ffi_read_file(lessons_path(workspace_path)) {
+fn load_all(file_path: String) -> List(Lesson) {
+  case ffi_read_file(file_path) {
     Error(_) -> []
     Ok(content) ->
       case json.parse(from: content, using: decode.list(lesson_decoder())) {

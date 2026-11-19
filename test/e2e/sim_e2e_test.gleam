@@ -288,6 +288,10 @@ pub fn sim_group_prompts_are_per_person_test() {
           invariants.Secret(principal_id: "sim:alice", marker: "ABACAXI-7781"),
         ],
         prompts: [invariants.Prompt(principal_id: "sim:bob", content: b_prompt)],
+        core_docs: [],
+        tool_audits: [],
+        forget_audits: [],
+        memories: [],
       )
     invariants.check(dataset)
     |> list.any(fn(violation) { violation.invariant == "I6" })

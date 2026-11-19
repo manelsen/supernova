@@ -70,6 +70,7 @@ fn handle_message(
           interactive_state: channel_common_router.InteractiveRouterState(
             session_configs: next_state.session_configs,
             session_profiles: next_state.session_profiles,
+            forget_pending: next_state.forget_pending,
           ),
         ),
       )

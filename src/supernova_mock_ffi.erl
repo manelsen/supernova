@@ -1,6 +1,8 @@
 -module(supernova_mock_ffi).
 -export([ensure_hackney/0, clear_prompts/0, record_prompt/1, prompts/0, sim_http/5, network_fail_once/1, clock_set/1, clock_now/0]).
 
+-define(max_prompts, 200).
+
 %% Return true exactly once per key in the calling process. Used by the mock
 %% provider to simulate a network failure followed by a successful retry.
 clock_set(Timestamp) ->
@@ -35,7 +37,8 @@ clear_prompts() ->
 
 record_prompt(Prompt) ->
     Existing = persistent_term:get({supernova, mock_prompts}, []),
-    persistent_term:put({supernova, mock_prompts}, [Prompt | Existing]),
+    Updated = lists:sublist([Prompt | Existing], ?max_prompts),
+    persistent_term:put({supernova, mock_prompts}, Updated),
     ok.
 
 prompts() ->

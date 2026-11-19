@@ -225,6 +225,38 @@ pub fn command_text(text: String) -> String {
   }
 }
 
+pub type ForgetCommand {
+  ForgetStart
+  ForgetConfirm
+}
+
+/// Parse `/esquecer` and `/esquecer confirmo`, also in the `/esquecer@Bot`
+/// form Telegram uses in groups.
+pub fn forget_command(content: String) -> Option(ForgetCommand) {
+  let words =
+    string.trim(content)
+    |> string.lowercase
+    |> string.split(" ")
+    |> list.filter(fn(word) { word != "" })
+  case words {
+    [first] ->
+      case normalize_command(first) {
+        "/esquecer" -> Some(ForgetStart)
+        _ -> None
+      }
+    [first, "confirmo"] ->
+      case normalize_command(first) {
+        "/esquecer" -> Some(ForgetConfirm)
+        _ -> None
+      }
+    _ -> None
+  }
+}
+
+pub fn is_forget_command(content: String) -> Bool {
+  forget_command(content) != None
+}
+
 pub fn is_eu_command(text: String) -> Bool {
   let command = command_text(text) |> normalize_command
   command == "/eu"
