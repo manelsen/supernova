@@ -1198,3 +1198,25 @@ pub fn reflection_and_drift_defaults_test() {
   config.drift.threshold |> should_equal(3.0)
   config.drift.min_interval_days |> should_equal(90)
 }
+
+pub fn parse_reflection_and_drift_config_test() {
+  let yaml =
+    "reflection:
+  every_turns: 5
+  every_hours: 6
+  model: cheap-model
+  journal_limit: 42
+drift:
+  half_life_days: 10.0
+  threshold: 2.0
+  min_interval_days: 30
+"
+  let assert Ok(config) = parse_yaml(yaml)
+  config.reflection.every_turns |> should_equal(5)
+  config.reflection.every_hours |> should_equal(6)
+  config.reflection.model |> should_equal(Some("cheap-model"))
+  config.reflection.journal_limit |> should_equal(42)
+  config.drift.half_life_days |> should_equal(10.0)
+  config.drift.threshold |> should_equal(2.0)
+  config.drift.min_interval_days |> should_equal(30)
+}
