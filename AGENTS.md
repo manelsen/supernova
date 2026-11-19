@@ -2,6 +2,41 @@
 
 This document provides essential information for AI assistants working with the Supernova codebase.
 
+## Hard Rules (read first)
+
+These rules apply to every contributor, human or automated (executor agents, CodeRabbit Autofix, reviewers). They come from real incidents in this repository.
+
+### Toolchain
+
+- **Use exactly the versions in `.tool-versions`** (Gleam 1.19.2, Erlang 28.5.0.8). Check `gleam --version` before formatting.
+- **Never run `gleam format` over all of `src`/`test` with a different Gleam version.** Another version reformats untouched files and breaks the CI `format --check`. If your local version differs, format only the files you touched and inspect the diff.
+
+### Safety in tests
+
+- **No test may execute a blocked or destructive command.** A test that ran `find . -delete` once deleted the repository. Test shell blocking only through `safe_shell.validate/1`, never by running the command.
+- Tests use no real network, real tokens or real LLM. The LLM is the mock provider.
+- No fixed `process.sleep` to establish concurrent state; use the test clock (`supernova_mock_ffi:clock_set/1`) or explicit synchronization.
+- Only the process that owns a `Subject` receives on it. Jobs and handlers create their own reply subjects.
+
+### Workflow
+
+- **TDD:** write the test, confirm it fails, then implement. Record the failing run in the commit message.
+- One commit per story when working from a PRD, with the commit message the PRD gives.
+- Pull before committing on a shared branch: executor agents and CodeRabbit Autofix may both commit to the same PR branch.
+- **Never merge, tag, publish a release or push images.** The maintainer does that after review.
+
+### Kernel invariants
+
+- **An agent's `self/` directory and its workspace `.supernova/` directory are kernel state.** Only the kernel or runtime writes there; no tool may read or write them. Do not weaken `workspace_policy` checks for these paths.
+- **Every LLM call is admitted through the resource ledger** (`admit_llm_call`) and charged to the owning principal. If admission is denied, the operation does not happen.
+- **Fail closed:** when access, budget or ledger state is unavailable, deny.
+- In closed-group mode the agent's core (`self/core.md`) is never rewritten after birth.
+
+### Maintainer-owned content
+
+- **Do not write or change the content of `priv/constellation/` or `priv/reflection/`.** The constellation and the birth, reflection and drift prompts belong to the maintainer. Executors may create test fixtures and clearly marked provisional files only when a PRD asks for them.
+- Do not touch `blackboard` or `memory_federation` unless a PRD says so.
+
 ## Project Overview
 
 **Supernova** is an AI operating system built on the BEAM (Erlang VM) using the Gleam language. It provides infrastructure for multi-agent systems with:
@@ -82,8 +117,8 @@ gleam run -m supernova/wizard_main
 # Run tests
 gleam test
 
-# Format code
-gleam format
+# Format code (Gleam 1.19.2 only, see Hard Rules)
+gleam format src test
 
 # Check formatting (CI gate)
 gleam format --check src test
@@ -216,8 +251,8 @@ Each adapter:
 
 | Requirement | Version |
 |-------------|---------|
-| Gleam | >= 1.0.0 |
-| Erlang/OTP | >= 25.0 |
+| Gleam | 1.19.2 (`.tool-versions`) |
+| Erlang/OTP | 28.5.0.8 (`.tool-versions`) |
 | PostgreSQL | >= 12 |
 
 ### Key Dependencies
@@ -272,13 +307,17 @@ fn actor_integration_test() {
 Before opening a PR, ensure:
 
 ```sh
-gleam format --check src test  # Must pass
-gleam test                      # All tests green
+gleam --version                     # Must be 1.19.2
+gleam format --check src test       # Must pass
+gleam build --warnings-as-errors    # No warnings
+gleam test                          # All tests green
+make coverage                       # Line coverage gate (75%)
 ```
 
 CI enforces:
-- Format checking (warnings = errors)
-- Full test suite execution
+- Format checking with Gleam 1.19.2
+- Build with warnings as errors
+- Full test suite execution and the coverage gate
 
 ## Adding New Channels
 
