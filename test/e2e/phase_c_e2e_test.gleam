@@ -16,6 +16,7 @@ import supernova/core/introspection/lesson
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
 import supernova/llm/provider
+import supernova/self/core as self_core
 import supernova/self/journal
 import supernova/self/memory
 
@@ -327,6 +328,9 @@ pub fn forget_command_needs_confirmation_and_deletes_test() {
       memory.append_experiences(root, "sim:alice", [
         memory.Experience(at: 1, origin: "sim:alice", text: "segredo"),
       ])
+    let assert Ok(_) =
+      memory.append_addendum(root, "sim:alice", "Adendo que fica.")
+    let assert Some(prose_before) = self_core.read_prose(root, "sim:alice")
     route(router, "alice", "uma conversa")
     wait_for(fn() { list.length(journal.load(root, "sim:alice")) == 1 }, 5000)
     |> should.be_true()
@@ -350,6 +354,45 @@ pub fn forget_command_needs_confirmation_and_deletes_test() {
     }
     journal.load(root, "sim:alice") |> should.equal([])
     memory.experiences(root, "sim:alice") |> should.equal([])
+    self_core.read_prose(root, "sim:alice") |> should.equal(Some(prose_before))
+    memory.addenda(root, "sim:alice")
+    |> should.equal("\n\nAdendo que fica.\n")
+    clear_prompts()
+    route(router, "alice", "depois")
+    let prompt = wait_for_prompt("depois", 5000)
+    prompt |> should.not_equal("")
+    string.contains(prompt, "segredo") |> should.equal(False)
+    string.contains(prompt, "uma conversa") |> should.equal(False)
+    string.contains(prompt, "Adendo que fica.") |> should.be_true()
+  })
+}
+
+pub fn forget_after_deadline_does_not_delete_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
+  let assert Ok(router) = sim_router.start(mock_provider())
+  support.with_runtime_root(cfg(500), fn(root) {
+    birth(router, "alice", "Lua")
+    route(router, "alice", "uma conversa")
+    wait_for(fn() { list.length(journal.load(root, "sim:alice")) == 1 }, 5000)
+    |> should.be_true()
+    case route_result(router, "alice", "/esquecer") {
+      Ok(port.ImmediateReply(_)) -> Nil
+      _ -> should.fail()
+    }
+    closed_group_global.set_clock(fn() { support.now + 11 * 60 * 1000 })
+    let confirm = route_result(router, "alice", "/esquecer confirmo")
+    case confirm {
+      Ok(port.ImmediateReply(reply)) ->
+        string.contains(reply.content, "Não há confirmação pendente")
+        |> should.be_true()
+      _ -> should.fail()
+    }
+    journal.load(root, "sim:alice") |> list.length |> should.equal(1)
   })
 }
 

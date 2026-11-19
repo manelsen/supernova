@@ -147,3 +147,52 @@ pub fn forget_stops_sessions_of_the_owner_test() {
     session_supervisor.stop(sup)
   })
 }
+
+pub fn forgetting_alice_does_not_touch_bob_test() {
+  support.with_runtime_root(cfg(), fn(root) {
+    seed(root)
+    let assert Ok(_) =
+      self_core.save_birth(
+        root,
+        "sim:bob",
+        sampler.Sampled(traits: ["curiosa"], seed: 2, attempts: 1),
+        1,
+        "Núcleo de B.",
+        1000,
+      )
+    let assert Ok(_) =
+      journal.append(
+        root,
+        "sim:bob",
+        journal.Entry(
+          at: 2000,
+          origin: "sim:bob",
+          session: "sim:group-1:bob",
+          user: "segredo de B",
+          agent: "guardei",
+        ),
+        10,
+      )
+    let assert Ok(_) =
+      memory.append_experiences(root, "sim:bob", [
+        memory.Experience(at: 2000, origin: "sim:bob", text: "segredo de B"),
+      ])
+    let assert Ok(_) =
+      memory.append_pressures(root, "sim:bob", [
+        memory.Pressure(
+          at: 2000,
+          origin: "sim:bob",
+          from: "curiosa",
+          to: "cauta",
+          strength: 1.0,
+          reason: "segredo de B",
+        ),
+      ])
+    let assert Ok(_) = forget.forget(root, "sim:alice", None)
+    journal.load(root, "sim:bob") |> list.length |> should.equal(1)
+    memory.experiences(root, "sim:bob") |> list.length |> should.equal(1)
+    memory.pressures(root, "sim:bob") |> list.length |> should.equal(1)
+    let assert Some(core) = self_core.load(root, "sim:bob")
+    core.traits |> should.equal(["curiosa"])
+  })
+}
