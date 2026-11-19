@@ -225,6 +225,11 @@ pub fn command_text(text: String) -> String {
   }
 }
 
+pub fn is_forget_command(content: String) -> Bool {
+  let command = string.trim(content) |> string.lowercase
+  command == "/esquecer" || command == "/esquecer confirmo"
+}
+
 pub fn is_eu_command(text: String) -> Bool {
   let command = command_text(text) |> normalize_command
   command == "/eu"

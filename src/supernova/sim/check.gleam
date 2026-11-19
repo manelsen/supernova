@@ -235,10 +235,10 @@ fn core_docs(data_dir: String) -> List(invariants.CoreDoc) {
   |> list.filter_map(fn(path) {
     let principal = principal_from_path(path)
     case read_file(path) {
-      Error(_) -> Error(Nil)
+      Error(_) -> Ok(unreadable_core(principal))
       Ok(raw) ->
         case parse_core_json(raw) {
-          Error(_) -> Error(Nil)
+          Error(_) -> Ok(unreadable_core(principal))
           Ok(#(traits, prose_sha256)) -> {
             let actual_prose_sha256 =
               string.replace(path, "/core.json", "/core.md")
@@ -258,6 +258,17 @@ fn core_docs(data_dir: String) -> List(invariants.CoreDoc) {
         }
     }
   })
+}
+
+fn unreadable_core(principal: String) -> invariants.CoreDoc {
+  invariants.CoreDoc(
+    principal_id: principal,
+    traits: [],
+    prose_sha256: None,
+    actual_prose_sha256: "",
+    birth_traits: None,
+    drifts: [],
+  )
 }
 
 fn principal_from_path(path: String) -> String {
@@ -357,7 +368,13 @@ fn memory_file(
   find_files(data_dir <> "/agents", "*/self/" <> name)
   |> list.flat_map(fn(path) {
     case read_file(path) {
-      Error(_) -> []
+      Error(_) -> [
+        invariants.Memory(
+          kind: invariants.UnreadableMemory,
+          origin: principal_from_path(path),
+          at: 0,
+        ),
+      ]
       Ok(raw) ->
         string.split(raw, "\n")
         |> list.filter(fn(line) { string.trim(line) != "" })

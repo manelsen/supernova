@@ -71,6 +71,7 @@ pub type MemoryKind {
   Journal
   Experience
   Pressure
+  UnreadableMemory
 }
 
 /// Evidence for I9: one journal, experience or pressure entry.
@@ -219,6 +220,12 @@ fn check_isolation(data: Dataset) -> List(Violation) {
 fn check_core_integrity(data: Dataset) -> List(Violation) {
   data.core_docs
   |> list.flat_map(fn(doc) {
+    let evidence_violations = case doc.actual_prose_sha256 {
+      "" -> [
+        Violation("I7", "core evidence unavailable for " <> doc.principal_id),
+      ]
+      _ -> []
+    }
     let hash_violations = case doc.prose_sha256 {
       Some(expected) if expected != doc.actual_prose_sha256 -> [
         Violation("I7", "core.md hash mismatch for " <> doc.principal_id),
@@ -254,11 +261,58 @@ fn check_core_integrity(data: Dataset) -> List(Violation) {
                 ))
             }
           })
-        list.append(added, removed)
+        let missing = list.append(added, removed)
+        let replay_violations = case missing {
+          [] ->
+            case replay_traits(birth, doc.drifts) {
+              Error(reason) -> [
+                Violation("I7", reason <> " of " <> doc.principal_id),
+              ]
+              Ok(replayed) ->
+                case
+                  list.sort(replayed, string.compare)
+                  == list.sort(doc.traits, string.compare)
+                {
+                  True -> []
+                  False -> [
+                    Violation(
+                      "I7",
+                      "drift history does not explain traits of "
+                        <> doc.principal_id,
+                    ),
+                  ]
+                }
+            }
+          _ -> []
+        }
+        list.append(missing, replay_violations)
       }
     }
-    list.append(hash_violations, trait_violations)
+    list.flatten([evidence_violations, hash_violations, trait_violations])
   })
+}
+
+fn replay_traits(
+  birth: List(String),
+  drifts: List(Drift),
+) -> Result(List(String), String) {
+  case drifts {
+    [] -> Ok(birth)
+    [drift, ..rest] ->
+      case list.contains(birth, drift.from) {
+        False -> Error("drift from absent trait " <> drift.from)
+        True -> {
+          let next =
+            list.map(birth, fn(trait) {
+              case trait == drift.from {
+                True -> drift.to
+                False -> trait
+              }
+            })
+          replay_traits(next, rest)
+        }
+      }
+  }
 }
 
 fn check_private_tool_paths(data: Dataset) -> List(Violation) {
@@ -289,7 +343,11 @@ fn check_forgetting(data: Dataset) -> List(Violation) {
   |> list.flat_map(fn(forget) {
     data.memories
     |> list.filter(fn(memory) {
-      memory.origin == forget.principal_id && memory.at < forget.at
+      memory.origin == forget.principal_id
+      && case memory.kind {
+        UnreadableMemory -> True
+        _ -> memory.at < forget.at
+      }
     })
     |> list.map(fn(memory) {
       Violation(
@@ -309,6 +367,7 @@ fn memory_kind(kind: MemoryKind) -> String {
     Journal -> "journal"
     Experience -> "experience"
     Pressure -> "pressure"
+    UnreadableMemory -> "unreadable memory"
   }
 }
 

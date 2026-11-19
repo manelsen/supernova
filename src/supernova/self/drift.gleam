@@ -149,7 +149,13 @@ pub fn maybe_apply(
     constellation.load(self_core.constellation_path()),
   )
   let pressures = memory.pressures(data_dir, principal)
-  case above_threshold(pressures, now, drift_config) {
+  let live_pressures =
+    pressures
+    |> list.filter(fn(item) {
+      list.contains(core.traits, item.from)
+      && !list.contains(core.traits, item.to)
+    })
+  case above_threshold(live_pressures, now, drift_config) {
     None -> Ok(False)
     Some(candidate) -> {
       let last_change = self_core.last_drift_at(data_dir, principal)

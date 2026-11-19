@@ -53,7 +53,14 @@ pub fn forget(
 
   let lessons = lesson.load_recent_in(self_dir, 10_000)
   let lesson_count = list.length(lessons)
-  let _ = delete_file(lesson.lessons_path_in(self_dir))
+  use _ <- result.try(delete_file(lesson.lessons_path_in(self_dir)))
+  // A legacy copy left behind by an upgrade would be migrated back on the
+  // next prompt build if only the private copy were deleted.
+  use _ <- result.try(
+    delete_file(
+      lesson.lessons_path(agent_identity.workspace_dir(data_dir, principal)),
+    ),
+  )
 
   let has_relationship = case
     file_exists(relationship.relationship_path_in(self_dir))
@@ -65,19 +72,26 @@ pub fn forget(
     True -> 1
     False -> 0
   }
-  let _ = delete_file(relationship.relationship_path_in(self_dir))
+  use _ <- result.try(delete_file(relationship.relationship_path_in(self_dir)))
+  use _ <- result.try(
+    delete_file(
+      relationship.relationship_path(agent_identity.workspace_dir(
+        data_dir,
+        principal,
+      )),
+    ),
+  )
 
   let state = self_state.from_dir(self_dir)
-  let _ =
-    self_state.save_in(
-      self_dir,
-      self_state.SelfState(
-        ..state,
-        concerns: [],
-        open_questions: [],
-        last_reflection: "Sem reflexão registrada.",
-      ),
-    )
+  use _ <- result.try(self_state.save_in(
+    self_dir,
+    self_state.SelfState(
+      ..state,
+      concerns: [],
+      open_questions: [],
+      last_reflection: "Sem reflexão registrada.",
+    ),
+  ))
 
   let session_count = clear_sessions(supervisor, principal)
   let counts =

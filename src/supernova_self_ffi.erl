@@ -33,4 +33,4 @@ list_agent_dirs(Path) when is_binary(Path) ->
     end.
 
 with_lock(Key, Fun) when is_function(Fun, 0) ->
-    global:trans({supernova_self_lock, Key}, Fun).
+    global:trans({{supernova_self_lock, Key}, self()}, Fun).

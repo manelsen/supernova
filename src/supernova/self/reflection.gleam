@@ -12,6 +12,7 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
+import supernova/channel/chat_lanes
 import supernova/config
 import supernova/core/agent_identity
 import supernova/core/audit_log/types as audit_types
@@ -115,7 +116,7 @@ pub fn schedule(principal: String, llm_config: provider.ProviderConfig) -> Nil {
         False -> Nil
         True -> {
           let _ =
-            process.spawn_unlinked(fn() {
+            chat_lanes.submit("reflection:" <> principal, fn() {
               let _ = reflect(cfg.data_dir, principal, llm_config, now)
               Nil
             })

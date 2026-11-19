@@ -104,10 +104,12 @@ pub fn remove_many(
   principal: String,
   reflected: List(Entry),
 ) -> Result(Nil, String) {
-  let remaining =
-    load(data_dir, principal)
-    |> list.filter(fn(entry) { !list.contains(reflected, entry) })
-  replace(data_dir, principal, remaining)
+  with_lock(path(data_dir, principal), fn() {
+    let remaining =
+      load(data_dir, principal)
+      |> list.filter(fn(entry) { !list.contains(reflected, entry) })
+    replace(data_dir, principal, remaining)
+  })
 }
 
 pub fn without_origin(

@@ -60,16 +60,26 @@ fn migrate_file(
   use destination_exists <- result.try(ffi_file_exists(to_path))
   case destination_exists {
     True -> Ok(Nil)
-    False ->
-      case ffi_read_file(from_path) {
-        // Missing legacy file: nothing to migrate.
-        Error(_) -> Ok(Nil)
-        Ok(content) -> {
-          use _ <- result.try(ffi_ensure_dir(directory))
-          use _ <- result.try(ffi_write_file(to_path, content))
-          ffi_delete_file(from_path)
-        }
+    False -> {
+      use legacy_exists <- result.try(ffi_file_exists(from_path))
+      case legacy_exists {
+        False -> Ok(Nil)
+        True ->
+          case ffi_read_file(from_path) {
+            Error(reason) -> Error(reason)
+            Ok(content) -> {
+              use _ <- result.try(ffi_ensure_dir(directory))
+              case ffi_write_file(to_path, content) {
+                Error(reason) -> {
+                  let _ = ffi_delete_file(to_path)
+                  Error(reason)
+                }
+                Ok(_) -> ffi_delete_file(from_path)
+              }
+            }
+          }
       }
+    }
   }
 }
 

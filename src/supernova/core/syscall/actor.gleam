@@ -102,11 +102,16 @@ pub type ToolExecutor =
   fn(String, String) -> Result(String, String)
 
 type ToolReservation {
-  ToolReservation(principal_id: String, tool_name: String, expires_at: Int)
+  ToolReservation(
+    principal_id: String,
+    tool_name: String,
+    audit_target: String,
+    expires_at: Int,
+  )
 }
 
 type ClaimedTool {
-  ClaimedTool(principal_id: String, charged_at: Int)
+  ClaimedTool(principal_id: String, charged_at: Int, audit_target: String)
 }
 
 const tool_reservation_ttl_ms = 5000
@@ -420,6 +425,17 @@ fn tool_touches_write(tool_name: String, args: String) -> Bool {
   tool_name == "file_system" && string.contains(args, "\"write\"")
 }
 
+fn tool_audit_target(tool_name: String, args: String) -> String {
+  case tool_name {
+    "file_system" ->
+      case argument_path(args) {
+        Some(path) -> path
+        None -> tool_name
+      }
+    _ -> tool_name
+  }
+}
+
 fn tool_path_check(
   actor_state: ActorState,
   principal_id: String,
@@ -554,6 +570,7 @@ fn authorize_tool(
                 ToolReservation(
                   principal_id: principal_id,
                   tool_name: tool_name,
+                  audit_target: tool_audit_target(tool_name, args),
                   expires_at: timestamp + tool_reservation_ttl_ms,
                 )
               // Execution is charged only when the caller claims the
@@ -636,6 +653,7 @@ fn handle_message(
                     ClaimedTool(
                       principal_id: reservation.principal_id,
                       charged_at: timestamp,
+                      audit_target: reservation.audit_target,
                     ),
                   ),
                 ),
@@ -678,7 +696,7 @@ fn handle_message(
           )
         Error(_) ->
           case dict.get(actor_state.claimed_tools, reservation_id) {
-            Ok(ClaimedTool(principal_id, charged_at)) -> {
+            Ok(ClaimedTool(principal_id, charged_at, _)) -> {
               case
                 actor_state.budget_policy,
                 same_hour_bucket(charged_at, ffi_current_timestamp())
@@ -712,11 +730,17 @@ fn handle_message(
         Ok(_) -> #(audit_types.AuditSuccess, "ok")
         Error(reason) -> #(audit_types.AuditFailure, reason)
       }
+      let audit_target = case
+        dict.get(actor_state.claimed_tools, reservation_id)
+      {
+        Ok(ClaimedTool(_, _, target)) -> target
+        Error(_) -> tool_name
+      }
       audit_syscall(
         actor_state.audit_log,
         principal_id,
         "tool_call",
-        tool_name,
+        audit_target,
         audit_result,
         details,
         timestamp,
