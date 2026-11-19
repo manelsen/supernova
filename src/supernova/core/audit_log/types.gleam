@@ -172,13 +172,19 @@ pub fn result_to_string(result: AuditResult) -> String {
 pub fn format_entry(entry: AuditEntry) -> String {
   int.to_string(entry.timestamp)
   <> " | "
-  <> entry.agent_id
+  <> escape_field(entry.agent_id)
   <> " | "
-  <> entry.operation
+  <> escape_field(entry.operation)
   <> " | "
-  <> entry.target
+  <> escape_field(entry.target)
   <> " | "
   <> result_to_string(entry.result)
   <> " | "
-  <> entry.details
+  <> escape_field(entry.details)
 }
+
+/// Keep one audit event on one line with six fields. Targets can come from
+/// model-chosen paths, so line breaks and the field separator are escaped.
+/// Ordinary values are unchanged.
+@external(erlang, "supernova_audit_ffi", "escape_field")
+pub fn escape_field(value: String) -> String

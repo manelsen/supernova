@@ -3,10 +3,12 @@
 //// Runs outside the router. Admission and usage go through the owner's ledger
 //// with a `reflect:<principal>:<at>` call id.
 
+import exception
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -26,12 +28,18 @@ import supernova/self/audit
 import supernova/self/constellation
 import supernova/self/core as self_core
 import supernova/self/drift
+import supernova/self/epoch
 import supernova/self/journal
 import supernova/self/memory
 
 const prompt_path = "priv/reflection/reflection_prompt.md"
 
-const lock_name = "/.reflection.lock"
+/// Oldest journal entries read by one reflection. The rest wait for the next.
+pub const max_batch = 60
+
+const hour_ms = 3_600_000
+
+const max_backoff_ms = 86_400_000
 
 pub type Outcome {
   Reflected(experiences: Int, pressures: Int)
@@ -74,9 +82,67 @@ pub fn should_reflect(
       let by_time =
         reflection.every_hours > 0
         && now - baseline >= reflection.every_hours * 3_600_000
-      by_count || by_time
+      { by_count || by_time } && !backing_off(data_dir, principal, now)
     }
   }
+}
+
+/// After a failed reflection, wait 1 h, then 2 h, 4 h... up to 24 h before
+/// trying again, so a model that keeps failing does not cost a call per turn.
+fn backing_off(data_dir: String, principal: String, now: Int) -> Bool {
+  let #(failures, last_attempt_at) = read_backoff(data_dir, principal)
+  case failures {
+    0 -> False
+    _ -> now - last_attempt_at < backoff_ms(failures)
+  }
+}
+
+fn backoff_ms(failures: Int) -> Int {
+  let doublings = int.min(failures - 1, 5)
+  int.min(max_backoff_ms, hour_ms * int.bitwise_shift_left(1, doublings))
+}
+
+fn backoff_path(data_dir: String, principal: String) -> String {
+  self_dir(data_dir, principal) <> "/reflection_backoff.json"
+}
+
+fn read_backoff(data_dir: String, principal: String) -> #(Int, Int) {
+  let decoder = {
+    use failures <- decode.field("failures", decode.int)
+    use last_attempt_at <- decode.field("last_attempt_at", decode.int)
+    decode.success(#(failures, last_attempt_at))
+  }
+  case read_file(backoff_path(data_dir, principal)) {
+    Error(_) -> #(0, 0)
+    Ok(raw) ->
+      case json.parse(from: raw, using: decoder) {
+        Ok(value) -> value
+        Error(_) -> #(0, 0)
+      }
+  }
+}
+
+fn record_attempt(
+  data_dir: String,
+  principal: String,
+  now: Int,
+  succeeded: Bool,
+) -> Nil {
+  let failures = case succeeded {
+    True -> 0
+    False -> read_backoff(data_dir, principal).0 + 1
+  }
+  let _ =
+    write_file(
+      backoff_path(data_dir, principal),
+      json.to_string(
+        json.object([
+          #("failures", json.int(failures)),
+          #("last_attempt_at", json.int(now)),
+        ]),
+      ),
+    )
+  Nil
 }
 
 /// Apply the trigger to every known agent. Called by the hourly sweeper.
@@ -85,8 +151,10 @@ pub fn sweep(data_dir: String, llm_config: provider.ProviderConfig) -> Nil {
   list_agent_dirs(data_dir <> "/agents")
   |> list.each(fn(encoded) {
     let principal = agent_identity.decode_principal(encoded)
-    let _ = reflect(data_dir, principal, llm_config, now)
-    Nil
+    guarded(fn() {
+      let _ = reflect(data_dir, principal, llm_config, now)
+      Nil
+    })
   })
 }
 
@@ -102,8 +170,22 @@ pub fn start_sweeper(
 
 fn sweep_loop(data_dir: String, llm_config: provider.ProviderConfig) -> Nil {
   process.sleep(3_600_000)
-  sweep(data_dir, llm_config)
+  guarded(fn() { sweep(data_dir, llm_config) })
   sweep_loop(data_dir, llm_config)
+}
+
+/// Run `body`, logging and swallowing any crash, so the hourly sweeper keeps
+/// running after one bad agent or one bad sweep.
+pub fn guarded(body: fn() -> Nil) -> Nil {
+  case exception.rescue(body) {
+    Ok(Nil) -> Nil
+    Error(error) -> {
+      io.println_error(
+        "error: reflection sweep crashed: " <> string.inspect(error),
+      )
+      Nil
+    }
+  }
 }
 
 /// Schedule an asynchronous reflection when the trigger fires.
@@ -117,7 +199,8 @@ pub fn schedule(principal: String, llm_config: provider.ProviderConfig) -> Nil {
         True -> {
           let _ =
             chat_lanes.submit("reflection:" <> principal, fn() {
-              let _ = reflect(cfg.data_dir, principal, llm_config, now)
+              let started = now_or(closed_group_global.now())
+              let _ = reflect(cfg.data_dir, principal, llm_config, started)
               Nil
             })
           Nil
@@ -134,6 +217,24 @@ pub fn reflect(
   llm_config: provider.ProviderConfig,
   now: Int,
 ) -> Result(Outcome, String) {
+  reflect_from_epoch(
+    data_dir,
+    principal,
+    llm_config,
+    now,
+    epoch.current(data_dir, principal),
+  )
+}
+
+/// Reflect as work that started under forget epoch `started`. If the owner
+/// forgets while the model is thinking, the result is discarded.
+pub fn reflect_from_epoch(
+  data_dir: String,
+  principal: String,
+  llm_config: provider.ProviderConfig,
+  now: Int,
+  started: Int,
+) -> Result(Outcome, String) {
   let now = now_or(now)
   let cfg = case closed_group_global.get_config() {
     Some(cfg) -> cfg.reflection
@@ -142,12 +243,17 @@ pub fn reflect(
   case should_reflect(data_dir, principal, cfg, now) {
     False -> Ok(Skipped)
     True -> {
-      let lock = self_dir(data_dir, principal) <> lock_name
-      case try_lock(lock) {
+      case acquire_lock(data_dir, principal) {
         False -> Ok(Skipped)
         True -> {
-          let result = reflect_locked(data_dir, principal, llm_config, now, cfg)
-          remove_lock(lock)
+          let result =
+            reflect_locked(data_dir, principal, llm_config, now, cfg, started)
+          release_lock(data_dir, principal)
+          case result {
+            Error("forgotten during reflection") -> Nil
+            Error(_) -> record_attempt(data_dir, principal, now, False)
+            Ok(_) -> record_attempt(data_dir, principal, now, True)
+          }
           result
         }
       }
@@ -161,8 +267,9 @@ fn reflect_locked(
   llm_config: provider.ProviderConfig,
   now: Int,
   cfg: config.ReflectionConfig,
+  started: Int,
 ) -> Result(Outcome, String) {
-  let entries = journal.load(data_dir, principal)
+  let entries = journal.load(data_dir, principal) |> list.take(max_batch)
   case entries {
     [] -> Ok(Skipped)
     _ -> {
@@ -291,8 +398,21 @@ fn reflect_locked(
           Error(error_text(error))
         }
         Ok(response) ->
-          case parse_response(response.content) {
-            Error(reason) -> {
+          case
+            epoch.unchanged(data_dir, principal, started),
+            parse_response(response.content)
+          {
+            False, _ -> {
+              audit.record(
+                principal,
+                "reflection_discarded",
+                principal,
+                audit_types.AuditFailure,
+                "forgotten during reflection",
+              )
+              Error("forgotten during reflection")
+            }
+            True, Error(reason) -> {
               audit.record(
                 principal,
                 "reflection_failed",
@@ -302,7 +422,7 @@ fn reflect_locked(
               )
               Error(reason)
             }
-            Ok(#(raw_experiences, raw_pressures)) -> {
+            True, Ok(#(raw_experiences, raw_pressures)) -> {
               let experiences =
                 raw_experiences
                 |> list.filter_map(valid_experience)
@@ -383,7 +503,7 @@ fn build_prompt(
   let addenda = memory.addenda(data_dir, principal)
   let trait_lines =
     traits
-    |> list.map(fn(id) { "g: " <> describe_trait(constellation, id) })
+    |> list.map(fn(id) { "- " <> describe_trait(constellation, id) })
     |> string.join("\n")
   let neighbors =
     traits
@@ -461,7 +581,7 @@ pub fn parse_response(
     )
     decode.success(#(experiences, pressures))
   }
-  case json.parse(from: raw, using: decode.dynamic) {
+  case json.parse(from: strip_code_fence(raw), using: decode.dynamic) {
     Error(_) -> Error("invalid reflection JSON")
     Ok(dynamic) ->
       case decode.run(dynamic, decoder) {
@@ -481,10 +601,32 @@ pub fn parse_response(
   }
 }
 
+/// Models often wrap JSON in a ``` block despite the instructions.
+fn strip_code_fence(raw: String) -> String {
+  let trimmed = string.trim(raw)
+  case string.starts_with(trimmed, "```") {
+    False -> trimmed
+    True -> {
+      let without_open = case string.split_once(trimmed, "\n") {
+        Ok(#(_, rest)) -> rest
+        Error(_) -> ""
+      }
+      let body = string.trim(without_open)
+      case string.ends_with(body, "```") {
+        True -> string.drop_end(body, 3) |> string.trim
+        False -> body
+      }
+    }
+  }
+}
+
 fn raw_pressure_decoder() -> decode.Decoder(RawPressure) {
   use from <- decode.field("from", decode.string)
   use to <- decode.field("to", decode.string)
-  use strength <- decode.field("strength", decode.float)
+  use strength <- decode.field(
+    "strength",
+    decode.one_of(decode.float, [decode.int |> decode.map(int.to_float)]),
+  )
   use reason <- decode.field("reason", decode.string)
   decode.success(RawPressure(
     from: from,
@@ -576,11 +718,24 @@ fn self_dir(data_dir: String, principal: String) -> String {
   agent_identity.self_dir(data_dir, principal)
 }
 
-@external(erlang, "supernova_self_ffi", "try_lock_file")
-fn try_lock(path: String) -> Bool
+/// Take this agent's reflection lock for the calling process. The lock dies
+/// with its holder, so a crash cannot silence the agent.
+pub fn acquire_lock(data_dir: String, principal: String) -> Bool {
+  try_global_lock(self_dir(data_dir, principal))
+}
 
-@external(erlang, "supernova_self_ffi", "remove_lock_file")
-fn remove_lock(path: String) -> Nil
+pub fn release_lock(data_dir: String, principal: String) -> Nil {
+  release_global_lock(self_dir(data_dir, principal))
+}
+
+@external(erlang, "supernova_self_ffi", "try_global_lock")
+fn try_global_lock(key: String) -> Bool
+
+@external(erlang, "supernova_self_ffi", "release_global_lock")
+fn release_global_lock(key: String) -> Nil
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_file(path: String, content: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_self_ffi", "list_agent_dirs")
 fn list_agent_dirs(path: String) -> List(String)

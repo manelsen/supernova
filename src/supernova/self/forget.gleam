@@ -10,6 +10,7 @@ import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
 import supernova/core/session/supervisor as session_supervisor
 import supernova/self/audit
+import supernova/self/epoch
 import supernova/self/journal
 import supernova/self/memory
 
@@ -21,6 +22,7 @@ pub type Counts {
     lessons: Int,
     relationship: Int,
     sessions: Int,
+    workspace_files: Int,
   )
 }
 
@@ -30,6 +32,9 @@ pub fn forget(
   supervisor: Option(session_supervisor.SessionSupervisor),
 ) -> Result(Counts, String) {
   let self_dir = agent_identity.self_dir(data_dir, principal)
+  // Bump first: turns and reflections already in flight check the epoch
+  // before writing, so they stop as early as possible.
+  use _ <- result.try(epoch.bump(data_dir, principal))
 
   let #(journal_kept, journal_count) =
     journal.without_origin(data_dir, principal, principal)
@@ -94,6 +99,10 @@ pub fn forget(
   ))
 
   let session_count = clear_sessions(supervisor, principal)
+  // Files the agent wrote for the owner are also what came from the owner.
+  use workspace_count <- result.try(
+    clear_dir(agent_identity.workspace_dir(data_dir, principal)),
+  )
   let counts =
     Counts(
       journal: journal_count,
@@ -102,6 +111,7 @@ pub fn forget(
       lessons: lesson_count,
       relationship: relationship_count,
       sessions: session_count,
+      workspace_files: workspace_count,
     )
   audit.record(
     principal,
@@ -115,6 +125,7 @@ pub fn forget(
       #("lessons", lesson_count),
       #("relationship", relationship_count),
       #("sessions", session_count),
+      #("workspace_files", workspace_count),
     ]),
   )
   Ok(counts)
@@ -140,6 +151,9 @@ fn clear_sessions(
     }
   }
 }
+
+@external(erlang, "supernova_self_ffi", "clear_dir")
+fn clear_dir(path: String) -> Result(Int, String)
 
 @external(erlang, "supernova_file_system_ffi", "delete_file")
 fn delete_file(path: String) -> Result(Nil, String)

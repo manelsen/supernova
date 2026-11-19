@@ -441,26 +441,3 @@ pub fn invalid_response_keeps_journal_and_charges_test() {
     }
   })
 }
-
-pub fn lock_ignores_second_trigger_test() {
-  let _ =
-    envoy.set(
-      "SUPERNOVA_CONSTELLATION_PATH",
-      "test/fixtures/constellation_small.json",
-    )
-  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
-  support.with_runtime_root(cfg(), fn(root) {
-    let at = 1_700_000_000_000
-    seed(root, at)
-    let assert Ok(_) =
-      write_file(root <> "/agents/sim_alice/self/.reflection.lock", "")
-    let before = journal.load(root, "sim:alice")
-    let assert Ok(reflection.Skipped) =
-      reflection.reflect(root, "sim:alice", mock_provider(), at)
-    journal.load(root, "sim:alice") |> should.equal(before)
-    memory.experiences(root, "sim:alice") |> should.equal([])
-  })
-}
-
-@external(erlang, "supernova_file_system_ffi", "write_file")
-fn write_file(path: String, content: String) -> Result(Nil, String)

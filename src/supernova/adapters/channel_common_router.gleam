@@ -45,6 +45,7 @@ import supernova/llm/stream as llm_stream
 import supernova/self/audit as self_audit
 import supernova/self/birth
 import supernova/self/core as self_core
+import supernova/self/epoch
 import supernova/self/forget
 import supernova/self/journal
 import supernova/self/memory
@@ -77,6 +78,9 @@ pub type SessionProfile {
     bootstrap_state: persona_types.BootstrapState,
     awaiting_bootstrap_answer: Bool,
     draft: persona_types.BootstrapDraft,
+    /// Forget epoch when this message arrived. A turn that finishes after
+    /// /esquecer must not write memory.
+    turn_epoch: Int,
   )
 }
 
@@ -838,7 +842,7 @@ fn session_profile_for_session(
   session_id: String,
   _user_id: String,
 ) -> SessionProfile {
-  case dict.get(state.session_profiles, session_id) {
+  let profile = case dict.get(state.session_profiles, session_id) {
     Ok(profile) -> profile
     Error(_) ->
       SessionProfile(
@@ -848,8 +852,22 @@ fn session_profile_for_session(
         bootstrap_state: persona_types.AskingName,
         awaiting_bootstrap_answer: False,
         draft: persona_types.BootstrapDraft(name: None, soul: None, style: None),
+        turn_epoch: 0,
       )
   }
+  SessionProfile(..profile, turn_epoch: forget_epoch_for(profile.agent_id))
+}
+
+fn forget_epoch_for(agent_id: String) -> Int {
+  case closed_self_dir_for_agent(agent_id), closed_group_global.get_config() {
+    Some(_), Some(cfg) -> epoch.current(cfg.data_dir, agent_id)
+    _, _ -> 0
+  }
+}
+
+/// False when the owner forgot while this turn was running.
+fn turn_still_current(profile: SessionProfile) -> Bool {
+  forget_epoch_for(profile.agent_id) == profile.turn_epoch
 }
 
 fn put_session_profile(
@@ -2172,9 +2190,8 @@ fn maybe_handle_forget(
   case closed_self_dir_for_agent(profile.agent_id) {
     None -> None
     Some(_) -> {
-      let command = string.trim(msg.content) |> string.lowercase
-      case command {
-        "/esquecer" -> {
+      case closed_group_pure.forget_command(msg.content) {
+        Some(closed_group_pure.ForgetStart) -> {
           let count = case closed_group_global.get_config() {
             Some(cfg) ->
               list.length(memory.experiences(cfg.data_dir, profile.agent_id))
@@ -2183,8 +2200,9 @@ fn maybe_handle_forget(
           let reply =
             "Isso apaga tudo o que você me contou: "
             <> int.to_string(count)
-            <> " lembranças, o histórico das nossas conversas e o que eu aprendi"
-            <> " com você. O que eu me tornei fica. Para confirmar, envie"
+            <> " lembranças, o histórico das nossas conversas, o que eu aprendi"
+            <> " com você e os arquivos que guardei para você. O que eu me tornei"
+            <> " fica. Para confirmar, envie"
             <> " /esquecer confirmo nos próximos 10 minutos."
           Some(#(
             InteractiveRouterState(
@@ -2198,7 +2216,7 @@ fn maybe_handle_forget(
             reply,
           ))
         }
-        "/esquecer confirmo" -> {
+        Some(closed_group_pure.ForgetConfirm) -> {
           case dict.get(state.forget_pending, profile.agent_id) {
             Error(_) -> Some(#(state, forgotten_without_pending_reply()))
             Ok(at) -> {
@@ -2243,7 +2261,7 @@ fn maybe_handle_forget(
             }
           }
         }
-        _ -> None
+        None -> None
       }
     }
   }
@@ -2484,6 +2502,26 @@ fn lessons_for_prompt(agent_id: String) -> List(String) {
 }
 
 fn apply_success_self_state(
+  profile: SessionProfile,
+  session_id: String,
+  user_content: String,
+  content: String,
+  llm_config: provider.ProviderConfig,
+) -> Nil {
+  case turn_still_current(profile) {
+    False -> Nil
+    True ->
+      apply_current_success_self_state(
+        profile,
+        session_id,
+        user_content,
+        content,
+        llm_config,
+      )
+  }
+}
+
+fn apply_current_success_self_state(
   profile: SessionProfile,
   session_id: String,
   user_content: String,

@@ -223,9 +223,14 @@ fn special_mock_response(
     True, Some(content) ->
       case string.contains(content, "Reflita agora") {
         True ->
-          case string.contains(system_text, "[mock-invalid-reflection]") {
-            True -> Some("not json")
-            False -> Some(reflection_mock_json(system_text))
+          case
+            string.contains(system_text, "[mock-invalid-reflection]"),
+            string.contains(system_text, "[mock-fenced-reflection]")
+          {
+            True, _ -> Some("not json")
+            False, True ->
+              Some("```json\n" <> reflection_mock_json(system_text) <> "\n```")
+            False, False -> Some(reflection_mock_json(system_text))
           }
         False -> special_mock_response_plain(messages, config)
       }

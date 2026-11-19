@@ -1,5 +1,5 @@
 -module(supernova_audit_ffi).
--export([write_audit_entry/3]).
+-export([write_audit_entry/3, escape_field/1]).
 
 %% Write an audit entry to the agent's rotating log file.
 %% Log file path: <workspace_root>/<agent_id>/.supernova/audit.log
@@ -51,3 +51,15 @@ rotate_file(LogFile) ->
   %% Rename current to .1
   file:rename(LogFile, LogFile ++ ".1"),
   ok.
+
+%% Escape an audit field byte by byte. Gleam's string.replace works on
+%% grapheme clusters, so it cannot see the "\r" or "\n" inside a "\r\n"
+%% cluster.
+escape_field(Value) when is_binary(Value) ->
+    << <<(escape_byte(B))/binary>> || <<B>> <= Value >>.
+
+escape_byte($\\) -> <<"\\\\">>;
+escape_byte($\r) -> <<"\\r">>;
+escape_byte($\n) -> <<"\\n">>;
+escape_byte($|) -> <<"\\x7c">>;
+escape_byte(B) -> <<B>>.

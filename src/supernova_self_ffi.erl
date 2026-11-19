@@ -1,5 +1,6 @@
 -module(supernova_self_ffi).
--export([has_ascii_letter/1, sha256_hex/1, try_lock_file/1, remove_lock_file/1, list_agent_dirs/1, with_lock/2]).
+-export([has_ascii_letter/1, sha256_hex/1, try_lock_file/1, remove_lock_file/1, list_agent_dirs/1, with_lock/2,
+         clear_dir/1, try_global_lock/1, release_global_lock/1]).
 
 has_ascii_letter(Binary) when is_binary(Binary) ->
     lists:any(fun(C) ->
@@ -34,3 +35,29 @@ list_agent_dirs(Path) when is_binary(Path) ->
 
 with_lock(Key, Fun) when is_function(Fun, 0) ->
     global:trans({{supernova_self_lock, Key}, self()}, Fun).
+
+%% Remove everything inside Dir but keep Dir. Returns the number of regular
+%% files removed. A missing directory counts as empty.
+clear_dir(Dir0) when is_binary(Dir0) ->
+    Dir = binary_to_list(Dir0),
+    case file:list_dir(Dir) of
+        {error, enoent} -> {ok, 0};
+        {error, Reason} -> {error, list_to_binary(file:format_error(Reason))};
+        {ok, Names} ->
+            Count = filelib:fold_files(Dir, ".*", true, fun(_, N) -> N + 1 end, 0),
+            Results = [file:del_dir_r(filename:join(Dir, Name)) || Name <- Names],
+            case [R || R <- Results, R =/= ok] of
+                [] -> {ok, Count};
+                [{error, Reason} | _] -> {error, list_to_binary(file:format_error(Reason))}
+            end
+    end.
+
+%% Non-blocking lock owned by the calling process. The global name server
+%% releases it automatically when the owner dies, so a crash cannot leave a
+%% stale lock behind.
+try_global_lock(Key) ->
+    global:set_lock({{supernova_reflection, Key}, self()}, [node()], 0).
+
+release_global_lock(Key) ->
+    _ = global:del_lock({{supernova_reflection, Key}, self()}, [node()]),
+    nil.

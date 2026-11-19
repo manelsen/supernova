@@ -111,6 +111,7 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
       lessons: 1,
       relationship: 1,
       sessions: 0,
+      workspace_files: 0,
     )) = forget.forget(root, "sim:alice", None)
     let self_dir = root <> "/agents/sim_alice/self"
     journal.load(root, "sim:alice") |> should.equal([])
@@ -140,7 +141,7 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
           entry.operation == "forget"
           && entry.agent_id == "sim:alice"
           && entry.details
-          == "journal=1,experiences=1,pressures=1,lessons=1,relationship=1,sessions=0"
+          == "journal=1,experiences=1,pressures=1,lessons=1,relationship=1,sessions=0,workspace_files=0"
         })
         |> should.be_true()
       None -> should.fail()
