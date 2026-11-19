@@ -315,3 +315,17 @@ fn pick_counts_ok(constellation: Constellation, ids: List(String)) -> Bool {
     count == dimension.pick
   })
 }
+
+pub fn has_absolute_incompatibility(
+  constellation: constellation.Constellation,
+  ids: List(String),
+) -> Bool {
+  case ids {
+    [] -> False
+    [first, ..rest] ->
+      list.any(rest, fn(other) {
+        constellation.affinity_weight(constellation, first, other) == -1.0
+      })
+      || has_absolute_incompatibility(constellation, rest)
+  }
+}

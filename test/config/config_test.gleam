@@ -1187,3 +1187,14 @@ fn should_equal(actual: a, expected: a) -> Nil {
     False -> panic
   }
 }
+
+pub fn reflection_and_drift_defaults_test() {
+  let config = default_config()
+  config.reflection.every_turns |> should_equal(20)
+  config.reflection.every_hours |> should_equal(24)
+  config.reflection.model |> should_equal(None)
+  config.reflection.journal_limit |> should_equal(500)
+  config.drift.half_life_days |> should_equal(30.0)
+  config.drift.threshold |> should_equal(3.0)
+  config.drift.min_interval_days |> should_equal(90)
+}

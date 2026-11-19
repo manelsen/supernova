@@ -212,6 +212,31 @@ fn special_mock_response(
   messages: List(provider.ChatMessage),
   config: provider.ProviderConfig,
 ) -> Option(String) {
+  let system_text =
+    messages
+    |> list.filter(fn(message) { message.role == "system" })
+    |> list.map(fn(message) { message.content })
+    |> string.join("\n")
+  let is_reflection =
+    string.contains(system_text, "Responda APENAS com JSON estrito")
+  case is_reflection, latest_user_content(messages) {
+    True, Some(content) ->
+      case string.contains(content, "Reflita agora") {
+        True ->
+          Some(
+            "{\"experiences\":[{\"text\":\"Aprendi a confiar no que foi vivido.\"}],"
+            <> "\"pressures\":[]}",
+          )
+        False -> special_mock_response_plain(messages, config)
+      }
+    _, _ -> special_mock_response_plain(messages, config)
+  }
+}
+
+fn special_mock_response_plain(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+) -> Option(String) {
   case latest_user_content(messages) {
     Some(content) ->
       case string.contains(content, "[stream-error]") {

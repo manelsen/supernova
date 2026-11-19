@@ -32,6 +32,7 @@ pub type SelfState {
     concerns: List(String),
     open_questions: List(String),
     last_reflection: String,
+    last_reflection_at: Int,
     preferences: SessionPreferences,
   )
 }
@@ -54,6 +55,7 @@ pub fn default() -> SelfState {
     concerns: [],
     open_questions: [],
     last_reflection: "Sem reflexão registrada.",
+    last_reflection_at: 0,
     preferences: default_preferences(),
   )
 }
@@ -231,6 +233,9 @@ fn encode(state: SelfState) -> String {
   <> ",\"last_reflection\":\""
   <> escape(state.last_reflection)
   <> "\","
+  <> "\"last_reflection_at\":"
+  <> int.to_string(state.last_reflection_at)
+  <> ","
   <> "\"preferences\":"
   <> encode_preferences(state.preferences)
   <> "}"
@@ -322,6 +327,11 @@ fn self_state_decoder() -> decode.Decoder(SelfState) {
     "Sem reflexão registrada.",
     decode.string,
   )
+  use last_reflection_at <- decode.optional_field(
+    "last_reflection_at",
+    0,
+    decode.int,
+  )
   use preferences <- decode.optional_field(
     "preferences",
     default_preferences(),
@@ -335,6 +345,7 @@ fn self_state_decoder() -> decode.Decoder(SelfState) {
     concerns: list.take(concerns, 3),
     open_questions: list.take(open_questions, 3),
     last_reflection: last_reflection,
+    last_reflection_at: last_reflection_at,
     preferences: preferences,
   ))
 }

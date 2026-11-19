@@ -541,6 +541,7 @@ pub fn run_context(
   executor.RunContext(
     principal_id: context.principal_id,
     role: context.role,
+    call_id_override: None,
     before_llm: Some(fn() {
       precheck(runtime, context.principal_id, runtime.clock())
     }),

@@ -2,6 +2,7 @@
 
 import envoy
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -19,6 +20,7 @@ pub type Core {
     constellation_version: Int,
     born_at: Int,
     name: Option(String),
+    prose_sha256: Option(String),
   )
 }
 
@@ -45,7 +47,27 @@ pub fn exists(data_dir: String, principal: String) -> Bool {
 pub fn load(data_dir: String, principal: String) -> Option(Core) {
   case read_file(core_path(data_dir, principal)) {
     Error(_) -> None
-    Ok(raw) -> decode_core(raw)
+    Ok(raw) ->
+      case decode_core(raw) {
+        Some(core) -> Some(ensure_prose_hash(data_dir, principal, core))
+        None -> None
+      }
+  }
+}
+
+fn ensure_prose_hash(data_dir: String, principal: String, core: Core) -> Core {
+  case core.prose_sha256 {
+    Some(_) -> core
+    None ->
+      case read_file(prose_path(data_dir, principal)) {
+        Error(_) -> core
+        Ok(prose) -> {
+          let migrated = Core(..core, prose_sha256: Some(sha256_hex(prose)))
+          let _ =
+            write_file(core_path(data_dir, principal), encode_core(migrated))
+          migrated
+        }
+      }
   }
 }
 
@@ -66,6 +88,7 @@ pub fn save_birth(
       constellation_version: constellation_version,
       born_at: born_at,
       name: None,
+      prose_sha256: Some(sha256_hex(prose)),
     )
   let directory = agent_identity.self_dir(data_dir, principal)
   use _ <- result.try(ensure_dir(directory))
@@ -101,6 +124,50 @@ pub fn save_birth(
             Ok(_) -> Ok(Nil)
           }
       }
+  }
+}
+
+/// Persist a core whose traits may have drifted. Prose is never rewritten here.
+pub fn save(
+  data_dir: String,
+  principal: String,
+  core: Core,
+) -> Result(Nil, String) {
+  write_file(core_path(data_dir, principal), encode_core(core))
+}
+
+/// Append one raw biography entry (already JSON-encoded).
+pub fn append_biography_entry(
+  data_dir: String,
+  principal: String,
+  entry: String,
+) -> Result(Nil, String) {
+  append_file(biography_path(data_dir, principal), entry <> "\n")
+}
+
+/// Most recent drift timestamp in the biography, or 0.
+pub fn last_drift_at(data_dir: String, principal: String) -> Int {
+  case read_file(biography_path(data_dir, principal)) {
+    Error(_) -> 0
+    Ok(raw) ->
+      raw
+      |> string.split("\n")
+      |> list.filter_map(fn(line) {
+        case json.parse(from: line, using: drift_entry_decoder()) {
+          Ok(at) -> Ok(at)
+          Error(_) -> Error(Nil)
+        }
+      })
+      |> list.fold(0, int.max)
+  }
+}
+
+fn drift_entry_decoder() -> decode.Decoder(Int) {
+  use kind <- decode.field("kind", decode.string)
+  use at <- decode.field("at", decode.int)
+  case kind {
+    "drift" -> decode.success(at)
+    _ -> decode.failure(0, "not a drift")
   }
 }
 
@@ -183,6 +250,11 @@ fn decode_core(raw: String) -> Option(Core) {
       None,
       decode.optional(decode.string),
     )
+    use prose_sha256 <- decode.optional_field(
+      "prose_sha256",
+      None,
+      decode.optional(decode.string),
+    )
     decode.success(Core(
       version: version,
       traits: traits,
@@ -191,6 +263,7 @@ fn decode_core(raw: String) -> Option(Core) {
       constellation_version: constellation_version,
       born_at: born_at,
       name: name,
+      prose_sha256: prose_sha256,
     ))
   }
   case json.parse(from: raw, using: decoder) {
@@ -210,6 +283,10 @@ fn encode_core(core: Core) -> String {
       #("born_at", json.int(core.born_at)),
       #("name", case core.name {
         Some(name) -> json.string(name)
+        None -> json.null()
+      }),
+      #("prose_sha256", case core.prose_sha256 {
+        Some(hash) -> json.string(hash)
         None -> json.null()
       }),
     ]),
@@ -246,3 +323,6 @@ fn find_files(dir: String, pattern: String) -> List(String)
 
 @external(erlang, "supernova_self_ffi", "has_ascii_letter")
 fn has_ascii_letter(value: String) -> Bool
+
+@external(erlang, "supernova_self_ffi", "sha256_hex")
+fn sha256_hex(value: String) -> String

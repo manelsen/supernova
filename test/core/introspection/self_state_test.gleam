@@ -23,6 +23,7 @@ pub fn save_and_load_round_trip_test() {
       concerns: ["timeout"],
       open_questions: ["confirmar deploy?"],
       last_reflection: "Errei por não validar argumentos.",
+      last_reflection_at: 0,
       preferences: default_preferences(),
     )
 
@@ -43,6 +44,7 @@ pub fn prompt_block_contains_portuguese_humor_label_test() {
       concerns: [],
       open_questions: [],
       last_reflection: "Preciso validar entradas.",
+      last_reflection_at: 0,
       preferences: default_preferences(),
     )
 
@@ -64,6 +66,7 @@ pub fn base_dir_paths_and_round_trip_test() {
       concerns: ["self_dir"],
       open_questions: [],
       last_reflection: "Estado no diretorio self.",
+      last_reflection_at: 0,
       preferences: default_preferences(),
     )
 

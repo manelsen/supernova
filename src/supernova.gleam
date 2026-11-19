@@ -55,6 +55,7 @@ import supernova/llm/pricing
 import supernova/llm/provider
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
+import supernova/self/reflection
 import supernova/tools/browser
 import supernova/tracing/actor as tracing_actor
 import supernova/tracing/global as tracing_global
@@ -309,6 +310,12 @@ fn start_services(cfg: config.Config) -> Result(Services, String) {
       Error(_) -> Nil
     }
   })
+
+  // Start the hourly reflection sweeper outside the router.
+  case default_channel_llm_config(cfg) {
+    Ok(llm_config) -> reflection.start_sweeper(cfg.data_dir, llm_config)
+    Error(_) -> Nil
+  }
 
   // Start health server with real channel state callback
   let get_ready_channels = fn() { dict.keys(channel_reg.channels) }

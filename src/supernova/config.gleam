@@ -294,6 +294,19 @@ pub type InstanceBudgetConfig {
   )
 }
 
+pub type ReflectionConfig {
+  ReflectionConfig(
+    every_turns: Int,
+    every_hours: Int,
+    model: Option(String),
+    journal_limit: Int,
+  )
+}
+
+pub type DriftConfig {
+  DriftConfig(half_life_days: Float, threshold: Float, min_interval_days: Int)
+}
+
 /// Support level for a channel adapter.
 pub type ChannelSupport {
   Supported
@@ -363,6 +376,10 @@ pub type Config {
     pricing: PricingConfig,
     /// Instance-wide daily spend cap
     instance_budget: InstanceBudgetConfig,
+    /// Periodic reflection configuration
+    reflection: ReflectionConfig,
+    /// Slow trait drift configuration
+    drift: DriftConfig,
     /// Writable directory for runtime state (access.json, ledger/)
     data_dir: String,
     /// Tools configuration
@@ -428,6 +445,8 @@ pub fn default_config() -> Config {
     rate_limit: default_rate_limit_config(),
     pricing: default_pricing_config(),
     instance_budget: default_instance_budget_config(),
+    reflection: default_reflection_config(),
+    drift: default_drift_config(),
     data_dir: "data",
     tools: default_tools_config(),
   )
@@ -484,6 +503,19 @@ pub fn default_instance_budget_config() -> InstanceBudgetConfig {
 }
 
 /// Create a default tools configuration
+pub fn default_reflection_config() -> ReflectionConfig {
+  ReflectionConfig(
+    every_turns: 20,
+    every_hours: 24,
+    model: None,
+    journal_limit: 500,
+  )
+}
+
+pub fn default_drift_config() -> DriftConfig {
+  DriftConfig(half_life_days: 30.0, threshold: 3.0, min_interval_days: 90)
+}
+
 pub fn default_tools_config() -> ToolsConfig {
   ToolsConfig(browser: BrowserToolsConfig(allow_evaluate: False))
 }
@@ -1105,6 +1137,41 @@ fn decode_instance_budget(root: yay.Node) -> InstanceBudgetConfig {
   }
 }
 
+fn decode_reflection(root: yay.Node) -> ReflectionConfig {
+  let default = default_reflection_config()
+  case yay.select_sugar(root, "reflection") {
+    Ok(node) ->
+      ReflectionConfig(
+        every_turns: get_int_or(node, "every_turns", default.every_turns),
+        every_hours: get_int_or(node, "every_hours", default.every_hours),
+        model: get_optional_string(node, "model"),
+        journal_limit: get_int_or(node, "journal_limit", default.journal_limit),
+      )
+    Error(_) -> default
+  }
+}
+
+fn decode_drift(root: yay.Node) -> DriftConfig {
+  let default = default_drift_config()
+  case yay.select_sugar(root, "drift") {
+    Ok(node) ->
+      DriftConfig(
+        half_life_days: get_float_or(
+          node,
+          "half_life_days",
+          default.half_life_days,
+        ),
+        threshold: get_float_or(node, "threshold", default.threshold),
+        min_interval_days: get_int_or(
+          node,
+          "min_interval_days",
+          default.min_interval_days,
+        ),
+      )
+    Error(_) -> default
+  }
+}
+
 /// Decode full configuration from YAML root node
 fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
   // Parse app_name (optional, defaults to "supernova")
@@ -1148,6 +1215,8 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
   let rate_limit = decode_rate_limit(root)
   let pricing = decode_pricing(root)
   let instance_budget = decode_instance_budget(root)
+  let reflection = decode_reflection(root)
+  let drift = decode_drift(root)
   let data_dir = get_string_or(root, "data_dir", "data")
 
   // Parse tools
@@ -1176,6 +1245,8 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     rate_limit: rate_limit,
     pricing: pricing,
     instance_budget: instance_budget,
+    reflection: reflection,
+    drift: drift,
     data_dir: data_dir,
     tools: tools,
   ))
@@ -1497,6 +1568,8 @@ pub fn apply_env_overrides(config: Config) -> Config {
     rate_limit: config.rate_limit,
     pricing: config.pricing,
     instance_budget: config.instance_budget,
+    reflection: config.reflection,
+    drift: config.drift,
     data_dir: data_dir,
     tools: ToolsConfig(browser: BrowserToolsConfig(
       allow_evaluate: browser_allow_evaluate,
