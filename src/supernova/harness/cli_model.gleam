@@ -91,14 +91,12 @@ fn call_claude(
 ) -> Result(CliResult, String) {
   let system_path = work_dir <> "/judge_system.md"
   use _ <- result.try(write_file(system_path, system_prompt))
-  let schema_path = work_dir <> "/judge_schema.json"
-  use schema_args <- result.try(case schema {
-    None -> Ok([])
-    Some(text) -> {
-      use _ <- result.try(write_file(schema_path, text))
-      Ok(["--json-schema", schema_path])
-    }
-  })
+  // claude takes the schema itself as JSON text, not a path (a path fails
+  // with "--json-schema is not valid JSON"). The arg guard below bounds it.
+  let schema_args = case schema {
+    None -> []
+    Some(text) -> ["--json-schema", text]
+  }
   let args =
     [
       "-p",

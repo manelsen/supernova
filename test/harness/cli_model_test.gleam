@@ -326,3 +326,28 @@ fn scratch_dir() -> String
 
 @external(erlang, "harness_test_ffi", "mode")
 fn mode(path: String) -> Int
+
+// Regression from the first real run: claude takes the schema as JSON text.
+// A path made it fail with "--json-schema is not valid JSON".
+pub fn claude_receives_the_schema_as_json_text_test() {
+  with_fixture("claude_ok.json", fn(_fixture) {
+    test_workspace.with_isolated_workspace("harness-cli-schema", fn(root) {
+      let work = root <> "/work"
+      let records = root <> "/records"
+      let assert Ok(_) = ensure_dir(work)
+      let assert Ok(_) = ensure_dir(records)
+      envoy.set("FAKE_RECORD_DIR", records)
+      use <- exception.defer(fn() { envoy.unset("FAKE_RECORD_DIR") })
+      let schema = "{\"type\":\"object\",\"required\":[\"criteria\"]}"
+      let assert Ok(_) =
+        cli_model.call(
+          claude_config(absolute(fixtures <> "/fake_claude.sh"), 10),
+          "# harness:judge\nsistema",
+          "instrução",
+          work,
+          Some(schema),
+        )
+      read_file(records <> "/schema.json") |> should.equal(Ok(schema))
+    })
+  })
+}

@@ -5,6 +5,7 @@ import gleam/dict
 import gleam/erlang/process
 import gleam/float
 import gleam/int
+import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -626,8 +627,9 @@ fn envoy_get(name: String) -> Result(String, Nil)
 @external(erlang, "supernova_cli_ffi", "get_args")
 fn cli_args() -> List(String)
 
-@external(erlang, "gleam_erlang_ffi", "println")
-fn io_println(value: String) -> Nil
+fn io_println(value: String) -> Nil {
+  io.println(value)
+}
 
 @external(erlang, "erlang", "halt")
 fn halt(code: Int) -> Nil

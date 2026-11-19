@@ -87,7 +87,7 @@ http_request(Method, Port, Path, Token, Body) ->
         _ -> {Url, Headers, "application/json", Body}
     end,
     _ = application:ensure_all_started(inets),
-    case httpc:request(Method, Request, [{timeout, 120000}], [{body_format, binary}]) of
+    case httpc:request(Method, Request, [{timeout, 310000}], [{body_format, binary}]) of
         {ok, {{_, Status, _}, _, ResponseBody}} -> {ok, {Status, ResponseBody}};
         {error, Reason} -> {error, Reason}
     end.
