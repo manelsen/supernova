@@ -291,13 +291,18 @@ fn calibrate_all(
         read_file(root <> "/rubrics/" <> rubric_id <> ".md")
         |> result.unwrap("")
       let answer = fn(entry: calibration.Case) {
+        // Same template and schema as a real run: calibration must exercise
+        // the judge that will grade the scenarios.
         let system =
-          "# harness:judge\n"
-          <> rubric_text
-          <> "\n\n"
-          <> string.join(transcript.numbered_lines_from(entry.lines), "\n")
+          judge.render_prompt(
+            judge_template(root),
+            rubric_text,
+            "(não fornecido na calibração)",
+            "(não fornecido na calibração)",
+            string.join(transcript.numbered_lines_from(entry.lines), "\n"),
+          )
         let _ = mock
-        case judge_call(system, string.join(entry.lines, "\n"), None) {
+        case judge_call(system, judge.instruction, Some(judge.schema(rubric))) {
           Error(reason) -> Error(reason)
           Ok(result) -> Ok(judge.parse_answer(rubric, result.text, entry.lines))
         }
@@ -403,17 +408,7 @@ fn run_scenario(
           let judge_costs = process.new_subject()
           let answer =
             judge.ask(loaded.rubric, lines, fn() {
-              case
-                judge_call(
-                  judge_system,
-                  string.join(
-                    lines,
-                    "
-",
-                  ),
-                  Some(schema),
-                )
-              {
+              case judge_call(judge_system, judge.instruction, Some(schema)) {
                 Ok(result) -> {
                   process.send(judge_costs, result.cost_usd)
                   Ok(result.text)
@@ -534,13 +529,8 @@ fn judge_prompt(
     loaded.personas
     |> list.map(fn(item) { "### " <> item.0 <> "\n" <> item.1 })
     |> string.join("\n\n")
-  let template =
-    read_file(root <> "/judge_prompt.md")
-    |> result.unwrap(
-      "# harness:judge\n{{rubric}}\n{{agents}}\n{{personas}}\n{{transcript}}",
-    )
   judge.render_prompt(
-    template,
+    judge_template(root),
     rubric_text,
     agents,
     personas,
@@ -604,12 +594,21 @@ fn dedupe_by(items: List(a), key: fn(a) -> String) -> List(a) {
   |> dict.values
 }
 
-@external(erlang, "supernova_harness_ffi", "cwd")
-fn cwd() -> String
-
-fn temp_dir() -> String {
-  cwd() <> "/.harness-tmp"
+fn judge_template(root: String) -> String {
+  read_file(root <> "/judge_prompt.md")
+  |> result.unwrap(
+    "# harness:judge\n{{rubric}}\n{{agents}}\n{{personas}}\n{{transcript}}",
+  )
 }
+
+/// Empty directory outside the repository, so model CLIs load no project
+/// instructions (AGENTS.md, CLAUDE.md).
+fn temp_dir() -> String {
+  scratch_dir()
+}
+
+@external(erlang, "supernova_harness_ffi", "scratch_dir")
+fn scratch_dir() -> String
 
 @external(erlang, "supernova_ledger_ffi", "current_timestamp")
 fn timestamp() -> Int

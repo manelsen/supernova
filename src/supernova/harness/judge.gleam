@@ -12,6 +12,7 @@ import gleam/result
 import gleam/string
 import supernova/harness/checks
 import supernova/harness/scenario.{type Rubric}
+import supernova/self/template as prompt_template
 
 pub type Evidence {
   Evidence(line: Int, quote: String)
@@ -134,12 +135,20 @@ pub fn render_prompt(
   personas_text: String,
   transcript_text: String,
 ) -> String {
-  template
-  |> string.replace("{{rubric}}", rubric_text)
-  |> string.replace("{{agents}}", agents_text)
-  |> string.replace("{{personas}}", personas_text)
-  |> string.replace("{{transcript}}", transcript_text)
+  // Single pass: a placeholder inside an agent's core or the transcript is
+  // never expanded.
+  prompt_template.render(template, [
+    #("rubric", rubric_text),
+    #("agents", agents_text),
+    #("personas", personas_text),
+    #("transcript", transcript_text),
+  ])
 }
+
+/// The user turn sent with the judge prompt. Everything the judge needs is in
+/// the system prompt (written to a file), so this stays short.
+pub const instruction =
+  "Julgue o transcript conforme as instruções e responda só com o JSON pedido."
 
 // ============================================================================
 // Parse and verify

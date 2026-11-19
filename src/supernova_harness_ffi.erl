@@ -1,21 +1,26 @@
 -module(supernova_harness_ffi).
 -export([run/4, process_alive/1, json_first_key/1, json_encode/1,
          free_port/0, random_token/0, http_post/4, http_get/3, cwd/0,
-         dir_exists/1, remove_dir/1]).
+         dir_exists/1, remove_dir/1, scratch_dir/0]).
 
-%% Run an executable without a shell, capturing merged stdout/stderr.
+%% Run an executable with its arguments passed verbatim, capturing stdout
+%% only (stderr is not mixed into the JSON the caller parses).
+%% stdin is /dev/null: CLIs such as `claude -p` read a piped stdin until EOF,
+%% and an Erlang port cannot close its write end without closing the port.
+%% The fixed launcher `exec "$0" "$@" </dev/null` receives the executable and
+%% every argument as positional parameters, so nothing is interpolated by sh.
 %% On timeout the OS process is killed before the port is closed.
 run(Path, Args, Cwd, Timeout) when is_binary(Path), is_list(Args) ->
     Args1 = [binary_to_list(Arg) || Arg <- Args],
     Port =
         open_port(
-            {spawn_executable, binary_to_list(Path)},
-            [{args, Args1},
+            {spawn_executable, "/bin/sh"},
+            [{args, ["-c", "exec \"$0\" \"$@\" </dev/null",
+                     binary_to_list(Path) | Args1]},
              {cd, binary_to_list(Cwd)},
              exit_status,
              binary,
-             use_stdio,
-             stderr_to_stdout]
+             use_stdio]
         ),
     collect(Port, [], Timeout).
 
@@ -100,3 +105,23 @@ dir_exists(Path) ->
 remove_dir(Path) ->
     _ = file:del_dir_r(Path),
     ok.
+
+%% An empty working directory for model CLIs, outside any repository, so no
+%% AGENTS.md or CLAUDE.md is picked up. Created once per VM.
+scratch_dir() ->
+    case persistent_term:get({supernova_harness, scratch_dir}, undefined) of
+        undefined ->
+            Base = case os:getenv("TMPDIR") of
+                false -> "/tmp";
+                "" -> "/tmp";
+                T -> T
+            end,
+            Dir = filename:join(Base, "supernova-harness-" ++ os:getpid() ++ "-"
+                ++ integer_to_list(erlang:unique_integer([positive]))),
+            ok = filelib:ensure_path(Dir),
+            Bin = unicode:characters_to_binary(Dir),
+            persistent_term:put({supernova_harness, scratch_dir}, Bin),
+            Bin;
+        Dir ->
+            Dir
+    end.

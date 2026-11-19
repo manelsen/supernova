@@ -234,3 +234,78 @@ fn process_alive(pid: Int) -> Bool
 
 @external(erlang, "supernova_harness_ffi", "cwd")
 fn cwd() -> String
+
+// Regression: a real CLI may log on stderr and read a piped stdin until EOF.
+// stderr must not corrupt the JSON, and stdin must be closed so the call does
+// not hang until the timeout.
+pub fn cli_ignores_stderr_and_gets_closed_stdin_test() {
+  with_fixture("claude_ok.json", fn(_fixture) {
+    test_workspace.with_isolated_workspace("harness-cli-noisy", fn(root) {
+      let work = root <> "/work"
+      let assert Ok(_) = ensure_dir(work)
+      let assert Ok(result) =
+        cli_model.call(
+          claude_config(absolute(fixtures <> "/fake_noisy_stdin.sh"), 10),
+          "# harness:judge\nsistema",
+          "instrução",
+          work,
+          None,
+        )
+      result.model |> should.equal("claude-opus-5-5")
+    })
+  })
+}
+
+// Regression: a zero cost serialized as the integer 0 is still a cost.
+pub fn integer_costs_are_accepted_test() {
+  with_fixture("claude_int_cost.json", fn(_fixture) {
+    test_workspace.with_isolated_workspace("harness-cli-int-claude", fn(root) {
+      let work = root <> "/work"
+      let assert Ok(_) = ensure_dir(work)
+      let assert Ok(result) =
+        cli_model.call(
+          claude_config(absolute(fixtures <> "/fake_claude.sh"), 10),
+          "# harness:judge\nsistema",
+          "instrução",
+          work,
+          None,
+        )
+      result.cost_usd |> should.equal(0.0)
+    })
+  })
+  with_fixture("omp_int_cost.jsonl", fn(_fixture) {
+    test_workspace.with_isolated_workspace("harness-cli-int-omp", fn(root) {
+      let work = root <> "/work"
+      let assert Ok(_) = ensure_dir(work)
+      let assert Ok(result) =
+        cli_model.call(
+          omp_config(absolute(fixtures <> "/fake_omp.sh"), 10),
+          "# harness:persona\nsistema",
+          "transcript",
+          work,
+          None,
+        )
+      result.cost_usd |> should.equal(0.0)
+      result.text |> should.equal("OK.")
+    })
+  })
+}
+
+// An argument above the kernel's per-argument limit is refused up front.
+pub fn oversized_argument_is_refused_test() {
+  with_fixture("claude_ok.json", fn(_fixture) {
+    test_workspace.with_isolated_workspace("harness-cli-big-arg", fn(root) {
+      let work = root <> "/work"
+      let assert Ok(_) = ensure_dir(work)
+      let assert Error(reason) =
+        cli_model.call(
+          claude_config(absolute(fixtures <> "/fake_claude.sh"), 10),
+          "# harness:judge\nsistema",
+          string.repeat("x", 200_000),
+          work,
+          None,
+        )
+      string.contains(reason, "too long") |> should.be_true()
+    })
+  })
+}

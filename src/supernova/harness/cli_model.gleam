@@ -121,11 +121,22 @@ fn call_claude(
   parse_claude(output)
 }
 
+/// Linux refuses a single argument longer than 128 KiB (MAX_ARG_STRLEN).
+/// Long content goes through files; this guard turns a silent exec failure
+/// into a clear error.
+const max_arg_bytes = 100_000
+
 fn run(
   config: CliConfig,
   args: List(String),
   work_dir: String,
 ) -> Result(String, String) {
+  use _ <- result.try(
+    case list.find(args, fn(arg) { string.byte_size(arg) > max_arg_bytes }) {
+      Ok(_) -> Error("model call argument too long; pass it through a file")
+      Error(_) -> Ok(Nil)
+    },
+  )
   case
     ffi_run(config.executable, args, work_dir, config.timeout_seconds * 1000)
   {
@@ -240,8 +251,13 @@ fn usage_cost_decoder() -> decode.Decoder(Float) {
 }
 
 fn cost_total_decoder() -> decode.Decoder(Float) {
-  use total <- decode.field("total", decode.float)
+  use total <- decode.field("total", number_decoder())
   decode.success(total)
+}
+
+/// JSON numbers may come as `0` or `0.0`; both are a cost.
+fn number_decoder() -> decode.Decoder(Float) {
+  decode.one_of(decode.float, [decode.int |> decode.map(int.to_float)])
 }
 
 // ============================================================================
@@ -294,7 +310,7 @@ fn claude_output_decoder() -> decode.Decoder(ClaudeOutput) {
     "",
     decode.map(decode.dynamic, first_key),
   )
-  use cost_usd <- decode.optional_field("total_cost_usd", 0.0, decode.float)
+  use cost_usd <- decode.optional_field("total_cost_usd", 0.0, number_decoder())
   decode.success(ClaudeOutput(
     is_error: is_error,
     subtype: subtype,
