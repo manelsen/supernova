@@ -1,7 +1,6 @@
 import e2e/e2e_support as support
 import envoy
 import exception
-import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -16,6 +15,7 @@ import supernova/self/core as self_core
 import supernova/self/drift
 import supernova/self/memory
 import supernova/self/sampler
+import test_workspace
 
 const day = 86_400_000
 
@@ -242,8 +242,9 @@ pub fn missing_runtime_does_not_change_test() {
     )
   use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
   closed_group_global.clear_runtime()
-  let root =
-    "/tmp/supernova-drift-no-runtime-" <> int.to_string(unique_integer())
+  // A fresh directory, removed afterwards. A name from unique_integer/0
+  // repeats across VM runs and left stale pressures behind (flaky count).
+  use root <- test_workspace.with_isolated_workspace("drift-no-runtime")
   let now = 1_700_000_000_000
   let assert Ok(_) =
     self_core.save_birth(
@@ -271,9 +272,6 @@ pub fn missing_runtime_does_not_change_test() {
   core.traits |> should.equal(["temp_1", "voz_0"])
   memory.pressures(root, "sim:alice") |> list.length |> should.equal(20)
 }
-
-@external(erlang, "erlang", "unique_integer")
-fn unique_integer() -> Int
 
 pub fn stale_source_pressure_does_not_drift_test() {
   let _ =

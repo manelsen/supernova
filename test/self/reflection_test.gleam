@@ -198,9 +198,9 @@ pub fn missing_runtime_keeps_journal_test() {
     )
   use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
   closed_group_global.clear_runtime()
-  let root =
-    "/tmp/supernova-reflection-no-runtime-" <> int.to_string(unique_integer())
-  test_workspace.remove_dir_recursive(root)
+  // A fresh directory, removed afterwards (remove_dir_recursive only deletes
+  // /tmp/supernova-test-* paths, so a unique_integer name was never cleaned).
+  use root <- test_workspace.with_isolated_workspace("reflection-no-runtime")
   let assert Ok(_) =
     self_core.save_birth(
       root,
@@ -233,9 +233,6 @@ pub fn missing_runtime_keeps_journal_test() {
   journal.load(root, "sim:alice") |> list.length |> should.equal(20)
   memory.experiences(root, "sim:alice") |> should.equal([])
 }
-
-@external(erlang, "erlang", "unique_integer")
-fn unique_integer() -> Int
 
 fn seed_twenty(root: String, at: Int, user: String) -> Nil {
   let assert Ok(_) =
