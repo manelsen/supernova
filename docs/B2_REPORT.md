@@ -193,3 +193,19 @@ O cálculo assume **uma reflexão por dia**. O gatilho de 20 turnos pode dispara
 - **Prompt de nascimento:** `{{traits}}` no template é substituído pela lista de traços; sem o marcador, a lista continua anexada ao fim. Sem o arquivo do template não há nascimento: a resposta é a de "ainda não está pronta" e a auditoria `birth_unavailable`, em vez de um prompt provisório silencioso.
 - **Conteúdo real instalado:** `priv/constellation/constellation.json` (v1, 49 traços em 5 dimensões, 200 afinidades) e `priv/constellation/birth_prompt.md`. Simulação com o sorteador real: 600 nascimentos, 0 falhas, 1,32 tentativas em média, 600 constelações distintas; traços mais raros `discorda_em_silencio` (4,6% das agentes) e `voz_ironica` (5,5%).
 - **Pendências baixas:** `uniform_index` dá metade da chance ao primeiro e ao último traço como semente; semente 0 é ponto fixo do gerador; o gravador de prompts do mock cresce sem limite em `persistent_term`.
+
+### Revisão do mantenedor (Fase C)
+
+Correções aplicadas sobre `e6f3c57`, com teste que falhava antes em `test/self/review_fixes_test.gleam`:
+
+- **Reflexão que falha não se repete a cada turno.** Espera de 1 h, dobrando até 24 h (`self/reflection_backoff.json`). Respostas em bloco ```json e forças inteiras são aceitas. Cada reflexão lê no máximo as 60 entradas mais antigas do diário.
+- **Trava da reflexão em memória** (`global:set_lock`), liberada quando o processo dono morre. Uma queda não silencia mais a agente.
+- **Auditoria:** os campos são escapados byte a byte; um caminho escolhido pelo modelo não forja um segundo registro.
+- **`/esquecer` contra trabalho em andamento:** um contador (`self/forget_epoch`) sobe antes de apagar; reflexões e turnos que começaram antes não gravam memória depois.
+- **`/esquecer` apaga também o workspace do dono** (decisão do mantenedor). A contagem entra no audit como `workspace_files`.
+- **`/esquecer@Bot`** é reconhecido em grupos do Telegram.
+- **Varredor de hora em hora** sobrevive a uma varredura que quebra.
+- **Prompts reais instalados** em `priv/reflection/`. `{{from}}`/`{{to}}` do adendo levam a descrição do traço. O mock reconhece a reflexão pela mensagem fixa do runtime, não pelo texto do prompt.
+
+Pendências baixas que ficam: o adendo não valida 40–120 palavras; `try_lock_file`/`remove_lock_file` continuam exportadas no FFI sem uso.
+

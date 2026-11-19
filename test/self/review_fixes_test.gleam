@@ -18,6 +18,7 @@ import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/resource_ledger/types.{LLMUsage}
 import supernova/llm/provider
 import supernova/self/core as self_core
+import supernova/self/drift
 import supernova/self/epoch
 import supernova/self/forget
 import supernova/self/journal
@@ -293,6 +294,69 @@ pub fn audit_target_cannot_forge_records_test() {
   audit_types.escape_field("agents/sim_alice/workspace/a.md")
   |> should.equal("agents/sim_alice/workspace/a.md")
 }
+
+// 11. The installed reflection prompt is filled completely and still parses.
+pub fn real_reflection_prompt_is_filled_test() {
+  use <- with_constellation()
+  support.with_runtime_root(cfg(), fn(root) {
+    born(root, "sim:alice", at)
+    turn(root, "sim:alice", at - 10, "oi")
+    clear_prompts()
+    let assert Ok(reflection.Reflected(experiences: 1, pressures: 1)) =
+      reflection.reflect(root, "sim:alice", mock_provider(), at)
+    let assert Ok(prompt) =
+      prompts()
+      |> list.find(fn(p) { string.contains(p, "Use só os pares desta lista") })
+    string.contains(prompt, "{{") |> should.be_false()
+    string.contains(prompt, "- temp_1 -> temp_0 — temperamento")
+    |> should.be_true()
+    clear_prompts()
+  })
+}
+
+// 12. The drift prompt names traits with their descriptions.
+pub fn drift_prompt_describes_traits_test() {
+  use <- with_constellation()
+  support.with_runtime_root(cfg(), fn(root) {
+    let day = 86_400_000
+    let assert Ok(_) =
+      self_core.save_birth(
+        root,
+        "sim:alice",
+        sampler.Sampled(traits: ["temp_1", "voz_0"], seed: 1, attempts: 1),
+        1,
+        "Núcleo.",
+        at - 100 * day,
+      )
+    let item =
+      memory.Pressure(
+        at: at,
+        origin: "sim:alice",
+        from: "temp_1",
+        to: "temp_0",
+        strength: 1.0,
+        reason: "convivência",
+      )
+    let assert Ok(_) =
+      memory.append_pressures(root, "sim:alice", list.repeat(item, 20))
+    clear_prompts()
+    let assert Ok(True) =
+      drift.maybe_apply(root, "sim:alice", mock_provider(), at)
+    let assert Ok(prompt) =
+      prompts()
+      |> list.find(fn(p) { string.contains(p, "antes: ") })
+    string.contains(prompt, "antes: temp_1 — temperamento") |> should.be_true()
+    string.contains(prompt, "agora: temp_0 — temperamento") |> should.be_true()
+    string.contains(prompt, "{{") |> should.be_false()
+    clear_prompts()
+  })
+}
+
+@external(erlang, "supernova_mock_ffi", "clear_prompts")
+fn clear_prompts() -> Nil
+
+@external(erlang, "supernova_mock_ffi", "prompts")
+fn prompts() -> List(String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)

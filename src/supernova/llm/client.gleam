@@ -217,10 +217,10 @@ fn special_mock_response(
     |> list.filter(fn(message) { message.role == "system" })
     |> list.map(fn(message) { message.content })
     |> string.join("\n")
-  let is_reflection =
-    string.contains(system_text, "Responda APENAS com JSON estrito")
-  case is_reflection, latest_user_content(messages) {
-    True, Some(content) ->
+  // Reflection calls are recognized by the fixed user message the runtime
+  // sends; the system prompt belongs to the maintainer and can change.
+  case latest_user_content(messages) {
+    Some(content) ->
       case string.contains(content, "Reflita agora") {
         True ->
           case
@@ -234,7 +234,7 @@ fn special_mock_response(
           }
         False -> special_mock_response_plain(messages, config)
       }
-    _, _ -> special_mock_response_plain(messages, config)
+    None -> special_mock_response_plain(messages, config)
   }
 }
 
@@ -253,37 +253,31 @@ fn reflection_mock_json(system_text: String) -> String {
   }
 }
 
+/// First "- from -> to — description" line of the neighbor list.
 fn reflection_neighbor(system_text: String) -> Option(#(String, String)) {
-  case string.split(system_text, "Vizinhos coerentes:\n") {
-    [_, rest] -> {
-      let found =
-        rest
-        |> string.split("\n")
-        |> list.find_map(fn(line) {
-          let stripped = string.trim(line)
-          case string.starts_with(stripped, "- ") {
-            False -> Error(Nil)
-            True -> {
-              let body = string.drop_start(stripped, 2)
-              case string.split(body, " -> ") {
-                [from, target] -> {
-                  let to = case string.split(target, " — ") {
-                    [id, ..] -> id
-                    _ -> target
-                  }
-                  Ok(#(from, string.trim(to)))
-                }
-                _ -> Error(Nil)
+  let found =
+    system_text
+    |> string.split("\n")
+    |> list.find_map(fn(line) {
+      let stripped = string.trim(line)
+      case string.starts_with(stripped, "- ") {
+        False -> Error(Nil)
+        True ->
+          case string.split(string.drop_start(stripped, 2), " -> ") {
+            [from, target] -> {
+              let to = case string.split(target, " — ") {
+                [id, ..] -> id
+                _ -> target
               }
+              Ok(#(from, string.trim(to)))
             }
+            _ -> Error(Nil)
           }
-        })
-      case found {
-        Ok(pair) -> Some(pair)
-        Error(_) -> None
       }
-    }
-    _ -> None
+    })
+  case found {
+    Ok(pair) -> Some(pair)
+    Error(_) -> None
   }
 }
 

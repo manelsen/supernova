@@ -171,6 +171,7 @@ pub fn maybe_apply(
                 data_dir,
                 principal,
                 core,
+                constellation,
                 candidate,
                 pressures,
                 llm_config,
@@ -186,6 +187,7 @@ fn apply_candidate(
   data_dir: String,
   principal: String,
   core: self_core.Core,
+  constellation: constellation.Constellation,
   candidate: EffectivePressure,
   pressures: List(memory.Pressure),
   llm_config: provider.ProviderConfig,
@@ -221,8 +223,8 @@ fn apply_candidate(
       },
     )
     |> string.replace("{{addenda}}", memory.addenda(data_dir, principal))
-    |> string.replace("{{from}}", candidate.from)
-    |> string.replace("{{to}}", candidate.to)
+    |> string.replace("{{from}}", describe(constellation, candidate.from))
+    |> string.replace("{{to}}", describe(constellation, candidate.to))
     |> string.replace("{{reasons}}", reasons)
   let messages = [
     provider.system_message(prompt),
@@ -332,3 +334,10 @@ fn apply_candidate(
 
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
+
+fn describe(constellation: constellation.Constellation, id: String) -> String {
+  case list.find(constellation.traits, fn(trait) { trait.id == id }) {
+    Ok(trait) -> id <> " — " <> trait.description
+    Error(_) -> id
+  }
+}
