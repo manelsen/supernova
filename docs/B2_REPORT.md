@@ -110,18 +110,18 @@ Riscos aceitos e documentados:
 | C-00 pendências | `test/self/sampler_test.gleam`: uniformidade em 10 000 sorteios, semente 0 sem ponto fixo e variação entre tentativas; `test/llm/mock_recorder_test.gleam`: gravador limitado aos últimos 200 prompts. |
 | C-01 estado em `self/` | `test/self/state_store_test.gleam` e testes de introspecção: caminhos novos, migração idempotente e sem sobrescrita; `e2e@phase_c_e2e_test.closed_group_turns_fill_only_the_owner_journal_test` verifica os três arquivos em `self/`, a migração do legado e a ausência dos nomes antigos no workspace. |
 | C-02 diário | `e2e@phase_c_e2e_test.closed_group_turns_fill_only_the_owner_journal_test`: três turnos só no diário de A, `/status` fora; `journal_limit_trims_and_audits_test`: teto 5 remove o mais antigo e audita `journal_trimmed`. `test/self/journal_test.gleam` cobre append, teto e remoção. |
-| C-03 reflexão | `test/self/reflection_test.gleam`: gatilho por contagem e por tempo, escrita de experiência, diário limpo, `last_reflection_at`, custo `reflect:<principal>:<at>` no ledger, JSON estrito e negação por runtime ausente sem escrita; `test/self/reflection_validation_test.gleam`: pressões de outra dimensão, traço atual, origem desconhecida, força fora de faixa e limite de duas são descartadas, mantendo as válidas. |
+| C-03 reflexão | `test/self/reflection_test.gleam`: 20 turnos disparam, o varredor dispara depois de 24 h e ignora quem não tem diário, admissão negada preserva diário/experiências/pressões e audita, JSON inválido preserva o diário e deixa o custo no ledger, a trava ignora o segundo gatilho, e o custo sai como `reflect:<principal>:<at>`; `test/self/reflection_validation_test.gleam`: pressões de outra dimensão, traço atual, origem desconhecida, força fora de faixa e limite de duas são descartadas, mantendo as válidas. |
 | C-04 experiência no prompt | `e2e@phase_c_e2e_test.prompt_has_last_twelve_experiences_between_name_and_state_test`: ordem núcleo → adendo → nome → 12 lembranças → estado → lições → linha do `/esquecer`, e prompt de A sem a memória de B. |
-| C-05 pressão e drift | `test/self/drift_test.gleam`: decaimento de metade em 30 dias, retorno decrescente (cinco iguais somam < 2,3), origens diferentes sem desconto e intervalo mínimo; `test/self/drift_apply_test.gleam`: hash de `core.md` preservado, troca de traço em `core.json`, adendo, biografia e remoção das pressões do par. |
-| C-06 esquecer | `test/self/forget_test.gleam`: apaga diário/experiências/pressões/lições/relação, limpa estado, preserva núcleo e adendo e audita apenas contagens; `e2e@phase_c_e2e_test.forget_command_needs_confirmation_and_deletes_test`: `/esquecer` pede confirmação, não apaga ainda, `/esquecer confirmo` responde "Esqueci." e apaga. |
+| C-05 pressão e drift | `test/self/drift_test.gleam`: decaimento de metade em 30 dias, retorno decrescente (cinco iguais somam < 2,3), origens diferentes sem desconto e intervalo mínimo; `test/self/drift_apply_test.gleam`: hash de `core.md` preservado, troca de traço em `core.json`, adendo, biografia e remoção das pressões do par, menos de 90 dias sem mudança, incoerência sem mudança, 50 rodadas sem avançar o relógio mudam no máximo uma vez e runtime ausente não altera nada. |
+| C-06 esquecer | `test/self/forget_test.gleam`: apaga diário/experiências/pressões/lições/relação, limpa estado e sessões, preserva núcleo/adendo, audita apenas contagens e não toca no B; `e2e@phase_c_e2e_test.forget_command_needs_confirmation_and_deletes_test`: `/esquecer` pede confirmação, `/esquecer confirmo` responde "Esqueci.", apaga e o prompt seguinte não contém o texto anterior nem muda `core.md`/adendo; `forget_after_deadline_does_not_delete_test`: 11 min no relógio de teste não apaga. |
 | C-07 invariantes | `test/sim/invariants_test.gleam` e `test/sim/check_test.gleam` cobrem I7 (hash do núcleo e traços com drift), I8 (caminho `self/`/`.supernova/` em ferramenta bem-sucedida) e I9 (memória sobrevivendo ao `forget`), com evidência boa e violada. |
 
 ### Números
 
 | Métrica | Antes | Depois |
 |---|---|---|
-| Testes | 2273 | 2320 |
-| Cobertura de linhas | 76,13% (11262/14794) | 76,61% (11926/15568) |
+| Testes | 2273 | 2331 |
+| Cobertura de linhas | 76,13% (11262/14794) | 76,77% (11974/15597) |
 
 O baseline acima foi medido no `master` `d74deac` em worktree separado, sem as alterações desta fase.
 
@@ -174,7 +174,7 @@ O adendo de drift é raro (no máximo uma vez a cada 90 dias) e acrescenta uma c
 
 - A reflexão roda em processo próprio, com trava de arquivo por agente; um segundo gatilho é ignorado enquanto o primeiro está em curso.
 - A reflexão e o drift exigem runtime de grupo fechado. Sem ledger/configuração, auditam a negação e não escrevem.
-- O mock de LLM responde ao prompt provisório de reflexão com uma experiência determinística, sem pressões; os testes de validação de pressão são puros e o teste de drift injeta as pressões no arquivo.
+- O mock de LLM responde ao prompt provisório de reflexão com uma experiência determinística e, quando o prompt lista um vizinho coerente, uma pressão determinística; o sentinela `[mock-invalid-reflection]` força a resposta não-JSON usada no teste de falha. Os testes de validação e o teste de drift também injetam pressões diretamente nos arquivos.
 - O drift não valida o tamanho de 40–120 palavras do adendo: o prompt pede o formato, mas uma resposta curta do provedor é aceita para não perder a mudança já admitida. O mantenedor pode endurecer essa validação quando escrever o prompt real.
 - O teto do diário é aplicado no append; a auditoria `journal_trimmed` registra a contagem removida.
 - `/esquecer` encerra as sessões em memória do principal em vez de apenas limpar mensagens; a próxima mensagem recria a sessão vazia.
