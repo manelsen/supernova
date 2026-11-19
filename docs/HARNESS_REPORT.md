@@ -52,15 +52,38 @@ Final (`feat/harness`): **2394 testes**, cobertura **77.88%**
 - A calibração e o relatório foram exercitados com o mock; os números de custo
   reais só aparecem quando o mantenedor rodar com modelos de verdade.
 
-## Critérios não cumpridos
+## Critérios não cumpridos (situação depois da revisão)
 
-- **H-05: `advance` + `sweep` gera `experience.jsonl`.** O turno pelo canal
-  `sim` não deixou entrada em `journal.jsonl` (o sweep retornou `Ok(Skipped)`
-  com o journal vazio). O teste verifica que o passo roda e que o `data_dir`
-  continua íntegro, mas a experiência não foi gerada. Evidência: depuração com
-  `journal.load` = 0 após três falas e `reflection.reflect` = `Ok(Skipped)`.
-- **H-08: calibração com o mock no teste dedicado.** A calibração é exercitada
-  com um juiz de teste (`calibration_blocks_a_bad_fail_case_test`) e pelo
-  caminho de `run`, mas o teste que usava o mock do cliente foi removido por
-  instabilidade no encadeamento do prompt; o gate de calibração continua
-  obrigatório em `run` e um `fail-*` aprovado bloqueia a execução.
+- **H-05: `advance` + `sweep` gera `experience.jsonl`. Resolvido na revisão.**
+  A causa não estava no diário: no modo harness, o razão de gastos, o teto da
+  instância, o limitador e o acesso ainda rodavam no relógio real, enquanto o
+  runtime usava o relógio do harness. O dia do razão nunca batia com o dia do
+  teto, e todo turno recebia a recusa "O limite diário desta instância foi
+  atingido". Nenhum turno chegava à agente, e os testes de ponta a ponta do
+  harness passavam sobre recusas. Agora todos os atores de política usam o
+  relógio injetado (`start_closed_group_supervisor_with_clock`), o `turn_end`
+  marca recusas do kernel como `denied`, e o teste exige nenhuma recusa e um
+  `experience.jsonl` depois do `sweep`.
+- **H-08: calibração com o mock no teste dedicado.** A calibração continua
+  exercitada pelo caminho de `run` (`run_test`) e por um juiz de teste
+  (`calibration_blocks_a_bad_fail_case_test`). Depois da revisão, a calibração
+  usa o mesmo `judge_prompt.md` e o mesmo schema da execução real.
+- **Commits por história.** O histórico tem dois commits grandes em vez de um
+  por história. Recomendação: merge por squash.
+
+## Corrigido na revisão (além da H-05)
+
+- O CLI do juiz recebia o transcript inteiro de novo como argumento (limite de
+  128 KiB por argumento). Agora recebe uma instrução curta; argumentos grandes
+  são recusados com erro claro.
+- O stderr dos CLIs era misturado ao JSON do stdout; agora só o stdout é lido.
+- O stdin dos CLIs ficava aberto (o `claude -p` lê o stdin até o fim e
+  travaria); agora é `/dev/null`.
+- Os CLIs rodavam dentro do repositório (`.harness-tmp`), carregando o
+  `AGENTS.md` e o `CLAUDE.md`; agora rodam num diretório vazio em `TMPDIR`.
+- Custo `0` inteiro não era aceito.
+- O prompt do juiz era montado com substituições em sequência; agora numa só
+  passada.
+- Dois testes da Fase C (`missing_runtime_*`) deixavam diretórios em `/tmp` que
+  nunca eram apagados e acumulavam pressões; o de mudança falhava sempre que
+  `test/self` rodava sozinho, também no `master`.
