@@ -10,6 +10,8 @@
 //// let result = client.chat(messages, config, [])
 //// ```
 
+import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
@@ -217,6 +219,17 @@ fn special_mock_response(
     |> list.filter(fn(message) { message.role == "system" })
     |> list.map(fn(message) { message.content })
     |> string.join("\n")
+  case harness_mock_response(system_text) {
+    Some(content) -> Some(content)
+    None -> reflection_or_plain(messages, config, system_text)
+  }
+}
+
+fn reflection_or_plain(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+  system_text: String,
+) -> Option(String) {
   // Reflection calls are recognized by the fixed user message the runtime
   // sends; the system prompt belongs to the maintainer and can change.
   case latest_user_content(messages) {

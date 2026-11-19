@@ -1,6 +1,7 @@
 //// Execution transcript shared by the engine, the checks and the judge.
 
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -136,6 +137,12 @@ pub fn numbered(events: List(Event)) -> List(String) {
 
 pub fn lines(events: List(Event)) -> List(String) {
   events
+  |> list.filter(fn(event) {
+    case event {
+      TurnEnd(..) -> False
+      _ -> True
+    }
+  })
   |> list.map(render)
 }
 

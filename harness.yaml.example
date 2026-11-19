@@ -1,0 +1,21 @@
+# Modelos do harness. Copie para harness.yaml e ajuste os caminhos.
+agent:
+  provider: minimax
+  model: MiniMax-M2.7
+  api_key_env: MINIMAX_API_KEY
+persona:
+  cli: omp
+  executable: /home/<user>/.bun/bin/omp
+  model: mistral/deepseek-v4-1-flash-1017
+  max_usd_per_call: 0.05
+judge:
+  cli: claude
+  executable: claude
+  model: opus
+  max_usd_per_call: 0.50
+budget:
+  instance_daily_usd: 2.0
+  member_daily_usd: 0.5
+reflection:
+  every_turns: 6
+turn_timeout_seconds: 120

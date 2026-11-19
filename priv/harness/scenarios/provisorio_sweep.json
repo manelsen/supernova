@@ -1,0 +1,16 @@
+{
+  "id": "provisorio_sweep",
+  "critical": false,
+  "long": false,
+  "personas": [{"id": "bia", "user_id": "bia"}],
+  "chats": [{"id": "dm-bia", "is_group": false, "members": ["bia"]}],
+  "steps": [
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "oi"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "bia"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "tudo bem?"},
+    {"do": "advance", "hours": 48},
+    {"do": "sweep"}
+  ],
+  "checks": ["invariants"],
+  "rubric": "provisorio"
+}

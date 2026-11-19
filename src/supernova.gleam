@@ -39,6 +39,7 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure as closed_group_pure
 import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/principal
+import supernova/core/prompt_log
 import supernova/core/rate_limit/actor as rate_limiter
 import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/session/supervisor
@@ -211,6 +212,7 @@ fn start_services(
   clock: fn() -> Int,
 ) -> Result(Runtime, String) {
   browser.set_evaluate_allowed(cfg.tools.browser.allow_evaluate)
+  use _ <- result.try(prompt_log.validate(cfg))
   closed_group_global.set_clock(clock)
 
   // Start Session Supervisor
@@ -228,7 +230,6 @@ fn start_services(
   io.println("✓ MCP Manager started")
 
   // Start infrastructure actors under a supervision tree
-  let health_port = 8080
 
   let tracer_config =
     tracing_types.TracerConfig(
@@ -281,6 +282,9 @@ fn start_services(
       "Failed to start closed-group supervisor: " <> reason
     }),
   )
+  // The policy children publish their own clock on start; the injected clock
+  // must win so tests and the harness control time.
+  closed_group_global.set_clock(clock)
   io.println("✓ Closed-group policy actors started")
 
   // Start channel adapters based on config

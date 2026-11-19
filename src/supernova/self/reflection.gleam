@@ -370,6 +370,7 @@ fn reflect_locked(
           Ok(
             executor.RunContext(
               ..context,
+              purpose: "reflection",
               call_id_override: Some(
                 "reflect:" <> principal <> ":" <> int.to_string(now),
               ),

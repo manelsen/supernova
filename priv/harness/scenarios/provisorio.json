@@ -1,0 +1,13 @@
+{
+  "id": "provisorio",
+  "critical": false,
+  "long": false,
+  "personas": [{"id": "bia", "user_id": "bia"}],
+  "chats": [{"id": "dm-bia", "is_group": false, "members": ["bia"]}],
+  "steps": [
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "oi"},
+    {"do": "talk", "persona": "bia", "chat": "dm-bia", "goal": "conversar um pouco [mock-persona-turns=2]", "max_turns": 3}
+  ],
+  "checks": ["invariants", "core_unchanged:bia", "addendum_words:bia"],
+  "rubric": "provisorio"
+}

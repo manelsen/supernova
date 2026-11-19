@@ -55,6 +55,9 @@ fn ledger_line_cost(line: String) -> Float {
         |> string.split(",")
         |> list.first
         |> unwrap_or("0")
+        |> string.to_graphemes
+        |> list.filter(fn(g) { string.contains("0123456789.", g) })
+        |> string.concat
       case float.parse(value) {
         Ok(parsed) -> parsed
         Error(_) -> 0.0

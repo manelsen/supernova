@@ -186,7 +186,7 @@ pub fn maybe_apply(
 fn apply_candidate(
   data_dir: String,
   principal: String,
-  core: self_core.Core,
+  _core: self_core.Core,
   constellation: constellation.Constellation,
   candidate: EffectivePressure,
   pressures: List(memory.Pressure),
@@ -249,6 +249,7 @@ fn apply_candidate(
   let run_context =
     executor.RunContext(
       ..context,
+      purpose: "drift",
       call_id_override: Some("drift:" <> principal <> ":" <> int.to_string(now)),
     )
   case executor.run_with_context(messages, llm_config, [], run_context) {

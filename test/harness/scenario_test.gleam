@@ -1,3 +1,4 @@
+import gleam/dict
 import gleam/list
 import gleam/string
 import gleeunit/should
@@ -5,6 +6,9 @@ import supernova/harness/scenario
 import test_workspace
 
 fn setup(root: String) -> Nil {
+  let assert Ok(_) = ensure_dir(root <> "/personas")
+  let assert Ok(_) = ensure_dir(root <> "/rubrics")
+  let assert Ok(_) = ensure_dir(root <> "/scenarios")
   let assert Ok(_) = write_file(root <> "/personas/bia.md", "Bia")
   let assert Ok(_) =
     write_file(
@@ -15,6 +19,7 @@ fn setup(root: String) -> Nil {
 }
 
 fn write_scenario(root: String, body: String) -> Nil {
+  let assert Ok(_) = ensure_dir(root <> "/scenarios")
   let assert Ok(_) = write_file(root <> "/scenarios/teste.json", body)
   Nil
 }
@@ -131,6 +136,9 @@ pub fn parses_rubric_levels_test() {
   |> dict.get(1)
   |> should.equal(Ok("firme"))
 }
+
+@external(erlang, "supernova_file_system_ffi", "ensure_dir")
+fn ensure_dir(path: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)

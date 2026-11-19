@@ -46,6 +46,8 @@ pub type Provider {
   Zai
   /// Z.AI coding plan
   ZaiCoding
+  /// Deterministic mock provider (tests and CI harness)
+  Mock
 }
 
 /// Provider configuration
@@ -90,7 +92,13 @@ pub type TelegramConfig {
 
 /// HTTP-driven sim channel configuration.
 pub type SimConfig {
-  SimConfig(enabled: Bool, bind: String, port: Int, token: Option(String))
+  SimConfig(
+    enabled: Bool,
+    bind: String,
+    port: Int,
+    token: Option(String),
+    record_prompts: Bool,
+  )
 }
 
 /// Matrix channel configuration
@@ -421,7 +429,13 @@ pub fn default_config() -> Config {
       enabled: False,
     ),
     telegram: TelegramConfig(token: None, enabled: False),
-    sim: SimConfig(enabled: False, bind: "127.0.0.1", port: 8787, token: None),
+    sim: SimConfig(
+      enabled: False,
+      bind: "127.0.0.1",
+      port: 8787,
+      token: None,
+      record_prompts: False,
+    ),
     matrix: MatrixConfig(homeserver_url: None, token: None, enabled: False),
     lark: LarkConfig(token: None, base_url: None, enabled: False),
     google_chat: GoogleChatConfig(webhook_url: None, enabled: False),
@@ -562,6 +576,7 @@ fn parse_provider(s: String) -> Result(Provider, ConfigError) {
     "ollama" | "local" -> Ok(Ollama)
     "zai" -> Ok(Zai)
     "zai_coding" -> Ok(ZaiCoding)
+    "mock" -> Ok(Mock)
     _ ->
       Error(InvalidField(
         "provider",
@@ -766,9 +781,16 @@ fn decode_sim(root: yay.Node) -> SimConfig {
         bind: get_string_or(sim, "bind", "127.0.0.1"),
         port: get_int_or(sim, "port", 8787),
         token: get_optional_string(sim, "token"),
+        record_prompts: get_bool_or(sim, "record_prompts", False),
       )
     Error(_) ->
-      SimConfig(enabled: False, bind: "127.0.0.1", port: 8787, token: None)
+      SimConfig(
+        enabled: False,
+        bind: "127.0.0.1",
+        port: 8787,
+        token: None,
+        record_prompts: False,
+      )
   }
 }
 
@@ -1882,6 +1904,7 @@ fn validate_provider_config(name: String, config: ProviderConfig) {
       }
     }
     Ollama -> Nil
+    Mock -> Nil
     Zai | ZaiCoding -> {
       case config.api_key {
         Some(_) -> Nil
@@ -1971,6 +1994,7 @@ pub fn provider_requires_api_key(provider: Provider) -> Bool {
     Ollama -> False
     Zai -> True
     ZaiCoding -> True
+    Mock -> False
   }
 }
 
@@ -1987,6 +2011,7 @@ pub fn provider_runtime_name(provider: Provider) -> String {
     Ollama -> "ollama"
     Zai -> "zai"
     ZaiCoding -> "zai_coding"
+    Mock -> "mock"
   }
 }
 
@@ -2003,6 +2028,7 @@ pub fn provider_default_model(provider: Provider) -> String {
     Ollama -> "llama3"
     Zai -> "glm-5"
     ZaiCoding -> "glm-5.1"
+    Mock -> "mock-model"
   }
 }
 
@@ -2115,5 +2141,13 @@ pub fn is_channel_enabled(config: Config, channel: String) -> Bool {
     "wechat_work" -> is_wechat_work_enabled(config)
     "whatsapp" -> is_whatsapp_enabled(config)
     _ -> False
+  }
+}
+
+/// Provider type from its configuration name (used by the harness).
+pub fn provider_from_name(name: String) -> Result(Provider, Nil) {
+  case parse_provider(name) {
+    Ok(provider) -> Ok(provider)
+    Error(_) -> Error(Nil)
   }
 }

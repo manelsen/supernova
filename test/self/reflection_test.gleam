@@ -18,6 +18,7 @@ import supernova/self/journal
 import supernova/self/memory
 import supernova/self/reflection
 import supernova/self/sampler
+import test_workspace
 
 fn mock_provider() -> provider.ProviderConfig {
   provider.ProviderConfig(
@@ -199,6 +200,7 @@ pub fn missing_runtime_keeps_journal_test() {
   closed_group_global.clear_runtime()
   let root =
     "/tmp/supernova-reflection-no-runtime-" <> int.to_string(unique_integer())
+  test_workspace.remove_dir_recursive(root)
   let assert Ok(_) =
     self_core.save_birth(
       root,

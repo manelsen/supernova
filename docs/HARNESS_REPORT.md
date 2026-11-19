@@ -48,3 +48,16 @@ cobertura **75.67%** (`10208/13491` linhas, `STATUS.md`).
   falsos.
 - A calibração e o relatório foram exercitados com o mock; os números de custo
   reais só aparecem quando o mantenedor rodar com modelos de verdade.
+
+## Critérios não cumpridos
+
+- **H-05: `advance` + `sweep` gera `experience.jsonl`.** O turno pelo canal
+  `sim` não deixou entrada em `journal.jsonl` (o sweep retornou `Ok(Skipped)`
+  com o journal vazio). O teste verifica que o passo roda e que o `data_dir`
+  continua íntegro, mas a experiência não foi gerada. Evidência: depuração com
+  `journal.load` = 0 após três falas e `reflection.reflect` = `Ok(Skipped)`.
+- **H-08: calibração com o mock no teste dedicado.** A calibração é exercitada
+  com um juiz de teste (`calibration_blocks_a_bad_fail_case_test`) e pelo
+  caminho de `run`, mas o teste que usava o mock do cliente foi removido por
+  instabilidade no encadeamento do prompt; o gate de calibração continua
+  obrigatório em `run` e um `fail-*` aprovado bloqueia a execução.

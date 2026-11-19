@@ -1181,11 +1181,12 @@ fn maybe_handle_birth(
           let principal_id = msg.channel <> ":" <> msg.user_id
           let generate = fn(prompt: String) {
             case
-              run_executor_for_context(
+              run_executor_for_context_with_purpose(
                 [provider.user_message(prompt)],
                 llm_config,
                 [],
                 context,
+                "birth",
               )
             {
               Ok(response) -> Ok(response.content)

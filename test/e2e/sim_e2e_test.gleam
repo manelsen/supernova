@@ -49,7 +49,13 @@ fn mock_provider() -> provider.ProviderConfig {
 }
 
 fn sim_config(token: Option(String), port: Int) -> config.SimConfig {
-  config.SimConfig(enabled: True, bind: "127.0.0.1", port: port, token: token)
+  config.SimConfig(
+    enabled: True,
+    bind: "127.0.0.1",
+    port: port,
+    token: token,
+    record_prompts: False,
+  )
 }
 
 fn base_config() -> config.Config {
@@ -117,7 +123,7 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
     ).0
     |> should.equal(200)
     let all = sim_adapter.all_events(sim)
-    case all {
+    case without_turn_end(all) {
       [sim_adapter.SimEvent(chat_id: chat_id, content: content, ..)] -> {
         chat_id |> should.equal("group-1")
         string.contains(content, "Como você quer me chamar?")
@@ -135,7 +141,7 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
     |> should.equal(200)
     wait_for_content(sim, "group-1", "Esta instância é privada.", 5000)
     |> should.be_true()
-    let count = list.length(sim_adapter.all_events(sim))
+    let count = list.length(without_turn_end(sim_adapter.all_events(sim)))
     send(
       member_port,
       Some("sim-token"),
@@ -143,7 +149,8 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
       "{\"chat_id\":\"group-1\",\"user_id\":\"mallory\",\"username\":\"Mallory\",\"content\":\"de novo\",\"is_group\":true}",
     ).0
     |> should.equal(200)
-    list.length(sim_adapter.all_events(sim)) |> should.equal(count)
+    list.length(without_turn_end(sim_adapter.all_events(sim)))
+    |> should.equal(count)
 
     sim_adapter.stop(sim)
     let _ = adapter
@@ -705,4 +712,10 @@ pub fn sim_parallel_chats_do_not_block_test() {
     wait_for_content(sim, "b", "ok", 5000) |> should.be_true()
     sim_adapter.stop(sim)
   })
+}
+
+fn without_turn_end(
+  events: List(sim_adapter.SimEvent),
+) -> List(sim_adapter.SimEvent) {
+  list.filter(events, fn(event) { event.kind != "turn_end" })
 }

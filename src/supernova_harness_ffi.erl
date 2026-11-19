@@ -43,6 +43,15 @@ collect(Port, Acc, Timeout) ->
 process_alive(Pid) when is_integer(Pid) ->
     filelib:is_file("/proc/" ++ integer_to_list(Pid)).
 
+json_first_key(Map) when is_map(Map) ->
+    case maps:keys(Map) of
+        [Key | _] when is_binary(Key) -> Key;
+        [Key | _] -> unicode:characters_to_binary(io_lib:format("~p", [Key]));
+        [] -> <<>>
+    end;
+json_first_key(_) ->
+    <<>>.
+
 json_encode(Term) ->
     unicode:characters_to_binary(json:encode(Term)).
 

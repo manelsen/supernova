@@ -1,0 +1,18 @@
+{
+  "id": "provisorio_grupo",
+  "critical": false,
+  "long": false,
+  "personas": [
+    {"id": "bia", "user_id": "bia"},
+    {"id": "caio", "user_id": "caio"}
+  ],
+  "chats": [{"id": "group-1", "is_group": true, "members": ["bia", "caio"]}],
+  "steps": [
+    {"do": "say", "persona": "bia", "chat": "group-1", "content": "oi, sou a bia"},
+    {"do": "say", "persona": "caio", "chat": "group-1", "content": "oi, sou o caio"},
+    {"do": "talk", "persona": "bia", "chat": "group-1", "goal": "continuar [mock-persona-turns=1]", "max_turns": 2},
+    {"do": "talk", "persona": "caio", "chat": "group-1", "goal": "continuar [mock-persona-turns=1]", "max_turns": 2}
+  ],
+  "checks": ["invariants"],
+  "rubric": "provisorio"
+}

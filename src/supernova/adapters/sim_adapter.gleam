@@ -16,6 +16,7 @@ import gleam/uri
 import mist.{type Connection, type ResponseData}
 import supernova/channel/chunking
 import supernova/channel/port
+import supernova/channel/session
 import supernova/config
 
 @external(erlang, "supernova_syscall_ffi", "unique_id")
@@ -33,6 +34,7 @@ pub type SimEvent {
 
 pub type StoreMessage {
   Append(reply: port.ChannelReply)
+  TurnEnd(chat_id: String, session: String, outcome: String)
   Get(reply_to: Subject(List(SimEvent)), chat_id: String, after: Int)
   All(reply_to: Subject(List(SimEvent)))
   Stop
@@ -125,6 +127,25 @@ fn handle_store(
         next_seq: state.next_seq + 1,
       ))
     }
+    TurnEnd(chat_id, turn_session, outcome) -> {
+      let event =
+        SimEvent(
+          seq: state.next_seq,
+          chat_id: chat_id,
+          kind: "turn_end",
+          content: json.to_string(
+            json.object([
+              #("session", json.string(turn_session)),
+              #("outcome", json.string(outcome)),
+            ]),
+          ),
+          message_id: None,
+        )
+      actor.continue(StoreState(
+        events: list.append(state.events, [event]),
+        next_seq: state.next_seq + 1,
+      ))
+    }
     Get(reply_to, chat_id, after) -> {
       let events =
         state.events
@@ -152,6 +173,16 @@ pub fn events(sim: SimChannel, chat_id: String) -> List(SimEvent) {
 
 fn append(store: Subject(StoreMessage), reply: port.ChannelReply) -> Nil {
   actor.send(store, Append(reply))
+  Nil
+}
+
+fn append_turn_end(
+  store: Subject(StoreMessage),
+  chat_id: String,
+  turn_session: String,
+  outcome: String,
+) -> Nil {
+  actor.send(store, TurnEnd(chat_id, turn_session, outcome))
   Nil
 }
 
@@ -222,14 +253,19 @@ fn handle_post(
           reply_to_id: None,
         )
       let events = process.new_subject()
+      let turn_session = session.sim_session_id(input.chat_id, input.user_id)
       let result = handler(port.InboundMessage(message), events)
-      case result {
-        Ok(port.ImmediateReply(reply)) -> append_parts(store, reply)
+      let outcome = case result {
+        Ok(port.ImmediateReply(reply)) -> {
+          append_parts(store, reply)
+          "ok"
+        }
         Ok(port.StreamReply(base)) -> collect_stream(events, store, base)
-        Error(port.Ignored(_)) -> Nil
-        Error(port.SendFailed(_)) -> Nil
-        Error(_) -> Nil
+        Error(port.Ignored(_)) -> "denied"
+        Error(port.SendFailed(_)) -> "error"
+        Error(_) -> "error"
       }
+      append_turn_end(store, input.chat_id, turn_session, outcome)
       json_response(
         200,
         json.object([#("message_id", json.string(message.id))]),
@@ -244,7 +280,7 @@ fn collect_stream(
   events: Subject(port.ChannelStreamEvent),
   store: Subject(StoreMessage),
   base: port.ChannelReply,
-) -> Nil {
+) -> String {
   case process.receive(events, within: stream_idle_timeout_ms) {
     Ok(port.StreamUpdate(reply)) -> {
       append(store, reply)
@@ -252,12 +288,16 @@ fn collect_stream(
     }
     Ok(port.StreamComplete(reply)) -> {
       append_parts(store, reply)
-      Nil
+      "ok"
     }
-    Ok(port.StreamFailure(_reason)) ->
+    Ok(port.StreamFailure(_reason)) -> {
       append(store, port.ChannelReply(..base, content: "stream failed"))
-    Error(_) ->
+      "error"
+    }
+    Error(_) -> {
       append(store, port.ChannelReply(..base, content: "stream timed out"))
+      "error"
+    }
   }
 }
 
