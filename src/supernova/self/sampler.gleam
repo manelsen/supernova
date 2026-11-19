@@ -242,11 +242,17 @@ pub fn jaccard_distance(a: List(String), b: List(String)) -> Float {
 
 fn uniform_index(seed: Int, count: Int) -> #(Int, Int) {
   let #(next, value) = uniform_float(seed)
-  let index = case count {
-    0 -> 0
-    _ -> float.round(value *. int.to_float(count - 1))
+  case count <= 0 {
+    True -> #(next, 0)
+    False -> #(
+      next,
+      int.min(float.truncate(value *. int.to_float(count)), count - 1),
+    )
   }
-  #(next, int.min(index, count - 1))
+}
+
+pub fn uniform_index_for_test(seed: Int, count: Int) -> Int {
+  uniform_index(seed, count).1
 }
 
 fn uniform_float(seed: Int) -> #(Int, Float) {
@@ -255,15 +261,30 @@ fn uniform_float(seed: Int) -> #(Int, Float) {
 }
 
 fn rng_next(seed: Int) -> Int {
-  let x = bitwise_xor(seed, seed / 65_536)
-  let x = bitwise_xor(x, x * 256)
-  let x = bitwise_xor(x, x / 8)
-  let x = bitwise_xor(x, x * 32)
-  int.modulo(x, 2_147_483_647) |> result.unwrap(0)
+  // SplitMix32-style finalizer over a 32-bit state: the seed is offset so it is
+  // never 0 before the first step, and xor-shifts prevent the linear lattice
+  // structure of a pure multiplicative mix.
+  let z = int.modulo(seed + 0x9E3779B9, 4_294_967_296) |> result.unwrap(0)
+  let z =
+    int.modulo(bitwise_xor(z, z / 65_536) * 0x21F0AAAD, 4_294_967_296)
+    |> result.unwrap(0)
+  let z =
+    int.modulo(bitwise_xor(z, z / 32_768) * 0x735A2D97, 4_294_967_296)
+    |> result.unwrap(0)
+  let z = bitwise_xor(z, z / 32_768)
+  let mixed = int.modulo(z, 2_147_483_647) |> result.unwrap(0)
+  case mixed {
+    0 -> 1
+    _ -> mixed
+  }
 }
 
 @external(erlang, "erlang", "bxor")
 fn bitwise_xor(a: Int, b: Int) -> Int
+
+pub fn rng_next_for_test(seed: Int) -> Int {
+  rng_next(seed)
+}
 
 fn nth(items: List(a), index: Int) -> a {
   let assert Ok(value) = nth_result(items, index)
