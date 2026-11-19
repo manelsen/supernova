@@ -128,7 +128,7 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
     case without_turn_end(all) {
       [sim_adapter.SimEvent(chat_id: chat_id, content: content, ..)] -> {
         chat_id |> should.equal("group-1")
-        string.contains(content, "Como você quer me chamar?")
+        string.contains(content, "Que nome você quer me dar?")
         |> should.be_true()
       }
       _ -> should.fail()
@@ -391,7 +391,7 @@ pub fn sim_birth_names_and_prompts_from_core_test() {
         )
       case first {
         Ok(port.ImmediateReply(reply)) ->
-          string.contains(reply.content, "Como você quer me chamar?")
+          string.contains(reply.content, "Que nome você quer me dar?")
           |> should.be_true()
         _ -> should.fail()
       }
@@ -502,7 +502,7 @@ pub fn sim_tool_cannot_write_self_test() {
       "{\"chat_id\":\"group-1\",\"user_id\":\"alice\",\"username\":\"Alice\",\"content\":\"oi\",\"is_group\":true}",
     ).0
     |> should.equal(200)
-    wait_for_content(sim, "group-1", "Como você quer me chamar?", 5000)
+    wait_for_content(sim, "group-1", "Que nome você quer me dar?", 5000)
     |> should.be_true()
     send(
       tool_port,

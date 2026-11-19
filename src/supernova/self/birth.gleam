@@ -98,7 +98,7 @@ fn birth_from_constellation(
 }
 
 pub fn question() -> String {
-  "Como você quer me chamar?"
+  "Que nome você quer me dar?"
 }
 
 /// The birth prompt template. Without it there is no birth: a silent

@@ -37,7 +37,7 @@ pub fn birth_writes_self_and_accepts_name_test() {
       })
     case step {
       birth.AskName(text) ->
-        string.contains(text, "Como você quer me chamar?") |> should.be_true()
+        string.contains(text, "Que nome você quer me dar?") |> should.be_true()
       _ -> should.fail()
     }
     let assert Some(loaded) = core.load(root, "sim:a")
