@@ -116,3 +116,9 @@ fn find_files(dir: String, pattern: String) -> List(String)
 
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
 fn ensure_dir(path: String) -> Result(Nil, String)
+
+pub fn money_is_formatted_without_scientific_notation_test() {
+  report.format_money(0.044666252) |> should.equal("0.0447")
+  report.format_money(0.0) |> should.equal("0.0000")
+  report.format_money(3.0) |> should.equal("3.0000")
+}

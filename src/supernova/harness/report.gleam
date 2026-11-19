@@ -225,9 +225,14 @@ fn format_percent(value: Float) -> String {
   int.to_string(float.round(value *. 100.0)) <> "%"
 }
 
-fn format_money(value: Float) -> String {
-  float_to_binary(value)
+/// Dollars with four decimals (`0.0447`), never scientific notation.
+pub fn format_money(value: Float) -> String {
+  float_to_binary(value, [Decimals(4)])
+}
+
+type FloatOption {
+  Decimals(Int)
 }
 
 @external(erlang, "erlang", "float_to_binary")
-fn float_to_binary(value: Float) -> String
+fn float_to_binary(value: Float, options: List(FloatOption)) -> String
