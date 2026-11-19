@@ -16,11 +16,14 @@ import supernova/config
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/closed_group/global as closed_group_global
+import supernova/core/prompt_log
 import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/resource_ledger/types.{LLMUsage}
 import supernova/core/session/supervisor as session_supervisor
 import supernova/llm/provider
+import supernova/self/birth
 import supernova/self/core as self_core
+import supernova/self/journal
 import supernova/sim/invariants
 
 const auth_port = 18_787
@@ -128,7 +131,7 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
     case without_turn_end(all) {
       [sim_adapter.SimEvent(chat_id: chat_id, content: content, ..)] -> {
         chat_id |> should.equal("group-1")
-        string.contains(content, "Como você quer me chamar?")
+        string.contains(content, "Que nome você quer me dar?")
         |> should.be_true()
       }
       _ -> should.fail()
@@ -357,6 +360,12 @@ fn birth_via_handler(
       port.InboundMessage(sim_message(chat_id, user_id, name)),
       events,
     )
+  let _ =
+    sim_router.route_inbound_for_handler(
+      router,
+      port.InboundMessage(sim_message(chat_id, user_id, "sim")),
+      events,
+    )
   Nil
 }
 
@@ -391,7 +400,7 @@ pub fn sim_birth_names_and_prompts_from_core_test() {
         )
       case first {
         Ok(port.ImmediateReply(reply)) ->
-          string.contains(reply.content, "Como você quer me chamar?")
+          string.contains(reply.content, "Que nome você quer me dar?")
           |> should.be_true()
         _ -> should.fail()
       }
@@ -408,7 +417,23 @@ pub fn sim_birth_names_and_prompts_from_core_test() {
         )
       case second {
         Ok(port.ImmediateReply(reply)) ->
-          string.contains(reply.content, "Lua") |> should.be_true()
+          string.contains(reply.content, "Então meu nome é Lua?")
+          |> should.be_true()
+        _ -> should.fail()
+      }
+      let assert Some(unnamed) = self_core.load(root, "sim:alice")
+      unnamed.name |> should.equal(None)
+
+      let confirmation =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "sim")),
+          events,
+        )
+      case confirmation {
+        Ok(port.ImmediateReply(reply)) ->
+          string.contains(reply.content, "Prazer, Lua.")
+          |> should.be_true()
         _ -> should.fail()
       }
       let assert Some(named) = self_core.load(root, "sim:alice")
@@ -481,6 +506,220 @@ pub fn sim_birth_names_and_prompts_from_core_test() {
   )
 }
 
+pub fn sim_naming_end_to_end_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  let assert Ok(router) = sim_router.start(mock_provider())
+  support.with_runtime_root(
+    config.Config(
+      ..base_config(),
+      access: config.AccessConfig(
+        ..support.access_config([], ["sim:alice"]),
+        allowed_chats: ["sim:group-1"],
+      ),
+    ),
+    fn(root) {
+      let events = process.new_subject()
+      let first =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "oi")),
+          events,
+        )
+      case first {
+        Ok(port.ImmediateReply(reply)) ->
+          string.contains(reply.content, "Que nome você quer me dar?")
+          |> should.be_true()
+        _ -> should.fail()
+      }
+      let second =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message(
+            "group-1",
+            "alice",
+            "pode te chamar de Luna",
+          )),
+          events,
+        )
+      case second {
+        Ok(port.ImmediateReply(reply)) ->
+          string.contains(
+            reply.content,
+            "Então meu nome é Luna? Responda sim ou não.",
+          )
+          |> should.be_true()
+        _ -> should.fail()
+      }
+      let third =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "sim")),
+          events,
+        )
+      case third {
+        Ok(port.ImmediateReply(reply)) ->
+          string.contains(reply.content, "Prazer, Luna.") |> should.be_true()
+        _ -> should.fail()
+      }
+      let assert Some(named) = self_core.load(root, "sim:alice")
+      named.name |> should.equal(Some("Luna"))
+
+      let fourth =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "olá")),
+          events,
+        )
+      case fourth {
+        Ok(port.StreamReply(_)) -> await_stream(events)
+        _ -> should.fail()
+      }
+      journal.load(root, "sim:alice")
+      |> list.any(fn(entry) { entry.user == "olá" && entry.agent != "" })
+      |> should.be_true()
+    },
+  )
+}
+
+pub fn sim_name_extraction_uses_the_model_and_is_logged_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  let assert Ok(router) = sim_router.start(mock_provider())
+  let cfg =
+    config.Config(
+      ..base_config(),
+      access: config.AccessConfig(
+        ..support.access_config([], ["sim:alice"]),
+        allowed_chats: ["sim:group-1"],
+      ),
+      sim: config.SimConfig(
+        ..sim_config(Some("sim-token"), e2e_port),
+        record_prompts: True,
+      ),
+    )
+  support.with_runtime_root(cfg, fn(root) {
+    let assert Ok(_) = write_file(root <> "/.harness", "")
+    let events = process.new_subject()
+    let _ =
+      sim_router.route_inbound_for_handler(
+        router,
+        port.InboundMessage(sim_message("group-1", "alice", "oi")),
+        events,
+      )
+    let reply =
+      "Bia. A não ser que você prefira outro nome — nesse caso, diga qual e por quê."
+    let confirmation =
+      sim_router.route_inbound_for_handler(
+        router,
+        port.InboundMessage(sim_message("group-1", "alice", reply)),
+        events,
+      )
+    case confirmation {
+      Ok(port.ImmediateReply(reply)) ->
+        string.contains(reply.content, "Então meu nome é Bia?")
+        |> should.be_true()
+      _ -> should.fail()
+    }
+    let accepted =
+      sim_router.route_inbound_for_handler(
+        router,
+        port.InboundMessage(sim_message("group-1", "alice", "sim")),
+        events,
+      )
+    case accepted {
+      Ok(port.ImmediateReply(reply)) ->
+        string.contains(reply.content, "Prazer, Bia.") |> should.be_true()
+      _ -> should.fail()
+    }
+
+    case closed_group_global.get_ledger() {
+      Some(ledger) ->
+        ledger_actor.get_all_usage(ledger)
+        |> list.any(fn(event) {
+          case event {
+            LLMUsage(principal_id: principal_id, call_id: call_id, ..) ->
+              principal_id == "sim:alice"
+              && string.starts_with(call_id, "name:sim:alice:")
+            _ -> False
+          }
+        })
+        |> should.be_true()
+      None -> should.fail()
+    }
+
+    prompt_log.read_all(root)
+    |> list.any(fn(line) {
+      case prompt_log.decode_line(line) {
+        Some(record) ->
+          record.purpose == "name" && string.contains(record.content, reply)
+        None -> False
+      }
+    })
+    |> should.be_true()
+  })
+}
+
+pub fn sim_denied_name_extraction_is_rejected_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  let assert Ok(router) = sim_router.start(mock_provider())
+  support.with_runtime_root(
+    config.Config(
+      ..base_config(),
+      access: config.AccessConfig(
+        ..support.access_config([], ["sim:alice"]),
+        allowed_chats: ["sim:group-1"],
+      ),
+    ),
+    fn(root) {
+      let events = process.new_subject()
+      let _ =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "oi")),
+          events,
+        )
+      let assert Some(ledger) = closed_group_global.get_ledger()
+      ledger_actor.record_llm_usage(
+        ledger,
+        "sim:alice",
+        "mock",
+        "mock-model",
+        1000,
+        1000,
+        4.999,
+      )
+      let result =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "pode ser Luna")),
+          events,
+        )
+      case result {
+        Ok(port.ImmediateReply(reply)) -> {
+          string.contains(reply.content, "Não entendi qual nome")
+          |> should.be_true()
+        }
+        _ -> should.fail()
+      }
+      let assert Some(loaded) = self_core.load(root, "sim:alice")
+      loaded.name |> should.equal(None)
+      read_file(birth.name_pending_path(root, "sim:alice"))
+      |> should.be_error()
+    },
+  )
+}
+
 pub fn sim_tool_cannot_write_self_test() {
   let _ =
     envoy.set(
@@ -502,7 +741,7 @@ pub fn sim_tool_cannot_write_self_test() {
       "{\"chat_id\":\"group-1\",\"user_id\":\"alice\",\"username\":\"Alice\",\"content\":\"oi\",\"is_group\":true}",
     ).0
     |> should.equal(200)
-    wait_for_content(sim, "group-1", "Como você quer me chamar?", 5000)
+    wait_for_content(sim, "group-1", "Que nome você quer me dar?", 5000)
     |> should.be_true()
     send(
       tool_port,
@@ -511,7 +750,16 @@ pub fn sim_tool_cannot_write_self_test() {
       "{\"chat_id\":\"group-1\",\"user_id\":\"alice\",\"username\":\"Alice\",\"content\":\"Lua\",\"is_group\":true}",
     ).0
     |> should.equal(200)
-    wait_for_content(sim, "group-1", "Lua", 5000) |> should.be_true()
+    wait_for_content(sim, "group-1", "Então meu nome é Lua?", 5000)
+    |> should.be_true()
+    send(
+      tool_port,
+      Some("sim-token"),
+      "/sim/messages",
+      "{\"chat_id\":\"group-1\",\"user_id\":\"alice\",\"username\":\"Alice\",\"content\":\"sim\",\"is_group\":true}",
+    ).0
+    |> should.equal(200)
+    wait_for_content(sim, "group-1", "Prazer, Lua.", 5000) |> should.be_true()
 
     let json_path = root <> "/agents/sim_alice/self/core.json"
     let md_path = root <> "/agents/sim_alice/self/core.md"

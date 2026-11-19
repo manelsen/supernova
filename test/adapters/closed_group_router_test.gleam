@@ -66,6 +66,7 @@ fn ensure_born(
   let events = process.new_subject()
   let _ = handler(telegram_message(user_id, "oi"), events)
   let _ = handler(telegram_message(user_id, "Lua"), events)
+  let _ = handler(telegram_message(user_id, "sim"), events)
   Nil
 }
 

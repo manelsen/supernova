@@ -234,26 +234,96 @@ fn reflection_or_plain(
   // sends; the system prompt belongs to the maintainer and can change.
   case latest_user_content(messages) {
     Some(content) ->
-      case string.contains(content, "Escreva o parágrafo agora.") {
-        True -> Some(drift_mock_addendum(system_text))
+      case string.contains(content, "Qual nome a pessoa quer dar à agente?") {
+        True -> Some(name_mock_json(content))
         False ->
-          case string.contains(content, "Reflita agora") {
-            True ->
-              case
-                string.contains(system_text, "[mock-invalid-reflection]"),
-                string.contains(system_text, "[mock-fenced-reflection]")
-              {
-                True, _ -> Some("not json")
-                False, True ->
-                  Some(
-                    "```json\n" <> reflection_mock_json(system_text) <> "\n```",
-                  )
-                False, False -> Some(reflection_mock_json(system_text))
+          case string.contains(content, "Escreva o parágrafo agora.") {
+            True -> Some(drift_mock_addendum(system_text))
+            False ->
+              case string.contains(content, "Reflita agora") {
+                True ->
+                  case
+                    string.contains(system_text, "[mock-invalid-reflection]"),
+                    string.contains(system_text, "[mock-fenced-reflection]")
+                  {
+                    True, _ -> Some("not json")
+                    False, True ->
+                      Some(
+                        "```json\n"
+                        <> reflection_mock_json(system_text)
+                        <> "\n```",
+                      )
+                    False, False -> Some(reflection_mock_json(system_text))
+                  }
+                False -> special_mock_response_plain(messages, config)
               }
-            False -> special_mock_response_plain(messages, config)
           }
       }
     None -> special_mock_response_plain(messages, config)
+  }
+}
+
+/// The name extraction prompt asks which name the person wants to give. The
+/// mock reads their reply between the `<<<` markers and picks the first
+/// capitalized word, or null when there is none.
+fn name_mock_json(content: String) -> String {
+  let reply = between_markers(content, "<<<", ">>>")
+  case string.contains(reply, "[mock-name-none]") {
+    True -> "{\"name\": null}"
+    False -> {
+      let words =
+        reply
+        |> string.replace("\n", " ")
+        |> string.replace("\r", " ")
+        |> string.split(" ")
+      case
+        list.find_map(words, fn(word) {
+          let cleaned = clean_word(word)
+          case starts_capitalized(cleaned) {
+            True -> Ok(cleaned)
+            False -> Error(Nil)
+          }
+        })
+      {
+        Ok(name) -> json.to_string(json.object([#("name", json.string(name))]))
+        Error(_) -> "{\"name\": null}"
+      }
+    }
+  }
+}
+
+fn between_markers(text: String, open: String, close: String) -> String {
+  case string.split_once(text, open) {
+    Error(_) -> ""
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, close) {
+        Ok(#(inner, _)) -> inner
+        Error(_) -> ""
+      }
+  }
+}
+
+fn clean_word(word: String) -> String {
+  word
+  |> string.to_graphemes
+  |> list.drop_while(is_word_punctuation)
+  |> list.reverse
+  |> list.drop_while(is_word_punctuation)
+  |> list.reverse
+  |> string.concat
+}
+
+fn is_word_punctuation(char: String) -> Bool {
+  list.contains(
+    [".", ",", "!", "?", ";", ":", "\"", "'", "(", ")", "…", "—"],
+    char,
+  )
+}
+
+fn starts_capitalized(word: String) -> Bool {
+  case string.first(word) {
+    Error(_) -> False
+    Ok(char) -> char == string.uppercase(char) && char != string.lowercase(char)
   }
 }
 

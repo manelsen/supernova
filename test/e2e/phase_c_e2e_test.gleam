@@ -87,6 +87,7 @@ fn route(
 fn birth(router: sim_router.SimRouter, user_id: String, name: String) -> Nil {
   route(router, user_id, "oi")
   route(router, user_id, name)
+  route(router, user_id, "sim")
 }
 
 fn wait_for(predicate: fn() -> Bool, timeout_ms: Int) -> Bool {

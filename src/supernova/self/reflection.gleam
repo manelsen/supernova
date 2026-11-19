@@ -616,7 +616,7 @@ pub fn parse_response(
 }
 
 /// Models often wrap JSON in a ``` block despite the instructions.
-fn strip_code_fence(raw: String) -> String {
+pub fn strip_code_fence(raw: String) -> String {
   let trimmed = string.trim(raw)
   case string.starts_with(trimmed, "```") {
     False -> trimmed
