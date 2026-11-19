@@ -127,7 +127,10 @@ pub fn get_effective_workspace(
 }
 
 /// Check if an agent has external read access.
-pub fn has_external_read(state: WorkspacePolicyState, agent_id: String) -> Bool {
+pub fn has_external_read(
+  state: WorkspacePolicyState,
+  agent_id: String,
+) -> Bool {
   let rule = get_rule(state, agent_id)
   rule.external_read_allowed
 }
