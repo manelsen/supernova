@@ -74,7 +74,7 @@ fn parse_args_loop(
         Error(_) -> Error("invalid --runs: " <> value)
       }
     ["--max-usd", value, ..rest] ->
-      case float.parse(value) {
+      case parse_usd(value) {
         Ok(number) -> parse_args_loop(rest, Options(..options, max_usd: number))
         Error(_) -> Error("invalid --max-usd: " <> value)
       }
@@ -600,6 +600,14 @@ fn dedupe_by(items: List(a), key: fn(a) -> String) -> List(a) {
   items
   |> list.fold(dict.new(), fn(acc, item) { dict.insert(acc, key(item), item) })
   |> dict.values
+}
+
+/// `3` and `3.0` are both a dollar amount.
+pub fn parse_usd(value: String) -> Result(Float, Nil) {
+  case float.parse(value) {
+    Ok(parsed) -> Ok(parsed)
+    Error(_) -> int.parse(value) |> result.map(int.to_float)
+  }
 }
 
 fn judge_template(root: String) -> Result(String, String) {
