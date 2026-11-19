@@ -31,8 +31,13 @@ main(Args) ->
 to_modules(Arg) ->
   case filelib:is_dir(Arg) of
     true ->
-      Files = filelib:fold_files(Arg, ".*_test\\.gleam$", true, fun(F, Acc) -> [F | Acc] end, []),
-      [file_to_module(F) || F <- Files];
+      case filelib:fold_files(Arg, ".*_test\\.gleam$", true, fun(F, Acc) -> [F | Acc] end, []) of
+        [] ->
+          io:format("ERROR: no *_test.gleam files under ~s~n", [Arg]),
+          halt(2);
+        Files ->
+          [file_to_module(F) || F <- Files]
+      end;
     false ->
       case filename:extension(Arg) of
         ".gleam" -> [file_to_module(Arg)];

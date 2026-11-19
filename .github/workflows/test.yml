@@ -21,9 +21,9 @@ jobs:
           version-type: strict
           rebar3-version: "3.24.0"
 
-      # Dependencies and compiled artefacts. Gleam rebuilds whatever changed, and
-      # the coverage script derives source and test modules from src/ and test/,
-      # so a stale beam of a deleted module is never run or counted.
+      # Dependencies and their compiled artefacts. The project's own output is
+      # removed after restore (below): a stale beam of a deleted FFI module
+      # would otherwise satisfy calls that a clean build rejects.
       - name: Cache Gleam build
         uses: actions/cache@v4
         with:
@@ -34,6 +34,9 @@ jobs:
 
       - name: Download dependencies
         run: gleam deps download
+
+      - name: Remove compiled project artefacts
+        run: rm -rf build/dev/erlang/supernova build/test/erlang/supernova
 
       - name: Check formatting
         run: gleam format --check src test
