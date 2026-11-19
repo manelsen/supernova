@@ -23,6 +23,7 @@ import supernova/core/session/supervisor as session_supervisor
 import supernova/llm/provider
 import supernova/self/birth
 import supernova/self/core as self_core
+import supernova/self/journal
 import supernova/sim/invariants
 
 const auth_port = 18_787
@@ -501,6 +502,85 @@ pub fn sim_birth_names_and_prompts_from_core_test() {
       before |> should.equal(after)
       before_prose |> should.equal(after_prose)
       envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
+    },
+  )
+}
+
+pub fn sim_naming_end_to_end_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  let assert Ok(router) = sim_router.start(mock_provider())
+  support.with_runtime_root(
+    config.Config(
+      ..base_config(),
+      access: config.AccessConfig(
+        ..support.access_config([], ["sim:alice"]),
+        allowed_chats: ["sim:group-1"],
+      ),
+    ),
+    fn(root) {
+      let events = process.new_subject()
+      let first =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "oi")),
+          events,
+        )
+      case first {
+        Ok(port.ImmediateReply(reply)) ->
+          string.contains(reply.content, "Que nome você quer me dar?")
+          |> should.be_true()
+        _ -> should.fail()
+      }
+      let second =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message(
+            "group-1",
+            "alice",
+            "pode te chamar de Luna",
+          )),
+          events,
+        )
+      case second {
+        Ok(port.ImmediateReply(reply)) ->
+          string.contains(
+            reply.content,
+            "Então meu nome é Luna? Responda sim ou não.",
+          )
+          |> should.be_true()
+        _ -> should.fail()
+      }
+      let third =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "sim")),
+          events,
+        )
+      case third {
+        Ok(port.ImmediateReply(reply)) ->
+          string.contains(reply.content, "Prazer, Luna.") |> should.be_true()
+        _ -> should.fail()
+      }
+      let assert Some(named) = self_core.load(root, "sim:alice")
+      named.name |> should.equal(Some("Luna"))
+
+      let fourth =
+        sim_router.route_inbound_for_handler(
+          router,
+          port.InboundMessage(sim_message("group-1", "alice", "olá")),
+          events,
+        )
+      case fourth {
+        Ok(port.StreamReply(_)) -> await_stream(events)
+        _ -> should.fail()
+      }
+      journal.load(root, "sim:alice")
+      |> list.any(fn(entry) { entry.user == "olá" && entry.agent != "" })
+      |> should.be_true()
     },
   )
 }
