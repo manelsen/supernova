@@ -144,7 +144,9 @@ print_missing_beams(MissingBeams) ->
 
 run_tests() ->
   ensure_runtime_apps_started(),
-  eunit:test(test_modules(), [no_tty, {scale_timeouts, 10}]).
+  %% Default tty reporting prints each failure and the summary, so a red run
+  %% shows which test failed.
+  eunit:test(test_modules(), [{scale_timeouts, 10}]).
 
 ensure_runtime_apps_started() ->
   _ = application:ensure_all_started(yay),

@@ -21,6 +21,17 @@ jobs:
           version-type: strict
           rebar3-version: "3.24.0"
 
+      # Dependencies and compiled artefacts. Gleam rebuilds whatever changed, and
+      # the coverage script derives source and test modules from src/ and test/,
+      # so a stale beam of a deleted module is never run or counted.
+      - name: Cache Gleam build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: gleam-build-${{ runner.os }}-${{ hashFiles('.tool-versions', 'manifest.toml') }}-${{ github.sha }}
+          restore-keys: |
+            gleam-build-${{ runner.os }}-${{ hashFiles('.tool-versions', 'manifest.toml') }}-
+
       - name: Download dependencies
         run: gleam deps download
 
@@ -30,10 +41,9 @@ jobs:
       - name: Build with warnings as errors
         run: gleam build --warnings-as-errors
 
-      - name: Run test suite
-        run: gleam test
-
-      - name: Check line coverage threshold
+      # One instrumented run: it fails on any failing test and on coverage
+      # below the threshold.
+      - name: Run test suite with line coverage gate
         run: make coverage
 
       - name: Ensure working tree is clean of test artifacts

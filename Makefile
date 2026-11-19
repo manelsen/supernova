@@ -1,4 +1,4 @@
-.PHONY: help configure up down logs rebuild test coverage check-config clean restart
+.PHONY: help configure up down logs rebuild test test-only coverage check-config clean restart
 
 COMPOSE_FILE := -f docker-compose.yml
 
@@ -25,9 +25,13 @@ rebuild: ## Rebuild image without starting
 test: ## Run test suite
 	gleam test
 
-coverage: ## Run line coverage gate (minimum 75%)
-	gleam test
+coverage: ## Run the whole suite once, instrumented, with the line coverage gate (minimum 75%)
+	gleam build
 	./scripts/coverage/line_coverage.escript --threshold 75
+
+test-only: ## Run only some test modules, e.g. make test-only T="test/self/drift_apply_test.gleam test/sim"
+	gleam build
+	./scripts/test_modules.escript $(T)
 
 check-config: ## Validate supernova.yaml and report issues
 	gleam run -m supernova/check_config_main -- supernova.yaml
