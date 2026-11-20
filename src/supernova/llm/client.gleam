@@ -36,6 +36,10 @@ type MockToolMode {
 // Public API
 // ============================================================================
 
+/// Mistral's OpenAI-compatible chat endpoint. It also serves DeepSeek models
+/// (`deepseek-v4-1-flash-1017`), the agents' model after the first battery.
+pub const mistral_chat_url = "https://api.mistral.ai/v1/chat/completions"
+
 /// Send a chat completion request.
 ///
 /// Dispatches to the provider specified in config.
@@ -69,6 +73,14 @@ pub fn chat(
         config,
         tools,
         base_url: "https://api.z.ai/api/paas/v4/chat/completions",
+        extra_headers: [],
+      )
+    "mistral" ->
+      openai_compatible.chat(
+        messages,
+        config,
+        tools,
+        base_url: mistral_chat_url,
         extra_headers: [],
       )
     _ -> Error(provider.ProviderNotFound(name: config.name))

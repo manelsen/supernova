@@ -15,6 +15,9 @@ main([]) ->
 main(Args) ->
   lists:foreach(fun code:add_patha/1, filelib:wildcard("build/dev/erlang/*/ebin")),
   _ = application:ensure_all_started(yay),
+  %% The full suite starts hackney through earlier modules; a single module
+  %% that calls HTTP would otherwise fail with badarg on its ETS tables.
+  _ = application:ensure_all_started(hackney),
   Modules = lists:usort(lists:flatmap(fun to_modules/1, Args)),
   case [M || M <- Modules, code:which(M) =:= non_existing] of
     [] -> ok;

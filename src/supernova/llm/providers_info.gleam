@@ -92,6 +92,13 @@ pub fn known_providers() -> List(ProviderInfo) {
       env_var: "ZAI_API_KEY",
     ),
     ProviderInfo(
+      key: "mistral",
+      label: "Mistral",
+      description: "Mistral API, also serving DeepSeek models",
+      default_model: "deepseek-v4-1-flash-1017",
+      env_var: "MISTRAL_API_KEY",
+    ),
+    ProviderInfo(
       key: "ollama",
       label: "Ollama",
       description: "Local/self-hosted models",
