@@ -15,7 +15,8 @@ pub fn guidance_comes_from_the_maintainer_file_test() {
     "Não invente nem insinue nada sobre a vida de outras pessoas",
   )
   |> should.be_true()
-  string.contains(text, "ela pode enviar /esquecer") |> should.be_true()
+  string.contains(text, "sugira que ela envie /esquecer") |> should.be_true()
+  string.contains(text, "Nunca diga que leu, rodou") |> should.be_true()
 }
 
 pub fn guidance_falls_back_without_the_file_test() {
