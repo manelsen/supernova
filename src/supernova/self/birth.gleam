@@ -158,6 +158,20 @@ pub fn confirm_message(name: String) -> String {
   "Então meu nome é " <> name <> "? Responda sim ou não."
 }
 
+/// The agent takes the name as its own; "Prazer, <nome>." read as if it
+/// greeted the person by that name, and a persona took it so.
+pub fn accepted_message(name: String) -> String {
+  name <> ", então. Prazer!"
+}
+
+/// A name starts with a capital letter, however the person typed it.
+pub fn capitalize_name(name: String) -> String {
+  case string.pop_grapheme(name) {
+    Ok(#(first, rest)) -> string.uppercase(first) <> rest
+    Error(_) -> name
+  }
+}
+
 pub fn declined_message() -> String {
   "Tudo bem. Que nome você quer me dar?"
 }
@@ -319,7 +333,8 @@ fn propose_name(
   now: Int,
   extract: fn(String) -> Result(String, String),
 ) -> Step {
-  let candidate = name_candidate(content, extract)
+  let candidate =
+    name_candidate(content, extract) |> result.map(capitalize_name)
   case candidate {
     Ok(name) ->
       case write_name_pending(data_dir, principal, name, now) {

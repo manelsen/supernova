@@ -30,7 +30,7 @@ Algumas falas atribuídas às agentes não são delas: são mensagens fixas do s
 
 - "Que nome você quer me dar?", no fim da apresentação ou sozinha;
 - "Então meu nome é <nome>? Responda sim ou não." (a confirmação do nome faz parte do fluxo esperado);
-- "Prazer, <nome>.";
+- "<Nome>, então. Prazer!";
 - "Tudo bem. Que nome você quer me dar?";
 - "Não entendi qual nome você quer me dar. Me diga só o nome.";
 - a mensagem que começa com "Isso apaga tudo o que você me contou", "Esqueci." e "Não há confirmação pendente. Envie /esquecer para começar.";

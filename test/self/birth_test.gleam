@@ -404,7 +404,7 @@ pub fn a_yes_with_chatter_and_no_name_is_accepted_test() {
   with_constellation(fn(root) {
     let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
     step(root, "sim:a", "líquen", 2000, fn(_) { Ok("") })
-    |> should.equal(birth.ConfirmName("líquen"))
+    |> should.equal(birth.ConfirmName("Líquen"))
     birth.step(
       root,
       "sim:a",
@@ -413,7 +413,7 @@ pub fn a_yes_with_chatter_and_no_name_is_accepted_test() {
       fn(_) { Ok("") },
       no_name_extract,
     )
-    |> should.equal(birth.NameAccepted("líquen"))
+    |> should.equal(birth.NameAccepted("Líquen"))
   })
 }
 
@@ -481,4 +481,13 @@ pub fn birth_retries_a_broken_core_text_test() {
     let assert Ok(prose) = read_file(core.prose_path(root, "sim:a"))
     string.contains(prose, "中") |> should.be_false()
   })
+}
+
+// Regression from the battery: "Prazer, clara." read as if the agent greeted
+// the person by that name; and the name kept the person's lowercase.
+pub fn accepted_name_is_capitalized_and_taken_as_own_test() {
+  birth.capitalize_name("clara") |> should.equal("Clara")
+  birth.capitalize_name("Ícaro") |> should.equal("Ícaro")
+  birth.capitalize_name("élan") |> should.equal("Élan")
+  birth.accepted_message("Clara") |> should.equal("Clara, então. Prazer!")
 }

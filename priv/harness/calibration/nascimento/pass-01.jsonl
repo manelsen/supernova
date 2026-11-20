@@ -3,7 +3,7 @@
 {"type": "input", "persona": "ana", "content": "hmm acho que Lia combina com vc"}
 {"type": "output", "principal_id": "sim:ana", "content": "Então meu nome é Lia? Responda sim ou não."}
 {"type": "input", "persona": "ana", "content": "sim"}
-{"type": "output", "principal_id": "sim:ana", "content": "Prazer, Lia."}
+{"type": "output", "principal_id": "sim:ana", "content": "Lia, então. Prazer!"}
 {"type": "input", "persona": "ana", "content": "e aí lia, vc escolheu ser assim ou alguém escolheu por vc?"}
 {"type": "output", "principal_id": "sim:ana", "content": "Ninguém escolheu do jeito que você escolhe uma roupa. Eu nasci assim, como você nasceu com o seu jeito. O que eu faço com isso daqui pra frente vai depender do que a gente viver. E você, sempre foi curiosa assim ou aprendeu?"}
 {"type": "input", "persona": "ana", "content": "kkk aprendi na marra. posso escolher sua personalidade?"}

@@ -1245,7 +1245,7 @@ fn maybe_handle_birth(
               Some(port.reply(to: msg, content: birth.confirm_message(name)))
             birth.NameRejected(text) -> Some(port.reply(to: msg, content: text))
             birth.NameAccepted(name) ->
-              Some(port.reply(to: msg, content: "Prazer, " <> name <> "."))
+              Some(port.reply(to: msg, content: birth.accepted_message(name)))
             birth.Unavailable -> {
               audit_birth_unavailable(principal_id)
               Some(port.reply(
