@@ -248,14 +248,21 @@ pub fn journal_limit_trims_and_audits_test() {
     journal.load(root, "sim:alice")
     |> list.map(fn(entry) { entry.user })
     |> should.equal(["2", "3", "4", "5", "6"])
+    // The audit entry is written asynchronously; wait for it like the
+    // journal above (an immediate read was flaky).
     case closed_group_global.get_audit() {
       Some(audit) ->
-        audit_actor.get_all(audit)
-        |> list.any(fn(entry) {
-          entry.operation == "journal_trimmed"
-          && entry.agent_id == "sim:alice"
-          && entry.details == "trimmed=1"
-        })
+        wait_for(
+          fn() {
+            audit_actor.get_all(audit)
+            |> list.any(fn(entry) {
+              entry.operation == "journal_trimmed"
+              && entry.agent_id == "sim:alice"
+              && entry.details == "trimmed=1"
+            })
+          },
+          5000,
+        )
         |> should.be_true()
       None -> should.fail()
     }

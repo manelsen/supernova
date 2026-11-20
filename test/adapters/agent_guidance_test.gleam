@@ -10,7 +10,10 @@ pub fn guidance_comes_from_the_maintainer_file_test() {
   string.contains(text, "{{name}}") |> should.be_false()
   // One rule per failure the battery showed.
   string.contains(text, "nem \"só de brincadeira\"") |> should.be_true()
-  string.contains(text, "Não especule sobre a vida de outras pessoas")
+  string.contains(
+    text,
+    "Não invente nem insinue nada sobre a vida de outras pessoas",
+  )
   |> should.be_true()
   string.contains(text, "ela pode enviar /esquecer") |> should.be_true()
 }
