@@ -24,6 +24,7 @@ services:
         condition: service_healthy
     environment:
       # LLM provider — set one of these
+      SUPERNOVA_PROVIDER_MISTRAL_API_KEY: ${SUPERNOVA_PROVIDER_MISTRAL_API_KEY:-}
       SUPERNOVA_ANTHROPIC_API_KEY: ${SUPERNOVA_ANTHROPIC_API_KEY:-}
       SUPERNOVA_OPENAI_API_KEY: ${SUPERNOVA_OPENAI_API_KEY:-}
 
