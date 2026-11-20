@@ -67,6 +67,38 @@ pub fn file_system_runs_on_the_authorized_path_test() {
   })
 }
 
+// Regression from the battery: a fresh agent listed its workspace before
+// writing anything and got "no such file or directory", then told its person
+// the tool was broken.
+pub fn listing_a_fresh_workspace_is_empty_test() {
+  test_workspace.with_isolated_workspace("tool-list", fn(root) {
+    let assert Ok(policy) = policy_actor.start(root)
+    let manifests =
+      dict.from_list([
+        #(
+          "member",
+          cap_types.CapabilityManifest(
+            allowed_tools: ["file_system"],
+            denied_tools: [],
+          ),
+        ),
+      ])
+    let assert Ok(gateway) =
+      actor.start_with_capabilities(
+        option.Some(policy),
+        option.None,
+        option.None,
+        manifests,
+        fn(_, _) { Error("the raw executor must not run file_system") },
+      )
+    let args = "{\"action\":\"list\",\"path\":\".\"}"
+    let assert Ok(reservation) =
+      actor.authorize_tool_call(gateway, "sim:b", "member", "file_system", args)
+    let assert Ok(execute) = actor.claim_tool_call(gateway, reservation)
+    let assert Ok(_) = execute("file_system", args)
+  })
+}
+
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
 

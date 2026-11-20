@@ -177,7 +177,12 @@ fn do_ensure_dir(path: String) -> Result(Nil, String)
 
 /// List a directory the kernel's workspace policy already authorized.
 pub fn list_at(authorized_path: String) -> Result(List(String), String) {
-  do_list_dir(authorized_path)
+  // A fresh agent's workspace may not exist yet; listing it is listing an
+  // empty directory, not an error.
+  case do_ensure_dir(authorized_path) {
+    Ok(_) -> do_list_dir(authorized_path)
+    Error(reason) -> Error(reason)
+  }
 }
 
 /// Validate that a path is within the workspace.
