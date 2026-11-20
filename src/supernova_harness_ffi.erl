@@ -45,8 +45,18 @@ collect(Port, Acc, Timeout) ->
         {error, timeout}
     end.
 
+%% A killed process stays in /proc as a zombie until its parent reaps it;
+%% the timeout test read that window as "still alive". A zombie is dead.
 process_alive(Pid) when is_integer(Pid) ->
-    filelib:is_file("/proc/" ++ integer_to_list(Pid)).
+    case file:read_file("/proc/" ++ integer_to_list(Pid) ++ "/stat") of
+        {ok, Stat} ->
+            case binary:split(Stat, <<") ">>) of
+                [_, <<"Z", _/binary>>] -> false;
+                [_, <<"X", _/binary>>] -> false;
+                _ -> true
+            end;
+        {error, _} -> false
+    end.
 
 json_first_key(Map) when is_map(Map) ->
     case maps:keys(Map) of
