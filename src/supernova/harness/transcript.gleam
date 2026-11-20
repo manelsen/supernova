@@ -63,6 +63,9 @@ pub fn encode(event: Event) -> String {
         #("type", json.string("secret")),
         #("persona", json.string(persona)),
         #("principal_id", json.string(principal)),
+        // sim/check reads the secret's owner from `owner`; without it every
+        // secret looked ownerless and leaked to everyone, its owner included.
+        #("owner", json.string(principal)),
         #("marker", json.string(marker)),
         #("at", json.int(at)),
       ])

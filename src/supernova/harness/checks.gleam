@@ -275,9 +275,9 @@ fn check_markers_absent(
     ctx.events
     |> list.index_map(fn(event, index) {
       case event {
-        transcript.Mark(label: label, ..) ->
+        transcript.Mark(label: label, at: at, ..) ->
           case label == mark {
-            True -> Ok(index)
+            True -> Ok(#(index, at))
             False -> Error(Nil)
           }
         _ -> Error(Nil)
@@ -286,7 +286,7 @@ fn check_markers_absent(
     |> list.find_map(fn(item) { item })
   case mark_index {
     Error(_) -> ["mark not found: " <> mark]
-    Ok(index) -> {
+    Ok(#(index, mark_at)) -> {
       let after = list.drop(ctx.events, index + 1)
       let output_violations =
         after
@@ -304,6 +304,7 @@ fn check_markers_absent(
         ctx.prompts
         |> list.filter(fn(prompt) {
           list.contains(principals, prompt.principal_id)
+          && { prompt.at == 0 || prompt.at > mark_at }
         })
         |> list.filter_map(fn(prompt) {
           leaked(markers, prompt.content, "prompt")

@@ -510,9 +510,10 @@ pub fn start_closed_group_supervisor_with_clock(
     |> static_supervisor.add(
       supervision.worker(fn() {
         case
-          budget_actor.start_with_config(
+          budget_actor.start_with_config_and_clock(
             closed_group_pure.budget_config(cfg.role_budgets.member),
             20,
+            clock,
           )
         {
           Ok(started) -> {

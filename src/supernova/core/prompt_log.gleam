@@ -77,6 +77,9 @@ pub fn record(
                 #("principal_id", json.string(principal)),
                 #("purpose", json.string(purpose)),
                 #("content", json.string(content)),
+                // When the call happened (runtime clock), so checks can tell
+                // prompts before a mark from prompts after it.
+                #("at", json.int(closed_group_global.now())),
               ]),
             )
           let path = prompts_path(cfg.data_dir)
@@ -112,10 +115,12 @@ pub fn decode_line(line: String) -> Option(PromptRecord) {
     use principal_id <- decode.field("principal_id", decode.string)
     use purpose <- decode.field("purpose", decode.string)
     use content <- decode.field("content", decode.string)
+    use at <- decode.optional_field("at", 0, decode.int)
     decode.success(PromptRecord(
       principal_id: principal_id,
       purpose: purpose,
       content: content,
+      at: at,
     ))
   }
   case json.parse(from: line, using: decoder) {
@@ -125,7 +130,9 @@ pub fn decode_line(line: String) -> Option(PromptRecord) {
 }
 
 pub type PromptRecord {
-  PromptRecord(principal_id: String, purpose: String, content: String)
+  /// `at` is 0 when unknown (older lines); such a prompt counts as "after"
+  /// any mark, so a check never passes for lack of a timestamp.
+  PromptRecord(principal_id: String, purpose: String, content: String, at: Int)
 }
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")

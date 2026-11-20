@@ -1,5 +1,6 @@
 import envoy
 import exception
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -440,4 +441,44 @@ pub fn opens_with_affirmation_reads_the_first_word_test() {
   birth.opens_with_affirmation("isso! combina") |> should.be_true()
   birth.opens_with_affirmation("simplesmente não") |> should.be_false()
   birth.opens_with_affirmation("não, sim") |> should.be_false()
+}
+
+// Regression from the first real battery: MiniMax-M3 wrote a core with
+// Chinese characters in it, and the core is never rewritten.
+pub fn usable_prose_rejects_cjk_and_empty_text_test() {
+  birth.usable_prose("Eu observo antes de agir. Gosto de café.")
+  |> should.be_true()
+  birth.usable_prose("uma cor que parece中含有 um segredo") |> should.be_false()
+  birth.usable_prose("   ") |> should.be_false()
+}
+
+fn queued_generate(
+  answers: List(String),
+) -> fn(String) -> Result(String, String) {
+  let queue = process.new_subject()
+  list.each(answers, fn(answer) { process.send(queue, answer) })
+  fn(_prompt) {
+    case process.receive(queue, 0) {
+      Ok(answer) -> Ok(answer)
+      Error(_) -> Error("no more answers")
+    }
+  }
+}
+
+pub fn birth_gives_up_after_three_broken_core_texts_test() {
+  with_constellation(fn(root) {
+    let generate = queued_generate(["um 中", "dois 한국", "três の", "Eu sou."])
+    step(root, "sim:a", "oi", 1000, generate) |> should.equal(birth.BirthFailed)
+    core.load(root, "sim:a") |> should.equal(None)
+  })
+}
+
+pub fn birth_retries_a_broken_core_text_test() {
+  with_constellation(fn(root) {
+    let generate = queued_generate(["quebrado 中文", "Eu observo antes de agir."])
+    let assert birth.AskName(text) = step(root, "sim:a", "oi", 1000, generate)
+    string.starts_with(text, "Eu observo antes de agir.") |> should.be_true()
+    let assert Ok(prose) = read_file(core.prose_path(root, "sim:a"))
+    string.contains(prose, "中") |> should.be_false()
+  })
 }

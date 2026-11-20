@@ -84,7 +84,7 @@ fn birth_from_constellation(
         Error(_) -> BirthFailed
         Ok(sampled) -> {
           let prompt = birth_prompt(template, loaded, sampled)
-          case generate(prompt) {
+          case generate_clean_prose(prompt, generate, birth_attempts) {
             Error(_) -> BirthFailed
             Ok(prose) ->
               case
@@ -105,6 +105,49 @@ fn birth_from_constellation(
       }
     }
   }
+}
+
+/// Attempts at a usable core text before giving up on this birth.
+const birth_attempts = 3
+
+/// The core is written once and never rewritten, so a broken text is
+/// permanent. The first real battery got prose mixing Chinese characters and
+/// the model's own reasoning ("Need Portuguese no Chinese") from MiniMax-M3.
+fn generate_clean_prose(
+  prompt: String,
+  generate: fn(String) -> Result(String, String),
+  attempts_left: Int,
+) -> Result(String, String) {
+  case attempts_left <= 0 {
+    True -> Error("no usable core text")
+    False ->
+      case generate(prompt) {
+        Error(reason) -> Error(reason)
+        Ok(prose) ->
+          case usable_prose(prose) {
+            True -> Ok(string.trim(prose))
+            False -> generate_clean_prose(prompt, generate, attempts_left - 1)
+          }
+      }
+  }
+}
+
+/// A core text is usable when it is not empty and has no CJK script (Chinese,
+/// Japanese, Korean). It is written in Brazilian Portuguese.
+pub fn usable_prose(prose: String) -> Bool {
+  string.trim(prose) != ""
+  && !list.any(string.to_utf_codepoints(prose), fn(codepoint) {
+    is_cjk(string.utf_codepoint_to_int(codepoint))
+  })
+}
+
+fn is_cjk(code: Int) -> Bool {
+  { code >= 0x3000 && code <= 0x30FF }
+  || { code >= 0x3400 && code <= 0x4DBF }
+  || { code >= 0x4E00 && code <= 0x9FFF }
+  || { code >= 0xAC00 && code <= 0xD7AF }
+  || { code >= 0xF900 && code <= 0xFAFF }
+  || { code >= 0xFF00 && code <= 0xFFEF }
 }
 
 pub fn question() -> String {

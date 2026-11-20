@@ -115,10 +115,11 @@ fn execute_commands(commands: List(BudgetCommand)) -> Nil {
 fn handle_message(
   state: BudgetPolicyState,
   message: BudgetMessage,
+  clock: fn() -> Int,
 ) -> actor.Next(BudgetPolicyState, BudgetMessage) {
   case message {
     Check(reply_to, agent_id, resource, amount) -> {
-      let timestamp = ffi_current_timestamp()
+      let timestamp = clock()
       let #(new_state, result, commands) =
         pure.check(state, agent_id, resource, amount, timestamp)
       execute_commands(commands)
@@ -128,7 +129,7 @@ fn handle_message(
     }
 
     SetBudget(reply_to, agent_id, config) -> {
-      let timestamp = ffi_current_timestamp()
+      let timestamp = clock()
       let #(new_state, commands) =
         pure.set_budget(state, agent_id, config, timestamp)
       execute_commands(commands)
@@ -144,7 +145,7 @@ fn handle_message(
     }
 
     RecordConsumption(reply_to, agent_id, resource, amount) -> {
-      let timestamp = ffi_current_timestamp()
+      let timestamp = clock()
       let new_state =
         pure.record_consumption(state, agent_id, resource, amount, timestamp)
 
@@ -153,7 +154,7 @@ fn handle_message(
     }
 
     SetParent(reply_to, agent_id, parent_id) -> {
-      let timestamp = ffi_current_timestamp()
+      let timestamp = clock()
       let #(new_state, commands) =
         pure.set_parent(state, agent_id, parent_id, timestamp)
       execute_commands(commands)
@@ -163,7 +164,7 @@ fn handle_message(
     }
 
     ReleaseSubAgent(reply_to, agent_id) -> {
-      let timestamp = ffi_current_timestamp()
+      let timestamp = clock()
       let #(new_state, commands) =
         pure.release_sub_agent(state, agent_id, timestamp)
       execute_commands(commands)
@@ -173,7 +174,7 @@ fn handle_message(
     }
 
     ResetWindows(reply_to, agent_id) -> {
-      let timestamp = ffi_current_timestamp()
+      let timestamp = clock()
       let new_state = pure.reset_windows(state, agent_id, timestamp)
 
       actor.send(reply_to, Nil)
@@ -181,7 +182,7 @@ fn handle_message(
     }
 
     GetConsumption(reply_to, agent_id, resource) -> {
-      let timestamp = ffi_current_timestamp()
+      let timestamp = clock()
       let consumption =
         pure.get_consumption(state, agent_id, resource, timestamp)
 
@@ -202,6 +203,7 @@ fn handle_message(
 
 /// Start the budget policy actor with default configuration.
 pub fn start() -> Result(BudgetPolicy, actor.StartError) {
+  let clock = ffi_current_timestamp
   let initial_state =
     BudgetPolicyState(
       agents: dict.new(),
@@ -211,7 +213,9 @@ pub fn start() -> Result(BudgetPolicy, actor.StartError) {
 
   case
     actor.new(initial_state)
-    |> actor.on_message(handle_message)
+    |> actor.on_message(fn(state, message) {
+      handle_message(state, message, clock)
+    })
     |> actor.start
   {
     Ok(started) -> Ok(started.data)
@@ -224,6 +228,20 @@ pub fn start_with_config(
   default_config: BudgetConfig,
   inheritance_ratio: Int,
 ) -> Result(BudgetPolicy, actor.StartError) {
+  start_with_config_and_clock(
+    default_config,
+    inheritance_ratio,
+    ffi_current_timestamp,
+  )
+}
+
+/// Start with an injected clock: the hourly windows follow it, so tests and
+/// the harness (which advance simulated time) see windows reset.
+pub fn start_with_config_and_clock(
+  default_config: BudgetConfig,
+  inheritance_ratio: Int,
+  clock: fn() -> Int,
+) -> Result(BudgetPolicy, actor.StartError) {
   let initial_state =
     BudgetPolicyState(
       agents: dict.new(),
@@ -233,7 +251,9 @@ pub fn start_with_config(
 
   case
     actor.new(initial_state)
-    |> actor.on_message(handle_message)
+    |> actor.on_message(fn(state, message) {
+      handle_message(state, message, clock)
+    })
     |> actor.start
   {
     Ok(started) -> Ok(started.data)
