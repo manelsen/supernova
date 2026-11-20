@@ -18,6 +18,7 @@ import gleam/http/request
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
+import gleam/uri
 import supernova/llm/provider
 import supernova/llm/providers/openai
 
@@ -57,19 +58,25 @@ pub fn chat(
 /// hosts and for Ollama, whose key is a placeholder and which often runs on a
 /// private network under a service name.
 pub fn secure_endpoint(name: String, base_url: String) -> Result(Nil, String) {
-  let url = string.lowercase(string.trim(base_url))
-  let loopback =
-    list.any(
-      ["http://localhost", "http://127.0.0.1", "http://[::1]"],
-      fn(prefix) {
-        url == prefix
-        || string.starts_with(url, prefix <> ":")
-        || string.starts_with(url, prefix <> "/")
-      },
-    )
-  case string.starts_with(url, "https://"), loopback, name == "ollama" {
-    True, _, _ | _, True, _ | _, _, True -> Ok(Nil)
-    False, False, False ->
+  // The host is read from the parsed URL, as the HTTP client reads it: a
+  // prefix check let "http://localhost:8080@remote.example" through.
+  let allowed = case uri.parse(string.trim(base_url)) {
+    Ok(parsed) -> {
+      let scheme = option.map(parsed.scheme, string.lowercase)
+      let host = option.map(parsed.host, string.lowercase)
+      case scheme, host {
+        Some("https"), Some(_) -> True
+        Some("http"), Some(host) ->
+          name == "ollama"
+          || list.contains(["localhost", "127.0.0.1", "::1", "[::1]"], host)
+        _, _ -> False
+      }
+    }
+    Error(_) -> False
+  }
+  case allowed {
+    True -> Ok(Nil)
+    False ->
       Error("Refusing to send the " <> name <> " API key over a non-HTTPS URL")
   }
 }

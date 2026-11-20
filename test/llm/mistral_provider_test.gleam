@@ -86,6 +86,16 @@ pub fn the_key_travels_only_over_https_test() {
   |> should.be_ok()
   openai_compatible.secure_endpoint("mistral", "http://localhost.evil.com/v1")
   |> should.be_error()
+  // From review: userinfo made a remote host look like localhost.
+  openai_compatible.secure_endpoint(
+    "mistral",
+    "http://localhost:8080@gateway.example/v1/chat/completions",
+  )
+  |> should.be_error()
+  openai_compatible.secure_endpoint("mistral", "HTTPS://api.mistral.ai/v1")
+  |> should.be_ok()
+  openai_compatible.secure_endpoint("mistral", "http://127.0.0.1/v1")
+  |> should.be_ok()
   openai_compatible.secure_endpoint("ollama", "http://ollama:11434/v1")
   |> should.be_ok()
 }
