@@ -3,6 +3,7 @@ import gleeunit/should
 import supernova/config
 import supernova/llm/client
 import supernova/llm/provider
+import supernova/llm/providers/openai
 
 // The agents run on DeepSeek through Mistral's OpenAI-compatible API since
 // the first battery (MiniMax-M3 broke the core text).
@@ -38,3 +39,15 @@ pub fn mistral_dispatches_to_the_compatible_client_test() {
   client.mistral_chat_url
   |> should.equal("https://api.mistral.ai/v1/chat/completions")
 }
+
+// Regression from the third battery: a real Mistral answer carries
+// "tool_calls": null, and every agent turn failed to parse.
+pub fn real_mistral_answer_parses_test() {
+  let assert Ok(body) = read_file("test/fixtures/llm/mistral_deepseek_ok.json")
+  let assert Ok(response) = openai.parse_response(body)
+  response.content |> should.equal("OK")
+  response.tool_calls |> should.equal(None)
+}
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read_file(path: String) -> Result(String, String)
