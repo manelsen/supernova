@@ -95,7 +95,7 @@ pub fn listing_a_fresh_workspace_is_empty_test() {
     let assert Ok(reservation) =
       actor.authorize_tool_call(gateway, "sim:b", "member", "file_system", args)
     let assert Ok(execute) = actor.claim_tool_call(gateway, reservation)
-    let assert Ok(_) = execute("file_system", args)
+    execute("file_system", args) |> should.equal(Ok("(empty directory)"))
   })
 }
 

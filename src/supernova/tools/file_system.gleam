@@ -138,11 +138,20 @@ pub fn execute_at(
           }
         "list" ->
           case list_at(authorized_path) {
-            Ok(entries) -> Ok(string.join(entries, "\n"))
+            Ok(entries) -> Ok(format_listing(entries))
             Error(reason) -> Error(reason)
           }
         _ -> Error("file_system action must be read, write, or list")
       }
+  }
+}
+
+/// An empty directory is said in words: an empty tool result reads as "no
+/// output" and the agent took it for a broken tool.
+pub fn format_listing(entries: List(String)) -> String {
+  case entries {
+    [] -> "(empty directory)"
+    _ -> string.join(entries, "\n")
   }
 }
 
