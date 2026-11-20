@@ -11,6 +11,10 @@
 //// let result = file_system.read_authorized(policy, "agent_1", "src/main.gleam")
 //// ```
 
+import gleam/dynamic/decode
+import gleam/json
+import gleam/list
+import gleam/string
 import supernova/core/workspace_guard
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types.{OpRead, OpWrite}
@@ -107,6 +111,74 @@ pub fn tool() -> provider.ToolDefinition {
 // ============================================================================
 // Path Validation
 // ============================================================================
+
+/// Run a file_system tool call (`{"action","path","content"}`) on a path the
+/// kernel already authorized: the gateway resolves the model's path against
+/// the agent's own workspace and passes the result here. Executing the raw
+/// path against the process directory let agents list the application's root
+/// and read a file another agent had written (found by the harness).
+pub fn execute_at(
+  authorized_path: String,
+  args_json: String,
+) -> Result(String, String) {
+  let decoder = {
+    use action <- decode.field("action", decode.string)
+    use content <- decode.optional_field("content", "", decode.string)
+    decode.success(#(action, content))
+  }
+  case json.parse(from: args_json, using: decoder) {
+    Error(_) -> Error("Invalid arguments for file_system")
+    Ok(#(action, content)) ->
+      case string.lowercase(string.trim(action)) {
+        "read" -> read_at(authorized_path)
+        "write" ->
+          case write_at(authorized_path, content) {
+            Ok(Nil) -> Ok("ok")
+            Error(reason) -> Error(reason)
+          }
+        "list" ->
+          case list_at(authorized_path) {
+            Ok(entries) -> Ok(string.join(entries, "\n"))
+            Error(reason) -> Error(reason)
+          }
+        _ -> Error("file_system action must be read, write, or list")
+      }
+  }
+}
+
+/// Read a path the kernel's workspace policy already authorized (absolute,
+/// inside the caller's workspace). Only the syscall gateway calls these.
+pub fn read_at(authorized_path: String) -> Result(String, String) {
+  do_read_file(authorized_path)
+}
+
+/// Write a path the kernel's workspace policy already authorized.
+pub fn write_at(
+  authorized_path: String,
+  content: String,
+) -> Result(Nil, String) {
+  // The parent lies inside the authorized workspace; a fresh agent's
+  // workspace may not exist yet.
+  case do_ensure_dir(parent_dir(authorized_path)) {
+    Ok(_) -> do_write_file(authorized_path, content)
+    Error(reason) -> Error(reason)
+  }
+}
+
+fn parent_dir(path: String) -> String {
+  case string.split(path, "/") |> list.reverse {
+    [_, ..rest] -> rest |> list.reverse |> string.join("/")
+    [] -> "."
+  }
+}
+
+@external(erlang, "supernova_file_system_ffi", "ensure_dir")
+fn do_ensure_dir(path: String) -> Result(Nil, String)
+
+/// List a directory the kernel's workspace policy already authorized.
+pub fn list_at(authorized_path: String) -> Result(List(String), String) {
+  do_list_dir(authorized_path)
+}
 
 /// Validate that a path is within the workspace.
 /// Delegates to workspace_guard for uniform path confinement
