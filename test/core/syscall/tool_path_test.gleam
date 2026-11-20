@@ -99,6 +99,119 @@ pub fn listing_a_fresh_workspace_is_empty_test() {
   })
 }
 
+fn external_reader_gateway(
+  root: String,
+  body: fn(actor.SyscallGateway) -> a,
+) -> a {
+  let assert Ok(policy) = policy_actor.start(root)
+  policy_actor.set_rule(
+    policy,
+    "sim:x",
+    policy_types.rule_with_external_read("sim:x"),
+  )
+  let manifests =
+    dict.from_list([
+      #(
+        "member",
+        cap_types.CapabilityManifest(
+          allowed_tools: ["file_system"],
+          denied_tools: [],
+        ),
+      ),
+    ])
+  let assert Ok(gateway) =
+    actor.start_with_capabilities(
+      option.Some(policy),
+      option.None,
+      option.None,
+      manifests,
+      fn(_, _) { Error("the raw executor must not run file_system") },
+    )
+  body(gateway)
+}
+
+// From review: the write check matched only a lowercase "write", so "WRITE"
+// authorized as a read and, with external read allowed, wrote outside the
+// workspace.
+pub fn an_uppercase_write_is_still_a_write_test() {
+  test_workspace.with_isolated_workspace("tool-write-case", fn(root) {
+    external_reader_gateway(root, fn(gateway) {
+      let target = root <> "-outside-case.txt"
+      let args =
+        "{\"action\":\"WRITE\",\"path\":\"" <> target <> "\",\"content\":\"x\"}"
+      case
+        actor.authorize_tool_call(
+          gateway,
+          "sim:x",
+          "member",
+          "file_system",
+          args,
+        )
+      {
+        Error(_) -> Nil
+        Ok(reservation) -> {
+          let assert Ok(execute) = actor.claim_tool_call(gateway, reservation)
+          let _ = execute("file_system", args)
+          Nil
+        }
+      }
+      file_exists(target) |> should.equal(Ok(False))
+    })
+  })
+}
+
+// A read authorization never runs a write, whatever arguments reach the
+// executor.
+pub fn a_read_authorization_does_not_write_test() {
+  test_workspace.with_isolated_workspace("tool-read-only", fn(root) {
+    external_reader_gateway(root, fn(gateway) {
+      let read_args = "{\"action\":\"read\",\"path\":\"nota.md\"}"
+      let assert Ok(reservation) =
+        actor.authorize_tool_call(
+          gateway,
+          "sim:x",
+          "member",
+          "file_system",
+          read_args,
+        )
+      let assert Ok(execute) = actor.claim_tool_call(gateway, reservation)
+      execute(
+        "file_system",
+        "{\"action\":\"write\",\"path\":\"nota.md\",\"content\":\"x\"}",
+      )
+      |> should.be_error()
+    })
+  })
+}
+
+// From review: listing created the directory, even outside the workspace
+// under a read authorization.
+pub fn listing_does_not_create_the_directory_test() {
+  test_workspace.with_isolated_workspace("tool-list-create", fn(root) {
+    external_reader_gateway(root, fn(gateway) {
+      let target = root <> "-new-external-dir"
+      let args = "{\"action\":\"list\",\"path\":\"" <> target <> "\"}"
+      case
+        actor.authorize_tool_call(
+          gateway,
+          "sim:x",
+          "member",
+          "file_system",
+          args,
+        )
+      {
+        Error(_) -> Nil
+        Ok(reservation) -> {
+          let assert Ok(execute) = actor.claim_tool_call(gateway, reservation)
+          let _ = execute("file_system", args)
+          Nil
+        }
+      }
+      file_exists(target) |> should.equal(Ok(False))
+    })
+  })
+}
+
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
 

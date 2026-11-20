@@ -20,7 +20,6 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
-import gleam/string
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/budget_policy/actor as budget_actor
@@ -111,6 +110,9 @@ type ToolReservation {
     /// The path the workspace policy authorized, inside the caller's own
     /// workspace. The claimed executor runs on this path, never on the raw one.
     authorized_path: Option(String),
+    /// Whether the policy authorized a write. A read authorization never
+    /// runs a write, whatever arguments the executor receives.
+    authorized_write: Bool,
   )
 }
 
@@ -425,8 +427,14 @@ fn capability_denied(
   }
 }
 
+/// Decided from the action exactly as the tool will read it. Arguments the
+/// tool cannot read count as a write: the stricter check.
 fn tool_touches_write(tool_name: String, args: String) -> Bool {
-  tool_name == "file_system" && string.contains(args, "\"write\"")
+  tool_name == "file_system"
+  && case file_system.action(args) {
+    Ok(action) -> action == "write"
+    Error(_) -> True
+  }
 }
 
 fn tool_audit_target(tool_name: String, args: String) -> String {
@@ -449,7 +457,7 @@ fn claimed_executor(
 ) -> ToolExecutor {
   case reservation.tool_name, reservation.authorized_path {
     "file_system", Some(path) -> fn(_name, args) {
-      file_system.execute_at(path, args)
+      file_system.execute_at(path, args, reservation.authorized_write)
     }
     _, _ -> configured
   }
@@ -592,6 +600,7 @@ fn authorize_tool(
                   audit_target: tool_audit_target(tool_name, args),
                   expires_at: timestamp + tool_reservation_ttl_ms,
                   authorized_path: authorized_path,
+                  authorized_write: tool_touches_write(tool_name, args),
                 )
               // Execution is charged only when the caller claims the
               // reservation. Unclaimed authorizations expire for free.

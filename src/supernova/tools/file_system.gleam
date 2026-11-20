@@ -117,32 +117,49 @@ pub fn tool() -> provider.ToolDefinition {
 /// the agent's own workspace and passes the result here. Executing the raw
 /// path against the process directory let agents list the application's root
 /// and read a file another agent had written (found by the harness).
+/// The action a file_system call asks for, normalized the way `execute_at`
+/// reads it. Authorization decides read or write from this same value, so a
+/// spelling like "WRITE" cannot pass as a read.
+pub fn action(args_json: String) -> Result(String, Nil) {
+  let decoder = {
+    use action <- decode.field("action", decode.string)
+    decode.success(action)
+  }
+  case json.parse(from: args_json, using: decoder) {
+    Ok(action) -> Ok(string.lowercase(string.trim(action)))
+    Error(_) -> Error(Nil)
+  }
+}
+
+/// Run a file_system call on a path the kernel already authorized. A write
+/// runs only when the authorization was for a write.
 pub fn execute_at(
   authorized_path: String,
   args_json: String,
+  may_write: Bool,
 ) -> Result(String, String) {
   let decoder = {
-    use action <- decode.field("action", decode.string)
     use content <- decode.optional_field("content", "", decode.string)
-    decode.success(#(action, content))
+    decode.success(content)
   }
-  case json.parse(from: args_json, using: decoder) {
-    Error(_) -> Error("Invalid arguments for file_system")
-    Ok(#(action, content)) ->
-      case string.lowercase(string.trim(action)) {
-        "read" -> read_at(authorized_path)
-        "write" ->
+  case action(args_json), json.parse(from: args_json, using: decoder) {
+    Ok(action), Ok(content) ->
+      case action, may_write {
+        "read", _ -> read_at(authorized_path)
+        "write", True ->
           case write_at(authorized_path, content) {
             Ok(Nil) -> Ok("ok")
             Error(reason) -> Error(reason)
           }
-        "list" ->
+        "write", False -> Error("Write not authorized")
+        "list", _ ->
           case list_at(authorized_path) {
             Ok(entries) -> Ok(format_listing(entries))
             Error(reason) -> Error(reason)
           }
-        _ -> Error("file_system action must be read, write, or list")
+        _, _ -> Error("file_system action must be read, write, or list")
       }
+    _, _ -> Error("Invalid arguments for file_system")
   }
 }
 
@@ -187,10 +204,11 @@ fn do_ensure_dir(path: String) -> Result(Nil, String)
 /// List a directory the kernel's workspace policy already authorized.
 pub fn list_at(authorized_path: String) -> Result(List(String), String) {
   // A fresh agent's workspace may not exist yet; listing it is listing an
-  // empty directory, not an error.
-  case do_ensure_dir(authorized_path) {
-    Ok(_) -> do_list_dir(authorized_path)
-    Error(reason) -> Error(reason)
+  // empty directory, not an error. Listing is a read: it never creates the
+  // directory.
+  case do_file_exists(authorized_path) {
+    Ok(False) -> Ok([])
+    _ -> do_list_dir(authorized_path)
   }
 }
 
@@ -210,6 +228,9 @@ fn do_read_file(path: String) -> Result(String, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn do_write_file(path: String, content: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "file_exists")
+fn do_file_exists(path: String) -> Result(Bool, String)
 
 @external(erlang, "supernova_file_system_ffi", "list_dir")
 fn do_list_dir(path: String) -> Result(List(String), String)
