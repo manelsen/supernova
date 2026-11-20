@@ -295,7 +295,8 @@ pub fn prompt_has_last_twelve_experiences_between_name_and_state_test() {
     string.contains(prompt, "LEMBRANCA-2") |> should.be_true()
     string.contains(prompt, "LEMBRANCA-13") |> should.be_true()
     string.contains(prompt, "SEGREDO-DE-B") |> should.equal(False)
-    string.contains(prompt, "usar /esquecer") |> should.be_true()
+    // The guidance (priv/constellation/agent_guidance.md) explains /esquecer.
+    string.contains(prompt, "enviar /esquecer") |> should.be_true()
     let name_at = string_index_of(prompt, "Seu nome é Lua")
     let memory_at = string_index_of(prompt, "LEMBRANCA-13")
     let state_at = string_index_of(prompt, "Humor:")
