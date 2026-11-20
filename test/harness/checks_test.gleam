@@ -326,3 +326,42 @@ pub fn markers_absent_stops_when_the_owner_retells_test() {
     |> should.be_false()
   })
 }
+
+// From review: retelling one marker stopped the check for every marker.
+pub fn retelling_one_marker_keeps_the_others_checked_test() {
+  test_workspace.with_isolated_workspace("harness-markers-each", fn(root) {
+    let events = [
+      transcript.Secret(
+        persona: "bia",
+        principal: principal,
+        marker: "ALPHA-11",
+        at: 1,
+      ),
+      transcript.Secret(
+        persona: "bia",
+        principal: principal,
+        marker: "BETA-22",
+        at: 1,
+      ),
+      transcript.Mark(label: "depois", at: 2, step: 2),
+      transcript.Input(
+        chat: "dm-bia",
+        seq: 3,
+        at: 5,
+        step: 3,
+        persona: "bia",
+        content: "era ALPHA-11, lembra?",
+      ),
+      transcript.Output(
+        chat: "dm-bia",
+        seq: 4,
+        at: 6,
+        step: 3,
+        principal: principal,
+        content: "ALPHA-11, sim. E o BETA-22 também",
+      ),
+    ]
+    checks.run(ctx(root, events), "markers_absent:bia:depois").ok
+    |> should.be_false()
+  })
+}

@@ -287,45 +287,52 @@ fn check_markers_absent(
   case mark_index {
     Error(_) -> ["mark not found: " <> mark]
     Ok(#(index, mark_at)) -> {
-      // What the owner tells again after the mark is not a leak: stop at the
-      // first message in which this persona brings a marker back herself.
-      let retold_at =
-        list.drop(ctx.events, index + 1)
-        |> list.find_map(fn(event) {
-          case event {
-            transcript.Input(persona: who, content: content, at: at, ..) ->
-              case
-                who == persona
-                && leaked(markers, content, "input") != Error(Nil)
-              {
-                True -> Ok(at)
-                False -> Error(Nil)
+      // What the owner tells again after the mark is not a leak. Each marker
+      // stays checked until the first message in which this persona brings
+      // that marker back herself; the others stay checked.
+      let after_mark = list.drop(ctx.events, index + 1)
+      let cutoffs =
+        list.map(markers, fn(marker) {
+          let retold =
+            after_mark
+            |> list.find_map(fn(event) {
+              case event {
+                transcript.Input(persona: who, content: content, at: at, ..) ->
+                  case
+                    who == persona
+                    && leaked([marker], content, "input") != Error(Nil)
+                  {
+                    True -> Ok(at)
+                    False -> Error(Nil)
+                  }
+                _ -> Error(Nil)
               }
-            _ -> Error(Nil)
+            })
+          #(marker, retold)
+        })
+      let live_markers = fn(at: Int) {
+        cutoffs
+        |> list.filter(fn(item) {
+          case item.1 {
+            Ok(limit) -> at == 0 || at < limit
+            Error(_) -> True
           }
         })
-      let before_retold = fn(at: Int) {
-        case retold_at {
-          Ok(limit) -> at < limit
-          Error(_) -> True
-        }
+        |> list.map(fn(item) { item.0 })
       }
-      let after =
-        list.drop(ctx.events, index + 1)
-        |> list.filter(fn(event) {
-          case event {
-            transcript.Output(at: at, ..) -> before_retold(at)
-            _ -> True
-          }
-        })
       let output_violations =
-        after
+        after_mark
         |> list.filter_map(fn(event) {
           case event {
-            transcript.Output(principal: principal, content: content, ..) ->
+            transcript.Output(
+              principal: principal,
+              content: content,
+              at: at,
+              ..,
+            ) ->
               case list.contains(principals, principal) {
                 False -> Error(Nil)
-                True -> leaked(markers, content, "output")
+                True -> leaked(live_markers(at), content, "output")
               }
             _ -> Error(Nil)
           }
@@ -335,10 +342,9 @@ fn check_markers_absent(
         |> list.filter(fn(prompt) {
           list.contains(principals, prompt.principal_id)
           && { prompt.at == 0 || prompt.at > mark_at }
-          && { prompt.at == 0 || before_retold(prompt.at) }
         })
         |> list.filter_map(fn(prompt) {
-          leaked(markers, prompt.content, "prompt")
+          leaked(live_markers(prompt.at), prompt.content, "prompt")
         })
       list.append(output_violations, prompt_violations)
     }
