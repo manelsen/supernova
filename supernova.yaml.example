@@ -13,7 +13,14 @@ log_level: info
 # LLM Providers
 # At least one required. Comment/uncomment as needed.
 # API keys can use env var placeholders: "${VAR_NAME}"
+# The agents use the provider whose name sorts first. Keep only the providers
+# you use; with every block below, "anthropic" would win over "mistral".
 providers:
+
+  # https://mistral.ai — also serves DeepSeek; the agents run on it.
+  mistral:
+    api_key: "${SUPERNOVA_PROVIDER_MISTRAL_API_KEY}"
+    model: "deepseek-v4-1-flash-1017"
 
   # https://platform.openai.com
   openai:
