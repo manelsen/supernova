@@ -41,3 +41,17 @@ fn write_file(path: String, content: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
 fn ensure_dir(path: String) -> Result(Nil, String)
+
+// Regression from the first battery: 1.89e-4 was read as 1.894 dollars.
+pub fn ledger_cost_reads_scientific_notation_test() {
+  test_workspace.with_isolated_workspace("harness-cost-sci", fn(root) {
+    let assert Ok(_) = ensure_dir(root <> "/ledger")
+    let assert Ok(_) =
+      write_file(
+        root <> "/ledger/2026-11-19.jsonl",
+        "{\"type\":\"llm\",\"cost_usd\":0.002874}\n{\"type\":\"llm\",\"cost_usd\":1.89e-4}\n{\"type\":\"llm\",\"cost_usd\":0}\n",
+      )
+    let total = cost.ledger_cost(root)
+    { total >. 0.003062 && total <. 0.003064 } |> should.be_true()
+  })
+}

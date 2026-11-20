@@ -148,7 +148,7 @@ access:
 # Per-principal budgets (-1 = unlimited)
 budget:
   member:
-    tokens_per_hour: 50000
+    tokens_per_hour: 200000
     tool_calls_per_hour: 60
   admin:
     tokens_per_hour: -1

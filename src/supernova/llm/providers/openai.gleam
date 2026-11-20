@@ -252,20 +252,22 @@ fn choice_decoder() -> decode.Decoder(provider.ChatResponse) {
 /// Decode the message object.
 fn message_decoder() -> decode.Decoder(provider.ChatResponse) {
   use role <- decode.field("role", decode.string)
+  // Each field may be missing or explicitly null: Mistral sends
+  // "tool_calls": null on a plain answer, which failed every agent turn.
   use content <- decode.optional_field(
     "content",
     None,
-    decode.string |> decode.map(Some),
+    decode.optional(decode.string),
   )
   use tool_calls <- decode.optional_field(
     "tool_calls",
     None,
-    decode.list(tool_call_decoder()) |> decode.map(Some),
+    decode.optional(decode.list(tool_call_decoder())),
   )
   use reasoning_content <- decode.optional_field(
     "reasoning_content",
     None,
-    decode.string |> decode.map(Some),
+    decode.optional(decode.string),
   )
 
   decode.success(provider.ChatResponse(

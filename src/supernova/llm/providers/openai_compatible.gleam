@@ -18,6 +18,7 @@ import gleam/http/request
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
+import gleam/uri
 import supernova/llm/provider
 import supernova/llm/providers/openai
 
@@ -38,17 +39,45 @@ pub fn chat(
 ) -> Result(provider.ChatResponse, provider.LLMError) {
   let body = openai.build_request_body(messages, config.default_model, tools)
 
-  case config.api_key {
-    Some(api_key) -> {
+  case config.api_key, secure_endpoint(config.name, base_url) {
+    Some(_), Error(reason) -> Error(provider.ConfigError(reason: reason))
+    Some(api_key), Ok(Nil) -> {
       case do_request(body, api_key, base_url, extra_headers) {
         Ok(response_body) -> openai.parse_response(response_body)
         Error(reason) -> Error(provider.NetworkError(reason: reason))
       }
     }
-    None ->
+    None, _ ->
       Error(provider.ConfigError(
         reason: "No API key configured for " <> config.name,
       ))
+  }
+}
+
+/// The API key travels only over HTTPS. Plain HTTP is allowed for loopback
+/// hosts and for Ollama, whose key is a placeholder and which often runs on a
+/// private network under a service name.
+pub fn secure_endpoint(name: String, base_url: String) -> Result(Nil, String) {
+  // The host is read from the parsed URL, as the HTTP client reads it: a
+  // prefix check let "http://localhost:8080@remote.example" through.
+  let allowed = case uri.parse(string.trim(base_url)) {
+    Ok(parsed) -> {
+      let scheme = option.map(parsed.scheme, string.lowercase)
+      let host = option.map(parsed.host, string.lowercase)
+      case scheme, host {
+        Some("https"), Some(_) -> True
+        Some("http"), Some(host) ->
+          name == "ollama"
+          || list.contains(["localhost", "127.0.0.1", "::1", "[::1]"], host)
+        _, _ -> False
+      }
+    }
+    Error(_) -> False
+  }
+  case allowed {
+    True -> Ok(Nil)
+    False ->
+      Error("Refusing to send the " <> name <> " API key over a non-HTTPS URL")
   }
 }
 

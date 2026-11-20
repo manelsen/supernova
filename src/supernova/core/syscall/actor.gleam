@@ -20,7 +20,6 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
-import gleam/string
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/budget_policy/actor as budget_actor
@@ -37,6 +36,7 @@ import supernova/core/syscall/types.{
 }
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types as policy_types
+import supernova/tools/file_system
 
 // ============================================================================
 // FFI — Timestamp (Erlang)
@@ -107,6 +107,12 @@ type ToolReservation {
     tool_name: String,
     audit_target: String,
     expires_at: Int,
+    /// The path the workspace policy authorized, inside the caller's own
+    /// workspace. The claimed executor runs on this path, never on the raw one.
+    authorized_path: Option(String),
+    /// Whether the policy authorized a write. A read authorization never
+    /// runs a write, whatever arguments the executor receives.
+    authorized_write: Bool,
   )
 }
 
@@ -421,8 +427,14 @@ fn capability_denied(
   }
 }
 
+/// Decided from the action exactly as the tool will read it. Arguments the
+/// tool cannot read count as a write: the stricter check.
 fn tool_touches_write(tool_name: String, args: String) -> Bool {
-  tool_name == "file_system" && string.contains(args, "\"write\"")
+  tool_name == "file_system"
+  && case file_system.action(args) {
+    Ok(action) -> action == "write"
+    Error(_) -> True
+  }
 }
 
 fn tool_audit_target(tool_name: String, args: String) -> String {
@@ -436,19 +448,34 @@ fn tool_audit_target(tool_name: String, args: String) -> String {
   }
 }
 
+/// The executor handed to the caller of a claimed reservation. A file_system
+/// call runs on the authorized path; everything else keeps the configured
+/// executor.
+fn claimed_executor(
+  configured: ToolExecutor,
+  reservation: ToolReservation,
+) -> ToolExecutor {
+  case reservation.tool_name, reservation.authorized_path {
+    "file_system", Some(path) -> fn(_name, args) {
+      file_system.execute_at(path, args, reservation.authorized_write)
+    }
+    _, _ -> configured
+  }
+}
+
 fn tool_path_check(
   actor_state: ActorState,
   principal_id: String,
   tool_name: String,
   args: String,
-) -> Result(Nil, String) {
+) -> Result(Option(String), String) {
   case argument_path(args) {
-    None -> Ok(Nil)
+    None -> Ok(None)
     Some(path) ->
       case actor_state.workspace_policy {
         None ->
           case dict.is_empty(actor_state.capability_manifests) {
-            True -> Ok(Nil)
+            True -> Ok(None)
             False -> Error("workspace policy unavailable")
           }
         Some(policy) -> {
@@ -457,7 +484,7 @@ fn tool_path_check(
             False -> policy_types.OpRead
           }
           case policy_actor.authorize(policy, principal_id, op, path) {
-            Ok(_) -> Ok(Nil)
+            Ok(full_path) -> Ok(Some(full_path))
             Error(reason) -> Error(reason)
           }
         }
@@ -543,7 +570,7 @@ fn authorize_tool(
             ),
           )
         }
-        Ok(_) -> {
+        Ok(authorized_path) -> {
           let reservations =
             active_reservations(actor_state.tool_reservations, timestamp)
           let reserved = reserved_for(reservations, principal_id)
@@ -572,6 +599,8 @@ fn authorize_tool(
                   tool_name: tool_name,
                   audit_target: tool_audit_target(tool_name, args),
                   expires_at: timestamp + tool_reservation_ttl_ms,
+                  authorized_path: authorized_path,
+                  authorized_write: tool_touches_write(tool_name, args),
                 )
               // Execution is charged only when the caller claims the
               // reservation. Unclaimed authorizations expire for free.
@@ -642,7 +671,10 @@ fn handle_message(
           }
           case charge {
             Ok(_) -> {
-              actor.send(reply_to, Ok(actor_state.tool_executor))
+              actor.send(
+                reply_to,
+                Ok(claimed_executor(actor_state.tool_executor, reservation)),
+              )
               actor.continue(
                 ActorState(
                   ..actor_state,

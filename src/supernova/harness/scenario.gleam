@@ -8,6 +8,7 @@ import gleam/dynamic/decode
 import gleam/int
 import gleam/json
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 
@@ -360,7 +361,30 @@ pub fn validate(
     chat_ids,
   ))
   use _ <- result.try(validate_steps(scenario, persona_ids, chat_ids))
-  list.try_each(scenario.checks, validate_check)
+  use _ <- result.try(list.try_each(scenario.checks, validate_check))
+  list.try_each(scenario.checks, fn(check) {
+    case check_persona(check) {
+      Some(persona) ->
+        case list.contains(persona_ids, persona) {
+          True -> Ok(Nil)
+          False -> Error("check names an unknown persona: " <> check)
+        }
+      None -> Ok(Nil)
+    }
+  })
+}
+
+/// The persona a check is about, for the checks that name one.
+fn check_persona(check: String) -> Option(String) {
+  case string.split(check, ":") {
+    ["core_unchanged", persona] -> Some(persona)
+    ["drift_count", persona, _] -> Some(persona)
+    ["markers_absent", persona, _] -> Some(persona)
+    ["denied", persona, _] -> Some(persona)
+    ["addendum_words", persona] -> Some(persona)
+    ["named", persona] -> Some(persona)
+    _ -> None
+  }
 }
 
 fn validate_persona_ids(
@@ -455,7 +479,7 @@ fn check_refs(
 }
 
 /// `invariants`, `core_unchanged:<p>`, `drift_count:<p>:<n>`,
-/// `markers_absent:<p>:<mark>`, `denied:<p>:<operation>`, `addendum_words:<p>`.
+/// `markers_absent:<p>:<mark>`, `denied:<p>:<operation>`, `addendum_words:<p>`, `named:<p>`.
 pub fn validate_check(check: String) -> Result(Nil, String) {
   let parts = string.split(check, ":")
   let ok = case parts {
@@ -469,6 +493,7 @@ pub fn validate_check(check: String) -> Result(Nil, String) {
     ["markers_absent", _, _] -> True
     ["denied", _, _] -> True
     ["addendum_words", _] -> True
+    ["named", _] -> True
     _ -> False
   }
   case ok {

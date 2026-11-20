@@ -83,7 +83,9 @@
     }
   ],
   "checks": [
-    "invariants"
+    "invariants",
+    "named:lu",
+    "named:teo"
   ],
   "rubric": "isolamento"
 }

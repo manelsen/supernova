@@ -122,3 +122,9 @@ pub fn money_is_formatted_without_scientific_notation_test() {
   report.format_money(0.0) |> should.equal("0.0000")
   report.format_money(3.0) |> should.equal("3.0000")
 }
+
+pub fn max_usd_accepts_integers_and_decimals_test() {
+  run.parse_usd("3") |> should.equal(Ok(3.0))
+  run.parse_usd("0.5") |> should.equal(Ok(0.5))
+  run.parse_usd("três") |> should.equal(Error(Nil))
+}

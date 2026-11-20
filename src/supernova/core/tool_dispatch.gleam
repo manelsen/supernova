@@ -165,7 +165,7 @@ fn execute_file_system(args_json: String) -> Result(String, String) {
           }
         "list" ->
           case file_system.list(".", path) {
-            Ok(entries) -> Ok(string.join(entries, "\n"))
+            Ok(entries) -> Ok(file_system.format_listing(entries))
             Error(reason) -> Error(reason)
           }
         _ -> Error("file_system action must be read, write, or list")

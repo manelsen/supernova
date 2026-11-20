@@ -123,6 +123,16 @@ pub fn rejects_unknown_check_test() {
   })
 }
 
+// From review: `named:typo` passed validation and failed only after the run.
+pub fn rejects_a_check_on_an_unknown_persona_test() {
+  test_workspace.with_isolated_workspace("harness-scenario-check-p", fn(root) {
+    setup(root)
+    write_scenario(root, scenario_json("", "\"named:typo\""))
+    let assert Error(message) = scenario.load(root, "teste")
+    string.contains(message, "unknown persona: named:typo") |> should.be_true()
+  })
+}
+
 pub fn parses_rubric_levels_test() {
   let assert Ok(rubric) =
     scenario.parse_rubric(

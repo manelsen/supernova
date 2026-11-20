@@ -432,7 +432,7 @@ pub fn sim_birth_names_and_prompts_from_core_test() {
         )
       case confirmation {
         Ok(port.ImmediateReply(reply)) ->
-          string.contains(reply.content, "Prazer, Lua.")
+          string.contains(reply.content, "Lua, então. Prazer!")
           |> should.be_true()
         _ -> should.fail()
       }
@@ -562,7 +562,8 @@ pub fn sim_naming_end_to_end_test() {
         )
       case third {
         Ok(port.ImmediateReply(reply)) ->
-          string.contains(reply.content, "Prazer, Luna.") |> should.be_true()
+          string.contains(reply.content, "Luna, então. Prazer!")
+          |> should.be_true()
         _ -> should.fail()
       }
       let assert Some(named) = self_core.load(root, "sim:alice")
@@ -635,7 +636,8 @@ pub fn sim_name_extraction_uses_the_model_and_is_logged_test() {
       )
     case accepted {
       Ok(port.ImmediateReply(reply)) ->
-        string.contains(reply.content, "Prazer, Bia.") |> should.be_true()
+        string.contains(reply.content, "Bia, então. Prazer!")
+        |> should.be_true()
       _ -> should.fail()
     }
 
@@ -759,7 +761,8 @@ pub fn sim_tool_cannot_write_self_test() {
       "{\"chat_id\":\"group-1\",\"user_id\":\"alice\",\"username\":\"Alice\",\"content\":\"sim\",\"is_group\":true}",
     ).0
     |> should.equal(200)
-    wait_for_content(sim, "group-1", "Prazer, Lua.", 5000) |> should.be_true()
+    wait_for_content(sim, "group-1", "Lua, então. Prazer!", 5000)
+    |> should.be_true()
 
     let json_path = root <> "/agents/sim_alice/self/core.json"
     let md_path = root <> "/agents/sim_alice/self/core.md"

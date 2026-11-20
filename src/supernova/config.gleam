@@ -46,6 +46,8 @@ pub type Provider {
   Zai
   /// Z.AI coding plan
   ZaiCoding
+  /// Mistral API (OpenAI-compatible), which also serves DeepSeek models
+  Mistral
   /// Deterministic mock provider (tests and CI harness)
   Mock
 }
@@ -479,7 +481,9 @@ pub fn default_access_config() -> AccessConfig {
 
 pub fn default_role_budgets_config() -> RoleBudgetsConfig {
   RoleBudgetsConfig(
-    member: RoleBudgetConfig(tokens_per_hour: 50_000, tool_calls_per_hour: 60),
+    // 200k: a reasoning model uses ~4k tokens per turn; 50k allowed about
+    // 12 messages an hour (maintainer decision after the first battery).
+    member: RoleBudgetConfig(tokens_per_hour: 200_000, tool_calls_per_hour: 60),
     admin: RoleBudgetConfig(tokens_per_hour: -1, tool_calls_per_hour: -1),
   )
 }
@@ -576,12 +580,13 @@ fn parse_provider(s: String) -> Result(Provider, ConfigError) {
     "ollama" | "local" -> Ok(Ollama)
     "zai" -> Ok(Zai)
     "zai_coding" -> Ok(ZaiCoding)
+    "mistral" -> Ok(Mistral)
     "mock" -> Ok(Mock)
     _ ->
       Error(InvalidField(
         "provider",
         s,
-        "must be openai, anthropic, openrouter, opencode_zen, zhipu, zhipu_coding, minimax, ollama, zai, or zai_coding",
+        "must be openai, anthropic, openrouter, opencode_zen, zhipu, zhipu_coding, minimax, ollama, zai, zai_coding, or mistral",
       ))
   }
 }
@@ -1905,7 +1910,7 @@ fn validate_provider_config(name: String, config: ProviderConfig) {
     }
     Ollama -> Nil
     Mock -> Nil
-    Zai | ZaiCoding -> {
+    Zai | ZaiCoding | Mistral -> {
       case config.api_key {
         Some(_) -> Nil
         None -> {
@@ -1994,6 +1999,7 @@ pub fn provider_requires_api_key(provider: Provider) -> Bool {
     Ollama -> False
     Zai -> True
     ZaiCoding -> True
+    Mistral -> True
     Mock -> False
   }
 }
@@ -2011,6 +2017,7 @@ pub fn provider_runtime_name(provider: Provider) -> String {
     Ollama -> "ollama"
     Zai -> "zai"
     ZaiCoding -> "zai_coding"
+    Mistral -> "mistral"
     Mock -> "mock"
   }
 }
@@ -2028,6 +2035,7 @@ pub fn provider_default_model(provider: Provider) -> String {
     Ollama -> "llama3"
     Zai -> "glm-5"
     ZaiCoding -> "glm-5.1"
+    Mistral -> "deepseek-v4-1-flash-1017"
     Mock -> "mock-model"
   }
 }

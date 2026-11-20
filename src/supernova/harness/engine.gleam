@@ -20,6 +20,9 @@ import supernova/self/template as prompt_template
 
 /// Generate the next persona message from the rendered system prompt and the
 /// transcript of the chat as this persona sees it. Cost is in USD.
+/// Simulated time between two messages of a persona.
+pub const message_gap_ms = 20_000
+
 /// The user turn sent to the persona model.
 pub const persona_instruction = "Escreva agora a sua próxima mensagem."
 
@@ -285,7 +288,10 @@ fn say(
       case list.find(loaded.scenario.chats, fn(item) { item.id == chat_id }) {
         Error(_) -> Error("unknown chat: " <> chat_id)
         Ok(chat) -> {
-          let at = clock.now(state.clock)
+          // A person takes a while between messages. A frozen clock put every
+          // message in the same rate-limit minute and gave repeated model calls
+          // the same call id (charged once).
+          let at = clock.advance(state.clock, message_gap_ms)
           use _ <- result.try(sim_client.send(
             port,
             token,

@@ -83,7 +83,8 @@
   "checks": [
     "invariants",
     "markers_absent:nina:depois_do_esquecer",
-    "core_unchanged:nina"
+    "core_unchanged:nina",
+    "named:nina"
   ],
   "rubric": "esquecer"
 }

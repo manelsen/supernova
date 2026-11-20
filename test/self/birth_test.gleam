@@ -1,5 +1,6 @@
 import envoy
 import exception
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -349,4 +350,262 @@ fn step(
   generate: fn(String) -> Result(String, String),
 ) -> birth.Step {
   birth.step(root, principal, content, now, generate, fn(_) { Ok("") })
+}
+
+// Regressions from the first real battery: free replies to the confirmation
+// looped forever ("Sim, Vera. Fechado." asked again and again).
+fn named_extract(name: String) -> fn(String) -> Result(String, String) {
+  fn(_) { Ok("{\"name\": \"" <> name <> "\"}") }
+}
+
+fn no_name_extract(_prompt: String) -> Result(String, String) {
+  Ok("{\"name\": null}")
+}
+
+pub fn confirmation_in_a_sentence_with_the_same_name_is_accepted_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Vera", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Vera"))
+    birth.step(
+      root,
+      "sim:a",
+      "Sim, Vera. Fechado.",
+      3000,
+      fn(_) { Ok("") },
+      named_extract("Vera"),
+    )
+    |> should.equal(birth.NameAccepted("Vera"))
+    let assert Some(named) = core.load(root, "sim:a")
+    named.name |> should.equal(Some("Vera"))
+  })
+}
+
+pub fn confirmation_with_another_name_proposes_it_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(
+      root,
+      "sim:a",
+      "sim, mas prefiro Ana",
+      3000,
+      fn(_) { Ok("") },
+      named_extract("Ana"),
+    )
+    |> should.equal(birth.ConfirmName("Ana"))
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+  })
+}
+
+pub fn a_yes_with_chatter_and_no_name_is_accepted_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "líquen", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Líquen"))
+    birth.step(
+      root,
+      "sim:a",
+      "sim kkk, combina com você",
+      3000,
+      fn(_) { Ok("") },
+      no_name_extract,
+    )
+    |> should.equal(birth.NameAccepted("Líquen"))
+  })
+}
+
+pub fn chatter_without_yes_or_name_is_not_understood_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(
+      root,
+      "sim:a",
+      "hmm, deixa eu pensar",
+      3000,
+      fn(_) { Ok("") },
+      no_name_extract,
+    )
+    |> should.equal(birth.NameRejected(birth.rejected_message()))
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+  })
+}
+
+pub fn opens_with_affirmation_reads_the_first_word_test() {
+  birth.opens_with_affirmation("Sim, Vera. Fechado.") |> should.be_true()
+  birth.opens_with_affirmation("isso! combina") |> should.be_true()
+  birth.opens_with_affirmation("simplesmente não") |> should.be_false()
+  birth.opens_with_affirmation("não, sim") |> should.be_false()
+}
+
+// Regression from the first real battery: MiniMax-M3 wrote a core with
+// Chinese characters in it, and the core is never rewritten.
+pub fn usable_prose_rejects_cjk_and_empty_text_test() {
+  birth.usable_prose("Eu observo antes de agir. Gosto de café.")
+  |> should.be_true()
+  birth.usable_prose("uma cor que parece中含有 um segredo") |> should.be_false()
+  birth.usable_prose("   ") |> should.be_false()
+  // From review: decomposed Korean (Hangul Jamo) passed.
+  birth.usable_prose("um \u{1112}\u{1161}\u{11AB} segredo") |> should.be_false()
+  birth.usable_prose("um 한 segredo") |> should.be_false()
+  birth.usable_prose("ação, coração, pão") |> should.be_true()
+}
+
+fn queued_generate(
+  answers: List(String),
+) -> fn(String) -> Result(String, String) {
+  let queue = process.new_subject()
+  list.each(answers, fn(answer) { process.send(queue, answer) })
+  fn(_prompt) {
+    case process.receive(queue, 0) {
+      Ok(answer) -> Ok(answer)
+      Error(_) -> Error("no more answers")
+    }
+  }
+}
+
+pub fn birth_gives_up_after_three_broken_core_texts_test() {
+  with_constellation(fn(root) {
+    let generate = queued_generate(["um 中", "dois 한국", "três の", "Eu sou."])
+    step(root, "sim:a", "oi", 1000, generate) |> should.equal(birth.BirthFailed)
+    core.load(root, "sim:a") |> should.equal(None)
+  })
+}
+
+pub fn birth_retries_a_broken_core_text_test() {
+  with_constellation(fn(root) {
+    let generate = queued_generate(["quebrado 中文", "Eu observo antes de agir."])
+    let assert birth.AskName(text) = step(root, "sim:a", "oi", 1000, generate)
+    string.starts_with(text, "Eu observo antes de agir.") |> should.be_true()
+    let assert Ok(prose) = read_file(core.prose_path(root, "sim:a"))
+    string.contains(prose, "中") |> should.be_false()
+  })
+}
+
+// Regression from the battery: "Prazer, clara." read as if the agent greeted
+// the person by that name; and the name kept the person's lowercase.
+pub fn accepted_name_is_capitalized_and_taken_as_own_test() {
+  birth.capitalize_name("clara") |> should.equal("Clara")
+  birth.capitalize_name("Ícaro") |> should.equal("Ícaro")
+  birth.capitalize_name("élan") |> should.equal("Élan")
+  birth.accepted_message("Clara") |> should.equal("Clara, então. Prazer!")
+}
+
+fn with_intro_prompt(path: String, body: fn() -> a) -> a {
+  let previous = envoy.get("SUPERNOVA_INTRO_PROMPT_PATH")
+  use <- exception.defer(fn() {
+    case previous {
+      Ok(value) -> envoy.set("SUPERNOVA_INTRO_PROMPT_PATH", value)
+      Error(_) -> envoy.unset("SUPERNOVA_INTRO_PROMPT_PATH")
+    }
+  })
+  envoy.set("SUPERNOVA_INTRO_PROMPT_PATH", path)
+  body()
+}
+
+fn core_or_intro(prompt: String) -> Result(String, String) {
+  case string.contains(prompt, "Escreva a primeira coisa que ela diz") {
+    True -> Ok("Cheguei agora. Falo pouco.")
+    False -> Ok("Primeiro parágrafo do núcleo.\n\nSegundo parágrafo, longo.")
+  }
+}
+
+// Regression from the battery: the agent presented herself with the whole
+// core (300 words) while the core said "falo pouco".
+pub fn the_agent_presents_herself_briefly_test() {
+  with_constellation(fn(root) {
+    step(root, "sim:a", "oi", 1000, core_or_intro)
+    |> should.equal(birth.AskName(
+      "Cheguei agora. Falo pouco.\n\n" <> birth.question(),
+    ))
+  })
+}
+
+pub fn without_the_intro_prompt_the_first_paragraph_presents_her_test() {
+  with_constellation(fn(root) {
+    with_intro_prompt(root <> "/missing_intro_prompt.md", fn() {
+      step(root, "sim:a", "oi", 1000, core_or_intro)
+      |> should.equal(birth.AskName(
+        "Primeiro parágrafo do núcleo.\n\n" <> birth.question(),
+      ))
+    })
+  })
+}
+
+fn failing_extract(_prompt: String) -> Result(String, String) {
+  Error("model unavailable")
+}
+
+// From review: a failed extraction fell back to the opening "sim" and saved
+// the pending name, though the reply asked for another one.
+pub fn a_failed_extraction_does_not_confirm_the_pending_name_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(
+      root,
+      "sim:a",
+      "sim, mas prefiro Ana",
+      3000,
+      fn(_) { Ok("") },
+      failing_extract,
+    )
+    |> should.equal(birth.NameRejected(birth.rejected_message()))
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+  })
+}
+
+// From review: the replacement name was extracted twice; a failure on the
+// second call rejected a name the first call had found.
+pub fn the_replacement_name_is_extracted_once_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    let queue = process.new_subject()
+    process.send(queue, "{\"name\": \"ana\"}")
+    let extract_once = fn(_) {
+      case process.receive(queue, 0) {
+        Ok(answer) -> Ok(answer)
+        Error(_) -> Error("second call")
+      }
+    }
+    birth.step(
+      root,
+      "sim:a",
+      "sim, mas prefiro ana",
+      3000,
+      fn(_) { Ok("") },
+      extract_once,
+    )
+    |> should.equal(birth.ConfirmName("Ana"))
+  })
+}
+
+// From review: an invalid replacement name counted as no name, and the
+// opening "sim" then confirmed the pending one.
+pub fn an_invalid_replacement_name_does_not_confirm_the_pending_name_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(
+      root,
+      "sim:a",
+      "sim, mas prefiro outro nome bem comprido",
+      3000,
+      fn(_) { Ok("") },
+      named_extract(string.repeat("a", 80)),
+    )
+    |> should.equal(birth.NameRejected(birth.rejected_message()))
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+  })
 }

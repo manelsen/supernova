@@ -41,7 +41,8 @@
   ],
   "checks": [
     "invariants",
-    "drift_count:ana:0"
+    "drift_count:ana:0",
+    "named:ana"
   ],
   "rubric": "nascimento"
 }

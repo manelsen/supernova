@@ -11,6 +11,10 @@
 //// let result = file_system.read_authorized(policy, "agent_1", "src/main.gleam")
 //// ```
 
+import gleam/dynamic/decode
+import gleam/json
+import gleam/list
+import gleam/string
 import supernova/core/workspace_guard
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types.{OpRead, OpWrite}
@@ -91,7 +95,7 @@ pub fn list_authorized(
 pub fn tool() -> provider.ToolDefinition {
   provider.new_tool(
     name: "file_system",
-    description: "Read, write, and list files within the workspace",
+    description: "Read, write, and list the files you keep for your person, within your workspace. Your core and internal state are not reachable.",
     parameters: [
       provider.string_param("action", "Action: read, write, list", True),
       provider.string_param("path", "File path relative to workspace", True),
@@ -107,6 +111,106 @@ pub fn tool() -> provider.ToolDefinition {
 // ============================================================================
 // Path Validation
 // ============================================================================
+
+/// Run a file_system tool call (`{"action","path","content"}`) on a path the
+/// kernel already authorized: the gateway resolves the model's path against
+/// the agent's own workspace and passes the result here. Executing the raw
+/// path against the process directory let agents list the application's root
+/// and read a file another agent had written (found by the harness).
+/// The action a file_system call asks for, normalized the way `execute_at`
+/// reads it. Authorization decides read or write from this same value, so a
+/// spelling like "WRITE" cannot pass as a read.
+pub fn action(args_json: String) -> Result(String, Nil) {
+  let decoder = {
+    use action <- decode.field("action", decode.string)
+    decode.success(action)
+  }
+  case json.parse(from: args_json, using: decoder) {
+    Ok(action) -> Ok(string.lowercase(string.trim(action)))
+    Error(_) -> Error(Nil)
+  }
+}
+
+/// Run a file_system call on a path the kernel already authorized. A write
+/// runs only when the authorization was for a write.
+pub fn execute_at(
+  authorized_path: String,
+  args_json: String,
+  may_write: Bool,
+) -> Result(String, String) {
+  let decoder = {
+    use content <- decode.optional_field("content", "", decode.string)
+    decode.success(content)
+  }
+  case action(args_json), json.parse(from: args_json, using: decoder) {
+    Ok(action), Ok(content) ->
+      case action, may_write {
+        "read", _ -> read_at(authorized_path)
+        "write", True ->
+          case write_at(authorized_path, content) {
+            Ok(Nil) -> Ok("ok")
+            Error(reason) -> Error(reason)
+          }
+        "write", False -> Error("Write not authorized")
+        "list", _ ->
+          case list_at(authorized_path) {
+            Ok(entries) -> Ok(format_listing(entries))
+            Error(reason) -> Error(reason)
+          }
+        _, _ -> Error("file_system action must be read, write, or list")
+      }
+    _, _ -> Error("Invalid arguments for file_system")
+  }
+}
+
+/// An empty directory is said in words: an empty tool result reads as "no
+/// output" and the agent took it for a broken tool.
+pub fn format_listing(entries: List(String)) -> String {
+  case entries {
+    [] -> "(empty directory)"
+    _ -> string.join(entries, "\n")
+  }
+}
+
+/// Read a path the kernel's workspace policy already authorized (absolute,
+/// inside the caller's workspace). Only the syscall gateway calls these.
+pub fn read_at(authorized_path: String) -> Result(String, String) {
+  do_read_file(authorized_path)
+}
+
+/// Write a path the kernel's workspace policy already authorized.
+pub fn write_at(
+  authorized_path: String,
+  content: String,
+) -> Result(Nil, String) {
+  // The parent lies inside the authorized workspace; a fresh agent's
+  // workspace may not exist yet.
+  case do_ensure_dir(parent_dir(authorized_path)) {
+    Ok(_) -> do_write_file(authorized_path, content)
+    Error(reason) -> Error(reason)
+  }
+}
+
+fn parent_dir(path: String) -> String {
+  case string.split(path, "/") |> list.reverse {
+    [_, ..rest] -> rest |> list.reverse |> string.join("/")
+    [] -> "."
+  }
+}
+
+@external(erlang, "supernova_file_system_ffi", "ensure_dir")
+fn do_ensure_dir(path: String) -> Result(Nil, String)
+
+/// List a directory the kernel's workspace policy already authorized.
+pub fn list_at(authorized_path: String) -> Result(List(String), String) {
+  // A fresh agent's workspace may not exist yet; listing it is listing an
+  // empty directory, not an error. Listing is a read: it never creates the
+  // directory.
+  case do_file_exists(authorized_path) {
+    Ok(False) -> Ok([])
+    _ -> do_list_dir(authorized_path)
+  }
+}
 
 /// Validate that a path is within the workspace.
 /// Delegates to workspace_guard for uniform path confinement
@@ -124,6 +228,9 @@ fn do_read_file(path: String) -> Result(String, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn do_write_file(path: String, content: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "file_exists")
+fn do_file_exists(path: String) -> Result(Bool, String)
 
 @external(erlang, "supernova_file_system_ffi", "list_dir")
 fn do_list_dir(path: String) -> Result(List(String), String)

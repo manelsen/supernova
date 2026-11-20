@@ -248,14 +248,21 @@ pub fn journal_limit_trims_and_audits_test() {
     journal.load(root, "sim:alice")
     |> list.map(fn(entry) { entry.user })
     |> should.equal(["2", "3", "4", "5", "6"])
+    // The audit entry is written asynchronously; wait for it like the
+    // journal above (an immediate read was flaky).
     case closed_group_global.get_audit() {
       Some(audit) ->
-        audit_actor.get_all(audit)
-        |> list.any(fn(entry) {
-          entry.operation == "journal_trimmed"
-          && entry.agent_id == "sim:alice"
-          && entry.details == "trimmed=1"
-        })
+        wait_for(
+          fn() {
+            audit_actor.get_all(audit)
+            |> list.any(fn(entry) {
+              entry.operation == "journal_trimmed"
+              && entry.agent_id == "sim:alice"
+              && entry.details == "trimmed=1"
+            })
+          },
+          5000,
+        )
         |> should.be_true()
       None -> should.fail()
     }
@@ -295,7 +302,8 @@ pub fn prompt_has_last_twelve_experiences_between_name_and_state_test() {
     string.contains(prompt, "LEMBRANCA-2") |> should.be_true()
     string.contains(prompt, "LEMBRANCA-13") |> should.be_true()
     string.contains(prompt, "SEGREDO-DE-B") |> should.equal(False)
-    string.contains(prompt, "usar /esquecer") |> should.be_true()
+    // The guidance (priv/constellation/agent_guidance.md) explains /esquecer.
+    string.contains(prompt, "envie /esquecer") |> should.be_true()
     let name_at = string_index_of(prompt, "Seu nome é Lua")
     let memory_at = string_index_of(prompt, "LEMBRANCA-13")
     let state_at = string_index_of(prompt, "Humor:")

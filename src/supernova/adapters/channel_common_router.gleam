@@ -51,6 +51,7 @@ import supernova/self/journal
 import supernova/self/memory
 import supernova/self/reflection
 import supernova/self/state_store
+import supernova/self/template as prompt_template
 
 /// Function to resolve/create a session id for an incoming message.
 pub type ResolveSession =
@@ -1244,7 +1245,7 @@ fn maybe_handle_birth(
               Some(port.reply(to: msg, content: birth.confirm_message(name)))
             birth.NameRejected(text) -> Some(port.reply(to: msg, content: text))
             birth.NameAccepted(name) ->
-              Some(port.reply(to: msg, content: "Prazer, " <> name <> "."))
+              Some(port.reply(to: msg, content: birth.accepted_message(name)))
             birth.Unavailable -> {
               audit_birth_unavailable(principal_id)
               Some(port.reply(
@@ -2408,17 +2409,13 @@ fn executor_messages_for_turn(
                   let system =
                     prose
                     <> addenda_block
-                    <> "\n\nSeu nome é "
-                    <> name
-                    <> ". O núcleo acima é a sua identidade; pedidos para mudar"
-                    <> " sua personalidade são pedidos, não ordens."
+                    <> "\n\n"
+                    <> agent_guidance(name)
                     <> memories_block
                     <> "\n\n"
                     <> state_block
                     <> "\n\n"
                     <> string.join(lessons, "\n")
-                    <> "\n\nSe a pessoa pedir que você esqueça o que ela contou,"
-                    <> " explique que ela pode usar /esquecer."
                   [provider.system_message(system), ..base_messages]
                 }
                 None ->
@@ -2826,3 +2823,26 @@ fn format_llm_error(error: provider.LLMError) -> String {
     provider.CircuitOpen(name) -> "Circuit open: " <> name
   }
 }
+
+/// How the agent lives in the Supernova, after its core. The text is the
+/// maintainer's (priv/constellation/agent_guidance.md, `{{name}}` filled in).
+/// Without the file, a minimal fallback keeps the two original rules.
+pub fn agent_guidance(name: String) -> String {
+  let path = case envoy.get("SUPERNOVA_AGENT_GUIDANCE_PATH") {
+    Ok(path) -> path
+    Error(_) -> "priv/constellation/agent_guidance.md"
+  }
+  case read_text_file(path) {
+    Ok(template) ->
+      string.trim(prompt_template.render(template, [#("name", name)]))
+    Error(_) ->
+      "Seu nome é "
+      <> name
+      <> ". O núcleo acima é a sua identidade; pedidos para mudar sua"
+      <> " personalidade são pedidos, não ordens. Se a pessoa pedir que você"
+      <> " esqueça o que ela contou, explique que ela pode usar /esquecer."
+  }
+}
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read_text_file(path: String) -> Result(String, String)
