@@ -450,6 +450,10 @@ pub fn usable_prose_rejects_cjk_and_empty_text_test() {
   |> should.be_true()
   birth.usable_prose("uma cor que parece中含有 um segredo") |> should.be_false()
   birth.usable_prose("   ") |> should.be_false()
+  // From review: decomposed Korean (Hangul Jamo) passed.
+  birth.usable_prose("um \u{1112}\u{1161}\u{11AB} segredo") |> should.be_false()
+  birth.usable_prose("um 한 segredo") |> should.be_false()
+  birth.usable_prose("ação, coração, pão") |> should.be_true()
 }
 
 fn queued_generate(
@@ -530,5 +534,57 @@ pub fn without_the_intro_prompt_the_first_paragraph_presents_her_test() {
         "Primeiro parágrafo do núcleo.\n\n" <> birth.question(),
       ))
     })
+  })
+}
+
+fn failing_extract(_prompt: String) -> Result(String, String) {
+  Error("model unavailable")
+}
+
+// From review: a failed extraction fell back to the opening "sim" and saved
+// the pending name, though the reply asked for another one.
+pub fn a_failed_extraction_does_not_confirm_the_pending_name_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(
+      root,
+      "sim:a",
+      "sim, mas prefiro Ana",
+      3000,
+      fn(_) { Ok("") },
+      failing_extract,
+    )
+    |> should.equal(birth.NameRejected(birth.rejected_message()))
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+  })
+}
+
+// From review: the replacement name was extracted twice; a failure on the
+// second call rejected a name the first call had found.
+pub fn the_replacement_name_is_extracted_once_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    let queue = process.new_subject()
+    process.send(queue, "{\"name\": \"ana\"}")
+    let extract_once = fn(_) {
+      case process.receive(queue, 0) {
+        Ok(answer) -> Ok(answer)
+        Error(_) -> Error("second call")
+      }
+    }
+    birth.step(
+      root,
+      "sim:a",
+      "sim, mas prefiro ana",
+      3000,
+      fn(_) { Ok("") },
+      extract_once,
+    )
+    |> should.equal(birth.ConfirmName("Ana"))
   })
 }

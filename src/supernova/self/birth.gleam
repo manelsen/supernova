@@ -178,7 +178,11 @@ pub fn usable_prose(prose: String) -> Bool {
 }
 
 fn is_cjk(code: Int) -> Bool {
-  { code >= 0x3000 && code <= 0x30FF }
+  { code >= 0x1100 && code <= 0x11FF }
+  || { code >= 0x3000 && code <= 0x30FF }
+  || { code >= 0x3130 && code <= 0x318F }
+  || { code >= 0xA960 && code <= 0xA97F }
+  || { code >= 0xD7B0 && code <= 0xD7FF }
   || { code >= 0x3400 && code <= 0x4DBF }
   || { code >= 0x4E00 && code <= 0x9FFF }
   || { code >= 0xAC00 && code <= 0xD7AF }
@@ -312,15 +316,12 @@ fn resolve_free_reply(
   extract: fn(String) -> Result(String, String),
 ) -> Step {
   case name_candidate(content, extract) {
-    Ok(name) ->
+    Ok(Some(name)) ->
       case same_name(name, pending.candidate) {
         True -> keep_pending_name(data_dir, principal, existing, pending, now)
-        False -> {
-          clear_name_pending(data_dir, principal)
-          propose_name(data_dir, principal, content, now, extract)
-        }
+        False -> pend_name(data_dir, principal, capitalize_name(name), now)
       }
-    Error(_) ->
+    Ok(None) ->
       case opens_with_affirmation(content) {
         True -> keep_pending_name(data_dir, principal, existing, pending, now)
         False -> {
@@ -328,6 +329,9 @@ fn resolve_free_reply(
           NameRejected(rejected_message())
         }
       }
+    // The extraction failed: "sim, mas prefiro Ana" must not confirm the
+    // pending name. Keep it pending and ask again.
+    Error(_) -> NameRejected(rejected_message())
   }
 }
 
@@ -351,14 +355,28 @@ pub fn opens_with_affirmation(text: String) -> Bool {
   }
 }
 
+/// `Ok(None)`: the reply has no name. `Error`: the extraction failed, and
+/// nothing can be said about the reply.
 fn name_candidate(
   content: String,
   extract: fn(String) -> Result(String, String),
-) -> Result(String, Nil) {
+) -> Result(Option(String), Nil) {
   let trimmed = string.trim(content)
   case !string.contains(trimmed, " ") && core.valid_name(trimmed) {
-    True -> Ok(trimmed)
+    True -> Ok(Some(trimmed))
     False -> extract_name(trimmed, extract)
+  }
+}
+
+fn pend_name(
+  data_dir: String,
+  principal: String,
+  name: String,
+  now: Int,
+) -> Step {
+  case write_name_pending(data_dir, principal, name, now) {
+    Ok(_) -> ConfirmName(name)
+    Error(_) -> BirthFailed
   }
 }
 
@@ -369,22 +387,16 @@ fn propose_name(
   now: Int,
   extract: fn(String) -> Result(String, String),
 ) -> Step {
-  let candidate =
-    name_candidate(content, extract) |> result.map(capitalize_name)
-  case candidate {
-    Ok(name) ->
-      case write_name_pending(data_dir, principal, name, now) {
-        Ok(_) -> ConfirmName(name)
-        Error(_) -> BirthFailed
-      }
-    Error(_) -> NameRejected(rejected_message())
+  case name_candidate(content, extract) {
+    Ok(Some(name)) -> pend_name(data_dir, principal, capitalize_name(name), now)
+    Ok(None) | Error(_) -> NameRejected(rejected_message())
   }
 }
 
 fn extract_name(
   reply: String,
   extract: fn(String) -> Result(String, String),
-) -> Result(String, Nil) {
+) -> Result(Option(String), Nil) {
   case read_name_template() {
     Error(_) -> Error(Nil)
     Ok(name_template) -> {
@@ -393,12 +405,13 @@ fn extract_name(
         Error(_) -> Error(Nil)
         Ok(raw) ->
           case parse_name(raw) {
-            None -> Error(Nil)
-            Some(name) -> {
+            Error(_) -> Error(Nil)
+            Ok(None) -> Ok(None)
+            Ok(Some(name)) -> {
               let name = string.trim(name)
               case core.valid_name(name) {
-                True -> Ok(name)
-                False -> Error(Nil)
+                True -> Ok(Some(name))
+                False -> Ok(None)
               }
             }
           }
@@ -407,14 +420,14 @@ fn extract_name(
   }
 }
 
-fn parse_name(raw: String) -> Option(String) {
+fn parse_name(raw: String) -> Result(Option(String), Nil) {
   let decoder = {
     use name <- decode.field("name", decode.optional(decode.string))
     decode.success(name)
   }
   case json.parse(from: reflection.strip_code_fence(raw), using: decoder) {
-    Ok(name) -> name
-    Error(_) -> None
+    Ok(name) -> Ok(name)
+    Error(_) -> Error(Nil)
   }
 }
 
