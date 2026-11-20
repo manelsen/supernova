@@ -38,17 +38,39 @@ pub fn chat(
 ) -> Result(provider.ChatResponse, provider.LLMError) {
   let body = openai.build_request_body(messages, config.default_model, tools)
 
-  case config.api_key {
-    Some(api_key) -> {
+  case config.api_key, secure_endpoint(config.name, base_url) {
+    Some(_), Error(reason) -> Error(provider.ConfigError(reason: reason))
+    Some(api_key), Ok(Nil) -> {
       case do_request(body, api_key, base_url, extra_headers) {
         Ok(response_body) -> openai.parse_response(response_body)
         Error(reason) -> Error(provider.NetworkError(reason: reason))
       }
     }
-    None ->
+    None, _ ->
       Error(provider.ConfigError(
         reason: "No API key configured for " <> config.name,
       ))
+  }
+}
+
+/// The API key travels only over HTTPS. Plain HTTP is allowed for loopback
+/// hosts and for Ollama, whose key is a placeholder and which often runs on a
+/// private network under a service name.
+pub fn secure_endpoint(name: String, base_url: String) -> Result(Nil, String) {
+  let url = string.lowercase(string.trim(base_url))
+  let loopback =
+    list.any(
+      ["http://localhost", "http://127.0.0.1", "http://[::1]"],
+      fn(prefix) {
+        url == prefix
+        || string.starts_with(url, prefix <> ":")
+        || string.starts_with(url, prefix <> "/")
+      },
+    )
+  case string.starts_with(url, "https://"), loopback, name == "ollama" {
+    True, _, _ | _, True, _ | _, _, True -> Ok(Nil)
+    False, False, False ->
+      Error("Refusing to send the " <> name <> " API key over a non-HTTPS URL")
   }
 }
 

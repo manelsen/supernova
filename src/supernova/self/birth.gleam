@@ -409,9 +409,11 @@ fn extract_name(
             Ok(None) -> Ok(None)
             Ok(Some(name)) -> {
               let name = string.trim(name)
+              // An invalid name is not an absent one: "sim, mas prefiro
+              // <nome longo demais>" must not confirm the pending name.
               case core.valid_name(name) {
                 True -> Ok(Some(name))
-                False -> Ok(None)
+                False -> Error(Nil)
               }
             }
           }

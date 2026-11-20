@@ -588,3 +588,24 @@ pub fn the_replacement_name_is_extracted_once_test() {
     |> should.equal(birth.ConfirmName("Ana"))
   })
 }
+
+// From review: an invalid replacement name counted as no name, and the
+// opening "sim" then confirmed the pending one.
+pub fn an_invalid_replacement_name_does_not_confirm_the_pending_name_test() {
+  with_constellation(fn(root) {
+    let _ = step(root, "sim:a", "oi", 1000, fn(_) { Ok("Eu sou.") })
+    step(root, "sim:a", "Bia", 2000, fn(_) { Ok("") })
+    |> should.equal(birth.ConfirmName("Bia"))
+    birth.step(
+      root,
+      "sim:a",
+      "sim, mas prefiro outro nome bem comprido",
+      3000,
+      fn(_) { Ok("") },
+      named_extract(string.repeat("a", 80)),
+    )
+    |> should.equal(birth.NameRejected(birth.rejected_message()))
+    let assert Some(unnamed) = core.load(root, "sim:a")
+    unnamed.name |> should.equal(None)
+  })
+}

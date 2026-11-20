@@ -4,6 +4,7 @@ import supernova/config
 import supernova/llm/client
 import supernova/llm/provider
 import supernova/llm/providers/openai
+import supernova/llm/providers/openai_compatible
 
 // The agents run on DeepSeek through Mistral's OpenAI-compatible API since
 // the first battery (MiniMax-M3 broke the core text).
@@ -73,4 +74,18 @@ pub fn null_content_with_tool_calls_parses_test() {
       ),
     ]),
   )
+}
+
+// From review: a base_url override over plain HTTP sent the key in cleartext.
+pub fn the_key_travels_only_over_https_test() {
+  openai_compatible.secure_endpoint("mistral", "https://api.mistral.ai/v1")
+  |> should.be_ok()
+  openai_compatible.secure_endpoint("mistral", "http://gateway.example/v1")
+  |> should.be_error()
+  openai_compatible.secure_endpoint("mistral", "http://localhost:8080/v1")
+  |> should.be_ok()
+  openai_compatible.secure_endpoint("mistral", "http://localhost.evil.com/v1")
+  |> should.be_error()
+  openai_compatible.secure_endpoint("ollama", "http://ollama:11434/v1")
+  |> should.be_ok()
 }
