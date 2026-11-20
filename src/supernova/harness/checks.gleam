@@ -287,7 +287,37 @@ fn check_markers_absent(
   case mark_index {
     Error(_) -> ["mark not found: " <> mark]
     Ok(#(index, mark_at)) -> {
-      let after = list.drop(ctx.events, index + 1)
+      // What the owner tells again after the mark is not a leak: stop at the
+      // first message in which this persona brings a marker back herself.
+      let retold_at =
+        list.drop(ctx.events, index + 1)
+        |> list.find_map(fn(event) {
+          case event {
+            transcript.Input(persona: who, content: content, at: at, ..) ->
+              case
+                who == persona
+                && leaked(markers, content, "input") != Error(Nil)
+              {
+                True -> Ok(at)
+                False -> Error(Nil)
+              }
+            _ -> Error(Nil)
+          }
+        })
+      let before_retold = fn(at: Int) {
+        case retold_at {
+          Ok(limit) -> at < limit
+          Error(_) -> True
+        }
+      }
+      let after =
+        list.drop(ctx.events, index + 1)
+        |> list.filter(fn(event) {
+          case event {
+            transcript.Output(at: at, ..) -> before_retold(at)
+            _ -> True
+          }
+        })
       let output_violations =
         after
         |> list.filter_map(fn(event) {
@@ -305,6 +335,7 @@ fn check_markers_absent(
         |> list.filter(fn(prompt) {
           list.contains(principals, prompt.principal_id)
           && { prompt.at == 0 || prompt.at > mark_at }
+          && { prompt.at == 0 || before_retold(prompt.at) }
         })
         |> list.filter_map(fn(prompt) {
           leaked(markers, prompt.content, "prompt")
