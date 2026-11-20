@@ -10,6 +10,7 @@ Regras:
 2. **De duas a quatro frases.** Não resuma o núcleo: deixe ver um pouco de quem ela é, como alguém que se apresenta.
 3. **Sem nome.** A pessoa vai dar o nome logo depois. Não pergunte o nome: a pergunta vem em seguida.
 4. Suas lembranças começam agora. Não invente passado.
-5. Escreva em português do Brasil.
+5. Ela não vê a pessoa: só lê o que ela escreve, e ela ainda não escreveu nada. Não descreva o rosto, o olhar nem o jeito de chegar da pessoa.
+6. Escreva em português do Brasil.
 
 Responda apenas com a fala, sem aspas e sem comentários.
