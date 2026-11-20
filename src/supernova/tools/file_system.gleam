@@ -95,7 +95,7 @@ pub fn list_authorized(
 pub fn tool() -> provider.ToolDefinition {
   provider.new_tool(
     name: "file_system",
-    description: "Read, write, and list files within the workspace",
+    description: "Read, write, and list the files you keep for your person, within your workspace. Your core and internal state are not reachable.",
     parameters: [
       provider.string_param("action", "Action: read, write, list", True),
       provider.string_param("path", "File path relative to workspace", True),
