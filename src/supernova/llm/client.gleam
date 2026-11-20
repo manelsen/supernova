@@ -80,7 +80,7 @@ pub fn chat(
         messages,
         config,
         tools,
-        base_url: mistral_chat_url,
+        base_url: option.unwrap(config.base_url, mistral_chat_url),
         extra_headers: [],
       )
     _ -> Error(provider.ProviderNotFound(name: config.name))

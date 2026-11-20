@@ -1,4 +1,4 @@
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleeunit/should
 import supernova/config
 import supernova/llm/client
@@ -51,3 +51,26 @@ pub fn real_mistral_answer_parses_test() {
 
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
+
+// From review: only "tool_calls": null was covered; content and
+// reasoning_content may be null too.
+pub fn null_content_with_tool_calls_parses_test() {
+  let body =
+    "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,"
+    <> "\"reasoning_content\":null,\"tool_calls\":[{\"id\":\"c1\","
+    <> "\"type\":\"function\",\"function\":{\"name\":\"file_system\","
+    <> "\"arguments\":\"{\\\"action\\\":\\\"list\\\"}\"}}]}}]}"
+  let assert Ok(response) = openai.parse_response(body)
+  response.content |> should.equal("")
+  response.reasoning_content |> should.equal(None)
+  response.tool_calls
+  |> should.equal(
+    Some([
+      provider.ToolCall(
+        id: "c1",
+        name: "file_system",
+        arguments: "{\"action\":\"list\"}",
+      ),
+    ]),
+  )
+}
