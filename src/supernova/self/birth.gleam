@@ -97,13 +97,49 @@ fn birth_from_constellation(
                   now,
                 )
               {
-                Ok(_) -> AskName(prose <> "\n\n" <> question())
+                Ok(_) ->
+                  AskName(introduction(prose, generate) <> "\n\n" <> question())
                 Error(_) -> BirthFailed
               }
           }
         }
       }
     }
+  }
+}
+
+/// The first thing the agent says: a short presentation in the core's own
+/// voice. The whole core (300 words) read as a monologue from an agent whose
+/// core said "falo pouco". Without the prompt or a usable reply, the core's
+/// first paragraph presents her.
+fn introduction(
+  prose: String,
+  generate: fn(String) -> Result(String, String),
+) -> String {
+  let generated = case read_intro_template() {
+    Error(_) -> Error(Nil)
+    Ok(intro_template) -> {
+      let prompt = template.render(intro_template, [#("core", prose)])
+      case generate(prompt) {
+        Ok(text) ->
+          case usable_prose(text) {
+            True -> Ok(string.trim(text))
+            False -> Error(Nil)
+          }
+        Error(_) -> Error(Nil)
+      }
+    }
+  }
+  case generated {
+    Ok(text) -> text
+    Error(_) -> first_paragraph(prose)
+  }
+}
+
+pub fn first_paragraph(prose: String) -> String {
+  case string.split(string.trim(prose), "\n\n") {
+    [first, ..] -> string.trim(first)
+    [] -> prose
   }
 }
 
@@ -456,6 +492,16 @@ fn read_name_template() -> Result(String, String) {
   let path = case envoy.get("SUPERNOVA_NAME_PROMPT_PATH") {
     Ok(path) -> path
     Error(_) -> "priv/constellation/name_prompt.md"
+  }
+  read_file(path)
+}
+
+/// The introduction prompt. Without it the core's first paragraph presents
+/// the agent.
+fn read_intro_template() -> Result(String, String) {
+  let path = case envoy.get("SUPERNOVA_INTRO_PROMPT_PATH") {
+    Ok(path) -> path
+    Error(_) -> "priv/constellation/intro_prompt.md"
   }
   read_file(path)
 }

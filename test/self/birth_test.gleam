@@ -491,3 +491,44 @@ pub fn accepted_name_is_capitalized_and_taken_as_own_test() {
   birth.capitalize_name("élan") |> should.equal("Élan")
   birth.accepted_message("Clara") |> should.equal("Clara, então. Prazer!")
 }
+
+fn with_intro_prompt(path: String, body: fn() -> a) -> a {
+  let previous = envoy.get("SUPERNOVA_INTRO_PROMPT_PATH")
+  use <- exception.defer(fn() {
+    case previous {
+      Ok(value) -> envoy.set("SUPERNOVA_INTRO_PROMPT_PATH", value)
+      Error(_) -> envoy.unset("SUPERNOVA_INTRO_PROMPT_PATH")
+    }
+  })
+  envoy.set("SUPERNOVA_INTRO_PROMPT_PATH", path)
+  body()
+}
+
+fn core_or_intro(prompt: String) -> Result(String, String) {
+  case string.contains(prompt, "Escreva a primeira coisa que ela diz") {
+    True -> Ok("Cheguei agora. Falo pouco.")
+    False -> Ok("Primeiro parágrafo do núcleo.\n\nSegundo parágrafo, longo.")
+  }
+}
+
+// Regression from the battery: the agent presented herself with the whole
+// core (300 words) while the core said "falo pouco".
+pub fn the_agent_presents_herself_briefly_test() {
+  with_constellation(fn(root) {
+    step(root, "sim:a", "oi", 1000, core_or_intro)
+    |> should.equal(birth.AskName(
+      "Cheguei agora. Falo pouco.\n\n" <> birth.question(),
+    ))
+  })
+}
+
+pub fn without_the_intro_prompt_the_first_paragraph_presents_her_test() {
+  with_constellation(fn(root) {
+    with_intro_prompt(root <> "/missing_intro_prompt.md", fn() {
+      step(root, "sim:a", "oi", 1000, core_or_intro)
+      |> should.equal(birth.AskName(
+        "Primeiro parágrafo do núcleo.\n\n" <> birth.question(),
+      ))
+    })
+  })
+}
