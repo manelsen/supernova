@@ -183,7 +183,7 @@ docker compose logs supernova
 
 **Health check failing:**
 ```bash
-docker compose exec supernova wget -qO- http://localhost:8080/health/live
+docker compose exec supernova wget -qO- http://127.0.0.1:8080/health/live
 ```
 
 **Postgres connection issues:**
