@@ -17,6 +17,7 @@ import supernova/agenda/store
 import supernova/channel/port
 import supernova/core/agent_identity
 import supernova/self/epoch
+import supernova/self/incidents
 
 pub const interval_ms = 30_000
 
@@ -70,14 +71,33 @@ pub fn sweep(
   store.owners(data_dir)
   |> list.fold(0, fn(count, principal) {
     let epoch_before = epoch.read(data_dir, principal)
-    store.take_due(data_dir, principal, now, offset)
-    |> list.fold(count, fn(count, entry) {
-      // Fail closed: an unreadable epoch never counts as unchanged.
-      let unchanged = case epoch_before, epoch.read(data_dir, principal) {
-        Ok(before), Ok(at_handoff) -> before == at_handoff
+    let #(due, skipped) =
+      store.take_due_and_skipped(data_dir, principal, now, offset)
+    let still_current = fn() {
+      case epoch_before, epoch.read(data_dir, principal) {
+        Ok(before), Ok(now_epoch) -> before == now_epoch
         _, _ -> False
       }
-      case unchanged {
+    }
+    list.each(skipped, fn(entry) {
+      let _ =
+        incidents.record_if(
+          data_dir,
+          principal,
+          now,
+          "a tarefa "
+            <> int.to_string(entry.id)
+            <> " da agenda não rodou às "
+            <> schedule.format_local(entry.next_run_at, offset)
+            <> ": o serviço estava fora do ar nessa hora",
+          still_current,
+        )
+      Nil
+    })
+    due
+    |> list.fold(count, fn(count, entry) {
+      // Fail closed: an unreadable epoch never counts as unchanged.
+      case still_current() {
         False -> {
           io.println(
             "agenda: dropped after forget entry="

@@ -13,6 +13,7 @@ import supernova/core/introspection/self_state
 import supernova/core/session/supervisor as session_supervisor
 import supernova/self/core as self_core
 import supernova/self/forget
+import supernova/self/incidents
 import supernova/self/journal
 import supernova/self/memory
 import supernova/self/sampler
@@ -108,6 +109,8 @@ fn seed(root: String) -> Nil {
       1_795_273_200_000,
       -180,
     )
+  let assert Ok(_) =
+    incidents.record(root, "sim:alice", 1_795_273_200_000, "falha antiga")
   Nil
 }
 
@@ -123,7 +126,9 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
       sessions: 0,
       workspace_files: 0,
       agenda: 1,
+      incidents: 1,
     )) = forget.forget(root, "sim:alice", None)
+    incidents.count(root, "sim:alice") |> should.equal(0)
     agenda_store.list(root, "sim:alice") |> should.equal([])
     let self_dir = root <> "/agents/sim_alice/self"
     journal.load(root, "sim:alice") |> should.equal([])
@@ -153,7 +158,7 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
           entry.operation == "forget"
           && entry.agent_id == "sim:alice"
           && entry.details
-          == "journal=1,experiences=1,pressures=1,lessons=1,relationship=1,sessions=0,workspace_files=0,agenda=1"
+          == "journal=1,experiences=1,pressures=1,lessons=1,relationship=1,sessions=0,workspace_files=0,agenda=1,incidents=1"
         })
         |> should.be_true()
       None -> should.fail()

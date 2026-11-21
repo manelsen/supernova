@@ -13,6 +13,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
@@ -29,7 +30,6 @@ import supernova/core/closed_group/types as closed_group_types
 import supernova/core/error_ux
 import supernova/core/exception_guard
 import supernova/core/executor
-import supernova/core/introspection/lesson
 import supernova/core/introspection/mood
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
@@ -41,6 +41,7 @@ import supernova/core/session/supervisor as session_supervisor
 import supernova/core/ux
 import supernova/llm/provider
 import supernova/llm/providers/minimax
+import supernova/llm/providers/openai_compatible
 import supernova/llm/providers/opencode_zen
 import supernova/llm/providers/openrouter
 import supernova/llm/providers/zhipu
@@ -50,6 +51,7 @@ import supernova/self/birth
 import supernova/self/core as self_core
 import supernova/self/epoch
 import supernova/self/forget
+import supernova/self/incidents
 import supernova/self/journal
 import supernova/self/memory
 import supernova/self/reflection
@@ -1005,30 +1007,6 @@ fn save_self_state_for_agent(
     }
     None -> {
       let _ = self_state.save(workspace_path_for_agent(agent_id), state)
-      Nil
-    }
-  }
-}
-
-fn lessons_for_agent(agent_id: String, limit: Int) -> List(lesson.Lesson) {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      lesson.load_recent_in(self_dir, limit)
-    }
-    None -> lesson.load_recent(workspace_path_for_agent(agent_id), limit)
-  }
-}
-
-fn append_lesson_for_agent(agent_id: String, item: lesson.Lesson) -> Nil {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      let _ = lesson.append_in(self_dir, item)
-      Nil
-    }
-    None -> {
-      let _ = lesson.append(workspace_path_for_agent(agent_id), item)
       Nil
     }
   }
@@ -2438,7 +2416,14 @@ fn executor_messages_for_turn(
   let workspace_path = workspace_path_for_agent(profile.agent_id)
   let state = load_self_state_for_agent(profile.agent_id)
   let state_block = self_state.prompt_block(state)
-  let lessons = lessons_for_prompt(profile.agent_id)
+  // Lessons are no longer written or shown: the turn's own history and the
+  // memories reflection writes carry what matters. Failures go to the
+  // incidents the agent can explain (see self/incidents), shown in every
+  // prompt branch through the old lessons slot.
+  let lessons = case incidents_block_for_agent(profile.agent_id) {
+    "" -> []
+    block -> [block]
+  }
 
   case closed_group_global.get_config() {
     Some(cfg) ->
@@ -2489,8 +2474,10 @@ fn executor_messages_for_turn(
                     <> now_line
                     <> "\n"
                     <> state_block
-                    <> "\n\n"
-                    <> string.join(lessons, "\n")
+                    <> case lessons {
+                      [] -> ""
+                      _ -> "\n\n" <> string.join(lessons, "\n")
+                    }
                   [provider.system_message(system), ..base_messages]
                 }
                 None ->
@@ -2635,9 +2622,19 @@ fn record_session_turn(
   }
 }
 
-fn lessons_for_prompt(agent_id: String) -> List(String) {
-  lessons_for_agent(agent_id, 3)
-  |> list.map(lesson.to_prompt_item)
+/// "O que aconteceu por aqui", or "" when nothing happened.
+fn incidents_block_for_agent(agent_id: String) -> String {
+  case closed_group_global.get_config() {
+    None -> ""
+    Some(cfg) ->
+      incidents.prompt_block(
+        incidents.recent(cfg.data_dir, agent_id, closed_group_global.now(), 5),
+        result.unwrap(
+          agenda_schedule.timezone_offset(cfg.instance_budget.timezone),
+          0,
+        ),
+      )
+  }
 }
 
 fn apply_success_self_state(
@@ -2677,7 +2674,6 @@ fn apply_current_success_self_state(
     self_state.apply_outcome(current, outcome, "turn_success", suggestion)
   save_self_state_for_agent(profile.agent_id, updated)
   append_journal_turn(profile, session_id, user_content, content)
-  maybe_store_success_lesson(profile, session_id, user_content, content)
   apply_relationship_event(profile, relationship.TurnSuccess)
   reflection.schedule(profile.agent_id, llm_config)
   Nil
@@ -2734,8 +2730,19 @@ fn append_journal_turn(
 
 fn apply_error_self_state(
   profile: SessionProfile,
-  session_id: String,
-  user_content: String,
+  _session_id: String,
+  _user_content: String,
+  error: executor.ExecutorError,
+) -> Nil {
+  // Like the success path: a turn that outlived /esquecer writes nothing.
+  case turn_still_current(profile) {
+    False -> Nil
+    True -> apply_current_error_self_state(profile, error)
+  }
+}
+
+fn apply_current_error_self_state(
+  profile: SessionProfile,
   error: executor.ExecutorError,
 ) -> Nil {
   let current = load_self_state_for_agent(profile.agent_id)
@@ -2749,71 +2756,67 @@ fn apply_error_self_state(
   }
   let updated = self_state.apply_outcome(current, outcome, cause, None)
   save_self_state_for_agent(profile.agent_id, updated)
-  store_error_lesson(profile, session_id, user_content, error)
+  record_incident(profile, error)
   apply_relationship_event(profile, relationship.UserFrustrated)
   Nil
 }
 
-fn maybe_store_success_lesson(
+/// Note what went wrong in exact terms, for the agent to explain when asked.
+/// Never conversation text: a provider's error body is reduced to its type
+/// and status, like the log line.
+fn record_incident(
   profile: SessionProfile,
-  session_id: String,
-  user_content: String,
-  assistant_content: String,
+  error: executor.ExecutorError,
 ) -> Nil {
-  let normalized = assistant_content |> string.trim |> string.lowercase
-  case normalized == "" || string.contains(normalized, "nada relevante") {
-    True -> Nil
-    False -> {
-      let summary = compact_lesson_content(assistant_content)
-      let context = "Pergunta: " <> compact_lesson_content(user_content)
-      let new_lesson = lesson.make_success_lesson(session_id, summary, context)
-      append_lesson_for_agent(profile.agent_id, new_lesson)
+  case closed_group_global.get_config() {
+    None -> Nil
+    Some(cfg) -> {
+      let _ =
+        incidents.record_if(
+          cfg.data_dir,
+          profile.agent_id,
+          closed_group_global.now(),
+          incident_text(error),
+          fn() { turn_still_current(profile) },
+        )
       Nil
     }
   }
 }
 
-fn store_error_lesson(
-  profile: SessionProfile,
-  session_id: String,
-  user_content: String,
-  error: executor.ExecutorError,
-) -> Nil {
-  let #(content, context_tag) = case error {
-    executor.ToolError(name, reason) -> #(
-      "Falha de ferramenta " <> name <> ": " <> reason,
-      "tool_error",
-    )
-    executor.LLMError(reason) -> #(
-      "Falha do provedor LLM: " <> format_llm_error(reason),
-      "llm_error",
-    )
-    executor.MaxDepthExceeded(depth) -> #(
-      "Limite de profundidade excedido: " <> int.to_string(depth),
-      "max_depth",
-    )
-    executor.YieldAborted(reason) -> #(
-      "Execucao interrompida: " <> reason,
-      "yield_aborted",
-    )
-    executor.YieldPaused(checkpoint) -> #(
-      "Execucao pausada no checkpoint " <> checkpoint,
-      "yield_paused",
-    )
-    executor.PolicyDenied(message) -> #(message, "policy_denied")
-  }
-  let context =
-    "Pergunta: " <> compact_lesson_content(user_content) <> " | " <> context_tag
-  let new_lesson = lesson.make_error_lesson(session_id, content, context)
-  append_lesson_for_agent(profile.agent_id, new_lesson)
-  Nil
-}
-
-fn compact_lesson_content(content: String) -> String {
-  let trimmed = string.trim(content)
-  case string.length(trimmed) > 180 {
-    True -> string.slice(trimmed, 0, 180) <> "..."
-    False -> trimmed
+pub fn incident_text(error: executor.ExecutorError) -> String {
+  case error {
+    executor.LLMError(provider.NetworkError(reason)) ->
+      case string.split_once(reason, ": ") {
+        Ok(#("API error " <> status, body)) ->
+          "o provedor do modelo recusou o pedido (status "
+          <> status
+          <> ", "
+          <> openai_compatible.error_summary(body)
+          <> ")"
+        _ -> "não consegui falar com o provedor do modelo (falha de rede)"
+      }
+    executor.LLMError(provider.APIError(status, _)) ->
+      "o provedor do modelo respondeu com erro (status "
+      <> int.to_string(status)
+      <> ")"
+    executor.LLMError(provider.CircuitOpen(_)) ->
+      "o provedor do modelo ficou fora por um tempo, depois de várias falhas seguidas"
+    executor.LLMError(provider.ConfigError(_)) ->
+      "a configuração do provedor do modelo está inválida"
+    executor.LLMError(provider.ProviderNotFound(name)) ->
+      "o provedor do modelo não foi encontrado (" <> name <> ")"
+    executor.LLMError(provider.NotImplemented(_)) ->
+      "o provedor do modelo não oferece esse recurso"
+    executor.ToolError(name, reason) ->
+      "a ferramenta " <> name <> " falhou: " <> reason
+    executor.MaxDepthExceeded(depth) ->
+      "a tarefa ficou longa demais e parei no meio (limite de "
+      <> int.to_string(depth)
+      <> " passos)"
+    executor.YieldAborted(_) -> "a execução foi interrompida no meio"
+    executor.YieldPaused(_) -> "a execução foi pausada no meio"
+    executor.PolicyDenied(message) -> "a Supernova não permitiu: " <> message
   }
 }
 
@@ -2884,18 +2887,6 @@ fn default_response(
   case model_content {
     "" -> "Received: " <> original_content <> " (session: " <> session_id <> ")"
     content -> content
-  }
-}
-
-fn format_llm_error(error: provider.LLMError) -> String {
-  case error {
-    provider.APIError(status, message) ->
-      "API " <> int.to_string(status) <> " - " <> message
-    provider.NetworkError(reason) -> "Network - " <> reason
-    provider.ConfigError(reason) -> "Config - " <> reason
-    provider.ProviderNotFound(name) -> "Provider not found: " <> name
-    provider.NotImplemented(reason) -> "Not implemented: " <> reason
-    provider.CircuitOpen(name) -> "Circuit open: " <> name
   }
 }
 
