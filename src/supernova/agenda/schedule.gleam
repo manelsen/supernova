@@ -138,6 +138,25 @@ pub fn format_local(at: Int, offset: Int) -> String {
   <> pad2(in_day % 60)
 }
 
+/// The local weekday, date and time, as the agent reads it in its prompt:
+/// "sábado, 21/11/2026, 12:00".
+pub fn describe_now(at: Int, offset: Int) -> String {
+  let days = floor_div(floor_div(at, minute_ms) + offset, day_minutes)
+  let weekday = case { { days % 7 } + 7 + 4 } % 7 {
+    0 -> "domingo"
+    1 -> "segunda-feira"
+    2 -> "terça-feira"
+    3 -> "quarta-feira"
+    4 -> "quinta-feira"
+    5 -> "sexta-feira"
+    _ -> "sábado"
+  }
+  case string.split(format_local(at, offset), " ") {
+    [date, time] -> weekday <> ", " <> date <> ", " <> time
+    _ -> weekday <> ", " <> format_local(at, offset)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Cron
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/agenda/runtime as agenda_runtime
+import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
 import supernova/channel/port
 import supernova/config
@@ -2462,6 +2463,14 @@ fn executor_messages_for_turn(
                         "\n",
                       )
                   }
+                  let now_line =
+                    "Agora: "
+                    <> agenda_schedule.describe_now(
+                      closed_group_global.now(),
+                      agenda_schedule.offset_minutes(
+                        cfg.instance_budget.timezone,
+                      ),
+                    )
                   let system =
                     prose
                     <> addenda_block
@@ -2469,6 +2478,8 @@ fn executor_messages_for_turn(
                     <> agent_guidance(name)
                     <> memories_block
                     <> "\n\n"
+                    <> now_line
+                    <> "\n"
                     <> state_block
                     <> "\n\n"
                     <> string.join(lessons, "\n")

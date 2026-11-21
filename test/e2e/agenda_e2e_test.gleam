@@ -152,6 +152,10 @@ pub fn due_entry_reaches_the_agent_test() {
     && string.contains(prompt, "[Agenda]")
   })
   |> should.be_true
+  // The agent knows what time it is, so "tomorrow at nine" has a meaning.
+  prompt_texts()
+  |> list.any(fn(prompt) { string.contains(prompt, "Agora: ") })
+  |> should.be_true
 }
 
 @external(erlang, "supernova_mock_ffi", "clear_prompts")

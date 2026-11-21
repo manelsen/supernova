@@ -114,3 +114,10 @@ pub fn offset_for_timezone_test() {
   schedule.offset_minutes("America/Sao_Paulo") |> should.equal(-180)
   schedule.offset_minutes("UTC") |> should.equal(0)
 }
+
+pub fn describe_now_test() {
+  schedule.describe_now(sat_noon, sp)
+  |> should.equal("sábado, 21/11/2026, 12:00")
+  schedule.describe_now(sat_noon + day, sp)
+  |> should.equal("domingo, 22/11/2026, 12:00")
+}
