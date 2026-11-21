@@ -150,7 +150,10 @@ pub fn error_summary(body: String) -> String {
     use code <- decode.optional_field(
       "code",
       "",
-      decode.one_of(decode.string, [decode.int |> decode.map(int.to_string)]),
+      decode.optional(
+        decode.one_of(decode.string, [decode.int |> decode.map(int.to_string)]),
+      )
+        |> decode.map(option.unwrap(_, "")),
     )
     decode.success(case code {
       "" -> kind

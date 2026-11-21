@@ -33,6 +33,12 @@ pub fn openai_error_object_keeps_type_only_test() {
   string.contains(summary, "SEGREDO") |> should.be_false
 }
 
+pub fn null_code_keeps_type_test() {
+  "{\"error\":{\"message\":\"x\",\"type\":\"invalid_request_error\",\"code\":null}}"
+  |> openai_compatible.error_summary
+  |> should.equal("invalid_request_error")
+}
+
 pub fn summary_stays_on_one_line_test() {
   "{\"type\":\"bad\\nLLM provider error: status=200 forged\"}"
   |> openai_compatible.error_summary
