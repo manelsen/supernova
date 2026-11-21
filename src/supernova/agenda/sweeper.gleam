@@ -73,9 +73,15 @@ pub fn sweep(
     let epoch_before = epoch.read(data_dir, principal)
     let #(due, skipped) =
       store.take_due_and_skipped(data_dir, principal, now, offset)
+    let still_current = fn() {
+      case epoch_before, epoch.read(data_dir, principal) {
+        Ok(before), Ok(now_epoch) -> before == now_epoch
+        _, _ -> False
+      }
+    }
     list.each(skipped, fn(entry) {
       let _ =
-        incidents.record(
+        incidents.record_if(
           data_dir,
           principal,
           now,
@@ -84,17 +90,14 @@ pub fn sweep(
             <> " da agenda não rodou às "
             <> schedule.format_local(entry.next_run_at, offset)
             <> ": o serviço estava fora do ar nessa hora",
+          still_current,
         )
       Nil
     })
     due
     |> list.fold(count, fn(count, entry) {
       // Fail closed: an unreadable epoch never counts as unchanged.
-      let unchanged = case epoch_before, epoch.read(data_dir, principal) {
-        Ok(before), Ok(at_handoff) -> before == at_handoff
-        _, _ -> False
-      }
-      case unchanged {
+      case still_current() {
         False -> {
           io.println(
             "agenda: dropped after forget entry="

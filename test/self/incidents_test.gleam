@@ -128,3 +128,45 @@ pub fn provider_refusal_keeps_no_conversation_text_test() {
   )
   |> should.equal("não consegui falar com o provedor do modelo (falha de rede)")
 }
+
+pub fn recent_is_ordered_by_time_test() {
+  use dir <- with_data_dir
+  let assert Ok(_) = incidents.record(dir, owner, now + 2 * hour, "depois")
+  let assert Ok(_) = incidents.record(dir, owner, now + hour, "antes")
+  incidents.recent(dir, owner, now + 3 * hour, 5)
+  |> list.map(fn(i) { i.text })
+  |> should.equal(["antes", "depois"])
+}
+
+pub fn unreadable_history_is_not_replaced_test() {
+  use dir <- with_data_dir
+  let assert Ok(_) = incidents.record(dir, owner, now, "a")
+  let file = incidents.path(dir, owner)
+  // As root the file stays readable; there is nothing to check then.
+  case make_unreadable(file) {
+    Error(Nil) -> Nil
+    Ok(Nil) -> {
+      incidents.record(dir, owner, now, "b") |> should.be_error
+      let assert Ok(_) = make_readable(file)
+      incidents.count(dir, owner) |> should.equal(1)
+    }
+  }
+}
+
+// A producer racing /esquecer: the guard runs inside the lock, after the
+// forget bumped its epoch, so nothing is written back.
+pub fn guarded_record_skips_when_stale_test() {
+  use dir <- with_data_dir
+  incidents.record_if(dir, owner, now, "tarde demais", fn() { False })
+  |> should.equal(Ok(Nil))
+  incidents.count(dir, owner) |> should.equal(0)
+  let assert Ok(_) =
+    incidents.record_if(dir, owner, now, "a tempo", fn() { True })
+  incidents.count(dir, owner) |> should.equal(1)
+}
+
+@external(erlang, "incidents_test_ffi", "make_unreadable")
+fn make_unreadable(path: String) -> Result(Nil, Nil)
+
+@external(erlang, "incidents_test_ffi", "make_readable")
+fn make_readable(path: String) -> Result(Nil, Nil)

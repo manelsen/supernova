@@ -38,12 +38,33 @@ pub fn record(
   at: Int,
   text: String,
 ) -> Result(Nil, String) {
+  record_if(data_dir, principal, at, text, fn() { True })
+}
+
+/// Record only if `still_current()` holds, checked inside the lock. A
+/// producer racing /esquecer passes an epoch check: /esquecer bumps the epoch
+/// before it clears, so a write that gets the lock after the clear sees the
+/// new epoch and is dropped.
+pub fn record_if(
+  data_dir: String,
+  principal: String,
+  at: Int,
+  text: String,
+  still_current: fn() -> Bool,
+) -> Result(Nil, String) {
   let incident = Incident(at: at, text: clean(text))
   with_lock("incidents:" <> principal, fn() {
-    let kept =
-      list.append(load(data_dir, principal), [incident])
-      |> keep_last(max_kept)
-    save(data_dir, principal, kept)
+    case still_current() {
+      False -> Ok(Nil)
+      True -> {
+        use current <- result.try(load(data_dir, principal))
+        let kept =
+          [incident, ..current]
+          |> by_time
+          |> keep_last(max_kept)
+        save(data_dir, principal, kept)
+      }
+    }
   })
 }
 
@@ -55,19 +76,22 @@ pub fn recent(
   limit: Int,
 ) -> List(Incident) {
   load(data_dir, principal)
+  |> result.unwrap([])
   |> list.filter(fn(incident) {
     incident.at <= now && now - incident.at <= window_ms
   })
+  |> by_time
   |> keep_last(limit)
 }
 
 pub fn count(data_dir: String, principal: String) -> Int {
-  list.length(load(data_dir, principal))
+  load(data_dir, principal) |> result.unwrap([]) |> list.length
 }
 
 pub fn clear(data_dir: String, principal: String) -> Result(Int, String) {
   with_lock("incidents:" <> principal, fn() {
-    let count = list.length(load(data_dir, principal))
+    // Forgetting removes the file even when it cannot be read.
+    let count = load(data_dir, principal) |> result.unwrap([]) |> list.length
     delete_file(path(data_dir, principal))
     |> result.replace(count)
   })
@@ -111,23 +135,36 @@ fn clean(text: String) -> String {
   }
 }
 
+fn by_time(incidents: List(Incident)) -> List(Incident) {
+  list.sort(incidents, fn(a, b) { int.compare(a.at, b.at) })
+}
+
 fn keep_last(items: List(a), count: Int) -> List(a) {
   list.drop(items, int.max(0, list.length(items) - count))
 }
 
-fn load(data_dir: String, principal: String) -> List(Incident) {
-  case read_file(path(data_dir, principal)) {
-    Error(_) -> []
-    Ok(text) ->
-      string.split(text, "\n")
-      |> list.filter_map(fn(line) {
-        json.parse(line, {
-          use at <- decode.field("at", decode.int)
-          use text <- decode.field("text", decode.string)
-          decode.success(Incident(at:, text:))
-        })
-        |> result.replace_error(Nil)
-      })
+/// A missing file is no incidents; a file that cannot be read is an error,
+/// so a write never replaces a history it could not see. A line that does
+/// not decode is skipped.
+fn load(data_dir: String, principal: String) -> Result(List(Incident), String) {
+  let file = path(data_dir, principal)
+  case file_exists(file) {
+    Error(reason) -> Error(reason)
+    Ok(False) -> Ok([])
+    Ok(True) -> {
+      use text <- result.try(read_file(file))
+      Ok(
+        string.split(text, "\n")
+        |> list.filter_map(fn(line) {
+          json.parse(line, {
+            use at <- decode.field("at", decode.int)
+            use text <- decode.field("text", decode.string)
+            decode.success(Incident(at:, text:))
+          })
+          |> result.replace_error(Nil)
+        }),
+      )
+    }
   }
 }
 
@@ -169,3 +206,6 @@ fn ensure_dir(path: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "delete_file")
 fn delete_file(path: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "file_exists")
+fn file_exists(path: String) -> Result(Bool, String)

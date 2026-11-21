@@ -2417,9 +2417,13 @@ fn executor_messages_for_turn(
   let state = load_self_state_for_agent(profile.agent_id)
   let state_block = self_state.prompt_block(state)
   // Lessons are no longer written or shown: the turn's own history and the
-  // memories reflection writes carry what matters, and failures now go to
-  // the incidents the agent can explain (see self/incidents).
-  let lessons = []
+  // memories reflection writes carry what matters. Failures go to the
+  // incidents the agent can explain (see self/incidents), shown in every
+  // prompt branch through the old lessons slot.
+  let lessons = case incidents_block_for_agent(profile.agent_id) {
+    "" -> []
+    block -> [block]
+  }
 
   case closed_group_global.get_config() {
     Some(cfg) ->
@@ -2470,19 +2474,9 @@ fn executor_messages_for_turn(
                     <> now_line
                     <> "\n"
                     <> state_block
-                    <> case
-                      incidents.prompt_block(
-                        incidents.recent(cfg.data_dir, profile.agent_id, now, 5),
-                        result.unwrap(
-                          agenda_schedule.timezone_offset(
-                            cfg.instance_budget.timezone,
-                          ),
-                          0,
-                        ),
-                      )
-                    {
-                      "" -> ""
-                      block -> "\n\n" <> block
+                    <> case lessons {
+                      [] -> ""
+                      _ -> "\n\n" <> string.join(lessons, "\n")
                     }
                   [provider.system_message(system), ..base_messages]
                 }
@@ -2628,6 +2622,21 @@ fn record_session_turn(
   }
 }
 
+/// "O que aconteceu por aqui", or "" when nothing happened.
+fn incidents_block_for_agent(agent_id: String) -> String {
+  case closed_group_global.get_config() {
+    None -> ""
+    Some(cfg) ->
+      incidents.prompt_block(
+        incidents.recent(cfg.data_dir, agent_id, closed_group_global.now(), 5),
+        result.unwrap(
+          agenda_schedule.timezone_offset(cfg.instance_budget.timezone),
+          0,
+        ),
+      )
+  }
+}
+
 fn apply_success_self_state(
   profile: SessionProfile,
   session_id: String,
@@ -2725,6 +2734,17 @@ fn apply_error_self_state(
   _user_content: String,
   error: executor.ExecutorError,
 ) -> Nil {
+  // Like the success path: a turn that outlived /esquecer writes nothing.
+  case turn_still_current(profile) {
+    False -> Nil
+    True -> apply_current_error_self_state(profile, error)
+  }
+}
+
+fn apply_current_error_self_state(
+  profile: SessionProfile,
+  error: executor.ExecutorError,
+) -> Nil {
   let current = load_self_state_for_agent(profile.agent_id)
   let #(outcome, cause) = case error {
     executor.ToolError(_, _) -> #(mood.ToolCallError, "tool_error")
@@ -2752,11 +2772,12 @@ fn record_incident(
     None -> Nil
     Some(cfg) -> {
       let _ =
-        incidents.record(
+        incidents.record_if(
           cfg.data_dir,
           profile.agent_id,
           closed_group_global.now(),
           incident_text(error),
+          fn() { turn_still_current(profile) },
         )
       Nil
     }
