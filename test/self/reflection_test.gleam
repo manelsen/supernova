@@ -46,6 +46,7 @@ fn cfg() -> config.Config {
       half_life_days: 30.0,
       threshold: 3.0,
       min_interval_days: 90,
+      min_pressure_days: 4,
     ),
   )
 }

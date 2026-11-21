@@ -314,7 +314,14 @@ pub type ReflectionConfig {
 }
 
 pub type DriftConfig {
-  DriftConfig(half_life_days: Float, threshold: Float, min_interval_days: Int)
+  DriftConfig(
+    half_life_days: Float,
+    threshold: Float,
+    min_interval_days: Int,
+    /// Distinct days with pressure in the same direction, within one half
+    /// life, before a change. One strong push is never enough.
+    min_pressure_days: Int,
+  )
 }
 
 /// Support level for a channel adapter.
@@ -531,7 +538,14 @@ pub fn default_reflection_config() -> ReflectionConfig {
 }
 
 pub fn default_drift_config() -> DriftConfig {
-  DriftConfig(half_life_days: 30.0, threshold: 3.0, min_interval_days: 90)
+  // A month of steady living is enough for a nudge (maintainer decision): a
+  // weekly pressure of 0.25 crosses 1.0 in about five weeks.
+  DriftConfig(
+    half_life_days: 30.0,
+    threshold: 1.0,
+    min_interval_days: 30,
+    min_pressure_days: 4,
+  )
 }
 
 pub fn default_tools_config() -> ToolsConfig {
@@ -1193,6 +1207,11 @@ fn decode_drift(root: yay.Node) -> DriftConfig {
           node,
           "min_interval_days",
           default.min_interval_days,
+        ),
+        min_pressure_days: get_int_or(
+          node,
+          "min_pressure_days",
+          default.min_pressure_days,
         ),
       )
     Error(_) -> default

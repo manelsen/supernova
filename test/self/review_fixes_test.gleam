@@ -53,6 +53,7 @@ fn cfg() -> config.Config {
       half_life_days: 30.0,
       threshold: 3.0,
       min_interval_days: 90,
+      min_pressure_days: 4,
     ),
   )
 }
@@ -339,7 +340,7 @@ pub fn drift_prompt_describes_traits_test() {
         reason: "convivência",
       )
     let assert Ok(_) =
-      memory.append_pressures(root, "sim:alice", list.repeat(item, 20))
+      memory.append_pressures(root, "sim:alice", over_days(item, 20))
     clear_prompts()
     let assert Ok(True) =
       drift.maybe_apply(root, "sim:alice", mock_provider(), at)
@@ -415,3 +416,11 @@ fn read_file(path: String) -> Result(String, String)
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")
 fn file_exists(path: String) -> Result(Bool, String)
+
+// Pressures on distinct days: a change needs persistence, not one burst.
+fn over_days(item: memory.Pressure, count: Int) -> List(memory.Pressure) {
+  list.repeat(item, count)
+  |> list.index_map(fn(pressure, index) {
+    memory.Pressure(..pressure, at: pressure.at - index * 86_400_000)
+  })
+}
