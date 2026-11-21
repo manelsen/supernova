@@ -130,31 +130,48 @@ fn do_request(
 }
 
 /// A one-line, log-safe summary of a provider error body: the error type,
-/// where it points and its reason. Validation errors echo the offending
-/// input, which can be conversation text, so the input is never included.
+/// its code and the field it points at. Free text (`msg`, `message`) and
+/// validation `input` can repeat conversation text, so they are never kept;
+/// control characters are dropped so the summary stays on one line.
 pub fn error_summary(body: String) -> String {
+  let loc_part =
+    decode.one_of(decode.string, [decode.int |> decode.map(int.to_string)])
   let validation = {
-    let loc_part =
-      decode.one_of(decode.string, [decode.int |> decode.map(int.to_string)])
     let item = {
       use kind <- decode.field("type", decode.string)
       use loc <- decode.optional_field("loc", [], decode.list(loc_part))
-      use msg <- decode.optional_field("msg", "", decode.string)
-      decode.success(kind <> " at " <> string.join(loc, ".") <> ": " <> msg)
+      decode.success(kind <> " at " <> string.join(loc, "."))
     }
     decode.at(["detail"], decode.list(item))
     |> decode.map(string.join(_, "; "))
   }
   let flat = {
-    use kind <- decode.optional_field("type", "error", decode.string)
-    use message <- decode.field("message", decode.string)
-    decode.success(kind <> ": " <> message)
+    use kind <- decode.field("type", decode.string)
+    use code <- decode.optional_field(
+      "code",
+      "",
+      decode.one_of(decode.string, [decode.int |> decode.map(int.to_string)]),
+    )
+    decode.success(case code {
+      "" -> kind
+      _ -> kind <> " (code " <> code <> ")"
+    })
   }
   let nested = decode.at(["error"], flat)
 
   case json.parse(body, decode.one_of(validation, [nested, flat])) {
-    Ok(summary) -> string.slice(summary, 0, 300)
+    Ok(summary) -> summary |> one_line |> string.slice(0, 300)
     Error(_) ->
       "unparsed body, " <> int.to_string(string.byte_size(body)) <> " bytes"
   }
+}
+
+fn one_line(text: String) -> String {
+  text
+  |> string.to_utf_codepoints
+  |> list.filter(fn(cp) {
+    let n = string.utf_codepoint_to_int(cp)
+    n >= 32 && n != 127
+  })
+  |> string.from_utf_codepoints
 }
