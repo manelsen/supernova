@@ -75,6 +75,7 @@ pub fn pressure_days(
   |> list.filter(fn(item) {
     item.from == from
     && item.to == to
+    && item.strength >. 0.0
     && item.at <= now
     && int.to_float(now - item.at) <=. half_life_ms
   })

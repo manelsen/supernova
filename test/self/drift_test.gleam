@@ -115,3 +115,18 @@ pub fn min_interval_respects_birth_and_last_change_test() {
   drift.eligible_at(0, 100 * day, 120 * day, drift_config)
   |> should.equal(False)
 }
+
+// From review: zero-strength records counted as days of pressure, so one
+// real push after three empty ones was "persistent".
+pub fn zero_strength_days_do_not_count_test() {
+  let pressures = [
+    pressure(1 * day, "sim:alice", 0.0),
+    pressure(2 * day, "sim:alice", 0.0),
+    pressure(3 * day, "sim:alice", 0.0),
+    pressure(4 * day, "sim:alice", 1.0),
+  ]
+  drift.pressure_days(pressures, "curiosa", "cauta", 4 * day, 30.0)
+  |> should.equal(1)
+  drift.above_threshold(pressures, 4 * day, config.default_drift_config())
+  |> should.equal(None)
+}
