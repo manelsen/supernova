@@ -1170,6 +1170,40 @@ fn record_leave_audit(chat_key: String) -> Nil {
   }
 }
 
+/// Run an inbound the core produced itself (an agenda entry coming due) as if
+/// the channel had delivered it: same handler, same per-chat lane, so it never
+/// overlaps a turn the person is having in that chat.
+pub fn inject(
+  registry: ChannelRegistry,
+  handler: port.ChannelHandler,
+  inbound: port.ChannelInbound,
+) -> Result(Nil, port.ChannelError) {
+  let channel = case inbound {
+    port.InboundMessage(message) -> message.channel
+    port.InboundInteraction(interaction) -> interaction.channel
+  }
+  case dict.has_key(registry.channels, channel) {
+    False -> Error(port.SendFailed("Channel not registered: " <> channel))
+    True -> {
+      let stream_send_fn = case dict.get(registry.streams, channel) {
+        Ok(send_fn) -> send_fn
+        Error(_) -> fn(base_reply, _events) {
+          send(registry, channel, base_reply)
+        }
+      }
+      dispatch_inbound(
+        handler,
+        fn(reply) { send(registry, channel, reply) },
+        stream_send_fn,
+        inbound,
+        registry.id,
+        turn_hard_timeout_ms,
+      )
+      Ok(Nil)
+    }
+  }
+}
+
 /// Hand the inbound turn to the lane of its chat and return immediately.
 ///
 /// The polling loop must never wait for a turn: a slow LLM or tool call

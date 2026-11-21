@@ -498,7 +498,7 @@ pub fn default_role_budgets_config() -> RoleBudgetsConfig {
 pub fn default_capabilities_config() -> CapabilitiesConfig {
   CapabilitiesConfig(
     member: RoleCapabilitiesConfig(
-      allowed: ["web", "web_fetch", "file_system", "canvas", "github"],
+      allowed: ["web", "web_fetch", "file_system", "canvas", "github", "agenda"],
       denied: ["safe_shell", "process", "browser", "gateway"],
     ),
     admin: RoleCapabilitiesConfig(allowed: ["*"], denied: []),

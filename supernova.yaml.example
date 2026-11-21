@@ -164,7 +164,7 @@ budget:
 # Tools available to each role
 capabilities:
   member:
-    allowed: ["web", "web_fetch", "file_system", "canvas", "github"]
+    allowed: ["web", "web_fetch", "file_system", "canvas", "github", "agenda"]
     denied: ["safe_shell", "process", "browser", "gateway"]
   admin:
     allowed: ["*"]

@@ -8,6 +8,7 @@ fn read_file(path: String) -> String
 
 import supernova/config
 import supernova/config_check
+import supernova/core/tool_dispatch
 
 fn parsed(yaml: String) -> config.Config {
   let assert Ok(cfg) = config.parse_yaml(yaml)
@@ -198,4 +199,14 @@ pub fn errors_produce_exit_code_one_test() {
   let cfg = parsed("access:\n  admins: [\"bad\"]\n")
   let issues = config_check.check(cfg)
   should.equal(config_check.exit_code(issues), 1)
+}
+
+// A new built-in tool must also be a known capability name, or listing it in
+// supernova.yaml makes the configuration check fail.
+pub fn every_builtin_tool_is_a_known_capability_test() {
+  let known = config_check.known_tool_names()
+  tool_dispatch.builtin_tools()
+  |> list.filter(fn(tool) { !list.contains(known, tool.name) })
+  |> list.map(fn(tool) { tool.name })
+  |> should.equal([])
 }

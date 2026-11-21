@@ -36,6 +36,7 @@ import supernova/core/syscall/types.{
 }
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types as policy_types
+import supernova/tools/agenda
 import supernova/tools/file_system
 
 // ============================================================================
@@ -449,8 +450,8 @@ fn tool_audit_target(tool_name: String, args: String) -> String {
 }
 
 /// The executor handed to the caller of a claimed reservation. A file_system
-/// call runs on the authorized path; everything else keeps the configured
-/// executor.
+/// call runs on the authorized path; an agenda call runs on the caller's own
+/// agenda; everything else keeps the configured executor.
 fn claimed_executor(
   configured: ToolExecutor,
   reservation: ToolReservation,
@@ -458,6 +459,9 @@ fn claimed_executor(
   case reservation.tool_name, reservation.authorized_path {
     "file_system", Some(path) -> fn(_name, args) {
       file_system.execute_at(path, args, reservation.authorized_write)
+    }
+    "agenda", _ -> fn(_name, args) {
+      agenda.execute(reservation.principal_id, args)
     }
     _, _ -> configured
   }

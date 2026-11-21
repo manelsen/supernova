@@ -14,6 +14,8 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import supernova/agenda/runtime as agenda_runtime
+import supernova/agenda/store as agenda_store
 import supernova/channel/port
 import supernova/config
 import supernova/core/agent_identity
@@ -52,6 +54,7 @@ import supernova/self/memory
 import supernova/self/reflection
 import supernova/self/state_store
 import supernova/self/template as prompt_template
+import supernova/tools/agenda as agenda_tool
 
 /// Function to resolve/create a session id for an incoming message.
 pub type ResolveSession =
@@ -432,7 +435,7 @@ fn handle_inbound_message_allowed_for_handler(
                 )
 
               case
-                maybe_handle_forget(
+                maybe_handle_control(
                   state_with_profile,
                   msg,
                   profile,
@@ -638,7 +641,7 @@ fn handle_inbound_message_allowed(
                 )
 
               case
-                maybe_handle_forget(
+                maybe_handle_control(
                   state_with_profile,
                   msg,
                   profile,
@@ -2249,6 +2252,59 @@ fn put_session_config(
   )
 }
 
+/// Commands answered without the model: /agenda first, then /esquecer.
+fn maybe_handle_control(
+  state: InteractiveRouterState,
+  msg: port.ChannelMessage,
+  profile: SessionProfile,
+  supervisor: Option(session_supervisor.SessionSupervisor),
+) -> Option(#(InteractiveRouterState, String)) {
+  case maybe_handle_agenda(msg, profile) {
+    Some(reply) -> Some(#(state, reply))
+    None -> maybe_handle_forget(state, msg, profile, supervisor)
+  }
+}
+
+fn maybe_handle_agenda(
+  msg: port.ChannelMessage,
+  profile: SessionProfile,
+) -> Option(String) {
+  case closed_group_pure.agenda_command(msg.content), agenda_runtime.get() {
+    None, _ -> None
+    Some(_), None -> Some("A agenda não está disponível agora.")
+    Some(command), Some(context) ->
+      Some(agenda_reply(command, profile.agent_id, context))
+  }
+}
+
+fn agenda_reply(
+  command: closed_group_pure.AgendaCommand,
+  principal: String,
+  context: agenda_runtime.Context,
+) -> String {
+  case command {
+    closed_group_pure.AgendaList ->
+      case agenda_store.list(context.data_dir, principal) {
+        [] -> "Sua agenda está vazia."
+        entries ->
+          "Sua agenda:\n"
+          <> {
+            entries
+            |> list.map(agenda_tool.describe(_, context.offset_minutes))
+            |> string.join("\n")
+          }
+          <> "\n\nPara tirar uma tarefa: /agenda remover N"
+      }
+    closed_group_pure.AgendaRemove(id) ->
+      case agenda_store.remove(context.data_dir, principal, id) {
+        Ok(_) -> "Tirei a tarefa " <> int.to_string(id) <> " da agenda."
+        Error(_) -> "Não há tarefa " <> int.to_string(id) <> " na agenda."
+      }
+    closed_group_pure.AgendaUsage ->
+      "Use /agenda para ver a agenda e /agenda remover N para tirar uma tarefa."
+  }
+}
+
 fn maybe_handle_forget(
   state: InteractiveRouterState,
   msg: port.ChannelMessage,
@@ -2269,7 +2325,7 @@ fn maybe_handle_forget(
             "Isso apaga tudo o que você me contou: "
             <> int.to_string(count)
             <> " lembranças, o histórico das nossas conversas, o que eu aprendi"
-            <> " com você e os arquivos que guardei para você. O que eu me tornei"
+            <> " com você, os arquivos que guardei para você e a sua agenda. O que eu me tornei"
             <> " fica. Para confirmar, envie"
             <> " /esquecer confirmo nos próximos 10 minutos."
           Some(#(

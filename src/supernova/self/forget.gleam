@@ -3,6 +3,7 @@
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import supernova/agenda/store as agenda_store
 import supernova/core/agent_identity
 import supernova/core/audit_log/types as audit_types
 import supernova/core/introspection/lesson
@@ -23,6 +24,7 @@ pub type Counts {
     relationship: Int,
     sessions: Int,
     workspace_files: Int,
+    agenda: Int,
   )
 }
 
@@ -103,6 +105,8 @@ pub fn forget(
   use workspace_count <- result.try(
     clear_dir(agent_identity.workspace_dir(data_dir, principal)),
   )
+  // What the owner asked to schedule is also what came from the owner.
+  use agenda_count <- result.try(agenda_store.clear(data_dir, principal))
   let counts =
     Counts(
       journal: journal_count,
@@ -112,6 +116,7 @@ pub fn forget(
       relationship: relationship_count,
       sessions: session_count,
       workspace_files: workspace_count,
+      agenda: agenda_count,
     )
   audit.record(
     principal,
@@ -126,6 +131,7 @@ pub fn forget(
       #("relationship", relationship_count),
       #("sessions", session_count),
       #("workspace_files", workspace_count),
+      #("agenda", agenda_count),
     ]),
   )
   Ok(counts)
