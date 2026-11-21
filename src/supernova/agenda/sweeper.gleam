@@ -72,7 +72,12 @@ pub fn sweep(
     let epoch_before = epoch.read(data_dir, principal)
     store.take_due(data_dir, principal, now, offset)
     |> list.fold(count, fn(count, entry) {
-      case epoch.read(data_dir, principal) == epoch_before {
+      // Fail closed: an unreadable epoch never counts as unchanged.
+      let unchanged = case epoch_before, epoch.read(data_dir, principal) {
+        Ok(before), Ok(at_handoff) -> before == at_handoff
+        _, _ -> False
+      }
+      case unchanged {
         False -> {
           io.println(
             "agenda: dropped after forget entry="

@@ -4,6 +4,7 @@ import gleam/string
 import gleeunit/should
 import supernova/agenda/store
 import supernova/agenda/sweeper
+import supernova/core/agent_identity
 import supernova/self/epoch
 import test_workspace
 
@@ -71,3 +72,20 @@ pub fn forget_during_a_sweep_drops_the_rest_test() {
   let assert Ok(_) = process.receive(inbox, 100)
   process.receive(inbox, 10) |> should.be_error
 }
+
+pub fn unreadable_forget_epoch_runs_nothing_test() {
+  use dir <- with_data_dir
+  let assert Ok(entry) = store.add(dir, owner, "0 5 * * *", "radar", now, sp)
+  let assert Ok(_) =
+    write_file(
+      agent_identity.self_dir(dir, owner) <> "/forget_epoch",
+      "ilegível",
+    )
+  let inbox = process.new_subject()
+  sweeper.sweep(dir, sp, entry.next_run_at, process.send(inbox, _))
+  |> should.equal(0)
+  process.receive(inbox, 10) |> should.be_error
+}
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_file(path: String, content: String) -> Result(Nil, String)
