@@ -29,38 +29,24 @@ pub type EffectivePressure {
   EffectivePressure(from: String, to: String, value: Float)
 }
 
+/// Decayed sum of the pressures in each direction. Repetition is not
+/// discounted: persistence is what changes a self, and `above_threshold`
+/// requires it on distinct days.
 pub fn effective_pressures(
   pressures: List(memory.Pressure),
   now: Int,
   half_life_days: Float,
 ) -> List(EffectivePressure) {
   let half_life_ms = float.max(1.0, half_life_days) *. int.to_float(day_ms)
-  let contributions =
-    pressures
-    |> list.index_map(fn(item, index) {
-      let previous =
-        pressures
-        |> list.take(index)
-        |> list.filter(fn(prior) {
-          prior.from == item.from
-          && prior.to == item.to
-          && prior.origin == item.origin
-          && int.to_float(item.at - prior.at) <=. half_life_ms
-        })
-      let k = list.length(previous)
-      let age = float.max(0.0, int.to_float(now - item.at))
-      let decay = case float.power(0.5, age /. half_life_ms) {
-        Ok(value) -> value
-        Error(_) -> 0.0
-      }
-      let denominator = 1.0 +. int.to_float(k)
-      let value = item.strength *. decay /. denominator
-      #(item.from, item.to, value)
-    })
-  contributions
+  pressures
   |> list.fold(dict.new(), fn(acc, item) {
-    let #(from, to, value) = item
-    let key = #(from, to)
+    let age = float.max(0.0, int.to_float(now - item.at))
+    let decay = case float.power(0.5, age /. half_life_ms) {
+      Ok(value) -> value
+      Error(_) -> 0.0
+    }
+    let value = item.strength *. decay
+    let key = #(item.from, item.to)
     case dict.get(acc, key) {
       Ok(existing) -> dict.insert(acc, key, existing +. value)
       Error(_) -> dict.insert(acc, key, value)
@@ -73,6 +59,28 @@ pub fn effective_pressures(
   })
   |> list.sort(fn(a, b) { float.compare(a.value, b.value) })
   |> list.reverse
+}
+
+/// Distinct days, within one half life of `now`, with pressure from `from`
+/// toward `to`.
+pub fn pressure_days(
+  pressures: List(memory.Pressure),
+  from: String,
+  to: String,
+  now: Int,
+  half_life_days: Float,
+) -> Int {
+  let half_life_ms = float.max(1.0, half_life_days) *. int.to_float(day_ms)
+  pressures
+  |> list.filter(fn(item) {
+    item.from == from
+    && item.to == to
+    && item.at <= now
+    && int.to_float(now - item.at) <=. half_life_ms
+  })
+  |> list.map(fn(item) { item.at / day_ms })
+  |> list.unique
+  |> list.length
 }
 
 pub fn effective_for(
@@ -95,7 +103,11 @@ pub fn above_threshold(
 ) -> Option(EffectivePressure) {
   case
     effective_pressures(pressures, now, drift.half_life_days)
-    |> list.find(fn(item) { item.value >=. drift.threshold })
+    |> list.find(fn(item) {
+      item.value >=. drift.threshold
+      && pressure_days(pressures, item.from, item.to, now, drift.half_life_days)
+      >= drift.min_pressure_days
+    })
   {
     Ok(item) -> Some(item)
     Error(_) -> None

@@ -66,6 +66,7 @@ fn cfg() -> config.Config {
       half_life_days: 30.0,
       threshold: 3.0,
       min_interval_days: 90,
+      min_pressure_days: 4,
     ),
   )
 }
@@ -98,7 +99,7 @@ pub fn drift_changes_traits_but_not_core_prose_test() {
         reason: "convivência",
       )
     let assert Ok(_) =
-      memory.append_pressures(root, "sim:alice", list.repeat(item, 20))
+      memory.append_pressures(root, "sim:alice", over_days(item, 20))
     let assert Ok(True) =
       drift.maybe_apply(root, "sim:alice", mock_provider(), now)
     let assert Some(core) = self_core.load(root, "sim:alice")
@@ -142,7 +143,7 @@ pub fn under_90_days_does_not_change_test() {
         reason: "convivência",
       )
     let assert Ok(_) =
-      memory.append_pressures(root, "sim:alice", list.repeat(item, 20))
+      memory.append_pressures(root, "sim:alice", over_days(item, 20))
     let assert Ok(False) =
       drift.maybe_apply(root, "sim:alice", mock_provider(), now)
     let assert Some(core) = self_core.load(root, "sim:alice")
@@ -183,7 +184,7 @@ pub fn incoherent_change_does_not_happen_test() {
         reason: "convivência",
       )
     let assert Ok(_) =
-      memory.append_pressures(root, "sim:alice", list.repeat(item, 20))
+      memory.append_pressures(root, "sim:alice", over_days(item, 20))
     let assert Ok(False) =
       drift.maybe_apply(root, "sim:alice", mock_provider(), now)
     let assert Some(core) = self_core.load(root, "sim:alice")
@@ -222,7 +223,7 @@ pub fn fifty_runs_without_clock_change_produce_one_drift_test() {
             reason: "convivência",
           )
         let assert Ok(_) =
-          memory.append_pressures(root, "sim:alice", list.repeat(item, 20))
+          memory.append_pressures(root, "sim:alice", over_days(item, 20))
         case drift.maybe_apply(root, "sim:alice", mock_provider(), now) {
           Ok(True) -> count + 1
           _ -> count
@@ -265,7 +266,7 @@ pub fn missing_runtime_does_not_change_test() {
       reason: "convivência",
     )
   let assert Ok(_) =
-    memory.append_pressures(root, "sim:alice", list.repeat(item, 20))
+    memory.append_pressures(root, "sim:alice", over_days(item, 20))
   let assert Error("runtime unavailable") =
     drift.maybe_apply(root, "sim:alice", mock_provider(), now)
   let assert Some(core) = self_core.load(root, "sim:alice")
@@ -301,7 +302,7 @@ pub fn stale_source_pressure_does_not_drift_test() {
         reason: "convivência",
       )
     let assert Ok(_) =
-      memory.append_pressures(root, "sim:alice", list.repeat(first, 20))
+      memory.append_pressures(root, "sim:alice", over_days(first, 20))
     let assert Ok(True) =
       drift.maybe_apply(root, "sim:alice", mock_provider(), now)
     let later = now + 90 * day
@@ -315,7 +316,7 @@ pub fn stale_source_pressure_does_not_drift_test() {
         reason: "pressão antiga",
       )
     let assert Ok(_) =
-      memory.append_pressures(root, "sim:alice", list.repeat(stale, 20))
+      memory.append_pressures(root, "sim:alice", over_days(stale, 20))
     let assert Ok(False) =
       drift.maybe_apply(root, "sim:alice", mock_provider(), later)
     let assert Some(core) = self_core.load(root, "sim:alice")
@@ -344,7 +345,7 @@ fn seed_drift_root(root: String, now: Int, prose: String) -> Nil {
       reason: "convivência",
     )
   let assert Ok(_) =
-    memory.append_pressures(root, "sim:alice", list.repeat(item, 20))
+    memory.append_pressures(root, "sim:alice", over_days(item, 20))
   Nil
 }
 
@@ -500,3 +501,11 @@ pub fn validate_addendum_rejects_headings_test() {
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)
+
+// Pressures on distinct days: a change needs persistence, not one burst.
+fn over_days(item: memory.Pressure, count: Int) -> List(memory.Pressure) {
+  list.repeat(item, count)
+  |> list.index_map(fn(pressure, index) {
+    memory.Pressure(..pressure, at: pressure.at - index * 86_400_000)
+  })
+}
