@@ -170,3 +170,19 @@ fn make_unreadable(path: String) -> Result(Nil, Nil)
 
 @external(erlang, "incidents_test_ffi", "make_readable")
 fn make_readable(path: String) -> Result(Nil, Nil)
+
+pub fn newest_survives_equal_timestamps_test() {
+  use dir <- with_data_dir
+  list.repeat(Nil, incidents.max_kept)
+  |> list.each(fn(_) {
+    let assert Ok(_) = incidents.record(dir, owner, now, "antiga")
+    Nil
+  })
+  let assert Ok(_) = incidents.record(dir, owner, now, "nova")
+  incidents.count(dir, owner) |> should.equal(incidents.max_kept)
+  let assert Ok(last) =
+    incidents.recent(dir, owner, now, 1)
+    |> list.map(fn(i) { i.text })
+    |> list.first
+  last |> should.equal("nova")
+}

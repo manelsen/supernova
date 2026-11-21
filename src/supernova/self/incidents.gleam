@@ -59,7 +59,7 @@ pub fn record_if(
       True -> {
         use current <- result.try(load(data_dir, principal))
         let kept =
-          [incident, ..current]
+          list.append(current, [incident])
           |> by_time
           |> keep_last(max_kept)
         save(data_dir, principal, kept)
