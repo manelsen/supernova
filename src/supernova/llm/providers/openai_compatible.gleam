@@ -12,9 +12,13 @@
 //// )
 //// ```
 
+import gleam/dynamic/decode
 import gleam/hackney
 import gleam/http
 import gleam/http/request
+import gleam/int
+import gleam/io
+import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -107,10 +111,70 @@ fn do_request(
     Ok(response) -> {
       case response.status {
         200 -> Ok(response.body)
-        status ->
+        status -> {
+          io.println(
+            "LLM provider error: status="
+            <> int.to_string(status)
+            <> " "
+            <> error_summary(response.body),
+          )
           Error("API error " <> string.inspect(status) <> ": " <> response.body)
+        }
       }
     }
-    Error(_) -> Error("Network error connecting to " <> base_url)
+    Error(error) -> {
+      io.println("LLM provider error: transport " <> string.inspect(error))
+      Error("Network error connecting to " <> base_url)
+    }
   }
+}
+
+/// A one-line, log-safe summary of a provider error body: the error type,
+/// its code and the field it points at. Free text (`msg`, `message`) and
+/// validation `input` can repeat conversation text, so they are never kept;
+/// control characters are dropped so the summary stays on one line.
+pub fn error_summary(body: String) -> String {
+  let loc_part =
+    decode.one_of(decode.string, [decode.int |> decode.map(int.to_string)])
+  let validation = {
+    let item = {
+      use kind <- decode.field("type", decode.string)
+      use loc <- decode.optional_field("loc", [], decode.list(loc_part))
+      decode.success(kind <> " at " <> string.join(loc, "."))
+    }
+    decode.at(["detail"], decode.list(item))
+    |> decode.map(string.join(_, "; "))
+  }
+  let flat = {
+    use kind <- decode.field("type", decode.string)
+    use code <- decode.optional_field(
+      "code",
+      "",
+      decode.optional(
+        decode.one_of(decode.string, [decode.int |> decode.map(int.to_string)]),
+      )
+        |> decode.map(option.unwrap(_, "")),
+    )
+    decode.success(case code {
+      "" -> kind
+      _ -> kind <> " (code " <> code <> ")"
+    })
+  }
+  let nested = decode.at(["error"], flat)
+
+  case json.parse(body, decode.one_of(validation, [nested, flat])) {
+    Ok(summary) -> summary |> one_line |> string.slice(0, 300)
+    Error(_) ->
+      "unparsed body, " <> int.to_string(string.byte_size(body)) <> " bytes"
+  }
+}
+
+fn one_line(text: String) -> String {
+  text
+  |> string.to_utf_codepoints
+  |> list.filter(fn(cp) {
+    let n = string.utf_codepoint_to_int(cp)
+    n >= 32 && n != 127
+  })
+  |> string.from_utf_codepoints
 }
