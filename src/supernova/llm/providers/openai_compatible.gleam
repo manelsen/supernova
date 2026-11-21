@@ -12,9 +12,13 @@
 //// )
 //// ```
 
+import gleam/dynamic/decode
 import gleam/hackney
 import gleam/http
 import gleam/http/request
+import gleam/int
+import gleam/io
+import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -107,10 +111,50 @@ fn do_request(
     Ok(response) -> {
       case response.status {
         200 -> Ok(response.body)
-        status ->
+        status -> {
+          io.println(
+            "LLM provider error: status="
+            <> int.to_string(status)
+            <> " "
+            <> error_summary(response.body),
+          )
           Error("API error " <> string.inspect(status) <> ": " <> response.body)
+        }
       }
     }
-    Error(_) -> Error("Network error connecting to " <> base_url)
+    Error(error) -> {
+      io.println("LLM provider error: transport " <> string.inspect(error))
+      Error("Network error connecting to " <> base_url)
+    }
+  }
+}
+
+/// A one-line, log-safe summary of a provider error body: the error type,
+/// where it points and its reason. Validation errors echo the offending
+/// input, which can be conversation text, so the input is never included.
+pub fn error_summary(body: String) -> String {
+  let validation = {
+    let loc_part =
+      decode.one_of(decode.string, [decode.int |> decode.map(int.to_string)])
+    let item = {
+      use kind <- decode.field("type", decode.string)
+      use loc <- decode.optional_field("loc", [], decode.list(loc_part))
+      use msg <- decode.optional_field("msg", "", decode.string)
+      decode.success(kind <> " at " <> string.join(loc, ".") <> ": " <> msg)
+    }
+    decode.at(["detail"], decode.list(item))
+    |> decode.map(string.join(_, "; "))
+  }
+  let flat = {
+    use kind <- decode.optional_field("type", "error", decode.string)
+    use message <- decode.field("message", decode.string)
+    decode.success(kind <> ": " <> message)
+  }
+  let nested = decode.at(["error"], flat)
+
+  case json.parse(body, decode.one_of(validation, [nested, flat])) {
+    Ok(summary) -> string.slice(summary, 0, 300)
+    Error(_) ->
+      "unparsed body, " <> int.to_string(string.byte_size(body)) <> " bytes"
   }
 }
