@@ -2,6 +2,7 @@ import e2e/e2e_support as support
 import gleam/list
 import gleam/option.{None, Some}
 import gleeunit/should
+import supernova/agenda/store as agenda_store
 import supernova/config
 import supernova/core/agent_identity
 import supernova/core/audit_log/actor as audit_actor
@@ -98,6 +99,15 @@ fn seed(root: String) -> Nil {
     )
   let assert Ok(_) =
     relationship.save(workspace, relationship.load(workspace, "alice"))
+  let assert Ok(_) =
+    agenda_store.add(
+      root,
+      "sim:alice",
+      "0 5 * * *",
+      "radar",
+      1_795_273_200_000,
+      -180,
+    )
   Nil
 }
 
@@ -112,7 +122,9 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
       relationship: 1,
       sessions: 0,
       workspace_files: 0,
+      agenda: 1,
     )) = forget.forget(root, "sim:alice", None)
+    agenda_store.list(root, "sim:alice") |> should.equal([])
     let self_dir = root <> "/agents/sim_alice/self"
     journal.load(root, "sim:alice") |> should.equal([])
     memory.experiences(root, "sim:alice") |> should.equal([])
@@ -141,7 +153,7 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
           entry.operation == "forget"
           && entry.agent_id == "sim:alice"
           && entry.details
-          == "journal=1,experiences=1,pressures=1,lessons=1,relationship=1,sessions=0,workspace_files=0"
+          == "journal=1,experiences=1,pressures=1,lessons=1,relationship=1,sessions=0,workspace_files=0,agenda=1"
         })
         |> should.be_true()
       None -> should.fail()

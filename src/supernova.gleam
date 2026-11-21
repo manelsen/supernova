@@ -26,6 +26,9 @@ import supernova/adapters/mcp_manager
 import supernova/adapters/sim_router
 import supernova/adapters/slack_router
 import supernova/adapters/telegram_router
+import supernova/agenda/runtime as agenda_runtime
+import supernova/agenda/schedule as agenda_schedule
+import supernova/agenda/sweeper as agenda_sweeper
 import supernova/channel/port
 import supernova/channel/registry
 import supernova/config
@@ -193,6 +196,9 @@ pub type Runtime {
     channel_registry: registry.ChannelRegistry,
     health_server: health_server.HealthServer,
     metrics: metrics_actor.Metrics,
+    /// Run the agenda entries due now and return how many ran. Started on a
+    /// half-minute clock in production; the harness calls it explicitly.
+    sweep_agenda: fn() -> Int,
   )
 }
 
@@ -326,6 +332,63 @@ fn start_services(
     }
   })
 
+  // The agenda: entries come due as messages in the person's private chat,
+  // run through the same handler and per-chat lane as any message. It stays
+  // off with a timezone it cannot resolve rather than run at the wrong hour.
+  let deliver_agenda = fn(message) {
+    case
+      registry.inject(
+        channel_reg,
+        channel_handler,
+        port.inbound_message(message),
+      )
+    {
+      Ok(Nil) -> Nil
+      Error(error) ->
+        io.println_error(
+          "error: agenda delivery failed: " <> string.inspect(error),
+        )
+    }
+  }
+  let sweep_agenda = case
+    agenda_schedule.timezone_offset(cfg.instance_budget.timezone)
+  {
+    Error(Nil) -> {
+      agenda_runtime.clear()
+      io.println(
+        "⚠ Agenda off: unsupported timezone "
+        <> cfg.instance_budget.timezone
+        <> " (use America/Sao_Paulo or UTC)",
+      )
+      fn() { 0 }
+    }
+    Ok(agenda_offset) -> {
+      agenda_runtime.configure(agenda_runtime.Context(
+        data_dir: cfg.data_dir,
+        offset_minutes: agenda_offset,
+        clock: clock,
+      ))
+      case cfg.environment == "harness" {
+        True -> Nil
+        False ->
+          agenda_sweeper.start(
+            cfg.data_dir,
+            agenda_offset,
+            clock,
+            deliver_agenda,
+          )
+      }
+      fn() {
+        agenda_sweeper.sweep(
+          cfg.data_dir,
+          agenda_offset,
+          clock(),
+          deliver_agenda,
+        )
+      }
+    }
+  }
+
   // Start the hourly reflection sweeper outside the router. A controllable
   // clock (harness mode) means the harness triggers sweeps explicitly.
   case cfg.environment == "harness" {
@@ -351,6 +414,7 @@ fn start_services(
     channel_registry: channel_reg,
     health_server: health_srv,
     metrics: metrics,
+    sweep_agenda: sweep_agenda,
   ))
 }
 

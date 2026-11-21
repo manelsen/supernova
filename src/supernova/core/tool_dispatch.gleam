@@ -10,6 +10,7 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/llm/provider
+import supernova/tools/agenda
 import supernova/tools/browser
 import supernova/tools/canvas
 import supernova/tools/file_system
@@ -32,6 +33,7 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     web.tool(),
     git_inspect.tool(),
     file_system.tool(),
+    agenda.tool(),
   ]
 }
 
@@ -55,6 +57,9 @@ pub fn execute(name: String, args_json: String) -> Result(String, String) {
     "web_fetch" -> execute_web_fetch(args_json)
     "git_inspect" -> execute_git_inspect(args_json)
     "file_system" -> execute_file_system(args_json)
+    // The agenda belongs to a person: only the syscall gateway, which knows
+    // the caller, runs it (see claimed_executor).
+    "agenda" -> Error("agenda needs the caller's identity")
     _ -> Error("Tool '" <> name <> "' is not wired in executor")
   }
 }

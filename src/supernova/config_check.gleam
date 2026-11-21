@@ -34,6 +34,7 @@ pub fn known_tool_names() -> List(String) {
     "web_fetch",
     "git_inspect",
     "file_system",
+    "agenda",
   ]
 }
 

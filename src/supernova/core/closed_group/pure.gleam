@@ -266,6 +266,35 @@ pub fn forget_command(content: String) -> Option(ForgetCommand) {
   }
 }
 
+pub type AgendaCommand {
+  AgendaList
+  AgendaRemove(id: Int)
+  AgendaUsage
+}
+
+/// Parse `/agenda` and `/agenda remover N`, also as `/agenda@Bot`.
+pub fn agenda_command(content: String) -> Option(AgendaCommand) {
+  let words =
+    string.trim(content)
+    |> string.lowercase
+    |> string.split(" ")
+    |> list.filter(fn(word) { word != "" })
+  case words {
+    [first, ..rest] ->
+      case normalize_command(first), rest {
+        "/agenda", [] -> Some(AgendaList)
+        "/agenda", ["remover", id] ->
+          case int.parse(id) {
+            Ok(id) -> Some(AgendaRemove(id))
+            Error(_) -> Some(AgendaUsage)
+          }
+        "/agenda", _ -> Some(AgendaUsage)
+        _, _ -> None
+      }
+    [] -> None
+  }
+}
+
 pub fn is_forget_command(content: String) -> Bool {
   forget_command(content) != None
 }
