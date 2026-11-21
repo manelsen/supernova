@@ -166,7 +166,7 @@ pub fn prompt_block(state: SelfState) -> String {
   <> float_to_2dp(state.mood.arousal)
   <> ")\n"
   <> "Causa: "
-  <> state.mood_cause
+  <> cause_label(state.mood_cause)
   <> "\n"
   <> "Disposição: "
   <> wakefulness_label(state.wakefulness)
@@ -179,6 +179,22 @@ pub fn prompt_block(state: SelfState) -> String {
   <> "\n"
   <> "Última reflexão: "
   <> state.last_reflection
+}
+
+/// The cause as the agent reads it. Technical failures point at "O que
+/// aconteceu por aqui", where the exact details are.
+fn cause_label(cause: String) -> String {
+  case cause {
+    "turn_success" -> "a última troca correu bem"
+    "inicial" -> "o começo"
+    "llm_error"
+    | "tool_error"
+    | "max_depth"
+    | "yield_aborted"
+    | "yield_paused"
+    | "policy_denied" -> "um tropeço técnico (veja O que aconteceu por aqui)"
+    other -> other
+  }
 }
 
 fn list_or_none(items: List(String)) -> String {

@@ -159,21 +159,32 @@ pub fn take_due(
   now: Int,
   offset: Int,
 ) -> List(Entry) {
+  take_due_and_skipped(data_dir, principal, now, offset).0
+}
+
+/// Like `take_due`, also returning the occurrences skipped for being later
+/// than the grace period (each as it was when it should have run).
+pub fn take_due_and_skipped(
+  data_dir: String,
+  principal: String,
+  now: Int,
+  offset: Int,
+) -> #(List(Entry), List(Entry)) {
   let taken =
     update(data_dir, principal, fn(agenda) {
-      let #(due, kept) =
-        list.fold(agenda.entries, #([], []), fn(acc, entry) {
-          let #(due, kept) = acc
+      let #(due, skipped, kept) =
+        list.fold(agenda.entries, #([], [], []), fn(acc, entry) {
+          let #(due, skipped, kept) = acc
           case entry.next_run_at <= now {
-            False -> #(due, [entry, ..kept])
+            False -> #(due, skipped, [entry, ..kept])
             True -> {
-              let due = case now - entry.next_run_at <= grace_ms {
-                True -> [entry, ..due]
-                False -> due
+              let #(due, skipped) = case now - entry.next_run_at <= grace_ms {
+                True -> #([entry, ..due], skipped)
+                False -> #(due, [entry, ..skipped])
               }
               case advance(entry, now, offset) {
-                Some(next) -> #(due, [next, ..kept])
-                None -> #(due, kept)
+                Some(next) -> #(due, skipped, [next, ..kept])
+                None -> #(due, skipped, kept)
               }
             }
           }
@@ -181,10 +192,13 @@ pub fn take_due(
       case list.any(agenda.entries, fn(entry) { entry.next_run_at <= now }) {
         False -> Error("nothing due")
         True ->
-          Ok(#(Agenda(..agenda, entries: list.reverse(kept)), list.reverse(due)))
+          Ok(#(
+            Agenda(..agenda, entries: list.reverse(kept)),
+            #(list.reverse(due), list.reverse(skipped)),
+          ))
       }
     })
-  result.unwrap(taken, [])
+  result.unwrap(taken, #([], []))
 }
 
 /// People who have an agenda file.

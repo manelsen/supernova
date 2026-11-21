@@ -12,6 +12,7 @@ import supernova/core/introspection/self_state
 import supernova/core/session/supervisor as session_supervisor
 import supernova/self/audit
 import supernova/self/epoch
+import supernova/self/incidents
 import supernova/self/journal
 import supernova/self/memory
 
@@ -25,6 +26,7 @@ pub type Counts {
     sessions: Int,
     workspace_files: Int,
     agenda: Int,
+    incidents: Int,
   )
 }
 
@@ -107,6 +109,8 @@ pub fn forget(
   )
   // What the owner asked to schedule is also what came from the owner.
   use agenda_count <- result.try(agenda_store.clear(data_dir, principal))
+  // What went wrong in the owner's turns is about the owner's turns too.
+  use incident_count <- result.try(incidents.clear(data_dir, principal))
   let counts =
     Counts(
       journal: journal_count,
@@ -117,6 +121,7 @@ pub fn forget(
       sessions: session_count,
       workspace_files: workspace_count,
       agenda: agenda_count,
+      incidents: incident_count,
     )
   audit.record(
     principal,
@@ -132,6 +137,7 @@ pub fn forget(
       #("sessions", session_count),
       #("workspace_files", workspace_count),
       #("agenda", agenda_count),
+      #("incidents", incident_count),
     ]),
   )
   Ok(counts)

@@ -6,6 +6,7 @@ import supernova/agenda/store
 import supernova/agenda/sweeper
 import supernova/core/agent_identity
 import supernova/self/epoch
+import supernova/self/incidents
 import test_workspace
 
 // 2026-11-21 12:00 in São Paulo (a Saturday).
@@ -89,3 +90,14 @@ pub fn unreadable_forget_epoch_runs_nothing_test() {
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)
+
+// A skipped occurrence is something the agent can explain when asked.
+pub fn skipped_occurrence_becomes_an_incident_test() {
+  use dir <- with_data_dir
+  let assert Ok(entry) = store.add(dir, owner, "0 5 * * *", "radar", now, sp)
+  let late = entry.next_run_at + 3 * 3_600_000
+  sweeper.sweep(dir, sp, late, fn(_) { Nil }) |> should.equal(0)
+  let assert [incident] = incidents.recent(dir, owner, late, 5)
+  string.contains(incident.text, "22/11/2026 05:00") |> should.be_true
+  string.contains(incident.text, "fora do ar") |> should.be_true
+}
