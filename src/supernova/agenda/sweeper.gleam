@@ -16,6 +16,7 @@ import supernova/agenda/schedule
 import supernova/agenda/store
 import supernova/channel/port
 import supernova/core/agent_identity
+import supernova/self/epoch
 
 pub const interval_ms = 30_000
 
@@ -57,6 +58,9 @@ pub fn wake_text(entry: store.Entry, offset: Int) -> String {
 }
 
 /// Run every entry due at `now`. Returns how many were handed over.
+///
+/// An entry taken while its person runs /esquecer is dropped, not run: the
+/// forget epoch is read before taking and checked again at each handoff.
 pub fn sweep(
   data_dir: String,
   offset: Int,
@@ -65,16 +69,30 @@ pub fn sweep(
 ) -> Int {
   store.owners(data_dir)
   |> list.fold(0, fn(count, principal) {
+    let epoch_before = epoch.read(data_dir, principal)
     store.take_due(data_dir, principal, now, offset)
     |> list.fold(count, fn(count, entry) {
-      io.println(
-        "agenda: running entry="
-        <> int.to_string(entry.id)
-        <> " principal="
-        <> principal,
-      )
-      deliver(wake_message(principal, entry, offset))
-      count + 1
+      case epoch.read(data_dir, principal) == epoch_before {
+        False -> {
+          io.println(
+            "agenda: dropped after forget entry="
+            <> int.to_string(entry.id)
+            <> " principal="
+            <> principal,
+          )
+          count
+        }
+        True -> {
+          io.println(
+            "agenda: running entry="
+            <> int.to_string(entry.id)
+            <> " principal="
+            <> principal,
+          )
+          deliver(wake_message(principal, entry, offset))
+          count + 1
+        }
+      }
     })
   })
 }

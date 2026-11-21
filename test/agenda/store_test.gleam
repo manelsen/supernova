@@ -123,3 +123,26 @@ pub fn owners_lists_people_with_entries_test() {
   let assert Ok(_) = store.add(dir, owner, "0 5 * * *", "a", now, sp)
   store.owners(dir) |> should.equal([owner])
 }
+
+// A damaged agenda file is never replaced by an empty one.
+pub fn unreadable_agenda_is_not_overwritten_test() {
+  use dir <- with_data_dir
+  let assert Ok(_) = store.add(dir, owner, "0 5 * * *", "a", now, sp)
+  let assert Ok(_) = write_file(store.path(dir, owner), "{corrompido")
+  store.add(dir, owner, "0 6 * * *", "b", now, sp) |> should.be_error
+  read_file(store.path(dir, owner)) |> should.equal(Ok("{corrompido"))
+  store.remove(dir, owner, 1) |> should.be_error
+  store.take_due(dir, owner, now + 24 * hour, sp) |> should.equal([])
+  read_file(store.path(dir, owner)) |> should.equal(Ok("{corrompido"))
+}
+
+pub fn remove_tells_missing_from_failure_test() {
+  use dir <- with_data_dir
+  store.remove(dir, owner, 7) |> should.equal(Error(store.NotFound))
+}
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read_file(path: String) -> Result(String, String)
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_file(path: String, content: String) -> Result(Nil, String)

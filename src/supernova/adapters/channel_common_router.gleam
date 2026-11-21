@@ -2299,7 +2299,12 @@ fn agenda_reply(
     closed_group_pure.AgendaRemove(id) ->
       case agenda_store.remove(context.data_dir, principal, id) {
         Ok(_) -> "Tirei a tarefa " <> int.to_string(id) <> " da agenda."
-        Error(_) -> "Não há tarefa " <> int.to_string(id) <> " na agenda."
+        Error(agenda_store.NotFound) ->
+          "Não há tarefa " <> int.to_string(id) <> " na agenda."
+        Error(agenda_store.RemoveFailed(_)) ->
+          "Não consegui tirar a tarefa "
+          <> int.to_string(id)
+          <> " agora. Tente de novo daqui a pouco."
       }
     closed_group_pure.AgendaUsage ->
       "Use /agenda para ver a agenda e /agenda remover N para tirar uma tarefa."
@@ -2463,14 +2468,17 @@ fn executor_messages_for_turn(
                         "\n",
                       )
                   }
+                  let now = closed_group_global.now()
                   let now_line =
                     "Agora: "
-                    <> agenda_schedule.describe_now(
-                      closed_group_global.now(),
-                      agenda_schedule.offset_minutes(
+                    <> case
+                      agenda_schedule.timezone_offset(
                         cfg.instance_budget.timezone,
-                      ),
-                    )
+                      )
+                    {
+                      Ok(offset) -> agenda_schedule.describe_now(now, offset)
+                      Error(_) -> agenda_schedule.describe_now(now, 0) <> " UTC"
+                    }
                   let system =
                     prose
                     <> addenda_block

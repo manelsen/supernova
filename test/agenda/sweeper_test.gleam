@@ -4,6 +4,7 @@ import gleam/string
 import gleeunit/should
 import supernova/agenda/store
 import supernova/agenda/sweeper
+import supernova/self/epoch
 import test_workspace
 
 // 2026-11-21 12:00 in São Paulo (a Saturday).
@@ -53,4 +54,20 @@ pub fn a_tick_runs_an_entry_once_test() {
   |> should.equal(1)
   sweeper.sweep(dir, sp, entry.next_run_at + 30_000, process.send(inbox, _))
   |> should.equal(0)
+}
+
+// /esquecer between taking an entry and handing it over: the rest is
+// dropped, never run after the person asked to forget.
+pub fn forget_during_a_sweep_drops_the_rest_test() {
+  use dir <- with_data_dir
+  let assert Ok(first) = store.add(dir, owner, "0 5 * * *", "um", now, sp)
+  let assert Ok(_) = store.add(dir, owner, "0 5 * * *", "dois", now, sp)
+  let inbox = process.new_subject()
+  sweeper.sweep(dir, sp, first.next_run_at, fn(message) {
+    let _ = epoch.bump(dir, owner)
+    process.send(inbox, message)
+  })
+  |> should.equal(1)
+  let assert Ok(_) = process.receive(inbox, 100)
+  process.receive(inbox, 10) |> should.be_error
 }

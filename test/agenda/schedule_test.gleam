@@ -110,14 +110,27 @@ pub fn describe_test() {
   |> should.equal("22/11/2026 05:00")
 }
 
-pub fn offset_for_timezone_test() {
-  schedule.offset_minutes("America/Sao_Paulo") |> should.equal(-180)
-  schedule.offset_minutes("UTC") |> should.equal(0)
-}
-
 pub fn describe_now_test() {
   schedule.describe_now(sat_noon, sp)
   |> should.equal("sábado, 21/11/2026, 12:00")
   schedule.describe_now(sat_noon + day, sp)
   |> should.equal("domingo, 22/11/2026, 12:00")
+}
+
+// Cron treats a day field that starts with "*" as a wildcard: with a
+// restricted weekday, "*/1" means every Monday, not every day.
+pub fn stepped_wildcard_day_is_still_a_wildcard_test() {
+  let assert Ok(s) = schedule.parse("0 9 */1 * 1", sat_noon, sp)
+  schedule.next_after(s, sat_noon, sp)
+  |> should.equal(Some(sat_noon + 2 * day - 3 * hour))
+  let assert Ok(t) = schedule.parse("0 9 1 * */1", sat_noon, sp)
+  // Weekday "*/1" is a wildcard: only the 1st of the month.
+  schedule.next_after(t, sat_noon, sp)
+  |> should.equal(Some(sat_noon + 10 * day - 3 * hour))
+}
+
+pub fn unknown_timezone_is_an_error_test() {
+  schedule.timezone_offset("America/Sao_Paulo") |> should.equal(Ok(-180))
+  schedule.timezone_offset("UTC") |> should.equal(Ok(0))
+  schedule.timezone_offset("Asia/Kolkata") |> should.be_error
 }

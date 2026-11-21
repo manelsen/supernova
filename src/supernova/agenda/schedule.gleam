@@ -32,12 +32,14 @@ const day_minutes = 1440
 /// of February.
 const horizon_days = 1462
 
-/// The UTC offset, in minutes, of a configured timezone. Brazil has had no
-/// daylight saving time since 2019, so São Paulo is a fixed UTC−3.
-pub fn offset_minutes(timezone: String) -> Int {
+/// The UTC offset, in minutes, of a supported timezone. Brazil has had no
+/// daylight saving time since 2019, so São Paulo is a fixed UTC−3. Any other
+/// zone is an error: guessing would run every entry at the wrong hour.
+pub fn timezone_offset(timezone: String) -> Result(Int, Nil) {
   case timezone {
-    "America/Sao_Paulo" -> -180
-    _ -> 0
+    "America/Sao_Paulo" -> Ok(-180)
+    "UTC" | "Etc/UTC" -> Ok(0)
+    _ -> Error(Nil)
   }
 }
 
@@ -192,8 +194,9 @@ fn parse_cron(text: String) -> Result(Schedule, String) {
         days: days,
         months: months,
         weekdays: weekdays,
-        days_restricted: day != "*",
-        weekdays_restricted: weekday != "*",
+        // As in cron, a field starting with "*" (also "*/n") is a wildcard.
+        days_restricted: !string.starts_with(day, "*"),
+        weekdays_restricted: !string.starts_with(weekday, "*"),
       ))
     }
     _ ->
@@ -307,11 +310,11 @@ fn day_matches(schedule: Schedule, days_since_epoch: Int) -> Bool {
   let weekday = { { days_since_epoch % 7 } + 7 + 4 } % 7
   let day_ok = list.contains(days, day)
   let weekday_ok = list.contains(weekdays, weekday)
-  let day_part = case days_restricted, weekdays_restricted {
-    True, True -> day_ok || weekday_ok
-    True, False -> day_ok
-    False, True -> weekday_ok
-    False, False -> True
+  // Both restricted: either may match. Otherwise the wildcard side matches
+  // its own expansion, so both must hold.
+  let day_part = case days_restricted && weekdays_restricted {
+    True -> day_ok || weekday_ok
+    False -> day_ok && weekday_ok
   }
   list.contains(months, month) && day_part
 }

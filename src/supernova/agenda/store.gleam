@@ -28,6 +28,13 @@ type Agenda {
   Agenda(next_id: Int, entries: List(Entry))
 }
 
+pub type RemoveError {
+  /// There is no entry with that id.
+  NotFound
+  /// The agenda could not be read or saved; the entry may still be there.
+  RemoveFailed(reason: String)
+}
+
 /// At most this many entries per person.
 pub const max_entries = 5
 
@@ -44,7 +51,10 @@ pub fn path(data_dir: String, principal: String) -> String {
 
 /// The person's entries, soonest first.
 pub fn list(data_dir: String, principal: String) -> List(Entry) {
-  load(data_dir, principal).entries
+  case load(data_dir, principal) {
+    Ok(agenda) -> agenda.entries
+    Error(_) -> []
+  }
   |> list.sort(fn(a, b) { int.compare(a.next_run_at, b.next_run_at) })
 }
 
@@ -110,19 +120,30 @@ pub fn remove(
   data_dir: String,
   principal: String,
   id: Int,
-) -> Result(Entry, String) {
-  update(data_dir, principal, fn(agenda) {
-    case list.partition(agenda.entries, fn(entry) { entry.id == id }) {
-      #([found], rest) -> Ok(#(Agenda(..agenda, entries: rest), found))
-      _ -> Error("não há tarefa " <> int.to_string(id) <> " na agenda")
-    }
-  })
+) -> Result(Entry, RemoveError) {
+  let missing = "not found"
+  let result =
+    update(data_dir, principal, fn(agenda) {
+      case list.partition(agenda.entries, fn(entry) { entry.id == id }) {
+        #([found], rest) -> Ok(#(Agenda(..agenda, entries: rest), found))
+        _ -> Error(missing)
+      }
+    })
+  case result {
+    Ok(entry) -> Ok(entry)
+    Error(reason) if reason == missing -> Error(NotFound)
+    Error(reason) -> Error(RemoveFailed(reason))
+  }
 }
 
 /// Remove every entry and the file. Returns how many entries there were.
 pub fn clear(data_dir: String, principal: String) -> Result(Int, String) {
   with_lock(lock_key(principal), fn() {
-    let count = list.length(load(data_dir, principal).entries)
+    // Forgetting removes the file even when it cannot be read.
+    let count = case load(data_dir, principal) {
+      Ok(agenda) -> list.length(agenda.entries)
+      Error(_) -> 0
+    }
     delete_file(path(data_dir, principal))
     |> result.replace(count)
   })
@@ -194,7 +215,8 @@ fn update(
   change: fn(Agenda) -> Result(#(Agenda, a), String),
 ) -> Result(a, String) {
   with_lock(lock_key(principal), fn() {
-    use #(agenda, value) <- result.try(change(load(data_dir, principal)))
+    use current <- result.try(load(data_dir, principal))
+    use #(agenda, value) <- result.try(change(current))
     use _ <- result.try(save(data_dir, principal, agenda))
     Ok(value)
   })
@@ -204,12 +226,18 @@ fn lock_key(principal: String) -> String {
   "agenda:" <> principal
 }
 
-fn load(data_dir: String, principal: String) -> Agenda {
-  case read_file(path(data_dir, principal)) {
-    Error(_) -> Agenda(next_id: 1, entries: [])
-    Ok(text) ->
+/// The agenda on disk. A missing file is an empty agenda; a file that cannot
+/// be read or decoded is an error, so no change ever overwrites it.
+fn load(data_dir: String, principal: String) -> Result(Agenda, String) {
+  let file = path(data_dir, principal)
+  case file_exists(file) {
+    Ok(False) -> Ok(Agenda(next_id: 1, entries: []))
+    Error(reason) -> Error(reason)
+    Ok(True) -> {
+      use text <- result.try(read_file(file))
       json.parse(text, agenda_decoder())
-      |> result.unwrap(Agenda(next_id: 1, entries: []))
+      |> result.replace_error("agenda file is damaged: " <> file)
+    }
   }
 }
 

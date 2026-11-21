@@ -333,14 +333,8 @@ fn start_services(
   })
 
   // The agenda: entries come due as messages in the person's private chat,
-  // run through the same handler and per-chat lane as any message.
-  let agenda_offset =
-    agenda_schedule.offset_minutes(cfg.instance_budget.timezone)
-  agenda_runtime.configure(agenda_runtime.Context(
-    data_dir: cfg.data_dir,
-    offset_minutes: agenda_offset,
-    clock: clock,
-  ))
+  // run through the same handler and per-chat lane as any message. It stays
+  // off with a timezone it cannot resolve rather than run at the wrong hour.
   let deliver_agenda = fn(message) {
     case
       registry.inject(
@@ -356,13 +350,43 @@ fn start_services(
         )
     }
   }
-  let sweep_agenda = fn() {
-    agenda_sweeper.sweep(cfg.data_dir, agenda_offset, clock(), deliver_agenda)
-  }
-  case cfg.environment == "harness" {
-    True -> Nil
-    False ->
-      agenda_sweeper.start(cfg.data_dir, agenda_offset, clock, deliver_agenda)
+  let sweep_agenda = case
+    agenda_schedule.timezone_offset(cfg.instance_budget.timezone)
+  {
+    Error(Nil) -> {
+      agenda_runtime.clear()
+      io.println(
+        "⚠ Agenda off: unsupported timezone "
+        <> cfg.instance_budget.timezone
+        <> " (use America/Sao_Paulo or UTC)",
+      )
+      fn() { 0 }
+    }
+    Ok(agenda_offset) -> {
+      agenda_runtime.configure(agenda_runtime.Context(
+        data_dir: cfg.data_dir,
+        offset_minutes: agenda_offset,
+        clock: clock,
+      ))
+      case cfg.environment == "harness" {
+        True -> Nil
+        False ->
+          agenda_sweeper.start(
+            cfg.data_dir,
+            agenda_offset,
+            clock,
+            deliver_agenda,
+          )
+      }
+      fn() {
+        agenda_sweeper.sweep(
+          cfg.data_dir,
+          agenda_offset,
+          clock(),
+          deliver_agenda,
+        )
+      }
+    }
   }
 
   // Start the hourly reflection sweeper outside the router. A controllable

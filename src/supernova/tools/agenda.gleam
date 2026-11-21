@@ -18,7 +18,7 @@ import supernova/llm/provider
 pub fn tool() -> provider.ToolDefinition {
   provider.new_tool(
     name: "agenda",
-    description: "Schedule something your person asked you to do later, once or on a recurring basis; at that time you will be woken with the request and your reply goes to your person. Also list or remove what is scheduled. Times are local (America/Sao_Paulo). Schedule only what your person asked for.",
+    description: "Schedule something your person asked you to do later, once or on a recurring basis; at that time you will be woken with the request and your reply goes to your person. Also list or remove what is scheduled. Times are in the local time shown as \"Agora\" in your context. Schedule only what your person asked for.",
     parameters: [
       provider.string_param("action", "Action: add, list, remove", True),
       provider.string_param(
@@ -83,7 +83,10 @@ pub fn execute_for(
               case store.remove(data_dir, principal, id) {
                 Ok(entry) ->
                   Ok("Removida a tarefa " <> int.to_string(entry.id) <> ".")
-                Error(reason) -> Error(reason)
+                Error(store.NotFound) ->
+                  Error("não há tarefa " <> int.to_string(id) <> " na agenda")
+                Error(store.RemoveFailed(reason)) ->
+                  Error("não consegui remover a tarefa agora: " <> reason)
               }
           }
         _ -> Error("agenda action must be add, list, or remove")
