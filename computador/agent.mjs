@@ -157,7 +157,14 @@ let generation = 0;
 // Settles when the last abandoned browser has closed (or gave up closing),
 // so the next launch does not fight it for the profile directory.
 let closing = Promise.resolve();
+// Settles when the last launch has finished, successful or not. An
+// abandoned launch may still be starting Chromium on the profile.
+let launching = Promise.resolve();
 const CLOSE_WAIT_MS = 10_000;
+
+function bounded(promise, ms) {
+  return Promise.race([promise, new Promise((resolve) => setTimeout(resolve, ms))]);
+}
 
 // Browser operations share one page, so they run one at a time. Each one has
 // a deadline: Playwright can wait forever (a page script that never
@@ -171,10 +178,7 @@ function serial(task) {
 }
 
 function closeBounded(context) {
-  return Promise.race([
-    context.close().catch(() => {}),
-    new Promise((resolve) => setTimeout(resolve, CLOSE_WAIT_MS)),
-  ]);
+  return bounded(context.close().catch(() => {}), CLOSE_WAIT_MS);
 }
 
 async function withDeadline(task) {
@@ -200,9 +204,12 @@ async function withDeadline(task) {
 
 async function page(gen) {
   if (!browserContext) {
+    // Read `closing` only after the previous launch settled: an abandoned
+    // launch sets it when it finishes.
+    await bounded(launching, LIMITS.browserOpMs + CLOSE_WAIT_MS);
     await closing;
     const { chromium } = await import('playwright');
-    const launched = await chromium.launchPersistentContext(PROFILE_DIR, {
+    const pending = chromium.launchPersistentContext(PROFILE_DIR, {
       headless: true,
       viewport: VIEWPORT,
       locale: 'pt-BR',
@@ -210,6 +217,8 @@ async function page(gen) {
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
       timeout: LIMITS.browserOpMs,
     });
+    launching = pending.then(() => {}, () => {});
+    const launched = await pending;
     if (gen !== generation) {
       // This operation already timed out; do not let its browser linger.
       closing = closeBounded(launched);

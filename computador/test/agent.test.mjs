@@ -182,10 +182,12 @@ test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, a
     } finally {
       LIMITS.browserOpMs = limit;
     }
-    await new Promise((resolve) => setTimeout(resolve, 8_000));
-    assert.equal(browserOpen(), false);
+    // Right away, while the abandoned launch may still be starting: the next
+    // operation waits for it instead of opening the same profile twice.
     const fresh = await run({ op: 'goto', url });
     assert.equal(fresh.title, 'Teste');
+    await run({ op: 'close' });
+    assert.equal(browserOpen(), false);
   } finally {
     await run({ op: 'close' });
     pageServer.close();
