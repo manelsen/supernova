@@ -64,7 +64,7 @@ Decisões por tema:
 | Adaptadores nativos: Slack, Matrix, WhatsApp, Lark, Google Chat, Mattermost, WeChat Work | `IMPLEMENTATION_TODO.md` P0 | `adapters/*`; a orquestração continua genérica (ver 3.2) |
 | Ferramentas browser, process, github, canvas, gateway (os stubs saíram) | `IMPLEMENTATION_TODO.md` P1 | `tools/`; nenhum `not implemented` restante |
 | Health checks `/health`, `/health/live`, `/health/ready` | `production-ready-v1` REQ-2 | `health/server.gleam`; os três respondem no piloto |
-| Circuit breaker, cooldown de failover, retry com backoff | `production-ready-v1` REQ-5/6/7, 13/14/15 | `llm/` |
+| Circuit breaker e retry com backoff | `production-ready-v1` REQ-5/6/7, 13/14/15 | `llm/`. O breaker só bloqueava uma vez: a passagem de aberto para meio-aberto não era gravada, e depois dos primeiros 30 s ele liberava tudo para sempre. Corrigido e coberto pelo ciclo completo em `test/llm/circuit_breaker_cycle_test.gleam`. |
 | Fim do fallback silencioso para mock (`mock` só quando configurado) | `production-ready-v1` REQ-1 | `llm/client.gleam` |
 | Deploy com um comando | `production-ready-v1` REQ-10 | `docker compose up -d` |
 | Sub-agentes em paralelo | `production-ready-v1` REQ-16 | `core/sub_agent.gleam` |
@@ -154,6 +154,8 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - confirmação garantida pelo código antes de qualquer efeito fora da máquina;
   - tarefas longas assíncronas.
 - **Yield manual de sessão.** O checkpoint por orçamento e por tempo existe no executor. Uma ferramenta para a agente ceder a vez por conta própria nunca foi exposta. Origem: `IMPLEMENTATION_TODO.md` 2.5.
+
+- **Failover entre provedores existe, mas não está ligado.** `llm/failover.gleam` (com cooldown por provedor) está pronto, e o ator de cooldown sobe no boot, mas nenhum caminho chama `failover.chat`: a agente usa um provedor só. Fica no código para quando houver um segundo provedor. Origem: medição de cobertura de 22/11.
 
 ### 3.4 Observabilidade e desempenho
 

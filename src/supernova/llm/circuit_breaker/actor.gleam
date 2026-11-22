@@ -36,6 +36,9 @@ pub type CircuitBreakerState {
   CircuitBreakerState(state: circuit_breaker.CircuitState)
 }
 
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn current_timestamp() -> Int
+
 type BreakerMap =
   dict.Dict(String, circuit_breaker.CircuitBreaker)
 
@@ -58,16 +61,14 @@ fn handle_message(
     CheckAndCall(provider, reply_to) -> {
       let cc = to_circuit_config(config)
       let breaker = get_or_create_breaker(state, provider, cc)
-      case circuit_breaker.is_call_allowed(breaker, cc) {
-        True -> {
-          actor.send(reply_to, Allowed)
-          actor.continue(state)
-        }
-        False -> {
-          actor.send(reply_to, Blocked("circuit_open"))
-          actor.continue(state)
-        }
+      let #(allowed, breaker) =
+        circuit_breaker.admit(breaker, cc, current_timestamp())
+      let state = update_breaker(state, provider, breaker)
+      case allowed {
+        True -> actor.send(reply_to, Allowed)
+        False -> actor.send(reply_to, Blocked("circuit_open"))
       }
+      actor.continue(state)
     }
     RecordSuccess(provider, reply_to) -> {
       let cc = to_circuit_config(config)
@@ -151,6 +152,13 @@ pub fn record_success(breaker: CircuitBreakerActor, provider: String) {
 
 pub fn record_failure(breaker: CircuitBreakerActor, provider: String) {
   actor.call(breaker, waiting: 5000, sending: RecordFailure(provider, _))
+}
+
+pub fn get_state(
+  breaker: CircuitBreakerActor,
+  provider: String,
+) -> circuit_breaker.CircuitState {
+  actor.call(breaker, waiting: 5000, sending: GetState(provider, _)).state
 }
 
 pub fn stop(breaker: CircuitBreakerActor) {
