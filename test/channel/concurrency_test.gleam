@@ -7,6 +7,7 @@ import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
 import gleeunit/should
+import supernova/channel/channel_kit
 import supernova/channel/chat_lanes
 import supernova/channel/port
 import supernova/channel/registry
@@ -331,7 +332,7 @@ pub fn late_terminal_keeps_lane_until_content_is_delivered_test() {
   let stream_seen = process.new_subject()
   let second_started = process.new_subject()
   let hooks =
-    registry.StartHooks(
+    channel_kit.StartHooks(
       discord_events: [],
       telegram_updates: [
         support.telegram_update("777", "777", "first"),
@@ -390,9 +391,9 @@ pub fn late_terminal_keeps_lane_until_content_is_delivered_test() {
 }
 
 fn receive_record_until(
-  recorder: process.Subject(registry.OutboundRecord),
-  predicate: fn(registry.OutboundRecord) -> Bool,
-) -> registry.OutboundRecord {
+  recorder: process.Subject(channel_kit.OutboundRecord),
+  predicate: fn(channel_kit.OutboundRecord) -> Bool,
+) -> channel_kit.OutboundRecord {
   let assert Ok(record) = process.receive(recorder, within: 3000)
   case predicate(record) {
     True -> record

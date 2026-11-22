@@ -4,6 +4,7 @@
 
 import gleam/option.{Some}
 import gleam/string
+import supernova/channel/chunking
 import supernova/channel/traits.{type ChannelTraits, ChannelTraits}
 
 pub fn channel() -> ChannelTraits {
@@ -17,6 +18,8 @@ pub fn channel() -> ChannelTraits {
     help_commands: traits.default_help_commands
       <> "/project - Start project wizard\n",
     command_list: traits.default_command_list,
+    edit_max_length: chunking.discord_max_length,
+    supports_typing: True,
   )
 }
 

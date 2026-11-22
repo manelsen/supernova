@@ -27,6 +27,11 @@ pub type ChannelTraits {
     help_commands: String,
     /// Slash command block of `/commands`.
     command_list: String,
+    /// Longest message a streamed reply can be edited into before it is
+    /// split into parts.
+    edit_max_length: Int,
+    /// The channel shows a typing indicator while a reply streams.
+    supports_typing: Bool,
   )
 }
 
@@ -58,6 +63,9 @@ pub fn generic(name: String) -> ChannelTraits {
     private_delivery: False,
     help_commands: default_help_commands,
     command_list: default_command_list,
+    // Channels without a documented edit limit keep the whole content.
+    edit_max_length: 1_000_000,
+    supports_typing: False,
   )
 }
 

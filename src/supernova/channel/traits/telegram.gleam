@@ -3,6 +3,7 @@
 
 import gleam/option.{Some}
 import gleam/string
+import supernova/channel/chunking
 import supernova/channel/traits.{type ChannelTraits, ChannelTraits}
 
 pub fn channel() -> ChannelTraits {
@@ -29,5 +30,7 @@ pub fn channel() -> ChannelTraits {
       <> "/model - Change LLM model\n"
       <> "/commands - List all commands\n"
       <> "/reasoning - Toggle reasoning mode\n",
+    edit_max_length: chunking.telegram_max_length,
+    supports_typing: True,
   )
 }

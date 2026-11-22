@@ -4,6 +4,7 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
+import supernova/channel/channel_kit
 import supernova/channel/registry
 import supernova/config
 import supernova/core/access/actor as access_actor
@@ -27,9 +28,9 @@ fn cfg(members: List(String)) -> config.Config {
 }
 
 fn collect_records(
-  recorder: process.Subject(registry.OutboundRecord),
-  acc: List(registry.OutboundRecord),
-) -> List(registry.OutboundRecord) {
+  recorder: process.Subject(channel_kit.OutboundRecord),
+  acc: List(channel_kit.OutboundRecord),
+) -> List(channel_kit.OutboundRecord) {
   case process.receive(recorder, within: 500) {
     Ok(record) -> collect_records(recorder, [record, ..acc])
     Error(_) -> list.reverse(acc)

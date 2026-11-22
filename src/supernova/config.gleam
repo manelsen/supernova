@@ -2168,6 +2168,7 @@ pub fn is_channel_enabled(config: Config, channel: String) -> Bool {
     "mattermost" -> is_mattermost_enabled(config)
     "wechat_work" -> is_wechat_work_enabled(config)
     "whatsapp" -> is_whatsapp_enabled(config)
+    "sim" -> is_sim_enabled(config)
     _ -> False
   }
 }

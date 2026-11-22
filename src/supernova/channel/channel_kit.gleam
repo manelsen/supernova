@@ -1,0 +1,552 @@
+//// Plumbing shared by the channel runtimes: start hooks, turn dispatch and
+//// generic streaming. Nothing here knows a specific channel.
+
+import gleam/erlang/process
+import gleam/int
+import gleam/io
+import gleam/option.{type Option, None, Some}
+import gleam/result
+import gleam/string
+import supernova/adapters/discord_gateway
+import supernova/adapters/telegram
+import supernova/channel/catalog
+import supernova/channel/chat_lanes
+import supernova/channel/chunking
+import supernova/channel/port
+
+/// Optional hooks for deterministic bootstrap tests.
+pub type StartHooks {
+  StartHooks(
+    discord_events: List(discord_gateway.DiscordEvent),
+    telegram_updates: List(telegram.Update),
+    slack_inbound_events: List(port.ChannelInbound),
+    matrix_inbound_events: List(port.ChannelInbound),
+    disable_telegram_polling: Bool,
+    typing_keepalive_ms: Int,
+    stream_timeout_ms: Int,
+    turn_hard_timeout_ms: Int,
+    registry_id: String,
+    outbound_records: Option(process.Subject(OutboundRecord)),
+    leave_group: Option(fn(String) -> Bool),
+    leave_retry_ms: List(Int),
+  )
+}
+
+/// Test-only outbound observation record for channel runtime sends/edits.
+pub type OutboundRecord {
+  OutboundRecord(
+    channel: String,
+    action: String,
+    content: String,
+    message_id: Option(String),
+  )
+}
+
+pub type StreamSendFn =
+  fn(port.ChannelReply, process.Subject(port.ChannelStreamEvent)) ->
+    Result(Nil, port.ChannelError)
+
+const default_typing_keepalive_ms = 4000
+
+pub const stream_timeout_ms = 60_000
+
+pub const turn_hard_timeout_ms = 300_000
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+pub fn current_timestamp() -> Int
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+/// Build empty bootstrap hooks for production startup.
+pub fn no_start_hooks() -> StartHooks {
+  StartHooks(
+    discord_events: [],
+    telegram_updates: [],
+    slack_inbound_events: [],
+    matrix_inbound_events: [],
+    disable_telegram_polling: False,
+    typing_keepalive_ms: default_typing_keepalive_ms,
+    stream_timeout_ms: 60_000,
+    turn_hard_timeout_ms: turn_hard_timeout_ms,
+    registry_id: "",
+    outbound_records: None,
+    leave_group: None,
+    leave_retry_ms: [5000, 30_000, 120_000],
+  )
+}
+
+/// Hand the inbound turn to the lane of its chat and return immediately.
+///
+/// The polling loop must never wait for a turn: a slow LLM or tool call
+/// would hold every other chat of the channel. Turns of the same chat stay
+/// ordered inside their lane.
+pub fn dispatch_inbound(
+  handler: port.ChannelHandler,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  stream_send_fn: StreamSendFn,
+  inbound: port.ChannelInbound,
+  registry_id: String,
+  turn_hard_timeout_ms: Int,
+) -> Nil {
+  let key = chat_lanes.key_for_registry(registry_id, inbound)
+  let _ =
+    chat_lanes.submit(key, fn() {
+      run_inbound_turn(
+        handler,
+        send_fn,
+        stream_send_fn,
+        inbound,
+        key,
+        turn_hard_timeout_ms,
+      )
+    })
+  Nil
+}
+
+fn run_inbound_turn(
+  handler: port.ChannelHandler,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  stream_send_fn: StreamSendFn,
+  inbound: port.ChannelInbound,
+  chat_key: String,
+  turn_hard_timeout_ms: Int,
+) -> Nil {
+  let stream_events = process.new_subject()
+
+  case handler(inbound, stream_events) {
+    Ok(port.ImmediateReply(reply)) -> {
+      let _ = send_fn(reply)
+      Nil
+    }
+    Ok(port.StreamReply(base_reply)) -> {
+      case stream_send_fn(base_reply, stream_events) {
+        Ok(_) -> Nil
+        Error(port.SendFailed("stream timed out")) ->
+          await_late_terminal(
+            stream_events,
+            send_fn,
+            base_reply,
+            chat_key,
+            current_timestamp() + turn_hard_timeout_ms,
+          )
+        Error(_) -> Nil
+      }
+    }
+    Error(_) -> Nil
+  }
+}
+
+fn await_late_terminal(
+  events: process.Subject(port.ChannelStreamEvent),
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  base_reply: port.ChannelReply,
+  chat_key: String,
+  deadline: Int,
+) -> Nil {
+  let remaining = deadline - current_timestamp()
+  case remaining <= 0 {
+    True -> {
+      io.println("error: chat lane turn hard timeout key=" <> chat_key)
+      Nil
+    }
+    False ->
+      case process.receive(events, within: remaining) {
+        Ok(port.StreamComplete(reply)) -> {
+          case string.trim(reply.content) {
+            "" -> Nil
+            _ -> {
+              let _ =
+                send_fn(
+                  port.ChannelReply(
+                    ..base_reply,
+                    content: reply.content,
+                    edit_message_id: None,
+                    typing: False,
+                  ),
+                )
+              Nil
+            }
+          }
+        }
+        Ok(port.StreamFailure(_)) -> Nil
+        Ok(port.StreamUpdate(_)) ->
+          await_late_terminal(events, send_fn, base_reply, chat_key, deadline)
+        Error(_) -> {
+          io.println("error: chat lane turn hard timeout key=" <> chat_key)
+          Nil
+        }
+      }
+  }
+}
+
+pub fn noop_handler() -> port.ChannelHandler {
+  fn(_, _) { Error(port.Ignored("no inbound handler configured")) }
+}
+
+// ============================================================================
+// Outbound Senders
+// ============================================================================
+
+/// Deliver the final stream content within the channel's length limit: the
+/// first part edits the placeholder, the remaining parts go out as new
+/// messages. Editing a message past the limit is rejected by the channel.
+pub fn finish_stream_in_parts(
+  reply: port.ChannelReply,
+  placeholder_id: String,
+  max_length: Int,
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  case chunking.split_reply(reply, max_length) {
+    [] -> Ok(Nil)
+    [first, ..rest] -> {
+      let first_result =
+        deliver(
+          port.ChannelReply(..first, edit_message_id: Some(placeholder_id)),
+        )
+      case first_result {
+        Ok(_) -> send_remaining_parts(rest, deliver, reply)
+        Error(error) ->
+          case is_message_not_modified(error) {
+            True -> send_remaining_parts(rest, deliver, reply)
+            False -> Error(error)
+          }
+      }
+    }
+  }
+}
+
+fn send_remaining_parts(
+  parts: List(port.ChannelReply),
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  base_reply: port.ChannelReply,
+) -> Result(Nil, port.ChannelError) {
+  case parts {
+    [] -> Ok(Nil)
+    [part, ..rest] ->
+      case deliver(part) {
+        Ok(_) -> send_remaining_parts(rest, deliver, base_reply)
+        Error(port.RateLimited(retry_after_seconds)) ->
+          deliver_rate_limited_part(
+            part,
+            rest,
+            deliver,
+            base_reply,
+            retry_after_seconds,
+            1,
+            0,
+          )
+        Error(error) -> Error(error)
+      }
+  }
+}
+
+fn deliver_rate_limited_part(
+  part: port.ChannelReply,
+  rest: List(port.ChannelReply),
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  base_reply: port.ChannelReply,
+  retry_after_seconds: Int,
+  attempts: Int,
+  waited_ms: Int,
+) -> Result(Nil, port.ChannelError) {
+  let wait_ms =
+    int.min(int.min(retry_after_seconds * 1000, 10_000 - waited_ms), 10_000)
+  case wait_ms > 0 {
+    True -> process.sleep(wait_ms)
+    False -> Nil
+  }
+  let waited_ms = waited_ms + int.max(wait_ms, 0)
+  case deliver(part) {
+    Ok(_) -> send_remaining_parts(rest, deliver, base_reply)
+    Error(port.RateLimited(next_retry)) ->
+      case attempts < 3 {
+        True ->
+          deliver_rate_limited_part(
+            part,
+            rest,
+            deliver,
+            base_reply,
+            next_retry,
+            attempts + 1,
+            waited_ms,
+          )
+        False -> send_stream_fallback(base_reply, deliver)
+      }
+    Error(error) -> Error(error)
+  }
+}
+
+fn send_stream_fallback(
+  base_reply: port.ChannelReply,
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  deliver(
+    port.ChannelReply(
+      ..base_reply,
+      content: "(Não consegui enviar o restante da resposta.)",
+      edit_message_id: None,
+      typing: False,
+    ),
+  )
+}
+
+fn is_message_not_modified(error: port.ChannelError) -> Bool {
+  case error {
+    port.SendFailed(reason) ->
+      string.contains(string.lowercase(reason), "message is not modified")
+    _ -> False
+  }
+}
+
+pub fn stream_update_fits(channel: String, content: String) -> Bool {
+  string.length(content) <= stream_max_length(channel)
+}
+
+/// Test seam for split-delivery edge cases.
+pub fn finish_stream_in_parts_for_test(
+  reply: port.ChannelReply,
+  placeholder_id: String,
+  max_length: Int,
+  deliver: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  finish_stream_in_parts(reply, placeholder_id, max_length, deliver)
+}
+
+fn stream_max_length(channel: String) -> Int {
+  catalog.get(channel).edit_max_length
+}
+
+pub fn record_stream_for_test(
+  recorder: process.Subject(OutboundRecord),
+  channel: String,
+  base_reply: port.ChannelReply,
+  events: process.Subject(port.ChannelStreamEvent),
+  keepalive_ms: Int,
+  timeout_ms: Int,
+) -> Result(Nil, port.ChannelError) {
+  let message_id = channel <> "-stream-1"
+
+  case channel_supports_typing(channel) && base_reply.typing {
+    True ->
+      process.send(
+        recorder,
+        OutboundRecord(
+          channel: channel,
+          action: "typing",
+          content: "",
+          message_id: None,
+        ),
+      )
+    False -> Nil
+  }
+
+  process.send(
+    recorder,
+    OutboundRecord(
+      channel: channel,
+      action: "send",
+      content: "Thinking...",
+      message_id: Some(message_id),
+    ),
+  )
+
+  consume_recorded_stream_events(
+    recorder,
+    channel,
+    events,
+    message_id,
+    "",
+    base_reply.typing,
+    timeout_ms,
+    keepalive_ms,
+  )
+}
+
+pub fn send_chunked_replies(
+  replies: List(port.ChannelReply),
+  send_one: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  case replies {
+    [] -> Ok(Nil)
+    [reply, ..rest] -> {
+      use _ <- result.try(send_one(reply))
+      send_chunked_replies(rest, send_one)
+    }
+  }
+}
+
+pub fn record_reply_for_test(
+  recorder: process.Subject(OutboundRecord),
+  channel: String,
+  replies: List(port.ChannelReply),
+) -> Result(Nil, port.ChannelError) {
+  record_reply_for_test_loop(recorder, channel, replies, 1)
+}
+
+fn record_reply_for_test_loop(
+  recorder: process.Subject(OutboundRecord),
+  channel: String,
+  replies: List(port.ChannelReply),
+  index: Int,
+) -> Result(Nil, port.ChannelError) {
+  case replies {
+    [] -> Ok(Nil)
+    [reply, ..rest] -> {
+      let #(action, message_id) = case reply.edit_message_id {
+        Some(existing_id) -> #("edit", Some(existing_id))
+        None -> #("send", Some(channel <> "-send-" <> int.to_string(index)))
+      }
+
+      process.send(
+        recorder,
+        OutboundRecord(
+          channel: channel,
+          action: action,
+          content: reply.content,
+          message_id: message_id,
+        ),
+      )
+      record_reply_for_test_loop(recorder, channel, rest, index + 1)
+    }
+  }
+}
+
+fn consume_recorded_stream_events(
+  recorder: process.Subject(OutboundRecord),
+  channel: String,
+  events: process.Subject(port.ChannelStreamEvent),
+  message_id: String,
+  last_content: String,
+  typing: Bool,
+  remaining_ms: Int,
+  keepalive_ms: Int,
+) -> Result(Nil, port.ChannelError) {
+  let wait_ms = stream_wait_ms(remaining_ms, keepalive_ms)
+
+  case process.receive(events, within: wait_ms) {
+    Ok(port.StreamUpdate(reply)) ->
+      case stream_update_fits(channel, reply.content) {
+        True -> {
+          process.send(
+            recorder,
+            OutboundRecord(
+              channel: channel,
+              action: "edit",
+              content: reply.content,
+              message_id: Some(message_id),
+            ),
+          )
+          consume_recorded_stream_events(
+            recorder,
+            channel,
+            events,
+            message_id,
+            reply.content,
+            typing,
+            remaining_ms,
+            keepalive_ms,
+          )
+        }
+        False ->
+          consume_recorded_stream_events(
+            recorder,
+            channel,
+            events,
+            message_id,
+            last_content,
+            typing,
+            remaining_ms,
+            keepalive_ms,
+          )
+      }
+    Ok(port.StreamComplete(reply)) -> {
+      case reply.content == last_content {
+        True -> Ok(Nil)
+        False ->
+          finish_stream_in_parts(
+            reply,
+            message_id,
+            stream_max_length(channel),
+            fn(part) {
+              let #(action, id) = case part.edit_message_id {
+                Some(id) -> #("edit", Some(id))
+                None -> #("send", None)
+              }
+              process.send(
+                recorder,
+                OutboundRecord(
+                  channel: channel,
+                  action: action,
+                  content: part.content,
+                  message_id: id,
+                ),
+              )
+              Ok(Nil)
+            },
+          )
+      }
+    }
+    Ok(port.StreamFailure(error)) -> Error(error)
+    Error(_) ->
+      case remaining_ms <= wait_ms {
+        True -> {
+          process.send(
+            recorder,
+            OutboundRecord(
+              channel: channel,
+              action: "edit",
+              content: "Streaming timed out",
+              message_id: Some(message_id),
+            ),
+          )
+          Error(port.SendFailed("stream timed out"))
+        }
+        False -> {
+          case channel_supports_typing(channel) && typing {
+            True ->
+              process.send(
+                recorder,
+                OutboundRecord(
+                  channel: channel,
+                  action: "typing",
+                  content: "",
+                  message_id: None,
+                ),
+              )
+            False -> Nil
+          }
+
+          consume_recorded_stream_events(
+            recorder,
+            channel,
+            events,
+            message_id,
+            last_content,
+            typing,
+            remaining_ms - wait_ms,
+            keepalive_ms,
+          )
+        }
+      }
+  }
+}
+
+pub fn normalize_typing_keepalive_ms(interval_ms: Int) -> Int {
+  case interval_ms < 1 {
+    True -> default_typing_keepalive_ms
+    False -> interval_ms
+  }
+}
+
+pub fn stream_wait_ms(remaining_ms: Int, keepalive_ms: Int) -> Int {
+  case remaining_ms < keepalive_ms {
+    True -> remaining_ms
+    False -> keepalive_ms
+  }
+}
+
+fn channel_supports_typing(channel: String) -> Bool {
+  catalog.get(channel).supports_typing
+}
