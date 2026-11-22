@@ -22,6 +22,13 @@ WORKDIR /app
 COPY gleam.toml manifest.toml ./
 RUN gleam deps download
 
+# Compile the dependencies in their own layer, with a placeholder module, so a
+# change to src/ or priv/ only recompiles Supernova itself.
+RUN mkdir -p src \
+ && echo 'pub fn main() { Nil }' > src/supernova.gleam \
+ && gleam build \
+ && rm -rf src build/dev/erlang/supernova
+
 COPY . .
 RUN gleam build
 
