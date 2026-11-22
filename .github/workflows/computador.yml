@@ -1,0 +1,27 @@
+name: computador
+
+# The agent's computer (computador/): build its image and run its tests.
+# CI has no gVisor, so the tests run on Docker's default runtime here;
+# docs/operations/COMPUTADOR.md shows how to run them on gVisor.
+on:
+  push:
+    branches: [master]
+    paths: ["computador/**", ".github/workflows/computador.yml"]
+  pull_request:
+    paths: ["computador/**", ".github/workflows/computador.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  computador:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t supernova-computador computador/
+      - name: Run tests
+        run: |
+          docker run --rm --cap-drop ALL --security-opt no-new-privileges \
+            --shm-size 1g supernova-computador npm test --prefix /opt/computador

@@ -13,6 +13,7 @@ import supernova/llm/provider
 import supernova/tools/agenda
 import supernova/tools/browser
 import supernova/tools/canvas
+import supernova/tools/computador
 import supernova/tools/file_system
 import supernova/tools/gateway
 import supernova/tools/git_inspect
@@ -21,8 +22,13 @@ import supernova/tools/process as process_tool
 import supernova/tools/safe_shell
 import supernova/tools/web
 
-/// Built-in tool definitions exposed to the LLM.
+/// Built-in tool definitions exposed to the LLM. The computer is offered
+/// only when one is configured.
 pub fn builtin_tools() -> List(provider.ToolDefinition) {
+  let computer = case computador.configured() {
+    True -> [computador.tool()]
+    False -> []
+  }
   [
     safe_shell.tool(),
     browser.tool(),
@@ -34,6 +40,7 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     git_inspect.tool(),
     file_system.tool(),
     agenda.tool(),
+    ..computer
   ]
 }
 
@@ -60,6 +67,7 @@ pub fn execute(name: String, args_json: String) -> Result(String, String) {
     // The agenda belongs to a person: only the syscall gateway, which knows
     // the caller, runs it (see claimed_executor).
     "agenda" -> Error("agenda needs the caller's identity")
+    "computador" -> Error("computador needs the caller's identity")
     _ -> Error("Tool '" <> name <> "' is not wired in executor")
   }
 }

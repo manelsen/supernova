@@ -140,7 +140,7 @@ fn do_request(body: String, api_key: String) -> Result(String, String) {
 fn encode_message(msg: provider.ChatMessage) -> json.Json {
   let base = [
     #("role", json.string(msg.role)),
-    #("content", json.string(msg.content)),
+    #("content", encode_content(msg)),
   ]
 
   let with_tool_call_id = case msg.tool_call_id {
@@ -165,6 +165,29 @@ fn encode_message(msg: provider.ChatMessage) -> json.Json {
   }
 
   json.object(with_reasoning)
+}
+
+/// Encode a message's content: plain text, or, when the message carries
+/// images, the OpenAI content-part array (text first, then each image as an
+/// `image_url` part). Mistral and other OpenAI-compatible APIs accept the
+/// same shape.
+pub fn encode_content(msg: provider.ChatMessage) -> json.Json {
+  case msg.images {
+    [] -> json.string(msg.content)
+    images ->
+      json.preprocessed_array([
+        json.object([
+          #("type", json.string("text")),
+          #("text", json.string(msg.content)),
+        ]),
+        ..list.map(images, fn(url) {
+          json.object([
+            #("type", json.string("image_url")),
+            #("image_url", json.object([#("url", json.string(url))])),
+          ])
+        })
+      ])
+  }
 }
 
 /// Encode a ToolCall to JSON.

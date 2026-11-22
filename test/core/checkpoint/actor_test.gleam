@@ -28,6 +28,7 @@ fn make_messages() -> List(provider.ChatMessage) {
       tool_call_id: None,
       tool_calls: None,
       reasoning_content: None,
+      images: [],
     ),
   ]
 }

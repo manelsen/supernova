@@ -31,6 +31,10 @@ pub type ChatMessage {
     /// Reasoning / thinking content produced by the model (e.g. Zhipu GLM-4.7).
     /// Must be echoed back verbatim in subsequent requests when present.
     reasoning_content: Option(String),
+    /// Images attached to the message, as data URLs
+    /// (`data:image/jpeg;base64,...`). Only user messages carry them; providers
+    /// that cannot send images ignore them.
+    images: List(String),
   )
 }
 
@@ -129,6 +133,7 @@ pub fn user_message(content: String) -> ChatMessage {
     tool_call_id: None,
     tool_calls: None,
     reasoning_content: None,
+    images: [],
   )
 }
 
@@ -140,6 +145,7 @@ pub fn system_message(content: String) -> ChatMessage {
     tool_call_id: None,
     tool_calls: None,
     reasoning_content: None,
+    images: [],
   )
 }
 
@@ -151,6 +157,7 @@ pub fn assistant_message(content: String) -> ChatMessage {
     tool_call_id: None,
     tool_calls: None,
     reasoning_content: None,
+    images: [],
   )
 }
 
@@ -165,6 +172,7 @@ pub fn assistant_message_with_tools(
     tool_call_id: None,
     tool_calls: Some(tool_calls),
     reasoning_content: None,
+    images: [],
   )
 }
 
@@ -179,7 +187,16 @@ pub fn tool_result_message(
     tool_call_id: Some(tool_call_id),
     tool_calls: None,
     reasoning_content: None,
+    images: [],
   )
+}
+
+/// Create a user message that carries images (data URLs) next to its text.
+pub fn user_message_with_images(
+  content: String,
+  images: List(String),
+) -> ChatMessage {
+  ChatMessage(..user_message(content), images: images)
 }
 
 // ============================================================================
