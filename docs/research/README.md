@@ -1,63 +1,27 @@
-# Supernova API Documentation (RAG)
+# Referências de API dos canais
 
-**Última atualização:** 2026-03-26
+Notas sobre a API externa de cada canal, reunidas em março de 2026, quando os adaptadores foram escritos. São retratos daquele momento: confira a documentação oficial antes de confiar num detalhe.
 
-## Índice de APIs Documentadas
+| Canal | Notas | Situação na Supernova |
+|---|---|---|
+| Telegram | `telegram_api.md` | Suportado (grupo fechado completo) |
+| Discord | `discord_api.md` | Suportado; paridade com o Telegram decidida em 22/11 |
+| Slack | `slack_api.md` | Adaptador nativo, experimental |
+| Matrix | `matrix_api.md`, `ADAPTERS_API.md` | Adaptador nativo, experimental |
+| WhatsApp (bridge) | `ADAPTERS_API.md` | Adaptador nativo, experimental |
+| Mattermost | `mattermost_api.md`, `ADAPTERS_API.md` | Adaptador nativo, experimental |
+| Google Chat | `google_chat_api.md` | Adaptador nativo, experimental |
+| Lark/Feishu | `lark_api.md` | Adaptador nativo, experimental |
+| WeChat Work | `wechat_work_api.md` | Adaptador nativo, experimental |
+| QQ | `qq_api.md` | Sem adaptador |
 
-### ✅ Completas
+"Experimental" quer dizer que o canal ainda não passa pelo grupo fechado (acesso, orçamento, comandos) nem tem testes de ponta a ponta. A ordem dos próximos canais está em [`docs/PENDENCIAS.md`](../PENDENCIAS.md), seção 3.2.
 
-| API | Status | Arquivo |
-|-----|--------|---------|
-| Gleam Language | ✅ Completa | `gleam_docs.md` |
-| Telegram Bot API 9.5 | ✅ Completa | `telegram_api.md` |
-| Slack Web API | ✅ Completa | `slack_api.md` |
-| Discord API v10 | ✅ Completa | `discord_api.md` |
-| Matrix Client-Server API v1.17 | ✅ Completa | `matrix_api.md` |
-| Google Chat API | ✅ Completa | `google_chat_api.md` |
-| Lark/Feishu API | ✅ Completa | `lark_api.md` |
-| QQ Bot API v2 | ✅ Completa | `qq_api.md` |
-| WeChat Work API | ✅ Completa | `wechat_work_api.md` |
-| Mattermost API v11 | ✅ Completa | `mattermost_api.md` |
+Ao acrescentar notas de um canal, registre:
 
-## ⚠️ Pendentes
-
-Nenhuma - todas as APIs documentadas.
-
-## Como Usar
-
-Para implementação de canais, use estas documentações como referência RAG:
-
-1. **Matrix**: `matrix_api.md` - Protocolo federado, E2E encryption, room events
-2. **Slack**: `slack_api.md` - Block Kit, interactive components
-3. **Telegram**: `telegram_api.md` - Bot API, inline keyboards, callbacks
-4. **Discord**: `discord_api.md` - Gateway, intents, slash commands
-5. **Google Chat**: `google_chat_api.md` - Cards, interactive elements
-6. **Lark**: `lark_api.md` - Rich cards, message types
-7. **QQ**: `qq_api.md` - WebSocket gateway, intents
-8. **WeCom**: `wechat_work_api.md` - Corporate WeChat API
-9. **Mattermost**: `mattermost_api.md` - Self-hosted alternative
-
-## Formato de Referência
-
-Para cada API, anote:
-
-- **Auth**: Como autenticar (token, OAuth, etc)
-- **Endpoints principais**: Send message, receive message, threading
-- **Message structure**: Formato das mensagens
-- **Rate limits**: Limites de uso
-- **WebSocket/Hook**: Como receber eventos
-- **Interactive elements**: Botões, menus, etc
-
-## Progresso de Implementação
-
-| Canal | Status | Referência API |
-|-------|--------|---------------|
-| Telegram | ⚠️ Parcial | `telegram_api.md` |
-| Discord | ⚠️ Parcial | `discord_api.md` |
-| Matrix | ❌ Scaffold | `matrix_api.md` |
-| Slack | ❌ Scaffold | `slack_api.md` |
-| Google Chat | ❌ Scaffold | `google_chat_api.md` |
-| Lark | ❌ Scaffold | `lark_api.md` |
-| Mattermost | ❌ Scaffold | `mattermost_api.md` |
-| QQ | ❌ Scaffold | `qq_api.md` |
-| WeCom | ❌ Scaffold | `wechat_work_api.md` |
+- **Auth:** como autenticar (token, OAuth etc.).
+- **Endpoints principais:** enviar, receber, threading.
+- **Estrutura das mensagens.**
+- **Rate limits.**
+- **Eventos:** WebSocket ou webhook.
+- **Elementos interativos:** botões, menus.

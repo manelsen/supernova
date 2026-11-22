@@ -1,5 +1,7 @@
 # PRD — commercially production-ready
 
+> **Situação em 22/11/2026:** Parcial. Entregues: health checks, circuit breaker, cooldown, retry, o fim do mock silencioso, deploy em um comando e sub-agentes em paralelo. Pendentes: métricas, tracing, benchmarks medidos e teste de carga verificado. Veja [docs/PENDENCIAS.md](../PENDENCIAS.md), seções 1 e 3.4. A decisão de 22/11 é observabilidade total.
+
 **Version:** 1.0  
 **Status:** Draft  
 **Last updated:** 2026-03-30

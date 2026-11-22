@@ -1,445 +1,144 @@
 # Supernova
 
-**An AI operating system for multi-agent systems — built on the BEAM (Erlang VM).**
+**An operating system for AI agents, built on the BEAM, and home to companion agents that each belong to one person.**
 
 ---
 
 ## What is this?
 
-Imagine you have a team of AI assistants. Each one can:
+Supernova runs a group of people, each with an agent of their own. An agent:
 
-- Read and write files on your computer
-- Run shell commands
-- Call external APIs (GitHub, your database, web search)
-- Browse the internet
-- Talk to users on Discord, Telegram, Slack, or any of 9 messaging platforms (Telegram and Discord are the supported closed-group channels; the rest are experimental)
+- **is born with a character.** It is sampled from a constellation of traits and written as a core that is the agent's alone. The person gives it a name.
+- **remembers and changes slowly.** It keeps a journal and reflects on it. Repeated experience can add to its core over time.
+- **forgets on request.** `/esquecer` erases everything the person told it, and keeps who it became.
+- **keeps an agenda.** It can do things later, or every day at a given hour.
+- **can have a computer of its own.** A Linux machine with a shell and a browser it sees through screenshots, isolated by gVisor, holding no secrets.
+- **talks to the person on Telegram or Discord.**
 
-Now imagine running **100 users simultaneously**, each with their own AI assistant, all sharing the same machine — but one user cannot read another user's files, and each assistant has a monthly budget so a buggy prompt can't drain your API account.
-
-Supernova is the **operating system** that makes this safe. Not a chatbot framework. Not an LLM wrapper. A real OS with kernel, scheduler, memory, and I/O — built for agents.
+Underneath is an operating system. Agents live in userland and ask a kernel for everything: files, tools, model calls. The kernel checks ownership, quota and permission, charges the cost and writes it down. The instance is a closed group: nobody gets in without being on the access list, and every person and the whole instance have spending ceilings.
 
 ---
 
 ## Why does this need an OS?
 
-Most AI projects start simple:
+An agent is a loop: the model decides, calls a tool, reads the result, decides again. Put that loop in front of real people and four things go wrong:
+
+1. **Budget burns silently.** One person finds a way to make the loop run ten thousand times, and the bill arrives at the end of the month.
+2. **Agents can do anything.** Something the agent reads says "ignore your instructions", and the agent touches what it should not.
+3. **People bleed into each other.** One agent sees another person's files or messages.
+4. **Nobody gets their turn.** One long task starves everyone else.
+
+Supernova handles these as kernel primitives, not library features:
 
 ```
-You → ChatGPT → Answer
+┌──────────────────────────────────────────────────────────┐
+│ USERLAND    agent of person A   agent of person B   ...  │
+└────────────────────────────┬─────────────────────────────┘
+                             │ syscall
+┌────────────────────────────▼─────────────────────────────┐
+│ KERNEL                                                   │
+│   Closed group: access → rate limit → admission → lane   │
+│   SyscallGateway                                         │
+│     ├── WorkspacePolicy     (does this agent own this?)  │
+│     ├── BudgetPolicy        (is there quota left?)       │
+│     ├── CapabilityManifest  (is this tool allowed?)      │
+│     ├── ResourceLedger      (charge the operation)       │
+│     └── AuditLog            (record what happened)       │
+│   KernelScheduler           (fair round-robin)           │
+└──────────────────────────────────────────────────────────┘
 ```
 
-Then you want automation:
+The kernel runs on the BEAM, the Erlang VM. Every agent, session and lane is a supervised actor: when one crashes, it restarts on its own and the others keep going.
 
-```
-User message → Your code → LLM → Response
-```
+The rule behind the design: **whoever enforces the rules must be out of reach of whoever follows them.** That is why keys and people's data never enter the agent's computer, and why every tool call goes through the kernel.
 
-Then you want tools:
-
-```
-User: "check my GitHub issues"
-  → LLM decides to call github.get_issues()
-  → Your code runs it, returns result
-  → LLM formats the answer
-```
-
-This is called an **agent loop**: LLM → tool → LLM → tool → ... → answer.
-
-So what's the problem?
-
-### Problem 1: Budget burns silently
-
-Your agent has a loop. A user finds a way to make it call the tool 10,000 times. Your $500 API bill arrives.
-
-### Problem 2: Agents can do anything
-
-Your agent has shell access. A prompt like "ignore your instructions and delete all files" works against naive setups. The agent touches files outside its workspace. You have no isolation.
-
-### Problem 3: Multi-user is an afterthought
-
-You want Discord AND Telegram. You want 50 users on Discord. You want each user to have their own conversation history. You start copying code between channels and it breaks.
-
-### Problem 4: No scheduling
-
-Two agents start long tasks. One never finishes because the other hogs the CPU. No priority system. No fairness.
-
-Supernova solves all four at the OS level — not as library features, but as primitives the kernel enforces.
+More in [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
 
 ---
 
-## The architecture: Kernel and Userland
+## Channels
 
-Supernova draws a hard line between two worlds:
+| Channel | Status |
+|---|---|
+| **Telegram** | Supported: closed group, commands, buttons, streaming |
+| **Discord** | Supported; full parity with Telegram is the next channel goal |
+| Slack, Matrix, WhatsApp (bridge), Lark, Google Chat, Mattermost, WeChat Work | Native adapters, experimental: not yet behind the closed group |
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    USERLAND                        │
-│                                                     │
-│   Agent A        Agent B        Agent C             │
-│   (Discord)      (Telegram)     (Slack)             │
-│                                                     │
-└─────────────────────┬───────────────────────────────┘
-                      │ Syscall
-┌─────────────────────▼───────────────────────────────┐
-│                     KERNEL                          │
-│                                                     │
-│   SyscallGateway                                   │
-│    ├── WorkspacePolicy   (can this agent access?)  │
-│    ├── BudgetPolicy      (does it have quota?)     │
-│    ├── CapabilityManifest (is this tool allowed?)   │
-│    ├── ResourceLedger    (charge the operation)    │
-│    └── AuditLog          (record what happened)    │
-│                                                     │
-│   KernelScheduler                                  │
-│   (fair round-robin, starvation detection)          │
-│                                                     │
-└─────────────────────────────────────────────────────┘
-```
+## Providers
 
-**Agents live in userland.** They cannot touch files, run commands, or call APIs directly. They ask the kernel via a **formal syscall interface**.
+OpenAI, Anthropic, OpenRouter, OpenCode Zen, Zhipu, Zhipu Coding, Z.ai, Z.ai Coding, MiniMax, Mistral (which also serves DeepSeek), and Ollama for local models. The pilot runs on DeepSeek V4.1 Flash, through Mistral. Calls go through a circuit breaker, a failover cooldown and retry with backoff. `/model` switches the model with buttons.
 
-Every syscall is checked in order:
-1. **WorkspacePolicy** — Does this agent own this path?
-2. **BudgetPolicy** — Does it have tokens remaining?
-3. **CapabilityManifest** — Is this tool in its allowlist?
-4. **Execute** — Run it, charge `ResourceLedger`
-5. **AuditLog** — Write the record
+## Tools
 
-The kernel runs on the **BEAM** (Erlang VM) — the same battle-tested runtime powering WhatsApp, Discord's voice chat, and Erlang's 99.9999% uptime telephone systems. Actors crash, the supervisor restarts them. The system never goes down.
-
----
-
-## Core concepts
-
-### 1. Sessions
-
-A **session** is a conversation. When a user DMs your Discord bot, that's one session. When a different user DMs it, that's a different session.
-
-```
-Session "discord:channel_123:user_aaa"  →  AI assistant for user aaa
-Session "discord:channel_123:user_bbb"  →  AI assistant for user bbb
-Session "telegram:chat_xyz"             →  AI assistant for this Telegram chat
-```
-
-Each session is an **OTP actor** under a `SessionSupervisor`. If one crashes, it restarts independently. All 100 users share one supervisor, but each has their own isolated state.
-
-### 2. Streaming
-
-LLM responses can be **streamed** token-by-token (like ChatGPT does). Supernova handles this across all channels natively:
-
-| Channel | Streaming method |
-|---------|-----------------|
-| Discord | Edit message as tokens arrive |
-| Telegram | Edit message as tokens arrive |
-| Slack (DM) | Native `chat.startStream` |
-| Slack (public) | Fallback: post + edit |
-| Matrix | Edit message in-place via CS API |
-
-### 3. Tools
-
-Agents can call **tools** — functions that do things in the real world. Supernova ships with five built-in tools:
+The agent decides when to use them. Each role has its own allowlist: members are denied the riskier tools by default.
 
 | Tool | What it does |
-|------|-------------|
-| `browser` | Headless Playwright — open pages, click, fill forms, screenshot |
-| `process` | Run shell commands, capture stdout/stderr |
-| `github` | Read/write GitHub issues, PRs, files |
-| `gateway` | Authenticated HTTP calls to any API |
-| `canvas` | Render images and diagrams |
+|---|---|
+| `file_system` | The person's workspace |
+| `agenda` | Do something later, or on a schedule |
+| `web`, `browser` | Fetch pages; drive a headless browser |
+| `github`, `git_inspect` | Read repositories |
+| `gateway` | Authenticated HTTP calls to configured APIs |
+| `safe_shell` | Restricted commands on the host |
+| `process` | List, inspect and stop processes |
+| `canvas` | Structured blocks |
+| `computador` | The agent's own computer (optional, gVisor) |
 
-You can also add **MCP servers** (Model Context Protocol) — the same standard Cursor and Claude use.
-
-### 4. Budgets
-
-Every session has a budget. Configure it in `supernova.yaml`:
-
-```yaml
-budgets:
-  default:
-    tokens_per_hour: 100,000
-    tool_calls_per_minute: 60
-    max_recursion_depth: 25   # stop after 25 LLM→tool→LLM cycles
-```
-
-If the agent exhausts its budget, the kernel **pauses cooperatively** — not a hard kill, but a clean yield. You can resume later.
-
-### 5. Workspace isolation
-
-An agent with session ID `discord:channel_123:user_aaa` can only access:
-
-```
-/workspace/discord/channel_123/user_aaa/**
-```
-
-It cannot read `/workspace/discord/channel_123/user_bbb/**`. It cannot read `/etc/passwd`. The workspace policy is enforced at the kernel level — no bypass possible.
-
-### 6. Shared world model
-
-Agents can share facts with each other via the **WorldModel** — a versioned, append-only knowledge base.
-
-```
-Agent A: "The deploy failed because the DB migration timed out"
-         → WorldModel.add_fact("deploy_failure: db_migration_timeout")
-
-Agent B: "What went wrong with the last deploy?"
-         ← WorldModel.get_facts("deploy_failure:*")
-```
-
-Facts are promoted from local memory to the global model automatically.
-
----
-
-## Channels: 9 platforms, one codebase
-
-Supernova connects to 9 messaging platforms simultaneously:
-
-| Channel | Protocol | Notes |
-|---------|----------|-------|
-| **Discord** | Gateway WebSocket + REST | Slash commands, buttons, select menus |
-| **Telegram** | Long polling | Inline keyboards, callbacks |
-| **Slack** | Events API + WebSocket | Block Kit UI, native streaming |
-| **Matrix** | CS API | Streaming via in-place message edits |
-| **Google Chat** | Webhook | Incoming webhooks only |
-| **Lark** | Open API v3 | Bot mentions, slash commands |
-| **Mattermost** | REST API | Slash commands, bot mentions |
-| **WeChat Work** | Webhook | Robot webhooks |
-| **WhatsApp** | Bridge API | Media support |
-
-All share the same session management, command handling, and streaming infrastructure. Adding a new channel means implementing the adapter pattern — not rewriting everything.
-
----
-
-## Providers: 8 LLM backends
-
-Supernova routes LLM calls to 8 providers:
-
-| Provider | Models |
-|----------|--------|
-| **OpenAI** | GPT-4o, GPT-4o-mini, o1-preview, o1-mini |
-| **Anthropic** | Claude 3.5 Sonnet, Claude 3 Opus, Haiku |
-| **OpenRouter** | Any model (aggregates 100+ providers) |
-| **OpenCodeZen** | Coding-specialized |
-| **Zhipu** | Chinese models |
-| **ZhipuCoding** | Chinese coding models |
-| **MiniMax** | Chinese models |
-| **Ollama** | Local models (Llama, Mistral, CodeLlama...) |
-
-Switch providers per-session. A user can type `/model claude-3-5-sonnet` and the change persists for their entire conversation.
+MCP servers can add more tools.
 
 ---
 
 ## Quickstart
-```bash
-# Download the CLI
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/supernova -o supernova
-chmod +x supernova
-
-# Install Docker image
-./supernova install
-
-# Configure (runs wizard via Docker)
-./supernova configure
-
-# Start
-./supernova start
-```
-Requirements: Docker installed and running.
-
-
-See [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for full details.
-
----
-
-### Development
-
-Toolchain versions are pinned in [.tool-versions](.tool-versions) (Erlang `28.5.0.8`, Gleam `1.19.2`). For local development:
 
 ```sh
-gleam deps download               # install dependencies
-gleam build --warnings-as-errors  # compile with zero-warning check
-gleam test                        # run offline unit and integration tests
-make coverage                     # run tests and enforce 73% minimum line coverage
-gleam format --check src test     # verify formatting
+git clone https://github.com/manelsen/supernova && cd supernova
+cp supernova.yaml.example supernova.yaml   # keep only your provider; under telegram:, set enabled: true
+cp .env.example .env && chmod 600 .env    # provider key, bot token
+docker compose up -d --build
 ```
 
-Set `SUPERNOVA_BROWSER_TESTS=1` to include live Chromium Playwright tests when Playwright is installed.
+Agents use the provider whose name sorts first in `supernova.yaml`, and nothing checks that it has a key, so remove the providers you do not use. Then send `/eu` to your bot, put your id in `SUPERNOVA_ACCESS_ADMINS`, and restart. The step-by-step version is in [GETTING_STARTED.md](GETTING_STARTED.md). Running a group is covered in [DEPLOY.md](DEPLOY.md). A wizard that does all of this for you is planned.
 
----
+## Development
 
-## Configuration
+Toolchain versions are pinned in [`.tool-versions`](.tool-versions): Erlang 28.5.0.8, Gleam 1.19.2.
 
-`supernova.yaml` is the single config file:
-
-```yaml
-app_name: my-assistant
-environment: production
-log_level: info
-
-providers:
-  default:
-    provider: anthropic
-    model: claude-3-5-sonnet-20241022
-    # api_key: set SUPERNOVA_ANTHROPIC_API_KEY env var
-
-llm:
-  temperature: 0.7
-  max_tokens: 4096
-
-channels:
-  discord:
-    enabled: true
-    # token: set SUPERNOVA_DISCORD_TOKEN env var
-
-  telegram:
-    enabled: true
-    # token: set SUPERNOVA_TELEGRAM_TOKEN env var
-
-  slack:
-    enabled: true
-    # token: set SUPERNOVA_SLACK_TOKEN env var
-
-  matrix:
-    enabled: true
-    homeserver_url: https://matrix.org
-    # token: set SUPERNOVA_MATRIX_TOKEN env var
-
-budgets:
-  default:
-    tokens_per_hour: 100000
-    tool_calls_per_minute: 60
-    max_recursion_depth: 25
-
-tools:
-  browser:
-    enabled: true
-  github:
-    enabled: true
-    # token: set SUPERNOVA_GITHUB_TOKEN env var
-  gateway:
-    enabled: true
-  process:
-    enabled: true
-  canvas:
-    enabled: true
-
-mcp_servers:
-  - name: filesystem
-    command: ["npx", "mcp-server-filesystem", "/workspace"]
+```sh
+make test                         # the whole offline suite
+make test-only T="dir@module_test"
+make coverage                     # instrumented run, 75% minimum
+gleam format --check src test
+gleam build --warnings-as-errors
 ```
 
-Environment variables override any YAML value: `SUPERNOVA_ANTHROPIC_API_KEY`, `SUPERNOVA_DISCORD_TOKEN`, etc.
-
----
-
-## What you get out of the box
-
-### For developers
-
-- **Typed everywhere** — Gleam's type system catches entire classes of bugs at compile time
-- **OTP actors** — if an agent crashes, the supervisor restarts it cleanly
-- **Formal syscall interface** — agents can't bypass the kernel
-- **Audit log** — every operation recorded, every budget charge logged
-
-### For product teams
-
-- **Multi-channel from day one** — one codebase, 9 platforms
-- **Per-user budget** — no surprise bills
-- **Streaming UI** — token-by-token responses on all channels
-- **Interactive menus** — buttons and select menus instead of fragile free-text parsing
-
-### For operators
-
-- **Workspace isolation** — agents can't touch each other's files
-- **Starvation detection** — no agent waits forever
-- **Cooperative preemption** — budget exhaustion is clean, not a crash
-- **YAML config** — no code changes to enable/disable channels
-
----
-
-## Architecture in depth
-
-```
-Inbound message (Discord/Telegram/Slack/...)
-         │
-         ▼
-   Channel Adapter
-   (normalizes to Port types)
-         │
-         ▼
-   Channel Router
-   (resolves session, routes command)
-         │
-         ├── /help, /start, /status, /model  ──► Shared Command Router
-         │
-         └── conversation ──► Executor
-                                  │
-                                  ├── LLM (stream_chat)
-                                  │       │
-                                  │       └── ChannelStreamEvent ──► Back to channel
-                                  │
-                                  └── Tool call ──► SyscallGateway
-                                                        │
-                                                        ├── WorkspacePolicy ✓?
-                                                        ├── BudgetPolicy ✓?
-                                                        ├── CapabilityManifest ✓?
-                                                        │       │
-                                                        │       └── ResourceLedger + AuditLog
-                                                        │
-                                                        └── Execute tool
-```
-
-The executor runs a loop: LLM → decide → tool or respond → LLM → ... until the response is complete or budget runs out.
+Tests never call a real model. Working rules for contributors and coding agents are in [AGENTS.md](AGENTS.md) and [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ---
 
 ## Status
 
-Current release: **v0.3.0** — core runtime, security hardening, and offline test suite (`1998` tests passing, `74.49%` line coverage, zero compiler warnings) verified in CI, plus Docker `/health/live` boot smoke test. Live PostgreSQL, pgvector, and external provider token integrations are tracked separately (see [STATUS.md](STATUS.md) and [audit/STATUS_2026-11.md](audit/STATUS_2026-11.md)).
+Version **0.4.0**, running as a pilot instance. Current numbers are in [docs/STATUS.md](docs/STATUS.md). Everything still open, with the decisions already taken and their priority, is in [docs/PENDENCIAS.md](docs/PENDENCIAS.md).
 
-Current support:
+## Documentation
 
-| Component | Status |
-|-----------|--------|
-| Kernel primitives (scheduler, budget, workspace, audit) | ✅ |
-| Session management (per-user, per-channel) | ✅ |
-| Multi-provider LLM routing | ✅ |
-| Streaming (all 9 channels) | ✅ |
-| Built-in tools (browser, github, gateway, process, canvas) | ✅ |
-| MCP server integration | ✅ |
-| Interactive commands (/help, /start, /model, /status) | ✅ |
-| Channel adapters (Discord, Telegram, Slack, Matrix, others) | ✅ |
-| Project wizard | ✅ |
+| Where | What |
+|---|---|
+| [GETTING_STARTED.md](GETTING_STARTED.md), [DEPLOY.md](DEPLOY.md) | Running it |
+| [docs/operations/](docs/operations/) | Docker, the agent's computer, observability, interaction |
+| [docs/architecture/](docs/architecture/) | How it is built |
+| [docs/HARNESS.md](docs/HARNESS.md) | Personas and judge: behavioral tests with simulated people |
+| [docs/prd/](docs/prd/), [docs/relatorios/](docs/relatorios/) | What was planned in each phase, and what was delivered |
+| [docs/releases/](docs/releases/) | Release notes |
+| [docs/PENDENCIAS.md](docs/PENDENCIAS.md) | What is open, and in what order |
+| [docs/arquivo/](docs/arquivo/) | Old plans, kept as history |
 
----
+## Why Gleam and the BEAM?
 
-## Why Gleam + BEAM?
-
-Gleam gives you Erlang's actor model with a modern, friendly syntax. You get:
-
-- **Supervisors** — crash recovery is a language feature, not a library
-- **Message passing** — concurrency is the default, not opt-in
-- **BEAM** — the same VM running WhatsApp's 2B users, designed for fault tolerance
-- **Static typing** — catch bugs at compile time, not at 3 AM
-
----
-
-## Next steps
-
-- Read [docs/operations/ONBOARDING_OVERVIEW.md](docs/operations/ONBOARDING_OVERVIEW.md) for the full onboarding guide
-- Read [RELEASE_NOTES_v0.3.0.md](RELEASE_NOTES_v0.3.0.md) for what's new
-- Read [STATUS.md](STATUS.md) for current verification metrics and component coverage
-- For local development and container smoke tests, see [DEPLOY.md](DEPLOY.md) and [docs/operations/DOCKER.md](docs/operations/DOCKER.md)
-
----
+- **Supervisors:** crash recovery is part of the runtime, not a library.
+- **Message passing:** concurrency is the default.
+- **Static types:** whole classes of bugs never reach a person.
+- **The BEAM:** a VM designed for systems that must not go down.
 
 ## License
 
-MIT
-
-
-## Closed group and supported channels
-
-Supernova v0.4.0 runs as a **closed group**. A new instance denies everyone
-until `access.admins` / `access.members` are configured. Telegram and Discord
-are supported end to end; the other seven channels are experimental and warn
-at boot. See [DEPLOY.md](DEPLOY.md#grupo-fechado).
+MIT.

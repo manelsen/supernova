@@ -20,6 +20,11 @@ Agents interact with kernel resources through `SyscallGateway`, which centralize
 - `core/capability_manifest/*`: tool/capability grants and denials.
 - `core/syscall/*`: syscall protocol and execution boundary.
 - `core/world_model/*`: persistent shared facts and context memory.
+- `core/closed_group/*`, `core/access/*`, `core/instance_budget/*`, `core/agent_queue/*`: the closed-group gate (see below).
+- `self/*`: each agent's private self (see below).
+- `agenda/*`: scheduled requests.
+- `tools/*`: built-in tools, including `computador`.
+- `health/*`, `metrics/*`, `tracing/*`: health endpoints and instrumentation (see `docs/operations/OBSERVABILITY.md`).
 - `adapters/*`: channel integrations and external system bridges.
 - `llm/*`: provider contracts, adapters, and model/catalog support.
 
@@ -31,6 +36,47 @@ Agents interact with kernel resources through `SyscallGateway`, which centralize
 4. Runtime executes LLM/tool loop under scheduler + budget + capability policies.
 5. Outbound reply payloads return to channel adapters for rendering and delivery.
 6. Resource usage and events are logged through audit and telemetry components.
+
+## Closed Group
+
+Since v0.4.0 an instance runs as a closed group: it denies everyone who is not on its access list. `core/closed_group/runtime.gleam` is the gate every inbound message goes through:
+
+1. **`/eu`** is answered first, before any check, so an unauthorized person can learn their principal id.
+2. **Access** (`core/access`): is this principal an admin or a member, and is this chat allowed?
+3. **Commands** answered by the gate without the LLM: `/uso`, `/acesso`, `/teto`, `/auditoria`. `/esquecer` also skips the checks below, so a person can always ask to forget.
+4. **Rate limit** (`core/rate_limit`) and **admission** against the person's daily budget and the instance ceiling (`core/instance_budget`). An LLM call reserves tokens in the ledger before it runs and settles the real cost after.
+5. **Lanes** (`core/agent_queue`): one serial queue per chat, with limits on pending turns and on the number of lanes. From here the router handles the rest, including `/agenda`, which therefore goes through rate limiting and admission like a normal message.
+6. **Capabilities** per role (`capabilities` in `supernova.yaml`). Members are denied the riskier tools by default.
+
+Every charge goes to `core/resource_ledger` (`/data/ledger/<date>.jsonl`). Every decision goes to `core/audit_log`.
+
+## The Agent's Self
+
+Each person gets their own agent, with a private self under `/data/agents/<principal>/self/` (`src/supernova/self/`):
+
+| Module | Role |
+|---|---|
+| `constellation`, `sampler`, `birth` | Sample a coherent set of traits from `priv/constellation/constellation.json`, write the core prose, then let the person name the agent. |
+| `core` | The core (`core.md`, `core.json`), traits and biography. The core is part of every prompt the agent receives, followed by `priv/constellation/agent_guidance.md`. |
+| `journal` | Append-only journal of turns not yet reflected. |
+| `reflection` | Turns the journal into experiences and pressures, after a number of turns or hours (`priv/reflection/reflection_prompt.md`). An hourly sweeper checks every agent. |
+| `drift` | Pressures that accumulate and decay. Past a threshold, they add a short addendum to the core (`drift_prompt.md`). |
+| `forget`, `epoch` | `/esquecer`: erases what the person told the agent and keeps who the agent became. |
+| `incidents` | What went wrong in the agent's own turns, in exact terms, so the agent can explain it. |
+
+The maintainer owns `priv/constellation/` and `priv/reflection/`. They are not changed without approval (see `AGENTS.md`).
+
+## Agenda
+
+`src/supernova/agenda/` keeps per-person scheduled requests (cron or one-shot), at most 5 per person. A sweeper runs every 30 seconds and injects due entries into the person's lane as an `[Agenda]` message. The answer is delivered to the person.
+
+## The Agent's Computer
+
+The `computador` tool (`tools/computador.gleam`) talks over HTTP to a separate container (`computador/`), which runs on gVisor and holds no secrets. It has a full shell, files in a volume and a persistent Chromium. Screenshots travel back as images in the conversation (`llm/tool_images.gleam`). The threat model and setup are in [`docs/operations/COMPUTADOR.md`](../operations/COMPUTADOR.md).
+
+## Simulation and Harness
+
+The `sim` channel lets the harness (`src/supernova/harness/`) talk to agents the way a person would. Personas, scenarios and rubrics live in `priv/harness/`. A judge from another model family scores what code cannot check. See [`docs/HARNESS.md`](../HARNESS.md).
 
 ## Port and Adapter Boundary
 
@@ -58,7 +104,7 @@ Adapters translate native provider/channel formats into this contract, allowing 
 
 ### Auditability
 
-`AuditLog` and telemetry modules produce event streams that can be consumed for observability and compliance.
+`AuditLog` records access, refusals, ceilings, births and forgetting (`/auditoria`). The resource ledger records every LLM charge. The state of metrics and tracing is in [`docs/operations/OBSERVABILITY.md`](../operations/OBSERVABILITY.md).
 
 ## Extensibility
 
