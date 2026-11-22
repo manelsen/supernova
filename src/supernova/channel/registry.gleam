@@ -176,6 +176,11 @@ pub fn start_channels_with_handler_and_hooks(
   let channels = dict.new()
   let streams = dict.new()
   let health = channel_health.start()
+  config.incomplete_channels(cfg)
+  |> list.each(fn(pair) {
+    io.println(pair.0 <> ": not started - " <> pair.1)
+    channel_health.failed(health, pair.0, pair.1)
+  })
 
   let #(channels, streams) = case config.is_discord_enabled(cfg) {
     True -> {
@@ -350,19 +355,13 @@ pub fn start_channels_with_handler_and_hooks(
   let total = dict.size(channels)
   io.println("Started " <> int.to_string(total) <> " channel adapter(s)")
 
+  // Telegram registers itself before its polling worker starts, so an early
+  // poll failure is not overwritten here.
   let now = channel_health.now_ms()
   channels
   |> dict.keys
-  |> list.each(fn(name) {
-    // Telegram reports every poll; the other channels only count as started.
-    let max_silence_ms = case
-      name == "telegram" && !hooks.disable_telegram_polling
-    {
-      True -> Some(telegram_max_silence_ms)
-      False -> None
-    }
-    channel_health.started(health, name, max_silence_ms, now)
-  })
+  |> list.filter(fn(name) { name != "telegram" })
+  |> list.each(fn(name) { channel_health.started(health, name, None, now) })
 
   Ok(ChannelRegistry(
     id: registry_id,
@@ -563,6 +562,16 @@ fn start_telegram_channel(
         |> result.map_error(fn(_) { "failed to start poller actor" }),
       )
 
+      let max_silence_ms = case hooks.disable_telegram_polling {
+        True -> None
+        False -> Some(telegram_max_silence_ms)
+      }
+      channel_health.started(
+        health,
+        "telegram",
+        max_silence_ms,
+        channel_health.now_ms(),
+      )
       let worker =
         start_telegram_worker(
           poller,

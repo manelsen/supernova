@@ -13,13 +13,13 @@ The health server listens on port **8080** inside the container. The port is not
 | `GET /health/ready` | Status, uptime and each enabled channel with `ready` and `error`. 200 with `"status":"ok"` when every channel is ready; 503 with `"status":"degraded"` otherwise. | People and external monitors |
 
 ```sh
-docker exec supernova wget -qO- http://127.0.0.1:8080/health/ready
+docker exec supernova curl -sS -i http://127.0.0.1:8080/health/ready
 ```
 
 What `ready` means for each channel:
 
 - **Telegram** reports every `getUpdates`. A failed poll makes it not ready, with the error (for example `telegram api error 401: Unauthorized` for a bad token), until the next poll succeeds; failed polls are retried with backoff from 1 s to 30 s. A minute with no successful poll, for example because the polling process died, also makes it not ready.
-- **A channel that failed to start** (bad configuration, missing token) is listed as not ready, with the reason.
+- **A channel that failed to start**, or that has `enabled: true` with a required setting missing (for example `enabled but missing token`), is listed as not ready, with the reason.
 - **The other channels** only report that they started. A Discord gateway that disconnects later still shows as ready.
 
 The compose healthcheck uses `/health/live`, so a channel that is down does not restart the container.

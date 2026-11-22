@@ -63,3 +63,32 @@ pub fn no_provider_is_an_error_test() {
   let assert Error(message) = config.selected_provider(with_providers([]))
   string.contains(message, "no LLM providers configured") |> should.be_true()
 }
+
+pub fn enabled_channel_without_credentials_is_reported_test() {
+  let base = config.default_config()
+  let cfg =
+    config.Config(
+      ..base,
+      telegram: config.TelegramConfig(enabled: True, token: None),
+      mattermost: config.MattermostConfig(
+        enabled: True,
+        token: Some("t"),
+        base_url: None,
+      ),
+    )
+  config.incomplete_channels(cfg)
+  |> should.equal([
+    #("telegram", "enabled but missing token"),
+    #("mattermost", "enabled but missing base_url"),
+  ])
+}
+
+pub fn disabled_or_complete_channels_are_not_reported_test() {
+  let base = config.default_config()
+  let cfg =
+    config.Config(
+      ..base,
+      telegram: config.TelegramConfig(enabled: True, token: Some("t")),
+    )
+  config.incomplete_channels(cfg) |> should.equal([])
+}

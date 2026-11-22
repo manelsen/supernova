@@ -2076,6 +2076,60 @@ pub fn is_whatsapp_enabled(config: Config) -> Bool {
   config.whatsapp.enabled && config.whatsapp.bridge_url != None
 }
 
+/// Channels with `enabled: true` that cannot start because a required
+/// setting is missing, with the reason. Boot skips them; readiness lists them.
+pub fn incomplete_channels(config: Config) -> List(#(String, String)) {
+  let missing = fn(name, enabled, fields: List(#(String, Bool))) {
+    case enabled {
+      False -> []
+      True ->
+        case list.filter(fields, fn(field) { !field.1 }) {
+          [] -> []
+          absent -> [
+            #(
+              name,
+              "enabled but missing "
+                <> string.join(list.map(absent, fn(field) { field.0 }), ", "),
+            ),
+          ]
+        }
+    }
+  }
+  let sim_token = case config.sim.token {
+    Some(token) -> string.trim(token) != ""
+    None -> False
+  }
+  list.flatten([
+    missing("discord", config.discord.enabled, [
+      #("token", config.discord.token != None),
+    ]),
+    missing("telegram", config.telegram.enabled, [
+      #("token", config.telegram.token != None),
+    ]),
+    missing("sim", config.sim.enabled, [#("token", sim_token)]),
+    missing("matrix", config.matrix.enabled, [
+      #("token", config.matrix.token != None),
+    ]),
+    missing("lark", config.lark.enabled, [#("token", config.lark.token != None)]),
+    missing("google_chat", config.google_chat.enabled, [
+      #("webhook_url", config.google_chat.webhook_url != None),
+    ]),
+    missing("slack", config.slack.enabled, [
+      #("token", config.slack.token != None),
+    ]),
+    missing("mattermost", config.mattermost.enabled, [
+      #("token", config.mattermost.token != None),
+      #("base_url", config.mattermost.base_url != None),
+    ]),
+    missing("wechat_work", config.wechat_work.enabled, [
+      #("webhook_url", config.wechat_work.webhook_url != None),
+    ]),
+    missing("whatsapp", config.whatsapp.enabled, [
+      #("bridge_url", config.whatsapp.bridge_url != None),
+    ]),
+  ])
+}
+
 /// Support level for a channel adapter.
 ///
 /// Telegram and Discord are covered end to end. The remaining channels are
