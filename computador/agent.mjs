@@ -160,10 +160,16 @@ let closing = Promise.resolve();
 // Settles when the last launch has finished, successful or not. An
 // abandoned launch may still be starting Chromium on the profile.
 let launching = Promise.resolve();
+// True from the moment Chromium is asked to start until that launch settles.
+let launchInFlight = false;
 const CLOSE_WAIT_MS = 10_000;
 
+// Waits for `promise`, but at most `ms`. The timer is cleared as soon as
+// either side wins, so it never keeps the process alive.
 function bounded(promise, ms) {
-  return Promise.race([promise, new Promise((resolve) => setTimeout(resolve, ms))]);
+  let timer;
+  const expired = new Promise((resolve) => { timer = setTimeout(resolve, ms); });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
 }
 
 // Browser operations share one page, so they run one at a time. Each one has
@@ -205,28 +211,37 @@ async function withDeadline(task) {
 async function page(gen) {
   if (!browserContext) {
     // Read `closing` only after the previous launch settled: an abandoned
-    // launch sets it when it finishes.
+    // launch sets it before `launching` settles.
     await bounded(launching, LIMITS.browserOpMs + CLOSE_WAIT_MS);
+    // An expired wait is no permission to launch: the old launch could
+    // still start Chromium on the same profile.
+    if (launchInFlight) throw new Error('the browser is still starting; try again shortly');
     await closing;
     const { chromium } = await import('playwright');
-    const pending = chromium.launchPersistentContext(PROFILE_DIR, {
-      headless: true,
-      viewport: VIEWPORT,
-      locale: 'pt-BR',
-      timezoneId: process.env.TZ || 'America/Sao_Paulo',
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
-      timeout: LIMITS.browserOpMs,
-    });
-    launching = pending.then(() => {}, () => {});
-    const launched = await pending;
-    if (gen !== generation) {
-      // This operation already timed out; do not let its browser linger.
-      closing = closeBounded(launched);
-      throw new Error('abandoned launch');
-    }
-    launched.setDefaultTimeout(LIMITS.browserTimeoutMs);
-    launched.on('close', () => { if (browserContext === launched) browserContext = null; });
-    browserContext = launched;
+    // This operation timed out while waiting; a newer one owns the browser.
+    // No await between this check and the launch below.
+    if (gen !== generation) throw new Error('abandoned operation');
+    const attempt = (async () => {
+      const launched = await chromium.launchPersistentContext(PROFILE_DIR, {
+        headless: true,
+        viewport: VIEWPORT,
+        locale: 'pt-BR',
+        timezoneId: process.env.TZ || 'America/Sao_Paulo',
+        args: ['--no-sandbox', '--disable-dev-shm-usage'],
+        timeout: LIMITS.browserOpMs,
+      });
+      if (gen !== generation) {
+        // This operation already timed out; do not let its browser linger.
+        closing = closeBounded(launched);
+        throw new Error('abandoned launch');
+      }
+      launched.setDefaultTimeout(LIMITS.browserTimeoutMs);
+      launched.on('close', () => { if (browserContext === launched) browserContext = null; });
+      browserContext = launched;
+    })();
+    launchInFlight = true;
+    launching = attempt.then(() => {}, () => {}).finally(() => { launchInFlight = false; });
+    await attempt;
   }
   const pages = browserContext.pages();
   return pages.length > 0 ? pages[pages.length - 1] : browserContext.newPage();
