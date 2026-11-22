@@ -65,6 +65,17 @@ docker compose logs supernova | grep '\[TRACE\]'
 | `complexity_selected_tier_total` | counter | `tier`, `model_used` |
 | `agents_spawned_total`, `agents_stopped_total` | counter | `status` on stops |
 | `agents_active` | gauge | |
+| `channel_messages_total` | counter | `channel`, `kind` (`message`, `interaction`) |
+| `turn_duration_seconds` | histogram | `channel`, `outcome` (`replied`, `streamed`, `stream_timeout`, `send_error`, `ignored`, `handler_error`) |
+| `channel_send_errors_total` | counter | `channel`, `error` (`send_failed`, `rate_limited`, `not_connected`, `other`) |
+| `chat_lane_rejected_total` | counter | `channel` |
+| `channel_poll_errors_total` | counter | `channel` |
+| `gate_decisions_total` | counter | `channel`, `decision` (`allowed`, `denied`, `chat_denied`, `rate_limited`, `budget`, `instance_cap`, `fail_closed`, `eu`, `command`, `missing_sender`) |
+| `llm_tokens_total` | counter | `kind` (`prompt`, `completion`), `provider`, `model` |
+| `llm_cost_usd_micros_total` | counter | `provider`, `model`. Cost in millionths of a dollar. |
+| `agenda_runs_total` | counter | `outcome` (`ran`, `dropped`, `missed`, `sweep_crashed`) |
+
+A reply that does not reach the person is counted in `channel_send_errors_total` and logged as `warn: reply not delivered channel=... error=...`.
 
 Spans are written to stdout as `[TRACE] span started/ended` lines: `llm.chat` for every model call (with its duration and status) and `tool.execute` for every tool call. There is no OTLP export.
 
@@ -73,7 +84,6 @@ The circuit breaker opens for a provider after 5 consecutive failures that mean 
 ## What does not work yet
 
 - **Readiness only probes Telegram.** The other channels count as ready once they start.
-- **Few things are measured.** Channels, gate decisions, ledger cost and tokens, the agenda and Telegram poll errors have no metrics yet. The streaming path (open access mode only) records no metric, opens no span and skips the circuit breaker.
 - **No exporter.** There is no Prometheus scrape configuration, no OTLP collector and no dashboards.
 - **Modules that nothing uses.** `core/telemetry`, `core/dashboard` and `core/alerts/actor` are not used outside their own modules.
 - **Performance never measured.** The benchmarks in `test/bench/` and the load test in `tests/load/` (`run_load_tests.sh`) exist. The targets from `docs/prd/production-ready-v1.md` (100 concurrent users, p99 under 2 s, under 1% errors) have never been checked.

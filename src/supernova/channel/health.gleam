@@ -13,6 +13,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
 import supernova/health/types as health_types
+import supernova/metrics/record
 
 pub type ChannelHealth =
   Subject(Message)
@@ -67,6 +68,10 @@ pub fn report(
   outcome: Result(Nil, String),
   now_ms: Int,
 ) -> Nil {
+  case outcome {
+    Ok(Nil) -> Nil
+    Error(_) -> record.count("channel_poll_errors_total", [#("channel", name)])
+  }
   process.send(health, Report(name, outcome, now_ms))
 }
 

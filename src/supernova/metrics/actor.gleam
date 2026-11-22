@@ -3,6 +3,7 @@
 //// Collects and exposes metrics in Prometheus text format.
 
 import gleam/erlang/process.{type Subject}
+import gleam/int
 import gleam/list
 import gleam/otp/actor
 
@@ -13,6 +14,7 @@ pub type Metrics =
 
 pub type MetricsCommand {
   IncCounter(name: String, labels: List(#(String, String)))
+  AddCounter(name: String, amount: Int, labels: List(#(String, String)))
   SetGauge(name: String, value: Int, labels: List(#(String, String)))
   AddGauge(name: String, delta: Int, labels: List(#(String, String)))
   ObserveHistogram(name: String, value: Float, labels: List(#(String, String)))
@@ -25,13 +27,19 @@ fn handle_message(
   message: MetricsCommand,
 ) -> actor.Next(metrics_types.MetricsRegistry, MetricsCommand) {
   case message {
-    IncCounter(name, labels) -> {
+    IncCounter(name, labels) ->
+      handle_message(state, AddCounter(name, 1, labels))
+    AddCounter(name, amount, labels) -> {
       let new_counters = case find_counter(state.counters, name, labels) {
-        Ok(c) -> update_counter(state.counters, name, labels, c.value + 1)
+        Ok(c) -> update_counter(state.counters, name, labels, c.value + amount)
         Error(Nil) ->
           list.prepend(
             state.counters,
-            metrics_types.CounterMetric(name: name, value: 1, labels: labels),
+            metrics_types.CounterMetric(
+              name: name,
+              value: amount,
+              labels: labels,
+            ),
           )
       }
       actor.continue(metrics_types.MetricsRegistry(
@@ -247,6 +255,16 @@ pub fn inc_counter(
   labels: List(#(String, String)),
 ) {
   actor.send(metrics, IncCounter(name, labels))
+}
+
+/// Add a non-negative amount to a counter (tokens, cost in micro-USD).
+pub fn add_counter(
+  metrics: Metrics,
+  name: String,
+  amount: Int,
+  labels: List(#(String, String)),
+) {
+  actor.send(metrics, AddCounter(name, int.max(amount, 0), labels))
 }
 
 pub fn set_gauge(

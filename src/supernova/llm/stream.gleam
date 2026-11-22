@@ -351,6 +351,14 @@ pub fn start_stream_with_tools(
   config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
 ) -> Subject(StreamChunk) {
+  start_stream_from(fn() { client.chat(messages, config, tools) })
+}
+
+/// Run `call` in a worker and forward its result as stream chunks. The
+/// caller decides how the call is made (and instrumented).
+pub fn start_stream_from(
+  call: fn() -> Result(provider.ChatResponse, provider.LLMError),
+) -> Subject(StreamChunk) {
   let relay = process.new_subject()
 
   // Spawn a worker that makes a synchronous LLM call and forwards
@@ -358,7 +366,7 @@ pub fn start_stream_with_tools(
   // never wired the relay to the actor.
   let _ =
     process.spawn_unlinked(fn() {
-      case client.chat(messages, config, tools) {
+      case call() {
         Ok(response) -> {
           // Send text content as a single chunk
           case response.content {

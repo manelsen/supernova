@@ -35,13 +35,33 @@ import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/syscall/actor as syscall_actor
 import supernova/llm/pricing
 import supernova/llm/provider
+import supernova/metrics/record
 
 // ============================================================================
 // Gate
 // ============================================================================
 
-/// Gate one inbound message before any LLM or tool work.
+/// Gate one inbound message before any LLM or tool work. Every decision is
+/// counted in `gate_decisions_total`.
 pub fn gate(
+  runtime: types.Runtime,
+  channel: String,
+  chat_id: String,
+  user_id: String,
+  content: String,
+) -> types.GateResult {
+  let result = decide(runtime, channel, chat_id, user_id, content)
+  record.count("gate_decisions_total", [
+    #("channel", channel),
+    #(
+      "decision",
+      pure.decision_label(result, content, runtime.config.access.denied_reply),
+    ),
+  ])
+  result
+}
+
+fn decide(
   runtime: types.Runtime,
   channel: String,
   chat_id: String,
@@ -699,6 +719,21 @@ fn record_llm_usage(
 ) -> Nil {
   let price = model_price(runtime, model)
   let cost = pricing.cost_usd(price, prompt_tokens, completion_tokens)
+  let labels = [#("provider", provider_name), #("model", model)]
+  record.count_by("llm_tokens_total", prompt_tokens, [
+    #("kind", "prompt"),
+    ..labels
+  ])
+  record.count_by("llm_tokens_total", completion_tokens, [
+    #("kind", "completion"),
+    ..labels
+  ])
+  // Counters are integers: cost in millionths of a dollar.
+  record.count_by(
+    "llm_cost_usd_micros_total",
+    float.round(cost *. 1_000_000.0),
+    labels,
+  )
   case
     ledger_actor.try_record_llm_usage_with_call_id(
       live_ledger(runtime),
