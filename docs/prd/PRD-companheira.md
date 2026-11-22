@@ -1,5 +1,7 @@
 # PRD — Agente Companheiro (Companion Agent)
 
+> **Situação em 22/11/2026:** Entregue e superado. Foi o rascunho original da agente companheira: os 37 itens estão marcados, e o desenho evoluiu nas PRDs B1, B2, H e N. O cabeçalho "Draft" abaixo é histórico.
+
 **Versão:** 1.0  
 **Status:** Draft  
 **Data:** 2026-04-19  

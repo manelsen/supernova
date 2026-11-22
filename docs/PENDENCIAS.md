@@ -2,10 +2,9 @@
 
 Consolidado em 22/11/2026, a partir de:
 
-- os PRDs do root (`PRD.md`, retomada, B1, B1.1 e rodada 2, B2 e fase C, H, N);
-- `docs/prd/production-ready-v1.md` e `tasks/PRDwizard.md`;
-- `TODO.md`, `IMPLEMENTATION_TODO.md`, `IMPLEMENTATION_READY.md` e `UX.md`;
-- os relatórios em `docs/` (retomada, B1, B1.1, B2, harness);
+- os PRDs, hoje em [`docs/prd/`](prd/);
+- os relatórios, em [`docs/relatorios/`](relatorios/);
+- os planos de março (`TODO.md`, `IMPLEMENTATION_TODO.md`, `IMPLEMENTATION_READY.md`, `UX.md`), hoje em [`docs/arquivo/`](arquivo/);
 - `audit/production.md` e `audit/STATUS_2026-11.md`;
 - as notas do mantenedor sobre o pós-piloto;
 - o que apareceu no piloto e na fase 1 do computador.
@@ -14,11 +13,41 @@ Cada item foi conferido no código e, quando possível, no piloto rodando. As ca
 
 Itens sobre Postgres e pgvector foram retirados: o banco saiu na PR #33.
 
-Este documento tem três partes:
+Este documento tem quatro partes:
 
+0. **Decisões e prioridades**: o que o mantenedor decidiu em 22/11 e em que ordem.
 1. **Feito**: estava listado como pendente e já está no código.
 2. **Incompatível com escolhas posteriores**: precisa ser repensado antes de ser feito.
-3. **Em aberto**: para estudar antes de decidir os próximos passos.
+3. **Pendências por tema**: cada uma com a decisão que recebeu.
+
+---
+
+## 0. Decisões e prioridades (22/11)
+
+Ordem de trabalho:
+
+1. **Documentação (nível 1).** Resolvida antes de qualquer outro ponto, incluindo a atualização dos PRDs em disco (3.6).
+2. **Qualidade, no topo** (3.5).
+3. **Observabilidade total**: o que não pode ser medido dificilmente melhora e frequentemente regride (3.4).
+4. Os demais temas, em ordem a combinar: conversa e memória (3.1), Discord (3.2), aprovação e computador fase 2 (3.3), wizard (2.1).
+
+Decisões por tema:
+
+| Tema | Decisão |
+|---|---|
+| Histórico da conversa | Precisa ser preservado entre reinícios. |
+| Mudança lenta | Deve disparar com uma pessoa só depois de uma semana de encorajamento. |
+| O que a agente vê no grupo | Todas as mensagens da sua pessoa **e** todas as mensagens em que ela for mencionada explicitamente (@). |
+| Explicações inventadas | Aprimorar o prompt para checar esse tipo de alucinação. |
+| Canais | O Discord ganha paridade com o Telegram. Os demais canais esperam a vez. |
+| Aprovação | Botões de aprovação, **sem** liberação geral (nada de "aprovar tudo"). |
+| Computador | Pode passar à fase 2. |
+| Observabilidade | Total. |
+| Qualidade | No topo. |
+| Documentação | Atualizar tudo; nível 1. |
+| Wizard | Boa ideia, adaptada ao fluxo com Docker e gVisor. |
+| Riscos aceitos | Continuam aceitos; podem ser revistos com bons argumentos. |
+| `docs/rag` e material de referência antigo | Limpar o que ficou para trás. |
 
 ---
 
@@ -51,7 +80,7 @@ Este documento tem três partes:
 
 ## 2. Incompatível com escolhas posteriores
 
-### 2.1 Quickstart nativo com `curl` + `systemd` (`tasks/PRDwizard.md`)
+### 2.1 Quickstart nativo com `curl` + `systemd` ([`docs/prd/PRD-wizard.md`](prd/PRD-wizard.md))
 
 O PRD tira o Docker do caminho principal e instala o serviço direto no host, com `systemd`. Hoje a Supernova roda em Docker e o computador da agente depende de Docker com gVisor (`runsc`).
 
@@ -65,6 +94,8 @@ O PRD tira o Docker do caminho principal e instala o serviço direto no host, co
 - os passos que hoje são manuais e dependem de `sudo`: instalar o gVisor e as regras de firewall do computador;
 - o smoke test do quickstart e a verificação de que os comandos da documentação existem.
 
+**Ponto de partida:** o CLI em `scripts/quickstart/supernova` (instalar, configurar pelo wizard em container, subir, logs, `doctor`) e a documentação dele, arquivada em `docs/arquivo/onboarding-cli/`. Ele ainda não conhece o gVisor nem o computador, e a imagem que ele baixa só é publicada em tags.
+
 **O que não se aproveita:** o serviço instalado direto no host com `systemd`, o Docker relegado a "dev/advanced" e o release BEAM pré-compilado como caminho principal.
 
 ### 2.2 Onboarding antigo e "bootstrap de agente por sessão"
@@ -75,7 +106,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 ---
 
-## 3. Em aberto
+## 3. Pendências por tema
 
 ### 3.1 Conversa e memória
 
@@ -120,25 +151,39 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 ### 3.4 Observabilidade e desempenho
 
-- **Métricas** (`production-ready-v1` REQ-4/11). O `/metrics` existe e responde 200, mas vem vazio no piloto: só o código de sub-agentes registra métricas, e a conversa, as ferramentas e as chamadas de LLM não registram nada.
-- **Tracing** (REQ-3/12). Não existe. A dependência `opentelemetry_api` saiu junto com o driver do Postgres.
+- **Métricas e tracing** (`production-ready-v1` REQ-3/4/11/12). A instrumentação existe, mas no piloto não aparece nada, e a causa não foi investigada.
+  - **O que existe:** o executor registra contadores e histogramas de LLM e abre spans `llm.chat` e `tool.execute`; os atores `metrics` e `tracing` sobem no boot; os spans iriam para o stdout, e não há exportação OTLP.
+  - **O que aparece no piloto:** o `/metrics` responde 200 e vem vazio depois de uma hora de conversa, e nenhum span aparece no log.
+  - **Sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` não são importados por ninguém fora dos próprios módulos.
 - **Benchmarks** (REQ-9). O código está em `test/bench/`, mas as metas de `BENCHMARKS.md` nunca foram medidas.
 - **Teste de carga** (REQ-8). O código está em `tests/load/` e `run_load_tests.sh`. A meta (100 usuários, p99 < 2 s, erro < 1%) nunca foi verificada.
 - **Verificação final da v1.** Faltam os critérios de `production-ready-v1`: spans visíveis, circuit breaker medido e nenhum `mock` em código de produção.
 
 ### 3.5 Qualidade
 
-- **Cobertura de 85%.** O gate está em 75%. Origem: retomada.
+- **Cobertura.** Medida em 22/11: 78,84% (14.114 de 17.903 linhas). O gate está em 75%, e a meta antiga era 85%. Os módulos com mais linhas descobertas são adaptadores de canal (Slack, WhatsApp, webhooks do Discord), `discord_events`, `channel_common_router` e `wizard`. Origem: retomada.
 - **Testes com Chromium real no CI.** Hoje só rodam com `SUPERNOVA_BROWSER_TESTS=1`. O computador já roda os testes dele no CI. Origem: auditoria 3.4.
 
 ### 3.6 Documentação
 
-- **`README.md`** ainda apresenta a v0.3.0 com Postgres. Falta contar a agente companheira, uma agente por pessoa e o computador.
-- **`STATUS.md`** parou em 18/11: tem números antigos e lista o Postgres como persistência.
-- **`OBSERVABILITY.md`** diz que o `/metrics` "não está integrado" e que o `/ready` checa banco. Os alertas descrevem métricas que nunca são registradas.
-- **`BENCHMARKS.md`** é só "TBD".
+Feito em 22/11 (PR #37):
+
+- `README.md`, `GETTING_STARTED.md`, `docs/STATUS.md`, `docs/operations/OBSERVABILITY.md`, `docs/operations/INTERACTION.md` e `docs/operations/DOCKER.md` foram reescritos com o que é verdade hoje, conferido no código e no piloto.
+- A arquitetura ganhou grupo fechado, self, agenda, computador e harness.
+- A raiz foi organizada:
+  - os PRDs foram para `docs/prd/`, cada um com um bloco de situação;
+  - os relatórios foram para `docs/relatorios/`, as notas de versão para `docs/releases/` e os planos antigos para `docs/arquivo/`.
+- Saíram:
+  - `docs/rag/`, o `scripts/fetch_docs.sh` e o `scripts/create_prs.sh`;
+  - o `BENCHMARKS.md`, que estava vazio;
+  - a cópia duplicada do CLI na raiz.
+- As referências de canais ficaram em `docs/research/`, como retrato de março.
+
+Ainda aberto:
+
 - **O PRD N não tem relatório.**
-- **A raiz está bagunçada.** Falta mover PRDs, notas de versão e planos antigos para `docs/` e revisar `docs/rag/` e `docs/research/`.
+- **Não existe arquivo `LICENSE`.** O README diz MIT.
+- **`audit/` continua como está.** A auditoria de março está reconciliada em `audit/STATUS_2026-11.md`.
 
 ### 3.7 Riscos aceitos (revisitar)
 

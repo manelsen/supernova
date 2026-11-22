@@ -305,6 +305,8 @@ global vale para todos, inclusive admins.
 | `/teto liberar <usd>` | admin |
 | `/auditoria [n]` | admin |
 | `/auditoria <principal> [n]` | admin |
+| `/agenda`, `/agenda remover <id>` | membros e admins |
+| `/esquecer`, `/esquecer confirmo` | membros e admins |
 
 ### Validar antes de subir
 

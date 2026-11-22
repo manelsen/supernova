@@ -1,6 +1,8 @@
 [PRD]
 # PRD B1: Grupo fechado e kernel ligado
 
+> **Situação em 22/11/2026:** Entregue na v0.4.0. Relatório: [B1_REPORT.md](../relatorios/B1_REPORT.md). Os riscos aceitos estão em [docs/PENDENCIAS.md](../PENDENCIAS.md), seção 3.7.
+
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar. Execute as histórias **na ordem**. Cada história termina com os quality gates verdes e um commit próprio.
 >
 > **Dimensionamento:** 19 histórias, cerca de 7 horas de execução. Se a sessão for interrompida, retome pela primeira história sem commit, conferindo `git log --oneline` contra os títulos de commit de cada história.

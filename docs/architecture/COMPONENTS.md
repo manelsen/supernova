@@ -55,3 +55,31 @@
 - `plugins.gleam`
   - plugin registry and plugin execution path.
 
+
+## Closed Group
+
+- `core/closed_group/*`: the gate every inbound message passes (access, commands, admission, lanes).
+- `core/access/*`: admins, members and allowed chats (`/acesso`).
+- `core/instance_budget/*`, `core/rate_limit/*`: the instance ceiling and per-person limits.
+- `core/agent_queue/*`: one serial lane per chat.
+- `core/audit_log/*`: decisions shown by `/auditoria`.
+
+## The Agent's Self
+
+- `self/*`: birth, core, journal, reflection, drift, forgetting and incidents, stored per agent under `/data/agents/<principal>/self/`.
+- `priv/constellation/`, `priv/reflection/`: maintainer-owned content used by `self/*`.
+
+## Agenda and Tools
+
+- `agenda/*`: per-person scheduled requests and the 30-second sweeper.
+- `tools/*`: built-in tools (`file_system`, `safe_shell`, `web`, `browser`, `github`, `git_inspect`, `gateway`, `canvas`, `process`, `agenda`, `computador`).
+- `computador/`: the agent's computer, a separate container on gVisor.
+
+## Health and Instrumentation
+
+- `health/*`: `/health`, `/health/live`, `/health/ready`, `/metrics` on port 8080.
+- `metrics/*`, `tracing/*`: instrumentation actors. Their current state is in `docs/operations/OBSERVABILITY.md`.
+
+## Harness
+
+- `sim/*`, `harness/*`: the simulated channel, invariant checks and the personas-and-judge harness (`docs/HARNESS.md`).

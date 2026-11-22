@@ -1,5 +1,7 @@
 # PRD B1.1 — rodada 2: integridade de custo, cobrança de ferramentas e desligamento
 
+> **Situação em 22/11/2026:** Entregue (PR #13). Relatório: [B1_1_REPORT.md](../relatorios/B1_1_REPORT.md). Os riscos aceitos estão em [docs/PENDENCIAS.md](../PENDENCIAS.md), seção 3.7.
+
 > Executor: DeepSeek 4.1 Flash. Branch: `fix/b1-1-endurecimento` (PR #13).
 > Revisor: Claude, antes de qualquer merge. O executor **não** faz merge, tag nem publica imagem.
 

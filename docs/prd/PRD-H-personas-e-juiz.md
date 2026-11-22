@@ -1,5 +1,7 @@
 # PRD H: ambiente de personas autônomas e juiz
 
+> **Situação em 22/11/2026:** Entregue. Relatório: [HARNESS_REPORT.md](../relatorios/HARNESS_REPORT.md). As personas `bia` e `caio` e a rubrica `provisorio` são provisórias de propósito: servem de fixture para os testes do executor.
+
 > Executor: DeepSeek 4.1 Flash. Revisor: Claude, antes de qualquer merge.
 > O executor **não** faz merge, tag nem publica imagem.
 

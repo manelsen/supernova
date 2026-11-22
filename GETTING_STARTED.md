@@ -1,152 +1,85 @@
 # Getting Started
 
-This guide takes you from zero to a running Supernova agent in about 10 minutes.
+From zero to talking with your own agent on Telegram. Running a group (several people, Discord, ceilings) is covered in [DEPLOY.md](DEPLOY.md).
 
 ## Prerequisites
 
-- [Gleam](https://gleam.run/getting-started/) >= 1.0.0
-- [Erlang/OTP](https://www.erlang.org/downloads) >= 25.0
-- Docker (optional, for Option A)
+- Docker Engine 28+ and Docker Compose 2.33.1+.
+- An API key for one LLM provider. The pilot runs on Mistral, serving DeepSeek.
+- A Telegram bot token. Open `@BotFather`, send `/newbot` and copy the token.
+- Optional: gVisor (`runsc`), only if you want the agent to have its own computer.
 
----
-
-## Option A: Docker (recommended)
-
-The fastest path. Docker builds and runs the app.
-
-**1. Clone and configure**
+## 1. Configure
 
 ```sh
-git clone <repo>
+git clone https://github.com/manelsen/supernova
 cd supernova
-cp examples/quickstart/supernova.yaml supernova.yaml
+cp supernova.yaml.example supernova.yaml
+cp .env.example .env && chmod 600 .env
 ```
 
-Edit `supernova.yaml` and fill in:
-- Your LLM API key (Anthropic or OpenAI)
-- Your Telegram and/or Discord bot token
+In `supernova.yaml`:
 
-**2. Set secrets as environment variables**
+- **Providers:** keep only the provider you will use. Agents use the provider whose name sorts first.
+- **Channels:** set `enabled: true` under `telegram`.
+
+In `.env`, fill in your provider's key and the bot token:
 
 ```sh
-export SUPERNOVA_ANTHROPIC_API_KEY=sk-ant-...
-export SUPERNOVA_TELEGRAM_TOKEN=123456:ABC-DEF...
+SUPERNOVA_PROVIDER_MISTRAL_API_KEY=...
+SUPERNOVA_TELEGRAM_TOKEN=...
 ```
 
-Or put them in a `.env` file (Docker Compose picks it up automatically):
+The variable name follows the provider's key in `supernova.yaml`: `SUPERNOVA_PROVIDER_{NAME}_API_KEY`. `docker-compose.yml` passes only the Mistral, Anthropic and OpenAI keys to the container; for any other provider, add its variable there too.
+
+## 2. Start and find your id
 
 ```sh
-SUPERNOVA_ANTHROPIC_API_KEY=sk-ant-...
-SUPERNOVA_TELEGRAM_TOKEN=123456:ABC-DEF...
+docker compose up -d --build
 ```
 
-**3. Start**
+The instance is a **closed group**: it denies everyone until someone is on its access list. Send `/eu` to your bot. It answers even before you are authorized, and shows your id, for example `telegram:123456789`.
+
+## 3. Make yourself admin
+
+Add your id to `.env` and restart:
 
 ```sh
-docker compose up
+SUPERNOVA_ACCESS_ADMINS=telegram:123456789
 ```
 
-Supernova starts and begins polling your Telegram/Discord bot.
+```sh
+docker compose up -d
+```
 
----
+## 4. Meet your agent
 
-## Option B: Local
+Send any message. Your agent is born: it gets a character of its own, and then asks you for a name. From then on:
 
-**1. Install dependencies**
+- it remembers what you tell it and reflects on it;
+- `/agenda` shows what you asked it to do later;
+- `/uso` shows what it has spent;
+- `/esquecer` erases everything you told it, and keeps who it became.
+
+The full list of commands is in [docs/operations/INTERACTION.md](docs/operations/INTERACTION.md).
+
+## Optional: the agent's computer
+
+The agent can have a Linux machine of its own, with a shell and a browser it sees through screenshots. The machine runs in a separate gVisor container that holds no secrets. Setup, the firewall rules and the threat model are in [docs/operations/COMPUTADOR.md](docs/operations/COMPUTADOR.md).
+
+## Running without Docker
+
+You need the pinned toolchain from `.tool-versions` (Erlang 28.5.0.8, Gleam 1.19.2):
 
 ```sh
 gleam deps download
-```
-
-**2. Configure interactively (optional)**
-
-The wizard guides you through creating bots and generates `supernova.yaml`:
-
-```sh
-gleam run -m supernova/wizard_main
-```
-
-Or copy and edit manually:
-
-```sh
-cp examples/quickstart/supernova.yaml supernova.yaml
-# edit supernova.yaml
-```
-
-**3. Run**
-
-```sh
+set -a; . ./.env; set +a
 gleam run
 ```
 
-You should see:
-
-```
-🚀 Starting Supernova...
-✓ Loaded configuration from supernova.yaml
-✓ Session Supervisor started
-✓ MCP Manager started
-✓ All services started
-✓ Supernova is running...
-
-Press Ctrl+C to shutdown
-```
-
----
-
-## Getting a Telegram bot token
-
-1. Open Telegram and search for `@BotFather`
-2. Send `/newbot`
-3. Follow the prompts — choose a name and username
-4. Copy the token BotFather gives you
-5. Set it in `supernova.yaml` under `telegram.token` or as `SUPERNOVA_TELEGRAM_TOKEN`
-
----
-
-## Getting a Discord bot
-
-1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
-2. Create a new application
-3. Go to **Bot** → **Add Bot**
-4. Copy the bot token
-5. Under **OAuth2 → URL Generator**, select `bot` + `applications.commands`
-6. Open the generated URL to invite the bot to your server
-7. Set the token as `SUPERNOVA_DISCORD_TOKEN` and the application ID as `SUPERNOVA_DISCORD_APP_ID`
-
----
-
-## Verifying it works
-
-Once running, send your bot a message. Supernova logs each session start:
-
-```
-✓ Session started: telegram:chat_id
-✓ LLM request: anthropic / claude-haiku-4-5
-✓ Response sent
-```
-
-To see resource accounting per agent:
-
-```sh
-# (coming soon: gleam run -- doctor)
-```
-
----
-
-## Next steps
-
-- Read [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) for the full architecture overview
-- Adjust `budgets` in `supernova.yaml` to control per-agent token limits
-- Add MCP servers under `mcp_servers:` in `supernova.yaml` to extend tool capabilities
-- Set `environment: production` and `log_level: warn` before deploying
-
----
-
 ## Troubleshooting
 
-**`supernova.yaml not found`** — the file is optional; Supernova uses defaults. Check that your API key and bot token are set as environment variables.
-
-**`Failed to start services`** — read the line after it: it names the cause (for example, no LLM provider configured).
-
-**Bot does not respond** — verify the token is correct and the bot is not already running elsewhere (Telegram allows only one polling connection per token).
+- **The bot does not answer at all.** Check `docker compose logs supernova`. Telegram allows one polling connection per token, so make sure the bot is not running elsewhere.
+- **The bot answers "Esta instância é privada."** You are not on the access list yet: see step 3.
+- **The bot says "A Supernova ainda não está pronta para receber agentes novas."** `priv/constellation/constellation.json` is missing.
+- **Health:** `docker exec supernova wget -qO- http://127.0.0.1:8080/health/ready` lists each channel and whether it is ready.

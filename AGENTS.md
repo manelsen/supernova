@@ -23,6 +23,7 @@ These rules apply to every contributor, human or automated (executor agents, Cod
 - **TDD:** write the test, confirm it fails, then implement. Record the failing run in the commit message.
 - **Fast loop:** while working on a story, run only the affected test modules with `make test-only T="test/path/to_test.gleam test/some_dir"` (seconds, not minutes). Run the full gates below before each commit.
 - One commit per story when working from a PRD, with the commit message the PRD gives.
+- PRDs live in `docs/prd/` and their execution reports in `docs/relatorios/`. Open work, with the maintainer's decisions and priorities, is in `docs/PENDENCIAS.md`. Keep it current: mark an item done when its PR merges.
 - Pull before committing on a shared branch: executor agents and CodeRabbit Autofix may both commit to the same PR branch.
 - **Never merge, tag, publish a release or push images.** The maintainer does that after review.
 

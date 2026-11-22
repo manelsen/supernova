@@ -1,6 +1,8 @@
 [PRD]
 # PRD: Quickstart Linux via `curl` + `systemd` com wizard obrigatório
 
+> **Situação em 22/11/2026:** Não executado. É incompatível com as escolhas posteriores, porque instala direto no host com `systemd` e Postgres. A ideia do wizard continua valendo, adaptada a Docker e gVisor: veja [docs/PENDENCIAS.md](../PENDENCIAS.md), seção 2.1. O CLI em `scripts/quickstart/supernova` e a documentação dele, em `docs/arquivo/onboarding-cli/`, são o ponto de partida.
+
 ## Overview
 Substituir o onboarding principal baseado em Docker por um quickstart host-native iniciado via `curl`, com instalação em Linux com `systemd`, PostgreSQL local e configuração obrigatória via wizard. Docker deixa de ser caminho recomendado e passa a ser opção de desenvolvimento e documentação avançada. O wizard passa a ser obrigatório no fluxo padrão, com modo não interativo equivalente para automação e CI.
 

@@ -60,7 +60,7 @@ All `16` findings (§2–3) and `9` requirements (§7) from `audit/RELATORIO_AUD
 ## 6. Docker Smoke Test Result (US-011)
 
 - Built `docker build -t supernova:retomada .` cleanly (`erlang:28.5.0.8-alpine`, Gleam `1.19.2`, `rebar3`).
-- Booted container with offline smoke fixture [test/fixtures/docker/supernova.yaml](../test/fixtures/docker/supernova.yaml) (all channels disabled, `ollama` provider configured — no external network or API tokens required).
+- Booted container with offline smoke fixture [test/fixtures/docker/supernova.yaml](../../test/fixtures/docker/supernova.yaml) (all channels disabled, `ollama` provider configured — no external network or API tokens required).
 - `curl -fsS http://127.0.0.1:18080/health/live` returned HTTP `200` (`ok`) on attempt 4 (~4s), and `/health` returned `{"status":"ok","uptime_seconds":1}`.
 - Cleaned up temporary container and test image (`supernova-smoke`, `supernova:retomada`), added `!test/fixtures/docker/supernova.yaml` in `.gitignore`, and documented the smoke test in `DEPLOY.md`.
 

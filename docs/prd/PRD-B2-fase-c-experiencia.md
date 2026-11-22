@@ -1,5 +1,7 @@
 # PRD B2 Fase C: experiência, esquecimento e mudança lenta
 
+> **Situação em 22/11/2026:** Entregue. Relatório: [B2_REPORT.md](../relatorios/B2_REPORT.md), Fase C. Pendente: com uma pessoa só, a mudança lenta nunca dispara. A decisão de 22/11 é que ela dispare depois de uma semana de encorajamento: veja [docs/PENDENCIAS.md](../PENDENCIAS.md), seção 3.1.
+
 > Executor: DeepSeek 4.1 Flash. Revisor: Claude, antes de qualquer merge.
 > O executor **não** faz merge, tag nem publica imagem.
 

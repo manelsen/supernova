@@ -27,7 +27,7 @@ Supernova 0.3.0 stabilizes and hardens the codebase after the v0.2.0 multi-chann
 ### Dependencies & Container Smoke Test
 
 - **Dependency updates** — updated `gleam_stdlib` to `1.1.0`, `gleam_otp` to `1.3.0`, `gleam_http` to `4.5.0`, `gleam_hackney` to `1.4.0`, and `hackney` to `4.12.1`; updated `supernova_llm_stream_ffi.erl` to handle both `pid()` and `reference()` async stream handles in hackney 4.x
-- **Docker smoke test** — added offline-safe fixture [test/fixtures/docker/supernova.yaml](test/fixtures/docker/supernova.yaml) and documented container `/health/live` verification in `DEPLOY.md`
+- **Docker smoke test** — added offline-safe fixture [test/fixtures/docker/supernova.yaml](../../test/fixtures/docker/supernova.yaml) and documented container `/health/live` verification in `DEPLOY.md`
 
 ---
 

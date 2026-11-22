@@ -1,6 +1,8 @@
 [PRD]
 # PRD: Retomada da Supernova — verde, segura e implantável
 
+> **Situação em 22/11/2026:** Entregue na v0.3.0 (PR #10). Relatório: [RETOMADA_REPORT.md](../relatorios/RETOMADA_REPORT.md). Os itens sobre Postgres e pgvector perderam o objeto com a remoção do banco (PR #33).
+
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar. Execute as histórias **na ordem**. Cada história termina com os quality gates verdes (ou com a exceção documentada na própria história) e um commit próprio.
 
 ## 1. Contexto

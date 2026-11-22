@@ -1,30 +1,14 @@
-# Supernova with Docker (Development / Advanced)
+# Supernova with Docker
 
-> **Note:** Docker is not recommended for production deployments.
-> For production, use the standard installation:
-> ```
-> curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/supernova -o supernova
-> chmod +x supernova
-> ./supernova install
-> ```
-> See [ONBOARDING_OVERVIEW.md](ONBOARDING_OVERVIEW.md) for details.
-
-
-This document covers Docker usage for local development and advanced setups.
-
-## When to use Docker
-
-- Local development on macOS or Windows
-- Quick evaluation without modifying your system
-- Complex multi-service setups
-- Building and testing custom images
+Docker Compose is the supported way to run Supernova, and the pilot runs on it. The agent's computer (`computador`) also needs Docker, with gVisor (`runsc`) registered as a runtime: see [COMPUTADOR.md](COMPUTADOR.md). The first-time setup is described in [DEPLOY.md](../../DEPLOY.md). A wizard that runs it for you, adapted to Docker and gVisor, is planned ([`docs/PENDENCIAS.md`](../PENDENCIAS.md), section 2.1).
 
 ## Prerequisites
 
-- Docker and Docker Compose installed
+- Docker Engine 28+ and Docker Compose 2.33.1+ (`gw_priority` in `docker-compose.yml`)
+- gVisor (`runsc`), only if you enable the agent's computer
 - Internet access to pull images
 
-## Quick start (development)
+## Quick start
 
 ```sh
 # Clone the repository
@@ -83,19 +67,3 @@ services:
   supernova:
     image: supernova:custom
 ```
-
-## Production deployment
-
-For production, use the systemd quickstart:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/quickstart/install.sh | bash
-```
-
-This provides:
-- Systemd service management with restart policies
-- Graceful shutdown handling
-- Proper separation of config and secrets
-- Idempotent, auditable installation
-
-See [ONBOARDING_OVERVIEW.md](ONBOARDING_OVERVIEW.md) for details.

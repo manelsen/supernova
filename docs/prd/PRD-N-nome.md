@@ -1,5 +1,7 @@
 # PRD N: a agente entende o nome que recebe
 
+> **Situação em 22/11/2026:** Entregue (`priv/constellation/name_prompt.md` e o fluxo de nome). Não tem relatório próprio.
+
 > Executor: DeepSeek 4.1 Flash. Revisor: Claude, antes de qualquer merge.
 > O executor **não** faz merge, tag nem publica imagem.
 

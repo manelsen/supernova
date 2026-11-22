@@ -1,6 +1,8 @@
 [PRD]
 # PRD B1.1: Endurecimento do grupo fechado antes da B2
 
+> **Situação em 22/11/2026:** Entregue. Relatório: [B1_REPORT.md](../relatorios/B1_REPORT.md), seções da Fase B. Os riscos aceitos estão em [docs/PENDENCIAS.md](../PENDENCIAS.md), seção 3.7.
+
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar. Execute as fases e as histórias **na ordem**. Cada história termina com os quality gates verdes e um commit próprio.
 >
 > **Dimensionamento:** 18 histórias em duas fases. Se a sessão for interrompida, retome pela primeira história sem commit, conferindo `git log --oneline` contra os títulos de commit de cada história.

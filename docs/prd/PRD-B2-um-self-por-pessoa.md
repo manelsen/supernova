@@ -1,5 +1,7 @@
 # PRD B2: uma agente por pessoa, com self próprio
 
+> **Situação em 22/11/2026:** Entregue (fases A e B). Relatório: [B2_REPORT.md](../relatorios/B2_REPORT.md). O conteúdo do mantenedor já foi escrito. O que a agente vê no grupo foi redecidido em 22/11: veja [docs/PENDENCIAS.md](../PENDENCIAS.md), seção 0.
+
 > Executor: DeepSeek 4.1 Flash. Revisor: Claude, antes de qualquer merge.
 > O executor **não** faz merge, tag nem publica imagem.
 
