@@ -126,7 +126,15 @@ pub fn record_failure(
   breaker: CircuitBreaker,
   config: CircuitConfig,
 ) -> CircuitBreaker {
-  let now = current_timestamp()
+  record_failure_at(breaker, config, current_timestamp())
+}
+
+/// Record a failure that happened at `now`.
+pub fn record_failure_at(
+  breaker: CircuitBreaker,
+  config: CircuitConfig,
+  now: Int,
+) -> CircuitBreaker {
   let new_failure_count = breaker.failure_count + 1
   case breaker.state {
     CircuitClosed -> {

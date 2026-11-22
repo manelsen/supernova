@@ -6,6 +6,7 @@
 import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/otp/actor
+import gleam/result
 import supernova/llm/circuit_breaker
 
 pub type CircuitBreakerActor =
@@ -56,13 +57,13 @@ fn handle_message(
   state: BreakerMap,
   message: CircuitBreakerCommand,
   config: CircuitBreakerConfig,
+  clock: fn() -> Int,
 ) -> actor.Next(BreakerMap, CircuitBreakerCommand) {
   case message {
     CheckAndCall(provider, reply_to) -> {
       let cc = to_circuit_config(config)
       let breaker = get_or_create_breaker(state, provider, cc)
-      let #(allowed, breaker) =
-        circuit_breaker.admit(breaker, cc, current_timestamp())
+      let #(allowed, breaker) = circuit_breaker.admit(breaker, cc, clock())
       let state = update_breaker(state, provider, breaker)
       case allowed {
         True -> actor.send(reply_to, Allowed)
@@ -81,7 +82,7 @@ fn handle_message(
     RecordFailure(provider, reply_to) -> {
       let cc = to_circuit_config(config)
       let breaker = get_or_create_breaker(state, provider, cc)
-      let updated = circuit_breaker.record_failure(breaker, cc)
+      let updated = circuit_breaker.record_failure_at(breaker, cc, clock())
       let new_state = update_breaker(state, provider, updated)
       actor.send(reply_to, Nil)
       actor.continue(new_state)
@@ -131,10 +132,26 @@ pub fn start(
 pub fn start_linked(
   config: CircuitBreakerConfig,
 ) -> Result(actor.Started(CircuitBreakerActor), actor.StartError) {
+  start_linked_with_clock(config, current_timestamp)
+}
+
+/// Start with an injected clock, so tests control recovery time.
+pub fn start_with_clock(
+  config: CircuitBreakerConfig,
+  clock: fn() -> Int,
+) -> Result(CircuitBreakerActor, actor.StartError) {
+  start_linked_with_clock(config, clock)
+  |> result.map(fn(started) { started.data })
+}
+
+fn start_linked_with_clock(
+  config: CircuitBreakerConfig,
+  clock: fn() -> Int,
+) -> Result(actor.Started(CircuitBreakerActor), actor.StartError) {
   let initial: BreakerMap = dict.new()
   actor.new(initial)
   |> actor.on_message(fn(state, message) {
-    handle_message(state, message, config)
+    handle_message(state, message, config, clock)
   })
   |> actor.start
 }

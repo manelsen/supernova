@@ -375,8 +375,34 @@ pub fn new_config(token: String) -> Config {
   )
 }
 
+/// Check a Bot API server URL before the token is sent to it: HTTPS for any
+/// host, plain HTTP only for loopback, so the token never crosses a network
+/// in cleartext.
+pub fn check_base_url(base_url: String) -> Result(Nil, String) {
+  let allowed = case uri.parse(string.trim(base_url)) {
+    Ok(parsed) -> {
+      let scheme = option.map(parsed.scheme, string.lowercase)
+      let host = option.map(parsed.host, string.lowercase)
+      case scheme, host {
+        Some("https"), Some(_) -> True
+        Some("http"), Some(host) ->
+          list.contains(["localhost", "127.0.0.1", "::1", "[::1]"], host)
+        _, _ -> False
+      }
+    }
+    Error(_) -> False
+  }
+  case allowed {
+    True -> Ok(Nil)
+    False ->
+      Error(
+        "telegram.base_url must be https, or http on localhost: the bot token travels in the URL",
+      )
+  }
+}
+
 /// Use another Bot API server, such as a self-hosted one, given as
-/// `http://host:port`.
+/// `https://host` or `http://localhost:port`. Call `check_base_url` first.
 pub fn with_base_url(config: Config, base_url: String) -> Config {
   let base = case string.ends_with(base_url, "/") {
     True -> string.drop_end(base_url, 1)

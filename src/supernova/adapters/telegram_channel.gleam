@@ -35,11 +35,14 @@ pub fn start_telegram_channel(
 ) -> Result(#(port.ChannelAdapter, channel_kit.StreamSendFn), String) {
   case telegram_cfg.token {
     Some(token) -> {
-      let poller_config = case telegram_cfg.base_url {
+      use poller_config <- result.try(case telegram_cfg.base_url {
         Some(base_url) ->
-          telegram.with_base_url(telegram.new_config(token), base_url)
-        None -> telegram.new_config(token)
-      }
+          telegram.check_base_url(base_url)
+          |> result.map(fn(_) {
+            telegram.with_base_url(telegram.new_config(token), base_url)
+          })
+        None -> Ok(telegram.new_config(token))
+      })
       let send_fn = telegram_send(poller_config, hooks)
       let stream_send_fn = telegram_stream_send(poller_config, hooks)
 
@@ -745,10 +748,18 @@ fn stream_telegram_reply(
     base_reply,
     events,
     placeholder_message.message_id,
-    "",
+    #("", None),
     channel_kit.stream_timeout_ms,
     keepalive_ms,
   )
+}
+
+/// What the person sees of a streamed message: its text and its buttons.
+type Rendered =
+  #(String, Option(port.ChannelInteractiveReply))
+
+fn rendered(reply: port.ChannelReply) -> Rendered {
+  #(reply.content, reply.interactive)
 }
 
 fn consume_telegram_stream_events(
@@ -756,7 +767,7 @@ fn consume_telegram_stream_events(
   base_reply: port.ChannelReply,
   events: process.Subject(port.ChannelStreamEvent),
   message_id: Int,
-  last_content: String,
+  last: Rendered,
   remaining_ms: Int,
   keepalive_ms: Int,
 ) -> Result(Nil, port.ChannelError) {
@@ -765,7 +776,7 @@ fn consume_telegram_stream_events(
   case process.receive(events, within: wait_ms) {
     Ok(port.StreamUpdate(reply)) ->
       case
-        reply.content != last_content
+        rendered(reply) != last
         && channel_kit.stream_update_fits("telegram", reply.content)
       {
         True -> {
@@ -791,7 +802,7 @@ fn consume_telegram_stream_events(
             base_reply,
             events,
             message_id,
-            reply.content,
+            rendered(reply),
             remaining_ms,
             keepalive_ms,
           )
@@ -802,13 +813,13 @@ fn consume_telegram_stream_events(
             base_reply,
             events,
             message_id,
-            last_content,
+            last,
             remaining_ms,
             keepalive_ms,
           )
       }
     Ok(port.StreamComplete(reply)) ->
-      case reply.content == last_content {
+      case rendered(reply) == last {
         True -> Ok(Nil)
         False ->
           channel_kit.finish_stream_in_parts(
@@ -845,7 +856,7 @@ fn consume_telegram_stream_events(
             base_reply,
             events,
             message_id,
-            last_content,
+            last,
             remaining_ms - wait_ms,
             keepalive_ms,
           )

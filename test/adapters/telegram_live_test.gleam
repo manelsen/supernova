@@ -244,3 +244,73 @@ pub fn repeated_update_does_not_abort_the_stream_test() {
   string.contains(last, "Resposta final") |> should.be_true()
   registry.stop_channels(channels)
 }
+
+pub fn new_buttons_with_the_same_text_still_reach_telegram_test() {
+  let requests = process.new_subject()
+  let fake = telegram_fake.start(requests)
+  let channels = live_registry(fake)
+  let #(events, done) = stream(channels, reply(""))
+  let buttons =
+    port.ChannelInteractiveReply(blocks: [
+      port.InteractionButtons(buttons: [
+        port.ChannelButton("Sim", "confirm:sim", port.ButtonPrimary),
+      ]),
+    ])
+
+  process.send(events, port.StreamUpdate(reply("Escolha")))
+  process.send(
+    events,
+    port.StreamUpdate(
+      port.ChannelReply(..reply("Escolha"), interactive: Some(buttons)),
+    ),
+  )
+  process.send(
+    events,
+    port.StreamComplete(
+      port.ChannelReply(..reply("Escolha"), interactive: Some(buttons)),
+    ),
+  )
+
+  process.receive(done, within: 5000) |> should.equal(Ok(Ok(Nil)))
+  let edits =
+    texts(requests, [])
+    |> list.filter(fn(sent) { sent.0 == "editMessageText" })
+  list.any(edits, fn(sent) { string.contains(sent.1, "confirm:sim") })
+  |> should.be_true()
+  registry.stop_channels(channels)
+}
+
+pub fn base_url_must_not_send_the_token_in_cleartext_test() {
+  telegram.check_base_url("https://bots.example.org") |> should.equal(Ok(Nil))
+  telegram.check_base_url("http://localhost:8081") |> should.equal(Ok(Nil))
+  telegram.check_base_url("http://127.0.0.1:8081") |> should.equal(Ok(Nil))
+  let assert Error(_) = telegram.check_base_url("http://10.0.0.5:8081")
+  let assert Error(_) =
+    telegram.check_base_url("http://localhost:8081@remote.example")
+  let assert Error(_) = telegram.check_base_url("ftp://localhost")
+  let assert Error(_) = telegram.check_base_url("not a url")
+}
+
+pub fn cleartext_base_url_keeps_telegram_from_starting_test() {
+  let base = config.default_config()
+  let cfg =
+    config.Config(
+      ..base,
+      telegram: config.TelegramConfig(
+        token: Some("123:abc"),
+        enabled: True,
+        base_url: Some("http://10.0.0.5:8081"),
+      ),
+    )
+  let assert Ok(channels) =
+    registry.start_channels_with_handler_and_hooks(
+      cfg,
+      fn(_, _) { Error(port.Ignored("test")) },
+      channel_kit.StartHooks(
+        ..channel_kit.no_start_hooks(),
+        disable_telegram_polling: True,
+      ),
+    )
+  registry.is_channel_available(channels, "telegram") |> should.be_false()
+  registry.stop_channels(channels)
+}
