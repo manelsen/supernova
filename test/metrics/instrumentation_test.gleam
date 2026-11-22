@@ -21,10 +21,19 @@ import supernova/metrics/global as metrics_global
 import telegram_fake
 import test_workspace
 
-fn fresh_metrics() -> metrics_actor.Metrics {
+/// Register a fresh metrics actor for the test, and restore the previous
+/// registration when it ends.
+fn with_metrics(body: fn(metrics_actor.Metrics) -> a) -> a {
+  let previous = metrics_global.get_metrics()
   let assert Ok(metrics) = metrics_actor.start()
+  use <- exception.defer(fn() {
+    case previous {
+      Some(previous) -> metrics_global.set_metrics(previous)
+      option.None -> metrics_global.clear_metrics()
+    }
+  })
   metrics_global.set_metrics(metrics)
-  metrics
+  body(metrics)
 }
 
 fn has(body: String, fragment: String) -> Nil {
@@ -53,7 +62,7 @@ fn await_metric(
 }
 
 pub fn a_member_turn_is_measured_end_to_end_test() {
-  let metrics = fresh_metrics()
+  use metrics <- with_metrics
   let base = support.channel_config()
   let cfg =
     config.Config(..base, access: support.access_config([], ["telegram:123"]))
@@ -88,7 +97,7 @@ pub fn a_member_turn_is_measured_end_to_end_test() {
 }
 
 pub fn a_stranger_is_counted_as_denied_test() {
-  let metrics = fresh_metrics()
+  use metrics <- with_metrics
   let base = support.channel_config()
   let cfg =
     config.Config(..base, access: support.access_config([], ["telegram:123"]))
@@ -145,7 +154,7 @@ pub fn decision_labels_test() {
 }
 
 pub fn a_reply_that_fails_is_counted_test() {
-  let metrics = fresh_metrics()
+  use metrics <- with_metrics
   let requests = process.new_subject()
   let fake = telegram_fake.start(requests)
   telegram_fake.queue(
@@ -207,7 +216,7 @@ pub fn a_reply_that_fails_is_counted_test() {
 }
 
 pub fn poll_errors_are_counted_test() {
-  let metrics = fresh_metrics()
+  use metrics <- with_metrics
   let health = channel_health.start()
   channel_health.started(health, "telegram", option.None, 0)
   channel_health.report(health, "telegram", Error("telegram unreachable"), 1)
@@ -220,7 +229,7 @@ pub fn poll_errors_are_counted_test() {
 }
 
 pub fn agenda_runs_are_counted_test() {
-  let metrics = fresh_metrics()
+  use metrics <- with_metrics
   let dir = test_workspace.create_temp_dir("agenda-metrics")
   use <- exception.defer(fn() { test_workspace.remove_dir_recursive(dir) })
   let now = 1_795_273_200_000
