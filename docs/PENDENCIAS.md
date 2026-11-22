@@ -164,6 +164,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 ### 3.5 Qualidade
 
 - **Cobertura.** Medida em 22/11: 78,84% (14.114 de 17.903 linhas). O gate está em 75%, e a meta antiga era 85%. Os módulos com mais linhas descobertas são adaptadores de canal (Slack, WhatsApp, webhooks do Discord), `discord_events`, `channel_common_router` e `wizard`. Origem: retomada.
+- **Provedor sem chave.** A agente usa o provedor cujo nome vem primeiro em ordem alfabética, e nada confere se ele tem chave: a Supernova sobe e falha só na primeira conversa. O boot deveria recusar.
 - **Testes com Chromium real no CI.** Hoje só rodam com `SUPERNOVA_BROWSER_TESTS=1`. O computador já roda os testes dele no CI. Origem: auditoria 3.4.
 
 ### 3.6 Documentação
