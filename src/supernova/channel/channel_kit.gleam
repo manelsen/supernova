@@ -31,6 +31,8 @@ pub type StartHooks {
     outbound_records: Option(process.Subject(OutboundRecord)),
     leave_group: Option(fn(String) -> Bool),
     leave_retry_ms: List(Int),
+    /// Wait before checking a group again when access was unavailable.
+    leave_recheck_ms: Int,
   )
 }
 
@@ -76,6 +78,7 @@ pub fn no_start_hooks() -> StartHooks {
     outbound_records: None,
     leave_group: None,
     leave_retry_ms: [5000, 30_000, 120_000],
+    leave_recheck_ms: 30_000,
   )
 }
 

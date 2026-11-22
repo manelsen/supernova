@@ -158,6 +158,18 @@ fn default_answer(
   state: State,
   recorded: Recorded,
 ) -> #(#(Int, String), State) {
+  let sends =
+    recorded.method == "sendMessage" || recorded.method == "editMessageText"
+  case sends && has_long_callback_data(recorded.body) {
+    True -> #(
+      #(400, error_body(400, "Bad Request: BUTTON_DATA_INVALID")),
+      state,
+    )
+    False -> answer_method(state, recorded)
+  }
+}
+
+fn answer_method(state: State, recorded: Recorded) -> #(#(Int, String), State) {
   case recorded.method {
     "getUpdates" -> {
       // A short long poll with nothing new.
@@ -235,6 +247,20 @@ fn chat_id(body: String) -> Int {
       field(body, "chat_id")
       |> option.then(fn(id) { int.parse(id) |> option.from_result })
       |> option.unwrap(0)
+  }
+}
+
+/// Telegram refuses a button whose `callback_data` is over 64 bytes.
+fn has_long_callback_data(body: String) -> Bool {
+  let decoder =
+    decode.at(
+      ["reply_markup", "inline_keyboard"],
+      decode.list(decode.list(decode.at(["callback_data"], decode.string))),
+    )
+  case json.parse(body, decoder) {
+    Ok(rows) ->
+      list.any(list.flatten(rows), fn(data) { string.byte_size(data) > 64 })
+    Error(_) -> False
   }
 }
 

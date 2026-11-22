@@ -205,6 +205,7 @@ pub fn telegram_start_registry(
         outbound_records: Some(recorder),
         leave_group: None,
         leave_retry_ms: [5000, 30_000, 120_000],
+        leave_recheck_ms: 30_000,
       ),
     )
   channel_registry
@@ -251,6 +252,7 @@ pub fn telegram_start_registry_with_leave(
           True
         }),
         leave_retry_ms: [5000, 30_000, 120_000],
+        leave_recheck_ms: 30_000,
       ),
     )
   channel_registry
@@ -308,6 +310,7 @@ pub fn discord_start_registry(
         outbound_records: Some(recorder),
         leave_group: None,
         leave_retry_ms: [5000, 30_000, 120_000],
+        leave_recheck_ms: 30_000,
       ),
     )
   channel_registry
@@ -402,6 +405,7 @@ pub fn telegram_start_registry_with_leave_result(
         outbound_records: Some(recorder),
         leave_group: Some(fn(_chat_id) { leave_result }),
         leave_retry_ms: retry_ms,
+        leave_recheck_ms: 30_000,
       ),
     )
   channel_registry

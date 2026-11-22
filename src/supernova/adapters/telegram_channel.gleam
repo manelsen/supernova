@@ -126,6 +126,7 @@ fn start_telegram_worker(
               telegram_config,
               hooks.leave_group,
               hooks.leave_retry_ms,
+              hooks.leave_recheck_ms,
               hooks.registry_id,
               hooks.turn_hard_timeout_ms,
             )
@@ -143,6 +144,7 @@ fn start_telegram_worker(
               telegram_config,
               hooks.leave_group,
               hooks.leave_retry_ms,
+              hooks.leave_recheck_ms,
               hooks.registry_id,
               hooks.turn_hard_timeout_ms,
             )
@@ -161,6 +163,7 @@ fn start_telegram_worker(
                   telegram_config,
                   hooks.leave_group,
                   hooks.leave_retry_ms,
+                  hooks.leave_recheck_ms,
                   hooks.registry_id,
                   hooks.turn_hard_timeout_ms,
                 )
@@ -197,6 +200,7 @@ fn dispatch_telegram_update(
   telegram_config: telegram.Config,
   leave_group: Option(fn(String) -> Bool),
   leave_retry_ms: List(Int),
+  leave_recheck_ms: Int,
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Nil {
@@ -207,6 +211,7 @@ fn dispatch_telegram_update(
         member,
         leave_group,
         leave_retry_ms,
+        leave_recheck_ms,
       )
     None -> Nil
   }
@@ -229,6 +234,7 @@ fn maybe_leave_unauthorized_group(
   member: telegram.ChatMemberUpdated,
   leave_group: Option(fn(String) -> Bool),
   leave_retry_ms: List(Int),
+  leave_recheck_ms: Int,
 ) -> Nil {
   let is_group = case member.chat.chat_type {
     telegram.GroupChat | telegram.SupergroupChat -> True
@@ -261,6 +267,7 @@ fn maybe_leave_unauthorized_group(
             member,
             leave_group,
             leave_retry_ms,
+            leave_recheck_ms,
           )
         }
       }
@@ -355,9 +362,10 @@ fn schedule_leave_recheck(
   member: telegram.ChatMemberUpdated,
   leave_group: Option(fn(String) -> Bool),
   retry_delays: List(Int),
+  delay_ms: Int,
 ) -> Nil {
   process.spawn_unlinked(fn() {
-    process.sleep(30_000)
+    process.sleep(delay_ms)
     recheck_leave(telegram_config, member, leave_group, retry_delays)
   })
   Nil
@@ -865,6 +873,10 @@ fn consume_telegram_stream_events(
   }
 }
 
+/// Telegram refuses the whole message when a button's `callback_data` is
+/// longer than this many bytes.
+const max_callback_data_bytes = 64
+
 fn telegram_reply_markup(
   interactive: port.ChannelInteractiveReply,
 ) -> telegram.ReplyMarkup {
@@ -888,7 +900,27 @@ fn telegram_reply_markup(
     }
   })
   |> list.reverse
+  |> list.map(fn(row) { list.filter(row, fits_callback_data) })
+  |> list.filter(fn(row) { row != [] })
   |> telegram.inline_keyboard
+}
+
+/// A button whose data does not fit is left out, so the rest of the message
+/// still reaches the person.
+fn fits_callback_data(button: telegram.InlineKeyboardButton) -> Bool {
+  let size = string.byte_size(button.callback_data)
+  case size <= max_callback_data_bytes {
+    True -> True
+    False -> {
+      io.println(
+        "warn: telegram button left out, callback_data has "
+        <> int.to_string(size)
+        <> " bytes (limit 64): "
+        <> button.text,
+      )
+      False
+    }
+  }
 }
 
 fn telegram_button(

@@ -331,6 +331,7 @@ pub fn leave_retry_stops_when_group_is_authorized_meanwhile_test() {
             False
           }),
           leave_retry_ms: [300, 300],
+          leave_recheck_ms: 30_000,
         ),
       )
 
