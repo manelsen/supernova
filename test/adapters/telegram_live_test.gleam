@@ -289,6 +289,9 @@ pub fn base_url_must_not_send_the_token_in_cleartext_test() {
     telegram.check_base_url("http://localhost:8081@remote.example")
   let assert Error(_) = telegram.check_base_url("ftp://localhost")
   let assert Error(_) = telegram.check_base_url("not a url")
+  // IPv6 literals lose their brackets on the way to the HTTP client.
+  let assert Error(_) = telegram.check_base_url("http://[::1]:8081")
+  let assert Error(_) = telegram.check_base_url("https://[2001:db8::1]")
 }
 
 pub fn cleartext_base_url_keeps_telegram_from_starting_test() {

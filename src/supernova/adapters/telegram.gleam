@@ -384,9 +384,12 @@ pub fn check_base_url(base_url: String) -> Result(Nil, String) {
       let scheme = option.map(parsed.scheme, string.lowercase)
       let host = option.map(parsed.host, string.lowercase)
       case scheme, host {
-        Some("https"), Some(_) -> True
+        // The HTTP client cannot reach IPv6 literals: the brackets are lost
+        // on the way to it.
+        _, Some(host) if host == "" -> False
+        Some("https"), Some(host) -> !string.contains(host, ":")
         Some("http"), Some(host) ->
-          list.contains(["localhost", "127.0.0.1", "::1", "[::1]"], host)
+          list.contains(["localhost", "127.0.0.1"], host)
         _, _ -> False
       }
     }
@@ -396,7 +399,7 @@ pub fn check_base_url(base_url: String) -> Result(Nil, String) {
     True -> Ok(Nil)
     False ->
       Error(
-        "telegram.base_url must be https, or http on localhost: the bot token travels in the URL",
+        "telegram.base_url must be https, or http on localhost or 127.0.0.1 (the bot token travels in the URL); IPv6 literals are not supported, use a host name",
       )
   }
 }
