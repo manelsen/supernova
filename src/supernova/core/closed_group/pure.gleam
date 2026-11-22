@@ -205,11 +205,7 @@ pub fn chat_key(channel: String, chat_id: String) -> String {
 }
 
 pub fn is_private_chat(channel: String, chat_id: String) -> Bool {
-  case channel {
-    "telegram" -> !string.starts_with(chat_id, "-") && chat_id != ""
-    "discord" -> string.starts_with(chat_id, "dm:")
-    _ -> False
-  }
+  principal.is_private_chat(channel, chat_id)
 }
 
 // ============================================================================

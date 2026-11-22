@@ -11,7 +11,7 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
-import gleam/string
+import supernova/channel/catalog
 import supernova/config
 import supernova/core/access/actor as access_actor
 import supernova/core/access/pure as access_pure
@@ -514,14 +514,7 @@ fn handle_access_command(
 }
 
 fn valid_chat_id(chat_id: String) -> Bool {
-  case string.starts_with(chat_id, "telegram:") {
-    True -> string.length(chat_id) > string.length("telegram:")
-    False ->
-      case string.starts_with(chat_id, "discord:guild:") {
-        True -> string.length(chat_id) > string.length("discord:guild:")
-        False -> False
-      }
-  }
+  catalog.is_group_key(chat_id)
 }
 
 fn usage_all_reply(runtime: types.Runtime) -> String {
