@@ -294,7 +294,7 @@ fn send_stream_fallback(
   )
 }
 
-fn is_message_not_modified(error: port.ChannelError) -> Bool {
+pub fn is_message_not_modified(error: port.ChannelError) -> Bool {
   case error {
     port.SendFailed(reason) ->
       string.contains(string.lowercase(reason), "message is not modified")

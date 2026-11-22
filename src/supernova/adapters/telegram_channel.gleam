@@ -35,7 +35,11 @@ pub fn start_telegram_channel(
 ) -> Result(#(port.ChannelAdapter, channel_kit.StreamSendFn), String) {
   case telegram_cfg.token {
     Some(token) -> {
-      let poller_config = telegram.new_config(token)
+      let poller_config = case telegram_cfg.base_url {
+        Some(base_url) ->
+          telegram.with_base_url(telegram.new_config(token), base_url)
+        None -> telegram.new_config(token)
+      }
       let send_fn = telegram_send(poller_config, hooks)
       let stream_send_fn = telegram_stream_send(poller_config, hooks)
 
@@ -760,14 +764,28 @@ fn consume_telegram_stream_events(
 
   case process.receive(events, within: wait_ms) {
     Ok(port.StreamUpdate(reply)) ->
-      case channel_kit.stream_update_fits("telegram", reply.content) {
+      case
+        reply.content != last_content
+        && channel_kit.stream_update_fits("telegram", reply.content)
+      {
         True -> {
           let next_reply =
             port.ChannelReply(
               ..reply,
               edit_message_id: Some(int.to_string(message_id)),
             )
-          use _ <- result.try(telegram_send_message(telegram_config, next_reply))
+          // Telegram refuses an edit that changes nothing; that is not a
+          // reason to drop the rest of the answer.
+          use _ <- result.try(
+            case telegram_send_message(telegram_config, next_reply) {
+              Error(error) ->
+                case channel_kit.is_message_not_modified(error) {
+                  True -> Ok(Nil)
+                  False -> Error(error)
+                }
+              Ok(_) -> Ok(Nil)
+            },
+          )
           consume_telegram_stream_events(
             telegram_config,
             base_reply,

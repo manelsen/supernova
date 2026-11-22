@@ -168,7 +168,11 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 ### 3.5 Qualidade
 
-- **Cobertura.** Medida em 22/11: 78,84% (14.114 de 17.903 linhas). O gate está em 75%, e a meta antiga era 85%. Os módulos com mais linhas descobertas são adaptadores de canal (Slack, WhatsApp, webhooks do Discord), `discord_events`, `channel_common_router` e `wizard`. Origem: retomada.
+- **Cobertura, por risco.** Decidido em 22/11: cobrir primeiro o que tem mais risco, e subir o gate junto. Medida: 79,82% (14.349 de 17.976 linhas); gate em 79%.
+  - **Feito:** ciclo completo do circuit breaker; cliente real do Telegram contra uma Bot API local (`test/telegram_fake.gleam`): polling, offset, erros, backoff, streaming. Os testes acharam três defeitos, corrigidos: o breaker que só bloqueava uma vez, o stream abortado por "message is not modified" e o `retry_after` lido do lugar errado.
+  - **Próximo:** saída de grupos e alertas do Telegram, botões (`telegram_reply_markup`), `inject` do registry. O Discord entra com a paridade.
+  - `COVER_FUNCTIONS="modulo1 modulo2" make coverage` lista as funções descobertas de cada módulo.
+  - Origem: retomada.
 - **Testes com Chromium real no CI.** Hoje só rodam com `SUPERNOVA_BROWSER_TESTS=1`. O computador já roda os testes dele no CI. Origem: auditoria 3.4.
 - **Failover entre provedores existe, mas não está ligado.** `llm/failover.gleam` (com cooldown por provedor) está pronto, e o ator de cooldown sobe no boot, mas nenhum caminho chama `failover.chat`: a agente usa um provedor só. Fica no código para quando houver um segundo provedor. Origem: medição de cobertura de 22/11.
 

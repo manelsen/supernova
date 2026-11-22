@@ -88,6 +88,9 @@ pub type TelegramConfig {
     token: Option(String),
     /// Enabled status
     enabled: Bool,
+    /// Bot API server (`http://host:port`), for a self-hosted one; the public
+    /// API when absent
+    base_url: Option(String),
   )
 }
 
@@ -414,7 +417,7 @@ pub fn default_config() -> Config {
       guild_id: None,
       enabled: False,
     ),
-    telegram: TelegramConfig(token: None, enabled: False),
+    telegram: TelegramConfig(token: None, enabled: False, base_url: None),
     sim: SimConfig(
       enabled: False,
       bind: "127.0.0.1",
@@ -749,9 +752,10 @@ fn decode_telegram(root: yay.Node) -> TelegramConfig {
       TelegramConfig(
         token: get_optional_string(telegram_node, "token"),
         enabled: get_bool_or(telegram_node, "enabled", False),
+        base_url: get_optional_string(telegram_node, "base_url"),
       )
     }
-    Error(_) -> TelegramConfig(token: None, enabled: False)
+    Error(_) -> TelegramConfig(token: None, enabled: False, base_url: None)
   }
 }
 
@@ -1471,7 +1475,11 @@ pub fn apply_env_overrides(config: Config) -> Config {
       guild_id: config.discord.guild_id,
       enabled: discord_enabled,
     ),
-    telegram: TelegramConfig(token: telegram_token, enabled: telegram_enabled),
+    telegram: TelegramConfig(
+      ..config.telegram,
+      token: telegram_token,
+      enabled: telegram_enabled,
+    ),
     sim: config.sim,
     matrix: MatrixConfig(
       homeserver_url: matrix_homeserver_url,

@@ -58,6 +58,7 @@ pub fn channel_config() -> config.Config {
     telegram: config.TelegramConfig(
       token: Some("telegram-token"),
       enabled: True,
+      base_url: None,
     ),
     discord: config.DiscordConfig(
       token: Some("discord-token"),

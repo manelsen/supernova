@@ -69,7 +69,11 @@ pub fn enabled_channel_without_credentials_is_reported_test() {
   let cfg =
     config.Config(
       ..base,
-      telegram: config.TelegramConfig(enabled: True, token: None),
+      telegram: config.TelegramConfig(
+        enabled: True,
+        token: None,
+        base_url: None,
+      ),
       mattermost: config.MattermostConfig(
         enabled: True,
         token: Some("t"),
@@ -88,7 +92,11 @@ pub fn disabled_or_complete_channels_are_not_reported_test() {
   let cfg =
     config.Config(
       ..base,
-      telegram: config.TelegramConfig(enabled: True, token: Some("t")),
+      telegram: config.TelegramConfig(
+        enabled: True,
+        token: Some("t"),
+        base_url: None,
+      ),
     )
   config.incomplete_channels(cfg) |> should.equal([])
 }

@@ -313,7 +313,7 @@ Before opening a PR, ensure:
 gleam --version                     # Must be 1.19.2
 gleam format --check src test       # Must pass
 gleam build --warnings-as-errors    # No warnings
-make coverage                       # Whole suite, once, instrumented: all green and line coverage >= 75%
+make coverage                       # Whole suite, once, instrumented: all green and line coverage >= 79%
 ```
 
 `make coverage` already runs every test module and fails on any failing test, so there is no need to run `gleam test` before it.
