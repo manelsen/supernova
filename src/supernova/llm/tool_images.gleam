@@ -27,14 +27,19 @@ pub fn attach(text: String, data_url: String) -> String {
 }
 
 /// Split a tool result into its text and the images attached to it.
-/// Anything after a marker that is not a `data:image/` URL is dropped.
+/// A marker that is not followed by a `data:image/` URL is ordinary text
+/// (a command can print anything) and stays in the text.
 pub fn split(content: String) -> #(String, List(String)) {
   case string.split(content, marker) {
     [] -> #(content, [])
-    [text, ..rest] -> #(
-      text,
-      list.filter(rest, fn(url) { string.starts_with(url, "data:image/") }),
-    )
+    [text, ..rest] ->
+      list.fold(rest, #(text, []), fn(acc, segment) {
+        let #(text, images) = acc
+        case string.starts_with(segment, "data:image/") {
+          True -> #(text, list.append(images, [segment]))
+          False -> #(text <> marker <> segment, images)
+        }
+      })
   }
 }
 
@@ -46,32 +51,32 @@ pub fn message(images: List(String)) -> List(provider.ChatMessage) {
   }
 }
 
-/// Keep images only on the last `keep` messages that have them; older ones
-/// lose their images and get a short note instead.
+/// Keep only the newest `keep` images in the history. Older images are
+/// removed, and a message that lost images gets a short note instead.
 pub fn keep_recent(
   messages: List(provider.ChatMessage),
   keep: Int,
 ) -> List(provider.ChatMessage) {
   let #(kept, _) =
-    list.fold_right(messages, #([], 0), fn(acc, msg) {
-      let #(out, seen) = acc
-      case msg.images {
-        [] -> #([msg, ..out], seen)
-        _ ->
-          case seen < keep {
-            True -> #([msg, ..out], seen + 1)
-            False -> #(
-              [
-                provider.ChatMessage(
-                  ..msg,
-                  content: msg.content <> dropped_note,
-                  images: [],
-                ),
-                ..out
-              ],
-              seen + 1,
-            )
-          }
+    list.fold_right(messages, #([], keep), fn(acc, msg) {
+      let #(out, allowance) = acc
+      let count = list.length(msg.images)
+      case count <= allowance {
+        True -> #([msg, ..out], allowance - count)
+        False -> {
+          let newest = list.drop(msg.images, count - allowance)
+          #(
+            [
+              provider.ChatMessage(
+                ..msg,
+                content: msg.content <> dropped_note,
+                images: newest,
+              ),
+              ..out
+            ],
+            0,
+          )
+        }
       }
     })
   kept

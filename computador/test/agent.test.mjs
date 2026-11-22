@@ -4,7 +4,8 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test } from 'node:test';
-import { clip, createServer, resolvePath, run, runShell, WORK_DIR, UserError } from '../agent.mjs';
+import { clip, createServer, LIMITS, resolvePath, run, runShell, WORK_DIR, UserError } from '../agent.mjs';
+import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
@@ -61,13 +62,20 @@ test('exec stops at the timeout, children included', async () => {
 
 test('exec returns while a background server keeps running', async () => {
   const started = Date.now();
-  const r = await runShell('nohup sleep 20 >/dev/null 2>&1 & echo started', 15);
-  assert.equal(r.stdout.trim(), 'started');
+  const r = await runShell('nohup sleep 20 >/dev/null 2>&1 & echo $!', 15);
+  const pid = r.stdout.trim();
+  assert.match(pid, /^\d+$/);
   assert.equal(r.timed_out, false);
   assert.ok(Date.now() - started < 5_000);
-  const still = await runShell('pgrep -f "sleep 20" >/dev/null && echo alive', 5);
+  // Check that exact process, not a command line that mentions it.
+  const still = await runShell(`kill -0 ${pid} && echo alive`, 5);
   assert.equal(still.stdout.trim(), 'alive');
-  await runShell('pkill -f "sleep 20"; true', 5);
+  await runShell(`kill ${pid}; true`, 5);
+});
+
+test('exec decodes UTF-8 split across output chunks', async () => {
+  const r = await runShell("printf '\\303'; sleep 0.3; printf '\\241'", 10);
+  assert.equal(r.stdout, 'á');
 });
 
 test('exec returns even when a background job keeps the output open', async () => {
@@ -104,6 +112,36 @@ test('http: token, bad JSON and errors', async () => {
   });
 });
 
+test('http: a browser cannot drive the service', async () => {
+  await withServer('', async (server) => {
+    const page = await post(server, { op: 'exec', command: 'echo pwned' }, { origin: 'http://evil.example' });
+    assert.equal(page.status, 403);
+    const simple = await post(server, { op: 'exec', command: 'echo pwned' }, { 'content-type': 'text/plain' });
+    assert.equal(simple.status, 403);
+    const supernova = await post(server, { op: 'exec', command: 'echo ok' });
+    assert.equal(supernova.json.stdout, 'ok\n');
+  });
+});
+
+test('http: UTF-8 split across request chunks survives', async () => {
+  await withServer('', async (server) => {
+    const body = Buffer.from(JSON.stringify({ op: 'write_file', path: 'utf8.txt', content: 'á' }));
+    const cut = body.indexOf(Buffer.from('á')) + 1;
+    const answer = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port: server.address().port, path: '/v1/run', method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': body.length },
+      }, (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(JSON.parse(d))); });
+      req.on('error', reject);
+      req.write(body.subarray(0, cut));
+      setTimeout(() => req.end(body.subarray(cut)), 100);
+    });
+    assert.equal(answer.ok, true);
+    const read = await run({ op: 'read_file', path: 'utf8.txt' });
+    assert.equal(read.content, 'á');
+  });
+});
+
 test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, async () => {
   const html = '<title>Teste</title><h1>Olá</h1><button onclick="document.title=\'clicado\'">ok</button>';
   // goto refuses non-http URLs, so serve the page from a local server.
@@ -124,6 +162,17 @@ test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, a
     const shot = await run({ op: 'screenshot' });
     assert.match(shot.image, /^data:image\/jpeg;base64,/);
     await assert.rejects(run({ op: 'goto', url: 'file:///etc/passwd' }), UserError);
+
+    // A script that never settles must not block the browser for good.
+    const limit = LIMITS.browserOpMs;
+    LIMITS.browserOpMs = 3_000;
+    try {
+      await assert.rejects(run({ op: 'evaluate', script: 'new Promise(() => {})' }), /restarted/);
+    } finally {
+      LIMITS.browserOpMs = limit;
+    }
+    const again = await run({ op: 'goto', url });
+    assert.equal(again.title, 'Teste');
   } finally {
     await run({ op: 'close' });
     pageServer.close();

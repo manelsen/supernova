@@ -233,3 +233,23 @@ pub fn executor_moves_tool_images_into_a_user_message_test() {
   image_message.content |> should.equal(tool_images.caption)
   image_message.images |> should.equal([image])
 }
+
+// Review of the computer PR: the service answers 200 or 400; anything else
+// means it is not working, even with a JSON body.
+pub fn unexpected_status_is_a_tool_error_test() {
+  computador.render(503, "{\"ok\":false,\"error\":\"maintenance\"}", "")
+  |> should.be_error
+  computador.render(500, "{\"ok\":true}", "") |> should.be_error
+  computador.render(400, "{\"ok\":false,\"error\":\"path is required\"}", "")
+  |> should.equal(Ok(computador.header <> "\nNão deu certo: path is required"))
+}
+
+// Review of the computer PR: a blank selector would win over x/y in the
+// service, so it is not sent.
+pub fn blank_selector_is_not_sent_with_a_point_test() {
+  let assert Ok(request) =
+    computador.build_request(
+      "{\"action\":\"click\",\"selector\":\" \",\"x\":10,\"y\":20}",
+    )
+  request.body |> should.equal("{\"op\":\"click\",\"x\":10,\"y\":20}")
+}

@@ -25,6 +25,8 @@ export const LIMITS = {
   execDefaultS: 60,
   execMaxS: 300,
   browserTimeoutMs: 30_000,
+  // A whole browser operation; below the 60 s Supernova waits for an answer.
+  browserOpMs: 45_000,
 };
 
 const HOME = process.env.HOME || os.homedir();
@@ -73,6 +75,9 @@ export function runShell(command, timeoutS) {
     let stderr = '';
     let timedOut = false;
     const cap = LIMITS.outputChars * 2;
+    // Decode as UTF-8 across chunk boundaries.
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => { if (stdout.length < cap) stdout += d; });
     child.stderr.on('data', (d) => { if (stderr.length < cap) stderr += d; });
     const timer = setTimeout(() => {
@@ -147,11 +152,35 @@ async function listDir(args) {
 let browserContext = null;
 let chain = Promise.resolve();
 
-// Browser operations share one page, so they run one at a time.
+// Browser operations share one page, so they run one at a time. Each one has
+// a deadline: Playwright can wait forever (a page script that never
+// settles), and a stuck operation would block every later one. On timeout
+// the browser is thrown away; the next operation starts a fresh one with the
+// same profile.
 function serial(task) {
-  const next = chain.then(task, task);
+  const next = chain.then(() => withDeadline(task), () => withDeadline(task));
   chain = next.catch(() => {});
   return next;
+}
+
+async function withDeadline(task) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), LIMITS.browserOpMs);
+  });
+  try {
+    return await Promise.race([task(), deadline]);
+  } catch (e) {
+    if (e && e.message === 'timeout') {
+      const stuck = browserContext;
+      browserContext = null;
+      if (stuck) stuck.close().catch(() => {});
+      throw new Error(`the browser did not answer within ${LIMITS.browserOpMs / 1000} s and was restarted`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function page() {
@@ -165,7 +194,8 @@ async function page() {
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
     });
     browserContext.setDefaultTimeout(LIMITS.browserTimeoutMs);
-    browserContext.on('close', () => { browserContext = null; });
+    const opened = browserContext;
+    opened.on('close', () => { if (browserContext === opened) browserContext = null; });
   }
   const pages = browserContext.pages();
   return pages.length > 0 ? pages[pages.length - 1] : browserContext.newPage();
@@ -271,21 +301,36 @@ export function authorized(req, token) {
   return req.headers['authorization'] === `Bearer ${token}`;
 }
 
+// The computer's own browser can reach this service on 127.0.0.1, so a page
+// must not be able to drive it. Browsers send an Origin header and cannot send
+// a cross-origin JSON POST without a preflight, which is never answered here.
+// Supernova sends application/json and no Origin.
+export function fromBrowser(req) {
+  if (req.headers['origin'] !== undefined) return true;
+  const type = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  return type !== 'application/json';
+}
+
 export function createServer(token = process.env.COMPUTADOR_TOKEN || '') {
   return http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true });
     if (req.method !== 'POST' || req.url !== '/v1/run') return send(res, 404, { ok: false, error: 'not found' });
+    if (fromBrowser(req)) return send(res, 403, { ok: false, error: 'requests from a browser are refused' });
     if (!authorized(req, token)) return send(res, 401, { ok: false, error: 'unauthorized' });
-    let raw = '';
+    // Keep raw bytes and decode once, so a UTF-8 character split across
+    // chunks survives.
+    const chunks = [];
+    let size = 0;
     let tooBig = false;
     req.on('data', (chunk) => {
-      raw += chunk;
-      if (raw.length > LIMITS.bodyBytes) { tooBig = true; req.destroy(); }
+      size += chunk.length;
+      if (size > LIMITS.bodyBytes) { tooBig = true; req.destroy(); return; }
+      chunks.push(chunk);
     });
     req.on('end', async () => {
       if (tooBig) return;
       let body;
-      try { body = JSON.parse(raw); } catch { return send(res, 400, { ok: false, error: 'body must be JSON' }); }
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(res, 400, { ok: false, error: 'body must be JSON' }); }
       if (body === null || typeof body !== 'object') return send(res, 400, { ok: false, error: 'body must be a JSON object' });
       try {
         send(res, 200, { ok: true, ...(await run(body)) });

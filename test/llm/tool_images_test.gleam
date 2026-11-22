@@ -19,9 +19,10 @@ pub fn attach_then_split_round_trips_test() {
   |> should.equal(#("tela", [png]))
 }
 
-pub fn only_image_data_urls_survive_test() {
+pub fn only_image_data_urls_become_images_test() {
   let content = tool_images.attach(tool_images.attach("t", "javascript:x"), png)
-  tool_images.split(content) |> should.equal(#("t", [png]))
+  tool_images.split(content)
+  |> should.equal(#("t\n[[supernova:image]]javascript:x", [png]))
 }
 
 pub fn no_images_no_message_test() {
@@ -74,4 +75,30 @@ pub fn request_body_carries_the_image_test() {
   )
   |> string.contains("\"image_url\":{\"url\":\"" <> png)
   |> should.be_true
+}
+
+// Review of the computer PR: a command may print the marker itself. Text
+// after a marker that is not an image must stay.
+pub fn marker_without_an_image_stays_as_text_test() {
+  let printed = "antes\n[[supernova:image]]depois"
+  tool_images.split(printed) |> should.equal(#(printed, []))
+  tool_images.attach(printed, png)
+  |> tool_images.split
+  |> should.equal(#(printed, [png]))
+}
+
+// Review of the computer PR: one tool round can return several screenshots
+// in one message; the limit counts images, not messages.
+pub fn keep_recent_counts_images_not_messages_test() {
+  let older = provider.user_message_with_images(tool_images.caption, [png])
+  let three =
+    provider.user_message_with_images(tool_images.caption, [
+      "data:image/png;base64,A", "data:image/png;base64,B",
+      "data:image/png;base64,C",
+    ])
+  let assert [first, last] = tool_images.keep_recent([older, three], 2)
+  first.images |> should.equal([])
+  last.images
+  |> should.equal(["data:image/png;base64,B", "data:image/png;base64,C"])
+  last.content |> string.contains("imagem antiga removida") |> should.be_true
 }

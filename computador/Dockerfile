@@ -7,7 +7,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 python3-pip python3-venv git curl jq unzip zip less file \
-      ca-certificates locales tzdata \
+      ca-certificates locales tzdata tini \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/computador
@@ -27,4 +27,7 @@ WORKDIR /home/pwuser/trabalho
 EXPOSE 7070
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:7070/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# tini as PID 1 reaps background processes the agent leaves behind, so they
+# do not pile up as zombies against the pid limit.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "/opt/computador/agent.mjs"]

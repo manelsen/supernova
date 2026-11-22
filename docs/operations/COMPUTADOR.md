@@ -16,6 +16,7 @@ The shell and the browser inside the computer are deliberately not restricted. T
 |---|---|
 | Keys and people's data stay out of the computer | A page that tricks the agent cannot take what is not there. |
 | gVisor (`runsc`) | Code inside the computer talks to a user-space kernel, not to the host kernel. |
+| The service refuses requests that come from a browser (an `Origin` header, or a body that is not JSON) | The computer's own browser can reach the service on `127.0.0.1`, so a malicious page cannot use it to run commands. |
 | Capabilities config | Members are denied `computador` by default; admins (`"*"`) get it. |
 | A separate network (`br-computador`) plus the host firewall rules below | The computer reaches the internet, but not the host or your LAN. |
 | Tool description and answer header | Content from the computer is data. The agent asks before acting outside it. |

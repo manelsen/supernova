@@ -209,7 +209,16 @@ pub fn build_request(args_json: String) -> Result(Request, String) {
           #("path", option.map(args.path, json.string)),
           #("content", option.map(args.content, json.string)),
           #("url", option.map(args.url, json.string)),
-          #("selector", option.map(args.selector, json.string)),
+          // A blank selector would win over x/y in the service: drop it.
+          #(
+            "selector",
+            option.then(args.selector, fn(selector) {
+              case string.trim(selector) {
+                "" -> None
+                _ -> Some(json.string(selector))
+              }
+            }),
+          ),
           #("x", option.map(args.x, json.int)),
           #("y", option.map(args.y, json.int)),
           #("text", option.map(args.text, json.string)),
@@ -371,7 +380,9 @@ fn exec_decoder() -> decode.Decoder(ExecAnswer) {
 
 /// Turn the service's answer into the text the model reads. A refusal by the
 /// service (bad path, failed click) is a normal answer the model can act on;
-/// only a broken service or transport is a tool error.
+/// a broken service or transport is a tool error. The service answers 200
+/// for both success and runtime refusals, and 400 for bad requests; any
+/// other status means it is not working.
 pub fn render(
   status: Int,
   body: String,
@@ -380,15 +391,7 @@ pub fn render(
   case status, json.parse(body, answer_decoder()) {
     401, _ ->
       Error("computador refused the token (check SUPERNOVA_COMPUTER_TOKEN)")
-    _, Error(_) ->
-      Error(
-        "computador answered with status "
-        <> int.to_string(status)
-        <> " and no readable body",
-      )
-    _, Ok(Answer(ok: False, error: error)) ->
-      Ok(header <> "\nNão deu certo: " <> error)
-    _, Ok(Answer(ok: True, ..)) -> {
+    200, Ok(Answer(ok: True, ..)) -> {
       let text = case json.parse(body, exec_decoder()) {
         Ok(exec) -> render_exec(exec)
         Error(_) -> body
@@ -399,6 +402,13 @@ pub fn render(
         data_url -> Ok(tool_images.attach(with_header, data_url))
       }
     }
+    200, Ok(Answer(ok: False, error: error))
+    | 400, Ok(Answer(ok: False, error: error))
+    -> Ok(header <> "\nNão deu certo: " <> error)
+    _, _ ->
+      Error(
+        "computador is not working (status " <> int.to_string(status) <> ")",
+      )
   }
 }
 

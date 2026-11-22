@@ -478,7 +478,13 @@ fn tool_path_check(
   tool_name: String,
   args: String,
 ) -> Result(Option(String), String) {
-  case argument_path(args) {
+  // A computador path names a place inside the agent's own computer, not on
+  // this host: the host workspace policy does not apply to it.
+  let host_path = case tool_name {
+    "computador" -> None
+    _ -> argument_path(args)
+  }
+  case host_path {
     None -> Ok(None)
     Some(path) ->
       case actor_state.workspace_policy {
