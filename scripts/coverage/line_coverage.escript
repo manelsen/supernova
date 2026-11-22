@@ -24,6 +24,7 @@ main(Args) ->
   TestResult = run_tests(),
   Summary = summarize_coverage(SrcModules),
   print_summary(Summary, Threshold, TestResult),
+  print_uncovered_functions(os:getenv("COVER_FUNCTIONS")),
   case gate_passes(Summary, Threshold, TestResult) of
     true -> halt(0);
     false -> halt(1)
@@ -223,6 +224,34 @@ print_largest_gaps(ModuleRows) ->
     end,
     Top10
   ).
+
+%% COVER_FUNCTIONS="supernova@adapters@telegram supernova@channel@health"
+%% lists, per module, the functions with uncovered lines.
+print_uncovered_functions(false) ->
+  ok;
+print_uncovered_functions(Spec) ->
+  lists:foreach(fun print_module_functions/1, string:lexemes(Spec, " ,")).
+
+print_module_functions(Name) ->
+  Module = list_to_atom(Name),
+  case cover:analyse(Module, coverage, function) of
+    {ok, Rows} ->
+      io:format("Uncovered functions in ~s:~n", [Name]),
+      Gaps =
+        lists:sort(
+          fun({_, {_, A}}, {_, {_, B}}) -> A >= B end,
+          [Row || {_, {_, NotCovered}} = Row <- Rows, NotCovered > 0]
+        ),
+      lists:foreach(
+        fun({{_M, F, A}, {Covered, NotCovered}}) ->
+          io:format("  - ~s/~p: ~p of ~p lines uncovered~n",
+                    [F, A, NotCovered, Covered + NotCovered])
+        end,
+        Gaps
+      );
+    _ ->
+      io:format("Uncovered functions in ~s: module not analysed~n", [Name])
+  end.
 
 percent(_Covered, 0) ->
   0.0;

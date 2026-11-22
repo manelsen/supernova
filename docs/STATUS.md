@@ -13,7 +13,7 @@ What is open, and in what order, is in [PENDENCIAS.md](PENDENCIAS.md). This page
 | `gleam format --check src test` | Passing | |
 | `gleam build --warnings-as-errors` | Passing | Dependencies (`gleam_hackney`, `wisp`) still use the deprecated `http.Header`; that warning comes from them, not from Supernova. |
 | `make test` | `2503` passed, `0` failed | Offline: no test calls a real model. Live Chromium tests are opt-in (`SUPERNOVA_BROWSER_TESTS=1`). |
-| `make coverage` | `78.84%` (`14114/17903` lines) | CI gate: 75%. The decided goal is to raise it ([PENDENCIAS](PENDENCIAS.md) 3.5). |
+| `make coverage` | `79.82%` (`14349/17976` lines) | CI gate: 79%. Raised by risk first ([PENDENCIAS](PENDENCIAS.md) 3.5). |
 | Computer service tests | `14` passed | Inside the image, on gVisor and on runc; CI runs them on runc (`.github/workflows/computador.yml`). |
 | Audit (`audit/STATUS_2026-11.md`) | 20 resolved, 5 accepted, 0 open | The accepted Postgres items lost their object when Postgres was removed (PR #33). |
 

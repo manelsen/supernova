@@ -25,9 +25,9 @@ rebuild: ## Rebuild image without starting
 test: ## Run test suite
 	gleam test
 
-coverage: ## Run the whole suite once, instrumented, with the line coverage gate (minimum 75%)
+coverage: ## Run the whole suite once, instrumented, with the line coverage gate (minimum 79%)
 	gleam build
-	./scripts/coverage/line_coverage.escript --threshold 75
+	./scripts/coverage/line_coverage.escript --threshold 79
 
 test-only: ## Run only some test modules, e.g. make test-only T="test/self/drift_apply_test.gleam test/sim"
 	gleam build

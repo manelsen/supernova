@@ -408,7 +408,7 @@ pub fn validate_telegram_enabled_without_token_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      telegram: TelegramConfigRecord(token: None, enabled: True),
+      telegram: TelegramConfigRecord(token: None, enabled: True, base_url: None),
     )
 
   case validate(config) {
@@ -530,7 +530,11 @@ pub fn validate_telegram_enabled_with_token_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      telegram: TelegramConfigRecord(token: Some("valid-token"), enabled: True),
+      telegram: TelegramConfigRecord(
+        token: Some("valid-token"),
+        enabled: True,
+        base_url: None,
+      ),
     )
 
   let assert Ok(Nil) = validate(config)
@@ -926,7 +930,11 @@ pub fn is_telegram_enabled_true_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      telegram: TelegramConfigRecord(token: Some("token"), enabled: True),
+      telegram: TelegramConfigRecord(
+        token: Some("token"),
+        enabled: True,
+        base_url: None,
+      ),
     )
 
   is_telegram_enabled(config) |> should_equal(True)
@@ -936,7 +944,7 @@ pub fn is_telegram_enabled_false_no_token_test() {
   let config =
     ConfigRecord(
       ..default_config(),
-      telegram: TelegramConfigRecord(token: None, enabled: True),
+      telegram: TelegramConfigRecord(token: None, enabled: True, base_url: None),
     )
 
   is_telegram_enabled(config) |> should_equal(False)

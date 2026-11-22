@@ -106,7 +106,7 @@ Toolchain versions are pinned in [`.tool-versions`](.tool-versions): Erlang 28.5
 ```sh
 make test                         # the whole offline suite
 make test-only T="dir@module_test"
-make coverage                     # instrumented run, 75% minimum
+make coverage                     # instrumented run, 79% minimum
 gleam format --check src test
 gleam build --warnings-as-errors
 ```

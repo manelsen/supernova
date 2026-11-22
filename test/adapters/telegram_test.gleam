@@ -664,9 +664,11 @@ pub fn get_updates_with_invalid_token_returns_http_error_test() -> Nil {
   let assert Ok(poller) = telegram.start_poller(config)
 
   case telegram.get_updates(poller) {
-    Error(telegram.HttpError(message)) ->
-      string.starts_with(message, "Failed to parse URL:")
-      |> should.equal(True)
+    Error(telegram.HttpError(message)) -> {
+      message |> should.equal("Failed to parse the Bot API URL")
+      // The URL carries the token; it must never reach an error message.
+      string.contains(message, "invalid token") |> should.be_false()
+    }
     _ -> should.fail()
   }
 }

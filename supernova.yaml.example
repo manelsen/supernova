@@ -85,6 +85,10 @@ telegram:
   # Required: SUPERNOVA_TELEGRAM_TOKEN
   token: "${SUPERNOVA_TELEGRAM_TOKEN}"
   enabled: false
+  # Optional: a self-hosted Bot API server; the public API when absent.
+  # https for any host name, http only on localhost or 127.0.0.1 (the token
+  # travels in the URL). IPv6 literals are not supported.
+  # base_url: "http://localhost:8081"
 
 matrix:
   # Required: SUPERNOVA_MATRIX_HOMESERVER_URL, SUPERNOVA_MATRIX_TOKEN

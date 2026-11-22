@@ -41,28 +41,40 @@ pub fn new(name: String, config: CircuitConfig) -> CircuitBreaker {
   )
 }
 
+/// Whether a call may go ahead now.
 pub fn is_call_allowed(breaker: CircuitBreaker, config: CircuitConfig) -> Bool {
-  let now = current_timestamp()
+  admit(breaker, config, current_timestamp()).0
+}
+
+/// Decide whether a call may go ahead at `now`, returning the breaker to keep.
+///
+/// An open breaker whose recovery timeout has passed becomes half-open here;
+/// the caller must store the returned breaker, or the transition is lost and
+/// the breaker never closes again.
+pub fn admit(
+  breaker: CircuitBreaker,
+  config: CircuitConfig,
+  now: Int,
+) -> #(Bool, CircuitBreaker) {
   case breaker.state {
-    CircuitClosed -> True
-    CircuitOpen -> {
+    CircuitClosed -> #(True, breaker)
+    CircuitOpen ->
       case now - breaker.last_failure_time_ms >= config.recovery_timeout_ms {
-        True -> {
-          let new_breaker =
-            CircuitBreaker(
-              name: breaker.name,
-              state: CircuitHalfOpen,
-              failure_count: 0,
-              success_count: 0,
-              last_failure_time_ms: breaker.last_failure_time_ms,
-              cooldown_ms: breaker.cooldown_ms,
-            )
-          new_breaker.state == CircuitHalfOpen
-        }
-        False -> False
+        True -> #(
+          True,
+          CircuitBreaker(
+            ..breaker,
+            state: CircuitHalfOpen,
+            failure_count: 0,
+            success_count: 0,
+          ),
+        )
+        False -> #(False, breaker)
       }
-    }
-    CircuitHalfOpen -> breaker.success_count < config.half_open_max_calls
+    CircuitHalfOpen -> #(
+      breaker.success_count < config.half_open_max_calls,
+      breaker,
+    )
   }
 }
 
@@ -114,7 +126,15 @@ pub fn record_failure(
   breaker: CircuitBreaker,
   config: CircuitConfig,
 ) -> CircuitBreaker {
-  let now = current_timestamp()
+  record_failure_at(breaker, config, current_timestamp())
+}
+
+/// Record a failure that happened at `now`.
+pub fn record_failure_at(
+  breaker: CircuitBreaker,
+  config: CircuitConfig,
+  now: Int,
+) -> CircuitBreaker {
   let new_failure_count = breaker.failure_count + 1
   case breaker.state {
     CircuitClosed -> {

@@ -246,6 +246,9 @@ pub type TelegramResponse(a) {
 pub type Config {
   Config(
     token: String,
+    /// Bot API prefix, `https://api.telegram.org/bot` by default; the token
+    /// and the method follow it.
+    api_base_url: String,
     polling_timeout: Int,
     polling_interval: Int,
     allowed_updates: List(String),
@@ -365,10 +368,50 @@ pub type TelegramError {
 pub fn new_config(token: String) -> Config {
   Config(
     token: token,
+    api_base_url: api_base_url,
     polling_timeout: 30,
     polling_interval: 0,
     allowed_updates: [],
   )
+}
+
+/// Check a Bot API server URL before the token is sent to it: HTTPS for any
+/// host, plain HTTP only for loopback, so the token never crosses a network
+/// in cleartext.
+pub fn check_base_url(base_url: String) -> Result(Nil, String) {
+  let allowed = case uri.parse(string.trim(base_url)) {
+    Ok(parsed) -> {
+      let scheme = option.map(parsed.scheme, string.lowercase)
+      let host = option.map(parsed.host, string.lowercase)
+      case scheme, host {
+        // The HTTP client cannot reach IPv6 literals: the brackets are lost
+        // on the way to it.
+        _, Some(host) if host == "" -> False
+        Some("https"), Some(host) -> !string.contains(host, ":")
+        Some("http"), Some(host) ->
+          list.contains(["localhost", "127.0.0.1"], host)
+        _, _ -> False
+      }
+    }
+    Error(_) -> False
+  }
+  case allowed {
+    True -> Ok(Nil)
+    False ->
+      Error(
+        "telegram.base_url must be https, or http on localhost or 127.0.0.1 (the bot token travels in the URL); IPv6 literals are not supported, use a host name",
+      )
+  }
+}
+
+/// Use another Bot API server, such as a self-hosted one, given as
+/// `https://host` or `http://localhost:port`. Call `check_base_url` first.
+pub fn with_base_url(config: Config, base_url: String) -> Config {
+  let base = case string.ends_with(base_url, "/") {
+    True -> string.drop_end(base_url, 1)
+    False -> base_url
+  }
+  Config(..config, api_base_url: base <> "/bot")
 }
 
 /// Set polling timeout (in seconds, 0-100)
@@ -391,8 +434,8 @@ pub fn with_allowed_updates(config: Config, updates: List(String)) -> Config {
 // ============================================================================
 
 /// Build API URL for endpoint
-fn build_api_url(token: String, endpoint: String) -> String {
-  api_base_url <> token <> "/" <> endpoint
+fn build_api_url(config: Config, endpoint: String) -> String {
+  config.api_base_url <> config.token <> "/" <> endpoint
 }
 
 /// Make HTTP GET request to Telegram API
@@ -401,7 +444,7 @@ fn api_get(
   endpoint: String,
   params: List(#(String, String)),
 ) -> Result(String, TelegramError) {
-  let url = build_api_url(config.token, endpoint)
+  let url = build_api_url(config, endpoint)
   let query_string = build_query_string(params)
   let full_url = case query_string {
     "" -> url
@@ -426,7 +469,7 @@ fn api_get(
         Error(_) -> Error(HttpError("Failed to build request from URI"))
       }
     }
-    Error(_) -> Error(HttpError("Failed to parse URL: " <> full_url))
+    Error(_) -> Error(HttpError("Failed to parse the Bot API URL"))
   }
 }
 
@@ -459,12 +502,12 @@ fn handle_response(
 }
 
 /// Parse retry_after from error response
+/// Seconds Telegram asks to wait. The Bot API sends them in
+/// `parameters.retry_after`; a top-level `retry_after` is also accepted.
 fn parse_retry_after(body: String) -> Int {
-  let decoder = {
-    use retry_after <- decode.field("retry_after", decode.int)
-    decode.success(retry_after)
-  }
-  case json.parse(from: body, using: decoder) {
+  let nested = decode.at(["parameters", "retry_after"], decode.int)
+  let top = decode.at(["retry_after"], decode.int)
+  case json.parse(from: body, using: decode.one_of(nested, [top])) {
     Ok(value) -> value
     Error(_) -> 30
   }
@@ -1370,7 +1413,7 @@ fn api_post(
   endpoint: String,
   body: String,
 ) -> Result(String, TelegramError) {
-  let url = build_api_url(config.token, endpoint)
+  let url = build_api_url(config, endpoint)
 
   case uri.parse(url) {
     Ok(parsed_uri) -> {
@@ -1394,7 +1437,7 @@ fn api_post(
         Error(_) -> Error(HttpError("Failed to build request from URI"))
       }
     }
-    Error(_) -> Error(HttpError("Failed to parse URL: " <> url))
+    Error(_) -> Error(HttpError("Failed to parse the Bot API URL"))
   }
 }
 

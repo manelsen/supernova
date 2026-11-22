@@ -34,6 +34,7 @@ fn enabled_discord_and_telegram_config() -> config.Config {
     telegram: config.TelegramConfig(
       token: Some("telegram-token"),
       enabled: True,
+      base_url: None,
     ),
   )
 }
@@ -559,7 +560,11 @@ pub fn start_channels_skips_enabled_channels_with_missing_credentials_test() {
         guild_id: None,
         enabled: True,
       ),
-      telegram: config.TelegramConfig(token: None, enabled: True),
+      telegram: config.TelegramConfig(
+        token: None,
+        enabled: True,
+        base_url: None,
+      ),
       matrix: config.MatrixConfig(
         homeserver_url: None,
         token: None,
