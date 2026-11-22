@@ -97,7 +97,7 @@ cp .env.example .env && chmod 600 .env    # provider key, bot token
 docker compose up -d --build
 ```
 
-Agents use the provider whose name sorts first in `supernova.yaml`, and nothing checks that it has a key, so remove the providers you do not use. Then send `/eu` to your bot, put your id in `SUPERNOVA_ACCESS_ADMINS`, and restart. The step-by-step version is in [GETTING_STARTED.md](GETTING_STARTED.md). Running a group is covered in [DEPLOY.md](DEPLOY.md). A wizard that does all of this for you is planned.
+Agents use the provider whose name sorts first in `supernova.yaml`, so remove the providers you do not use; Supernova refuses to start if that provider has no key. Then send `/eu` to your bot, put your id in `SUPERNOVA_ACCESS_ADMINS`, and restart. The step-by-step version is in [GETTING_STARTED.md](GETTING_STARTED.md). Running a group is covered in [DEPLOY.md](DEPLOY.md). A wizard that does all of this for you is planned.
 
 ## Development
 

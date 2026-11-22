@@ -76,7 +76,7 @@ Once running, the health server is on port **8080**:
 |----------|---------|
 | `GET /health` | Basic status + uptime |
 | `GET /health/live` | Liveness probe |
-| `GET /health/ready` | Readiness probe |
+| `GET /health/ready` | Readiness probe (503 when a channel is not ready) |
 
 Test locally:
 ```bash
@@ -145,7 +145,7 @@ Once running, the health server is on port **8080**:
 |----------|---------|
 | `GET /health` | Basic status + uptime |
 | `GET /health/live` | Liveness probe (Kubernetes) |
-| `GET /health/ready` | Readiness probe (checks channels) |
+| `GET /health/ready` | Readiness probe (503 when a channel is not ready) |
 
 Test locally:
 ```bash

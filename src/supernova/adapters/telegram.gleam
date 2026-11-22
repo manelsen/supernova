@@ -1078,10 +1078,22 @@ pub fn start_polling_loop(
   poller: Poller,
   callback: fn(Update) -> Nil,
 ) -> Result(Nil, TelegramError) {
-  // Start the poller
+  start_polling_loop_reporting(poller, fn(_) { Nil }, callback)
+}
+
+/// Like `start_polling_loop`, reporting the outcome of every `getUpdates`.
+///
+/// Failed polls are retried with exponential backoff (1 s up to 30 s, or the
+/// `retry_after` Telegram asks for), so a bad token or a network outage does
+/// not spin the loop.
+pub fn start_polling_loop_reporting(
+  poller: Poller,
+  report: fn(Result(Nil, String)) -> Nil,
+  callback: fn(Update) -> Nil,
+) -> Result(Nil, TelegramError) {
   case actor.call(poller, waiting: 1000, sending: StartPolling) {
     Ok(Nil) -> {
-      polling_loop(poller, callback)
+      polling_loop(poller, report, callback, 0)
       Ok(Nil)
     }
     Error(error) -> Error(error)
@@ -1089,28 +1101,60 @@ pub fn start_polling_loop(
 }
 
 /// Internal polling loop
-fn polling_loop(poller: Poller, callback: fn(Update) -> Nil) -> Nil {
+fn polling_loop(
+  poller: Poller,
+  report: fn(Result(Nil, String)) -> Nil,
+  callback: fn(Update) -> Nil,
+  failures: Int,
+) -> Nil {
   let state = actor.call(poller, waiting: 1000, sending: GetState)
 
   case state.is_running {
     False -> Nil
-    True -> {
-      // Fetch updates
+    True ->
       case get_updates(poller) {
         Ok(updates) -> {
-          // Process each update with callback
-          updates
-          |> list.each(callback)
-
-          // Continue polling
-          polling_loop(poller, callback)
+          report(Ok(Nil))
+          list.each(updates, callback)
+          polling_loop(poller, report, callback, 0)
         }
-        Error(_error) -> {
-          // Continue polling on error
-          polling_loop(poller, callback)
+        Error(error) -> {
+          report(Error(describe_poll_error(error)))
+          process.sleep(poll_backoff_ms(error, failures))
+          polling_loop(poller, report, callback, failures + 1)
         }
       }
-    }
+  }
+}
+
+/// Delay before retrying a failed `getUpdates`.
+pub fn poll_backoff_ms(error: TelegramError, failures: Int) -> Int {
+  case error {
+    RateLimitError(retry_after) -> int.max(retry_after, 1) * 1000
+    _ -> int.min(1000 * pow2(int.min(failures, 5)), 30_000)
+  }
+}
+
+fn pow2(n: Int) -> Int {
+  case n <= 0 {
+    True -> 1
+    False -> 2 * pow2(n - 1)
+  }
+}
+
+/// Short description of a polling error. It never includes the request URL,
+/// which carries the bot token.
+pub fn describe_poll_error(error: TelegramError) -> String {
+  case error {
+    ApiError(code, description) ->
+      "telegram api error " <> int.to_string(code) <> ": " <> description
+    RateLimitError(retry_after) ->
+      "telegram rate limit, retry after " <> int.to_string(retry_after) <> "s"
+    InvalidTokenError -> "telegram rejected the bot token"
+    TimeoutError -> "telegram poll timed out"
+    NetworkError(_) | HttpError(_) -> "telegram unreachable"
+    JsonDecodeError(_) -> "telegram sent an unreadable response"
+    MessageTooLongError | InvalidParseModeError -> "telegram request rejected"
   }
 }
 

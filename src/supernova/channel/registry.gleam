@@ -25,6 +25,7 @@ import supernova/adapters/wechat_work_adapter
 import supernova/adapters/whatsapp_adapter
 import supernova/channel/chat_lanes
 import supernova/channel/chunking
+import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/config
 import supernova/core/access/actor as access_actor
@@ -42,6 +43,7 @@ pub type ChannelRegistry {
     id: String,
     channels: Dict(String, port.ChannelAdapter),
     streams: Dict(String, StreamSendFn),
+    health: channel_health.ChannelHealth,
   )
 }
 
@@ -123,6 +125,10 @@ fn current_timestamp() -> Int
 // Public API
 // ============================================================================
 
+/// Telegram long polls last up to 30 seconds; a minute with no successful poll
+/// means the channel is not receiving messages.
+const telegram_max_silence_ms = 60_000
+
 /// Build empty bootstrap hooks for production startup.
 pub fn no_start_hooks() -> StartHooks {
   StartHooks(
@@ -169,6 +175,12 @@ pub fn start_channels_with_handler_and_hooks(
   let hooks = StartHooks(..hooks, registry_id: registry_id)
   let channels = dict.new()
   let streams = dict.new()
+  let health = channel_health.start()
+  config.incomplete_channels(cfg)
+  |> list.each(fn(pair) {
+    io.println(pair.0 <> ": not started - " <> pair.1)
+    channel_health.failed(health, pair.0, pair.1)
+  })
 
   let #(channels, streams) = case config.is_discord_enabled(cfg) {
     True -> {
@@ -179,6 +191,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("Discord: failed to start - " <> reason)
+          channel_health.failed(health, "discord", reason)
           #(channels, streams)
         }
       }
@@ -195,6 +208,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("Matrix: failed to start - " <> reason)
+          channel_health.failed(health, "matrix", reason)
           #(channels, streams)
         }
       }
@@ -211,6 +225,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("Mattermost: failed to start - " <> reason)
+          channel_health.failed(health, "mattermost", reason)
           #(channels, streams)
         }
       }
@@ -227,6 +242,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("WhatsApp: failed to start - " <> reason)
+          channel_health.failed(health, "whatsapp", reason)
           #(channels, streams)
         }
       }
@@ -243,6 +259,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("Sim: failed to start - " <> reason)
+          channel_health.failed(health, "sim", reason)
           #(channels, streams)
         }
       }
@@ -252,13 +269,14 @@ pub fn start_channels_with_handler_and_hooks(
 
   let #(channels, streams) = case config.is_telegram_enabled(cfg) {
     True -> {
-      case start_telegram_channel(cfg.telegram, handler, hooks) {
+      case start_telegram_channel(cfg.telegram, handler, hooks, health) {
         Ok(#(adapter, stream_send_fn)) -> {
           io.println("Telegram: poller started")
           insert_channel(channels, streams, adapter, Some(stream_send_fn))
         }
         Error(reason) -> {
           io.println("Telegram: failed to start - " <> reason)
+          channel_health.failed(health, "telegram", reason)
           #(channels, streams)
         }
       }
@@ -275,6 +293,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("Slack: failed to start - " <> reason)
+          channel_health.failed(health, "slack", reason)
           #(channels, streams)
         }
       }
@@ -291,6 +310,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("Lark: failed to start - " <> reason)
+          channel_health.failed(health, "lark", reason)
           #(channels, streams)
         }
       }
@@ -307,6 +327,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("Google Chat: failed to start - " <> reason)
+          channel_health.failed(health, "google_chat", reason)
           #(channels, streams)
         }
       }
@@ -323,6 +344,7 @@ pub fn start_channels_with_handler_and_hooks(
         }
         Error(reason) -> {
           io.println("WeChat Work: failed to start - " <> reason)
+          channel_health.failed(health, "wechat_work", reason)
           #(channels, streams)
         }
       }
@@ -333,7 +355,20 @@ pub fn start_channels_with_handler_and_hooks(
   let total = dict.size(channels)
   io.println("Started " <> int.to_string(total) <> " channel adapter(s)")
 
-  Ok(ChannelRegistry(id: registry_id, channels: channels, streams: streams))
+  // Telegram registers itself before its polling worker starts, so an early
+  // poll failure is not overwritten here.
+  let now = channel_health.now_ms()
+  channels
+  |> dict.keys
+  |> list.filter(fn(name) { name != "telegram" })
+  |> list.each(fn(name) { channel_health.started(health, name, None, now) })
+
+  Ok(ChannelRegistry(
+    id: registry_id,
+    channels: channels,
+    streams: streams,
+    health: health,
+  ))
 }
 
 /// Send a reply through a specific channel.
@@ -514,6 +549,7 @@ fn start_telegram_channel(
   telegram_cfg: config.TelegramConfig,
   handler: port.ChannelHandler,
   hooks: StartHooks,
+  health: channel_health.ChannelHealth,
 ) -> Result(#(port.ChannelAdapter, StreamSendFn), String) {
   case telegram_cfg.token {
     Some(token) -> {
@@ -526,6 +562,16 @@ fn start_telegram_channel(
         |> result.map_error(fn(_) { "failed to start poller actor" }),
       )
 
+      let max_silence_ms = case hooks.disable_telegram_polling {
+        True -> None
+        False -> Some(telegram_max_silence_ms)
+      }
+      channel_health.started(
+        health,
+        "telegram",
+        max_silence_ms,
+        channel_health.now_ms(),
+      )
       let worker =
         start_telegram_worker(
           poller,
@@ -534,6 +580,14 @@ fn start_telegram_channel(
           stream_send_fn,
           hooks,
           poller_config,
+          fn(outcome) {
+            channel_health.report(
+              health,
+              "telegram",
+              outcome,
+              channel_health.now_ms(),
+            )
+          },
         )
 
       Ok(#(
@@ -784,6 +838,7 @@ fn start_telegram_worker(
   stream_send_fn: StreamSendFn,
   hooks: StartHooks,
   telegram_config: telegram.Config,
+  report_poll: fn(Result(Nil, String)) -> Nil,
 ) -> TelegramWorker {
   let done = process.new_subject()
   let ingress_done = process.new_subject()
@@ -825,19 +880,23 @@ fn start_telegram_worker(
           })
 
           let _ =
-            telegram.start_polling_loop(poller, fn(update) {
-              dispatch_telegram_update(
-                handler,
-                send_fn,
-                stream_send_fn,
-                update,
-                telegram_config,
-                hooks.leave_group,
-                hooks.leave_retry_ms,
-                hooks.registry_id,
-                hooks.turn_hard_timeout_ms,
-              )
-            })
+            telegram.start_polling_loop_reporting(
+              poller,
+              report_poll,
+              fn(update) {
+                dispatch_telegram_update(
+                  handler,
+                  send_fn,
+                  stream_send_fn,
+                  update,
+                  telegram_config,
+                  hooks.leave_group,
+                  hooks.leave_retry_ms,
+                  hooks.registry_id,
+                  hooks.turn_hard_timeout_ms,
+                )
+              },
+            )
           process.send(ingress_done, Nil)
           Nil
         }

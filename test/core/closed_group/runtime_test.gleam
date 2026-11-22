@@ -1235,3 +1235,39 @@ pub fn denied_interaction_is_audited_test() {
     },
   )
 }
+
+pub fn agenda_and_forget_bypass_instance_cap_test() {
+  let base = config_with_access([], ["telegram:5"], [])
+  let cfg =
+    config.Config(
+      ..base,
+      instance_budget: config.InstanceBudgetConfig(
+        daily_usd: 0.001,
+        timezone: "UTC",
+        reserve_output_tokens: 1000,
+      ),
+    )
+  with_runtime(cfg, fn(runtime) {
+    ledger_actor.record_llm_usage(
+      runtime.ledger,
+      "telegram:5",
+      "mock",
+      "m",
+      1000,
+      1000,
+      10.0,
+    )
+    case cg_runtime.gate(runtime, "telegram", "5", "5", "oi") {
+      cg_types.Reply(text) -> should.equal(text, pure.instance_cap_reply)
+      _ -> should.fail()
+    }
+    ["/agenda", "/agenda remover 1", "/agenda@bot", "/esquecer"]
+    |> list.each(fn(command) {
+      case cg_runtime.gate(runtime, "telegram", "5", "5", command) {
+        cg_types.Allowed(context) ->
+          should.equal(context.principal_id, "telegram:5")
+        _ -> should.fail()
+      }
+    })
+  })
+}

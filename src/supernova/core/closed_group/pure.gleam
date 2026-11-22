@@ -295,6 +295,10 @@ pub fn agenda_command(content: String) -> Option(AgendaCommand) {
   }
 }
 
+pub fn is_agenda_command(content: String) -> Bool {
+  agenda_command(content) != None
+}
+
 pub fn is_forget_command(content: String) -> Bool {
   forget_command(content) != None
 }
