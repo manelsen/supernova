@@ -15,14 +15,11 @@ pub type Tracer =
 @external(erlang, "supernova_global_ffi", "global_erase")
 fn global_erase(key: String) -> Nil
 
+@external(erlang, "supernova_global_ffi", "global_lookup")
+fn global_lookup(key: String) -> Result(a, Nil)
+
 @external(erlang, "supernova_global_ffi", "global_put")
 fn global_put(key: String, value: any) -> Nil
-
-@external(erlang, "supernova_global_ffi", "global_get")
-fn global_get(key: String) -> any
-
-@external(erlang, "supernova_global_ffi", "global_has")
-fn global_has(key: String) -> Bool
 
 const tracer_key = "supernova_global_tracer"
 
@@ -31,15 +28,13 @@ pub fn set_tracer(tracer: Tracer) -> Nil {
 }
 
 pub fn get_tracer() -> option.Option(Tracer) {
-  case global_has(tracer_key) {
-    True -> {
-      let tracer = global_get(tracer_key)
+  case global_lookup(tracer_key) {
+    Ok(tracer) ->
       case subject_alive(tracer) {
         True -> option.Some(tracer)
         False -> option.None
       }
-    }
-    False -> option.None
+    Error(Nil) -> option.None
   }
 }
 

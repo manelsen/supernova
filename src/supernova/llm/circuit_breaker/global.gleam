@@ -13,14 +13,11 @@ pub type CircuitBreaker =
 @external(erlang, "supernova_global_ffi", "global_erase")
 fn global_erase(key: String) -> Nil
 
+@external(erlang, "supernova_global_ffi", "global_lookup")
+fn global_lookup(key: String) -> Result(a, Nil)
+
 @external(erlang, "supernova_global_ffi", "global_put")
 fn global_put(key: String, value: any) -> Nil
-
-@external(erlang, "supernova_global_ffi", "global_get")
-fn global_get(key: String) -> any
-
-@external(erlang, "supernova_global_ffi", "global_has")
-fn global_has(key: String) -> Bool
 
 const cb_key = "supernova_global_circuit_breaker"
 
@@ -29,15 +26,13 @@ pub fn set_circuit_breaker(cb: CircuitBreaker) -> Nil {
 }
 
 pub fn get_circuit_breaker() -> option.Option(CircuitBreaker) {
-  case global_has(cb_key) {
-    True -> {
-      let cb = global_get(cb_key)
+  case global_lookup(cb_key) {
+    Ok(cb) ->
       case subject_alive(cb) {
         True -> option.Some(cb)
         False -> option.None
       }
-    }
-    False -> option.None
+    Error(Nil) -> option.None
   }
 }
 

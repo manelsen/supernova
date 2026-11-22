@@ -95,3 +95,21 @@ pub fn cancel_after_completion_lowers_active_agents_once_test() {
   string.contains(metrics_actor.get_metrics(metrics), "agents_active 0\n")
   |> should.be_true()
 }
+
+pub fn cleared_globals_read_as_missing_test() {
+  let tracer = tracing_global.get_tracer()
+  let breaker = cb_global.get_circuit_breaker()
+  let metrics = metrics_global.get_metrics()
+  use <- exception.defer(fn() {
+    option.map(tracer, tracing_global.set_tracer)
+    option.map(breaker, cb_global.set_circuit_breaker)
+    option.map(metrics, metrics_global.set_metrics)
+    Nil
+  })
+  tracing_global.clear_tracer()
+  cb_global.clear_circuit_breaker()
+  metrics_global.clear_metrics()
+  tracing_global.get_tracer() |> should.equal(None)
+  cb_global.get_circuit_breaker() |> should.equal(None)
+  metrics_global.get_metrics() |> should.equal(None)
+}

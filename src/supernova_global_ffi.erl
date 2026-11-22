@@ -1,5 +1,5 @@
 -module(supernova_global_ffi).
--export([global_put/2, global_get/1, global_has/1, global_erase/1, safe_is_process_alive/1, safe_println/1]).
+-export([global_put/2, global_get/1, global_has/1, global_erase/1, safe_is_process_alive/1, safe_println/1, global_lookup/1]).
 
 %% Shared global storage using persistent_term.
 %% Unlike process dictionary, these are accessible from ALL processes.
@@ -44,4 +44,12 @@ safe_println(Line) ->
         _ -> nil
     catch
         _:_ -> nil
+    end.
+
+%% Read a key in one step: {ok, Value} or {error, nil}. Checking presence and
+%% then reading could race with an erase between the two calls.
+global_lookup(Key) ->
+    case persistent_term:get(Key, '$supernova_absent') of
+        '$supernova_absent' -> {error, nil};
+        Value -> {ok, Value}
     end.
