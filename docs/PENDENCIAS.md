@@ -35,7 +35,7 @@ Decisões por tema:
 
 | Tema | Decisão |
 |---|---|
-| Histórico da conversa | Precisa ser preservado entre reinícios. |
+| Histórico da conversa | Precisa ser preservado entre reinícios, junto com a fila de mensagens (sai dos riscos aceitos). |
 | Mudança lenta | Deve disparar com uma pessoa só depois de uma semana de encorajamento. |
 | O que a agente vê no grupo | Todas as mensagens da sua pessoa **e** todas as mensagens em que ela for mencionada explicitamente (@). |
 | Explicações inventadas | Aprimorar o prompt para checar esse tipo de alucinação. |
@@ -114,6 +114,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **Situação:** o `session/server` guarda o histórico só em memória. O reinício de 22/11 às 09:37 apagou a conversa da madrugada. Lembranças, diário, experiência, arquivos e agenda sobrevivem.
   - **Origem:** `audit/production.md` ("Reinício do container preserva histórico de sessão").
   - **Para estudar:** onde guardar (arquivo por agente, como o resto do `self/`?); quanto guardar; como o `/esquecer` apaga esse histórico.
+  - **Junto:** a fila de mensagens durável. Hoje um reinício perde as mensagens que ainda não começaram, e cada deploy reinicia.
 - **A mudança lenta não dispara com uma pessoa só.**
   - **Situação:** com reflexão semanal de força 0,25, a pressão efetiva máxima em um ano é 0,38, para um limiar de 3,0. Pessoas diferentes somam sem desconto, então na prática só várias pessoas juntas mudam a agente.
   - **Para estudar:** a intenção é "uma pessoa sozinha nunca muda a agente" (e então está funcionando) ou "meses de convivência mudam devagar" (e então o limiar ou o desconto precisam de recalibração)?
@@ -168,6 +169,8 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 Feito em 22/11 (PR #37):
 
+- `LICENSE` (MIT, confirmado pelo mantenedor) e `licences` no `gleam.toml`.
+
 - `README.md`, `GETTING_STARTED.md`, `docs/STATUS.md`, `docs/operations/OBSERVABILITY.md`, `docs/operations/INTERACTION.md` e `docs/operations/DOCKER.md` foram reescritos com o que é verdade hoje, conferido no código e no piloto.
 - A arquitetura ganhou grupo fechado, self, agenda, computador e harness.
 - A raiz foi organizada:
@@ -182,7 +185,6 @@ Feito em 22/11 (PR #37):
 Ainda aberto:
 
 - **O PRD N não tem relatório.**
-- **Não existe arquivo `LICENSE`.** O README diz MIT.
 - **`audit/` continua como está.** A auditoria de março está reconciliada em `audit/STATUS_2026-11.md`.
 
 ### 3.7 Riscos aceitos (revisitar)
@@ -191,7 +193,7 @@ Riscos aceitos nos relatórios, mantidos aqui para não se perderem.
 
 **Fila e reinício**
 
-- A fila não é durável: um kill forçado perde as mensagens que ainda não começaram.
+- ~~A fila não é durável: um kill forçado perde as mensagens que ainda não começaram.~~ Saiu dos riscos aceitos em 22/11: cada deploy reinicia o container, então a fila durável será tratada junto com a preservação do histórico (3.1).
 - O uso perdido depois de três tentativas é auditado, mas não entra no total do dia.
 
 **Orçamento e reservas**
