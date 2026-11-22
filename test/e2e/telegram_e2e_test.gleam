@@ -2,6 +2,7 @@ import e2e/e2e_support as support
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
 import gleeunit/should
 import supernova/channel/channel_kit
@@ -321,19 +322,26 @@ pub fn leave_retry_stops_when_group_is_authorized_meanwhile_test() {
           ],
           disable_telegram_polling: True,
           outbound_records: Some(process.new_subject()),
+          // Each attempt waits for the test's go-ahead, so the chat is
+          // authorized before the retry delay starts.
           leave_group: Some(fn(chat_id) {
-            process.send(attempts, chat_id)
+            let go = process.new_subject()
+            process.send(attempts, #(chat_id, go))
+            let _ = process.receive(go, within: 2000)
             False
           }),
           leave_retry_ms: [300, 300],
         ),
       )
 
-    process.receive(attempts, within: 2000) |> should.equal(Ok("-1003"))
+    let assert Ok(#("-1003", go)) = process.receive(attempts, within: 2000)
     let assert Some(runtime) = closed_group_global.get_runtime()
     let assert Ok(Nil) = access_actor.add_chat(runtime.access, "telegram:-1003")
+    process.send(go, Nil)
 
-    process.receive(attempts, within: 1000) |> should.equal(Error(Nil))
+    process.receive(attempts, within: 1000)
+    |> result.is_error
+    |> should.be_true()
     registry.stop_channels(channel_registry)
   })
 }

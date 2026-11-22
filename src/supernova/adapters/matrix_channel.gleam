@@ -118,6 +118,7 @@ fn stream_matrix_reply(
     events,
     event_id,
     "",
+    False,
     channel_kit.stream_timeout_ms,
   )
 }
@@ -128,13 +129,16 @@ fn consume_matrix_stream_events(
   events: process.Subject(port.ChannelStreamEvent),
   event_id: String,
   last_content: String,
+  uncertain: Bool,
   remaining_ms: Int,
 ) -> Result(Nil, port.ChannelError) {
   case process.receive(events, within: remaining_ms) {
     Ok(port.StreamUpdate(reply)) -> {
       // `last_content` is what the person sees: it advances only when an
       // edit succeeds, so completion resends after a failed or skipped edit.
-      let delivered = case
+      // A failed edit may still have been applied by the homeserver, so the
+      // visible content is uncertain until the next successful edit.
+      let #(delivered, uncertain) = case
         channel_kit.stream_update_fits("matrix", reply.content)
       {
         True -> {
@@ -143,11 +147,11 @@ fn consume_matrix_stream_events(
           case
             matrix_adapter.send_reply(homeserver_url, access_token, edit_reply)
           {
-            Ok(_) -> reply.content
-            Error(_) -> last_content
+            Ok(_) -> #(reply.content, False)
+            Error(_) -> #(last_content, True)
           }
         }
-        False -> last_content
+        False -> #(last_content, uncertain)
       }
       consume_matrix_stream_events(
         homeserver_url,
@@ -155,11 +159,12 @@ fn consume_matrix_stream_events(
         events,
         event_id,
         delivered,
+        uncertain,
         remaining_ms,
       )
     }
     Ok(port.StreamComplete(reply)) ->
-      case reply.content == last_content {
+      case reply.content == last_content && !uncertain {
         True -> Ok(Nil)
         False -> {
           let final_reply =
