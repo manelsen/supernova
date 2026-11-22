@@ -1,27 +1,7 @@
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: supernova
-      POSTGRES_USER: supernova
-      POSTGRES_PASSWORD: supernova
-    ports:
-      - "127.0.0.1:5433:5432"  # host only; the app reaches postgres on the compose network
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./migrations/init.sql:/docker-entrypoint-initdb.d/01-init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U supernova"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   supernova:
     container_name: supernova
     build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
       # LLM provider — set one of these
       SUPERNOVA_PROVIDER_MISTRAL_API_KEY: ${SUPERNOVA_PROVIDER_MISTRAL_API_KEY:-}
@@ -39,13 +19,6 @@ services:
 
       # Runtime state: access.json, ledger/ and audit_log/
       SUPERNOVA_DATA_DIR: /data
-
-      # Database (matches the postgres service above)
-      SUPERNOVA_DB_HOST: postgres
-      SUPERNOVA_DB_PORT: "5432"
-      SUPERNOVA_DB_NAME: supernova
-      SUPERNOVA_DB_USER: supernova
-      SUPERNOVA_DB_PASSWORD: supernova
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health/live || exit 1"]
       interval: 10s
@@ -59,5 +32,4 @@ services:
       - supernova_data:/data
 
 volumes:
-  postgres_data:
   supernova_data:

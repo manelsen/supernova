@@ -9,7 +9,6 @@
 //// - Support for routed providers (OpenAI, Anthropic, OpenRouter,
 ////   OpenCode Zen, Zhipu, Minimax, Ollama)
 //// - Discord and Telegram bot configuration
-//// - Database configuration
 
 import envoy
 import gleam/dict.{type Dict}
@@ -178,26 +177,6 @@ pub type WhatsAppConfig {
     device_id: Option(String),
     /// Enabled status
     enabled: Bool,
-  )
-}
-
-/// Database configuration
-pub type DatabaseConfig {
-  DatabaseConfig(
-    /// Database URL (connection string)
-    url: Option(String),
-    /// Database host
-    host: String,
-    /// Database port
-    port: Int,
-    /// Database name
-    database: String,
-    /// Database user
-    user: Option(String),
-    /// Database password
-    password: Option(String),
-    /// Connection pool size
-    pool_size: Int,
   )
 }
 
@@ -377,8 +356,6 @@ pub type Config {
     wechat_work: WechatWorkConfig,
     /// WhatsApp configuration
     whatsapp: WhatsAppConfig,
-    /// Database configuration
-    database: DatabaseConfig,
     /// Budget configuration
     budgets: BudgetsConfig,
     /// Closed-group access policy
@@ -452,15 +429,6 @@ pub fn default_config() -> Config {
     mattermost: MattermostConfig(token: None, base_url: None, enabled: False),
     wechat_work: WechatWorkConfig(webhook_url: None, enabled: False),
     whatsapp: WhatsAppConfig(bridge_url: None, device_id: None, enabled: False),
-    database: DatabaseConfig(
-      url: None,
-      host: "localhost",
-      port: 5432,
-      database: "supernova",
-      user: None,
-      password: None,
-      pool_size: 10,
-    ),
     budgets: default_budgets_config(),
     access: default_access_config(),
     role_budgets: default_role_budgets_config(),
@@ -902,33 +870,6 @@ fn decode_whatsapp(root: yay.Node) -> WhatsAppConfig {
   }
 }
 
-/// Decode Database configuration from YAML
-fn decode_database(root: yay.Node) -> DatabaseConfig {
-  case yay.select_sugar(root, "database") {
-    Ok(db_node) -> {
-      DatabaseConfig(
-        url: get_optional_string(db_node, "url"),
-        host: get_string_or(db_node, "host", "localhost"),
-        port: get_int_or(db_node, "port", 5432),
-        database: get_string_or(db_node, "database", "supernova"),
-        user: get_optional_string(db_node, "user"),
-        password: get_optional_string(db_node, "password"),
-        pool_size: get_int_or(db_node, "pool_size", 10),
-      )
-    }
-    Error(_) ->
-      DatabaseConfig(
-        url: None,
-        host: "localhost",
-        port: 5432,
-        database: "supernova",
-        user: None,
-        password: None,
-        pool_size: 10,
-      )
-  }
-}
-
 /// Decode a single budget config from YAML node
 fn decode_budget_config(node: yay.Node) -> BudgetConfigYaml {
   BudgetConfigYaml(
@@ -1250,9 +1191,6 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
   let wechat_work = decode_wechat_work(root)
   let whatsapp = decode_whatsapp(root)
 
-  // Parse database
-  let database = decode_database(root)
-
   // Parse budgets
   let budgets = decode_budgets(root)
   let access = decode_access(root)
@@ -1283,7 +1221,6 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     mattermost: mattermost,
     wechat_work: wechat_work,
     whatsapp: whatsapp,
-    database: database,
     budgets: budgets,
     access: access,
     role_budgets: role_budgets,
@@ -1484,33 +1421,6 @@ pub fn apply_env_overrides(config: Config) -> Config {
     _ -> config.whatsapp.enabled
   }
 
-  // Database overrides
-  let db_url = option.or(get_env("SUPERNOVA_DATABASE_URL"), config.database.url)
-  let db_host =
-    option.unwrap(get_env("SUPERNOVA_DATABASE_HOST"), config.database.host)
-  let db_port = case get_env("SUPERNOVA_DATABASE_PORT") {
-    Some(value) ->
-      case int.parse(value) {
-        Ok(port) -> port
-        Error(_) -> config.database.port
-      }
-    None -> config.database.port
-  }
-  let db_name =
-    option.unwrap(get_env("SUPERNOVA_DATABASE_NAME"), config.database.database)
-  let db_user =
-    option.or(get_env("SUPERNOVA_DATABASE_USER"), config.database.user)
-  let db_password =
-    option.or(get_env("SUPERNOVA_DATABASE_PASSWORD"), config.database.password)
-  let db_pool_size = case get_env("SUPERNOVA_DATABASE_POOL_SIZE") {
-    Some(value) ->
-      case int.parse(value) {
-        Ok(size) -> size
-        Error(_) -> config.database.pool_size
-      }
-    None -> config.database.pool_size
-  }
-
   // Provider API key overrides (for each provider in config)
   let providers = apply_provider_env_overrides(config.providers)
 
@@ -1591,15 +1501,6 @@ pub fn apply_env_overrides(config: Config) -> Config {
       bridge_url: whatsapp_bridge_url,
       device_id: whatsapp_device_id,
       enabled: whatsapp_enabled,
-    ),
-    database: DatabaseConfig(
-      url: db_url,
-      host: db_host,
-      port: db_port,
-      database: db_name,
-      user: db_user,
-      password: db_password,
-      pool_size: db_pool_size,
     ),
     budgets: config.budgets,
     access: AccessConfig(
@@ -1690,9 +1591,6 @@ pub fn validate(config: Config) -> Result(Nil, ConfigError) {
   use _ <- result.try(validate_mattermost(config.mattermost))
   use _ <- result.try(validate_wechat_work(config.wechat_work))
   use _ <- result.try(validate_whatsapp(config.whatsapp))
-
-  // Validate database configuration
-  use _ <- result.try(validate_database(config.database))
 
   // Validate provider configurations
   use _ <- result.try(validate_providers(config.providers))
@@ -1843,14 +1741,6 @@ fn validate_whatsapp(config: WhatsAppConfig) -> Result(Nil, ConfigError) {
           ))
       }
     False -> Ok(Nil)
-  }
-}
-
-/// Validate database configuration
-fn validate_database(config: DatabaseConfig) -> Result(Nil, ConfigError) {
-  case config.pool_size > 0 {
-    True -> Ok(Nil)
-    False -> Error(ValidationError("Database pool_size must be greater than 0"))
   }
 }
 

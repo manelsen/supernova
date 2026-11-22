@@ -64,7 +64,7 @@ pub fn get_capabilities_returns_json_array_test() {
   // Should start with [ and end with ]
   data
   |> should.equal(
-    "[\"resource_ledger\",\"world_model\",\"memory\",\"memory_recall\",\"llm_streaming\",\"sub_agents\",\"mcp\",\"entry_point\",\"budget_policy\",\"telemetry\",\"workspace_policy\",\"capability_manifest\",\"audit_log\",\"agent_queue\",\"kernel_scheduler\",\"checkpoint\",\"task_graph\",\"dag_tasks\",\"typed_subagent_result\",\"memory_federation\",\"context_injector\",\"syscall\",\"kernel_api\",\"kernel_version\"]",
+    "[\"resource_ledger\",\"world_model\",\"memory\",\"llm_streaming\",\"sub_agents\",\"mcp\",\"entry_point\",\"budget_policy\",\"telemetry\",\"workspace_policy\",\"capability_manifest\",\"audit_log\",\"agent_queue\",\"kernel_scheduler\",\"checkpoint\",\"task_graph\",\"dag_tasks\",\"typed_subagent_result\",\"memory_federation\",\"context_injector\",\"syscall\",\"kernel_api\",\"kernel_version\"]",
   )
   actor.stop(api)
 }

@@ -257,13 +257,11 @@ Each adapter:
 |-------------|---------|
 | Gleam | 1.19.2 (`.tool-versions`) |
 | Erlang/OTP | 28.5.0.8 (`.tool-versions`) |
-| PostgreSQL | >= 12 |
 
 ### Key Dependencies
 
 - `gleam_otp` - Actor/supervisor patterns
 - `gleam_json` - JSON serialization
-- `pog` - PostgreSQL driver
 - `stratus` - WebSocket support
 - `yay` - YAML parsing
 - `envoy` - Environment variables

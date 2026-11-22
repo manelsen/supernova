@@ -6,13 +6,13 @@ This guide takes you from zero to a running Supernova agent in about 10 minutes.
 
 - [Gleam](https://gleam.run/getting-started/) >= 1.0.0
 - [Erlang/OTP](https://www.erlang.org/downloads) >= 25.0
-- Docker (for PostgreSQL) — or a running PostgreSQL instance
+- Docker (optional, for Option A)
 
 ---
 
 ## Option A: Docker (recommended)
 
-The fastest path. Docker handles Postgres and the app.
+The fastest path. Docker builds and runs the app.
 
 **1. Clone and configure**
 
@@ -46,27 +46,19 @@ SUPERNOVA_TELEGRAM_TOKEN=123456:ABC-DEF...
 docker compose up
 ```
 
-Supernova starts, connects to Postgres, and begins polling your Telegram/Discord bot.
+Supernova starts and begins polling your Telegram/Discord bot.
 
 ---
 
 ## Option B: Local
 
-**1. Start Postgres**
-
-```sh
-docker compose up -d postgres
-```
-
-Or use an existing PostgreSQL instance — create a database named `supernova` and update `supernova.yaml`.
-
-**2. Install dependencies**
+**1. Install dependencies**
 
 ```sh
 gleam deps download
 ```
 
-**3. Configure interactively (optional)**
+**2. Configure interactively (optional)**
 
 The wizard guides you through creating bots and generates `supernova.yaml`:
 
@@ -81,7 +73,7 @@ cp examples/quickstart/supernova.yaml supernova.yaml
 # edit supernova.yaml
 ```
 
-**4. Run**
+**3. Run**
 
 ```sh
 gleam run
@@ -155,6 +147,6 @@ To see resource accounting per agent:
 
 **`supernova.yaml not found`** — the file is optional; Supernova uses defaults. Check that your API key and bot token are set as environment variables.
 
-**`Failed to start services`** — most likely Postgres is not reachable. Check that `docker compose up -d postgres` ran successfully and the host/port in config match.
+**`Failed to start services`** — read the line after it: it names the cause (for example, no LLM provider configured).
 
 **Bot does not respond** — verify the token is correct and the bot is not already running elsewhere (Telegram allows only one polling connection per token).

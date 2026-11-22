@@ -114,15 +114,6 @@ whatsapp:
   # Required: SUPERNOVA_WHATSAPP_WEBHOOK_VERIFY_TOKEN, SUPERNOVA_WHATSAPP_WEBHOOK_URL
   enabled: false
 
-# Database
-database:
-  host: "${SUPERNOVA_DB_HOST:-postgres}"
-  port: ${SUPERNOVA_DB_PORT:-5432}
-  name: "${SUPERNOVA_DB_NAME:-supernova}"
-  user: "${SUPERNOVA_DB_USER:-supernova}"
-  password: "${SUPERNOVA_DB_PASSWORD:-supernova}"
-  pool_size: 10
-
 # Budgets (per-agent limits, -1 = unlimited)
 budgets:
   default:

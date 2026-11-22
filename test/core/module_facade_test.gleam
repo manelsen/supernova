@@ -10,5 +10,5 @@ pub fn core_facade_version_test() {
 pub fn core_facade_capabilities_not_empty_test() {
   core.capabilities()
   |> list.length
-  |> should.equal(24)
+  |> should.equal(23)
 }

@@ -61,19 +61,6 @@ discord:
   # app_id: ...                    # or: SUPERNOVA_DISCORD_APP_ID
   # guild_id: ...                  # optional, for dev server slash commands
 
-# ── Database ──────────────────────────────────────────────────────────────────
-#
-# PostgreSQL is required for WorldModel, AuditLog, and persistent memory.
-# Use `docker compose up -d postgres` to start a local instance.
-#
-database:
-  host: localhost                   # or: SUPERNOVA_DB_HOST
-  port: 5432                        # or: SUPERNOVA_DB_PORT
-  database: supernova               # or: SUPERNOVA_DB_NAME
-  user: supernova                   # or: SUPERNOVA_DB_USER
-  # password: supernova             # or: SUPERNOVA_DB_PASSWORD
-  pool_size: 10
-
 # ── MCP Servers (optional) ────────────────────────────────────────────────────
 #
 # Register local MCP servers at startup. Each server is started via command/args
