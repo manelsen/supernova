@@ -156,6 +156,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **O que existe:** o executor registra contadores e histogramas de LLM e abre spans `llm.chat` e `tool.execute`; os atores `metrics` e `tracing` sobem no boot; os spans iriam para o stdout, e não há exportação OTLP.
   - **O que aparece no piloto:** o `/metrics` responde 200 e vem vazio depois de uma hora de conversa, e nenhum span aparece no log.
   - **Sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` não são importados por ninguém fora dos próprios módulos.
+- **Readiness de verdade.** O `/health/ready` lista os canais configurados como prontos e sempre responde 200, sem consultar o estado dos canais.
 - **Benchmarks** (REQ-9). O código está em `test/bench/`, mas as metas de `BENCHMARKS.md` nunca foram medidas.
 - **Teste de carga** (REQ-8). O código está em `tests/load/` e `run_load_tests.sh`. A meta (100 usuários, p99 < 2 s, erro < 1%) nunca foi verificada.
 - **Verificação final da v1.** Faltam os critérios de `production-ready-v1`: spans visíveis, circuit breaker medido e nenhum `mock` em código de produção.

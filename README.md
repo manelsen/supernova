@@ -79,7 +79,8 @@ The agent decides when to use them. Each role has its own allowlist: members are
 | `web`, `browser` | Fetch pages; drive a headless browser |
 | `github`, `git_inspect` | Read repositories |
 | `gateway` | Authenticated HTTP calls to configured APIs |
-| `safe_shell`, `process` | Restricted commands on the host |
+| `safe_shell` | Restricted commands on the host |
+| `process` | List, inspect and stop processes |
 | `canvas` | Structured blocks |
 | `computador` | The agent's own computer (optional, gVisor) |
 
@@ -91,7 +92,7 @@ MCP servers can add more tools.
 
 ```sh
 git clone https://github.com/manelsen/supernova && cd supernova
-cp supernova.yaml.example supernova.yaml
+cp supernova.yaml.example supernova.yaml   # under telegram:, set enabled: true
 cp .env.example .env && chmod 600 .env    # provider key, bot token
 docker compose up -d --build
 ```

@@ -40,6 +40,6 @@ The agent decides when to use its tools. Admins can use every tool. For members,
 
 ## Troubleshooting
 
-- **No answer at all:** check `docker compose logs supernova` and `GET /health/ready` ([OBSERVABILITY.md](OBSERVABILITY.md)).
+- **No answer at all:** check `docker compose logs supernova`. `GET /health/ready` only lists the configured channels ([OBSERVABILITY.md](OBSERVABILITY.md)).
 - **Unauthorized people** get the `denied_reply` configured in `access` (at most once every 24 h), or nothing. They can send `/eu` and ask an admin to run `/acesso adicionar <principal>`.
 - **"O limite diário desta instância foi atingido":** an admin can raise the ceiling for the day with `/teto liberar <usd>`.

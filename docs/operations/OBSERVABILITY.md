@@ -10,11 +10,13 @@ The health server listens on port **8080** inside the container. The port is not
 |---|---|---|
 | `GET /health` | `{"status":"ok","uptime_seconds":N}` | People |
 | `GET /health/live` | `ok` | The compose healthcheck |
-| `GET /health/ready` | Status, uptime and each enabled channel with `ready` and `error` | People, before trusting a deploy |
+| `GET /health/ready` | Status, uptime and the names of the enabled channels. Every channel is listed with `ready: true` and `error: null`: the endpoint does not check channel state, and it always answers 200. | People. For channel errors, read the logs. |
 
 ```sh
 docker exec supernova wget -qO- http://127.0.0.1:8080/health/ready
 ```
+
+A 200 from `/health/ready` shows that the process is up and which channels are configured. It does not show that a channel works.
 
 The computer (`computador`) has its own `GET /health` on port 7070, and the compose healthcheck uses it. See [COMPUTADOR.md](COMPUTADOR.md).
 
@@ -49,6 +51,7 @@ The code is there, but the pilot shows nothing:
 
 ## What does not work yet
 
+- **`/health/ready` does not check channels.** It lists the configured channels as ready and always answers 200.
 - **`/metrics` is empty in the pilot.** It answered 200 with an empty body after an hour of conversation. The cause has not been investigated.
 - **No spans in the logs.** The tracer starts at boot, but no `llm.chat` or `tool.execute` span reached the pilot's logs.
 - **No exporter.** There is no Prometheus scrape configuration, no OTLP collector and no dashboards.

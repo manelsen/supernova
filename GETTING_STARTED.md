@@ -82,4 +82,4 @@ gleam run
 - **The bot does not answer at all.** Check `docker compose logs supernova`. Telegram allows one polling connection per token, so make sure the bot is not running elsewhere.
 - **The bot answers "Esta instância é privada."** You are not on the access list yet: see step 3.
 - **The bot says "A Supernova ainda não está pronta para receber agentes novas."** `priv/constellation/constellation.json` is missing.
-- **Health:** `docker exec supernova wget -qO- http://127.0.0.1:8080/health/ready` lists each channel and whether it is ready.
+- **Health:** `docker exec supernova wget -qO- http://127.0.0.1:8080/health/ready` shows that the process is up and which channels are configured. It does not check that a channel works: for channel errors, read the logs.

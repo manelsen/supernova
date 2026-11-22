@@ -41,11 +41,12 @@ Agents interact with kernel resources through `SyscallGateway`, which centralize
 
 Since v0.4.0 an instance runs as a closed group: it denies everyone who is not on its access list. `core/closed_group/runtime.gleam` is the gate every inbound message goes through:
 
-1. **Access** (`core/access`): is this principal an admin or a member, and is this chat allowed?
-2. **Commands** answered without the LLM: `/eu`, `/uso`, `/acesso`, `/teto`, `/auditoria`, `/agenda`, `/esquecer`.
-3. **Rate limit** (`core/rate_limit`) and **admission** against the person's daily budget and the instance ceiling (`core/instance_budget`). An LLM call reserves tokens in the ledger before it runs and settles the real cost after.
-4. **Lanes** (`core/agent_queue`): one serial queue per chat, with limits on pending turns and on the number of lanes.
-5. **Capabilities** per role (`capabilities` in `supernova.yaml`). Members are denied the riskier tools by default.
+1. **`/eu`** is answered first, before any check, so an unauthorized person can learn their principal id.
+2. **Access** (`core/access`): is this principal an admin or a member, and is this chat allowed?
+3. **Commands** answered without the LLM: `/uso`, `/acesso`, `/teto`, `/auditoria`, `/agenda`, `/esquecer`.
+4. **Rate limit** (`core/rate_limit`) and **admission** against the person's daily budget and the instance ceiling (`core/instance_budget`). An LLM call reserves tokens in the ledger before it runs and settles the real cost after.
+5. **Lanes** (`core/agent_queue`): one serial queue per chat, with limits on pending turns and on the number of lanes.
+6. **Capabilities** per role (`capabilities` in `supernova.yaml`). Members are denied the riskier tools by default.
 
 Every charge goes to `core/resource_ledger` (`/data/ledger/<date>.jsonl`). Every decision goes to `core/audit_log`.
 
