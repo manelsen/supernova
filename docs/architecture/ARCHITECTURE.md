@@ -43,9 +43,9 @@ Since v0.4.0 an instance runs as a closed group: it denies everyone who is not o
 
 1. **`/eu`** is answered first, before any check, so an unauthorized person can learn their principal id.
 2. **Access** (`core/access`): is this principal an admin or a member, and is this chat allowed?
-3. **Commands** answered without the LLM: `/uso`, `/acesso`, `/teto`, `/auditoria`, `/agenda`, `/esquecer`.
+3. **Commands** answered by the gate without the LLM: `/uso`, `/acesso`, `/teto`, `/auditoria`. `/esquecer` also skips the checks below, so a person can always ask to forget.
 4. **Rate limit** (`core/rate_limit`) and **admission** against the person's daily budget and the instance ceiling (`core/instance_budget`). An LLM call reserves tokens in the ledger before it runs and settles the real cost after.
-5. **Lanes** (`core/agent_queue`): one serial queue per chat, with limits on pending turns and on the number of lanes.
+5. **Lanes** (`core/agent_queue`): one serial queue per chat, with limits on pending turns and on the number of lanes. From here the router handles the rest, including `/agenda`, which therefore goes through rate limiting and admission like a normal message.
 6. **Capabilities** per role (`capabilities` in `supernova.yaml`). Members are denied the riskier tools by default.
 
 Every charge goes to `core/resource_ledger` (`/data/ledger/<date>.jsonl`). Every decision goes to `core/audit_log`.
