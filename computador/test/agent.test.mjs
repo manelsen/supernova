@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test } from 'node:test';
-import { clip, createServer, LIMITS, resolvePath, run, runShell, WORK_DIR, UserError } from '../agent.mjs';
+import { browserOpen, clip, createServer, LIMITS, resolvePath, run, runShell, WORK_DIR, UserError } from '../agent.mjs';
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -173,6 +173,19 @@ test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, a
     }
     const again = await run({ op: 'goto', url });
     assert.equal(again.title, 'Teste');
+
+    // A launch that outlives its deadline must not become the browser.
+    await run({ op: 'close' });
+    LIMITS.browserOpMs = 50;
+    try {
+      await assert.rejects(run({ op: 'goto', url }), /restarted/);
+    } finally {
+      LIMITS.browserOpMs = limit;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 8_000));
+    assert.equal(browserOpen(), false);
+    const fresh = await run({ op: 'goto', url });
+    assert.equal(fresh.title, 'Teste');
   } finally {
     await run({ op: 'close' });
     pageServer.close();

@@ -151,6 +151,13 @@ async function listDir(args) {
 
 let browserContext = null;
 let chain = Promise.resolve();
+// Bumped when an operation times out: a launch that finishes after that
+// belongs to an abandoned operation and must not become the browser.
+let generation = 0;
+// Settles when the last abandoned browser has closed (or gave up closing),
+// so the next launch does not fight it for the profile directory.
+let closing = Promise.resolve();
+const CLOSE_WAIT_MS = 10_000;
 
 // Browser operations share one page, so they run one at a time. Each one has
 // a deadline: Playwright can wait forever (a page script that never
@@ -163,18 +170,26 @@ function serial(task) {
   return next;
 }
 
+function closeBounded(context) {
+  return Promise.race([
+    context.close().catch(() => {}),
+    new Promise((resolve) => setTimeout(resolve, CLOSE_WAIT_MS)),
+  ]);
+}
+
 async function withDeadline(task) {
   let timer;
   const deadline = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error('timeout')), LIMITS.browserOpMs);
   });
   try {
-    return await Promise.race([task(), deadline]);
+    return await Promise.race([task(generation), deadline]);
   } catch (e) {
     if (e && e.message === 'timeout') {
+      generation += 1;
       const stuck = browserContext;
       browserContext = null;
-      if (stuck) stuck.close().catch(() => {});
+      if (stuck) closing = closeBounded(stuck);
       throw new Error(`the browser did not answer within ${LIMITS.browserOpMs / 1000} s and was restarted`);
     }
     throw e;
@@ -183,19 +198,26 @@ async function withDeadline(task) {
   }
 }
 
-async function page() {
+async function page(gen) {
   if (!browserContext) {
+    await closing;
     const { chromium } = await import('playwright');
-    browserContext = await chromium.launchPersistentContext(PROFILE_DIR, {
+    const launched = await chromium.launchPersistentContext(PROFILE_DIR, {
       headless: true,
       viewport: VIEWPORT,
       locale: 'pt-BR',
       timezoneId: process.env.TZ || 'America/Sao_Paulo',
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      timeout: LIMITS.browserOpMs,
     });
-    browserContext.setDefaultTimeout(LIMITS.browserTimeoutMs);
-    const opened = browserContext;
-    opened.on('close', () => { if (browserContext === opened) browserContext = null; });
+    if (gen !== generation) {
+      // This operation already timed out; do not let its browser linger.
+      closing = closeBounded(launched);
+      throw new Error('abandoned launch');
+    }
+    launched.setDefaultTimeout(LIMITS.browserTimeoutMs);
+    launched.on('close', () => { if (browserContext === launched) browserContext = null; });
+    browserContext = launched;
   }
   const pages = browserContext.pages();
   return pages.length > 0 ? pages[pages.length - 1] : browserContext.newPage();
@@ -261,16 +283,22 @@ const BROWSER_OPS = {
   },
 };
 
-async function browserOp(name, args) {
+async function browserOp(name, args, gen) {
   if (name === 'close') {
-    if (browserContext) await browserContext.close();
+    const open = browserContext;
     browserContext = null;
+    if (open) await closeBounded(open);
     return {};
   }
   const op = BROWSER_OPS[name];
-  const p = await page();
+  const p = await page(gen);
   const result = await op(p, args);
   return { ...(await where(p)), ...result };
+}
+
+/// For tests: whether a browser is open right now.
+export function browserOpen() {
+  return browserContext !== null;
 }
 
 // ---------------------------------------------------------------- routing
@@ -285,7 +313,7 @@ export async function run(body) {
     case 'write_file': return writeFile(body);
     case 'list': return listDir(body);
     default:
-      if (op === 'close' || Object.hasOwn(BROWSER_OPS, op)) return serial(() => browserOp(op, body));
+      if (op === 'close' || Object.hasOwn(BROWSER_OPS, op)) return serial((gen) => browserOp(op, body, gen));
       throw new UserError(`unknown op "${op}"; expected one of: ${OPS.join(', ')}`);
   }
 }
