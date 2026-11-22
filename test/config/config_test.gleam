@@ -7,7 +7,7 @@ import gleam/option.{None, Some}
 import gleeunit
 import supernova/config.{
   AccessConfig as AccessConfigRecord, Anthropic, Config as ConfigRecord,
-  DatabaseConfig as DatabaseConfigRecord, DiscordConfig as DiscordConfigRecord,
+  DiscordConfig as DiscordConfigRecord,
   GoogleChatConfig as GoogleChatConfigRecord, InvalidField,
   LarkConfig as LarkConfigRecord, MatrixConfig as MatrixConfigRecord,
   MattermostConfig as MattermostConfigRecord, Minimax, MissingField, Ollama,
@@ -49,10 +49,6 @@ pub fn default_config_has_correct_defaults_test() {
   config.mattermost.enabled |> should_equal(False)
   config.wechat_work.enabled |> should_equal(False)
   config.whatsapp.enabled |> should_equal(False)
-  config.database.host |> should_equal("localhost")
-  config.database.port |> should_equal(5432)
-  config.database.database |> should_equal("supernova")
-  config.database.pool_size |> should_equal(10)
 }
 
 pub fn default_provider_config_openai_test() {
@@ -198,28 +194,21 @@ whatsapp:
   config.whatsapp.enabled |> should_equal(True)
 }
 
-pub fn parse_database_config_test() {
+/// The database section was removed with Postgres. Existing configs that
+/// still carry it must keep loading: the section is ignored.
+pub fn legacy_database_section_is_ignored_test() {
   let yaml =
     "
+app_name: legacy
 database:
-  url: postgres://user:pass@host:5432/db
-  host: db.example.com
-  port: 5433
-  database: supernova_prod
-  user: admin
-  password: secret
-  pool_size: 20
+  host: postgres
+  port: 5432
+  pool_size: 0
 "
 
-  let assert Ok(config) = parse_yaml(yaml)
+  let assert Ok(config) = load(yaml)
 
-  config.database.url |> should_equal(Some("postgres://user:pass@host:5432/db"))
-  config.database.host |> should_equal("db.example.com")
-  config.database.port |> should_equal(5433)
-  config.database.database |> should_equal("supernova_prod")
-  config.database.user |> should_equal(Some("admin"))
-  config.database.password |> should_equal(Some("secret"))
-  config.database.pool_size |> should_equal(20)
+  config.app_name |> should_equal("legacy")
 }
 
 pub fn parse_provider_config_test() {
@@ -522,27 +511,6 @@ pub fn validate_wechat_work_enabled_without_webhook_url_test() {
   }
 }
 
-pub fn validate_database_invalid_pool_size_test() {
-  let config =
-    ConfigRecord(
-      ..default_config(),
-      database: DatabaseConfigRecord(
-        url: None,
-        host: "localhost",
-        port: 5432,
-        database: "supernova",
-        user: None,
-        password: None,
-        pool_size: 0,
-      ),
-    )
-
-  case validate(config) {
-    Error(ValidationError("Database pool_size must be greater than 0")) -> Nil
-    _ -> panic as "Expected ValidationError for invalid pool_size"
-  }
-}
-
 pub fn validate_discord_enabled_with_token_test() {
   let config =
     ConfigRecord(
@@ -809,36 +777,6 @@ pub fn apply_env_overrides_new_channel_settings_test() {
   envoy.unset("SUPERNOVA_WECHAT_WORK_WEBHOOK_URL")
   envoy.unset("SUPERNOVA_WHATSAPP_BRIDGE_URL")
   envoy.unset("SUPERNOVA_WHATSAPP_DEVICE_ID")
-}
-
-pub fn apply_env_overrides_database_test() {
-  envoy.set("SUPERNOVA_DATABASE_URL", "postgres://env:pass@host/db")
-  envoy.set("SUPERNOVA_DATABASE_HOST", "env-host")
-  envoy.set("SUPERNOVA_DATABASE_PORT", "5433")
-  envoy.set("SUPERNOVA_DATABASE_NAME", "env_db")
-  envoy.set("SUPERNOVA_DATABASE_USER", "env_user")
-  envoy.set("SUPERNOVA_DATABASE_PASSWORD", "env_pass")
-  envoy.set("SUPERNOVA_DATABASE_POOL_SIZE", "25")
-
-  let config = default_config()
-  let overridden = apply_env_overrides(config)
-
-  overridden.database.url |> should_equal(Some("postgres://env:pass@host/db"))
-  overridden.database.host |> should_equal("env-host")
-  overridden.database.port |> should_equal(5433)
-  overridden.database.database |> should_equal("env_db")
-  overridden.database.user |> should_equal(Some("env_user"))
-  overridden.database.password |> should_equal(Some("env_pass"))
-  overridden.database.pool_size |> should_equal(25)
-
-  // Clean up
-  envoy.unset("SUPERNOVA_DATABASE_URL")
-  envoy.unset("SUPERNOVA_DATABASE_HOST")
-  envoy.unset("SUPERNOVA_DATABASE_PORT")
-  envoy.unset("SUPERNOVA_DATABASE_NAME")
-  envoy.unset("SUPERNOVA_DATABASE_USER")
-  envoy.unset("SUPERNOVA_DATABASE_PASSWORD")
-  envoy.unset("SUPERNOVA_DATABASE_POOL_SIZE")
 }
 
 pub fn apply_env_overrides_provider_api_key_test() {

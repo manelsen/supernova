@@ -46,5 +46,5 @@ Check logs for:
 
 - Missing config or token: validate `supernova.yaml` and environment variables.
 - No responses from bot: verify channel-side bot registration and token validity.
-- Runtime startup failure: inspect Postgres availability and config validation errors.
+- Runtime startup failure: inspect config validation errors.
 

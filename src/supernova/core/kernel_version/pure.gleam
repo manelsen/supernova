@@ -51,7 +51,6 @@ const all_capabilities: List(types.Capability) = [
   types.Capability(name: "resource_ledger", enabled: True),
   types.Capability(name: "world_model", enabled: True),
   types.Capability(name: "memory", enabled: True),
-  types.Capability(name: "memory_recall", enabled: True),
   types.Capability(name: "llm_streaming", enabled: True),
   types.Capability(name: "sub_agents", enabled: True),
   types.Capability(name: "mcp", enabled: True),

@@ -6,7 +6,6 @@ Thanks for contributing.
 
 - Gleam >= 1.0
 - Erlang/OTP >= 25
-- Docker or Podman (for local Postgres)
 
 ## Development Setup
 
@@ -17,19 +16,7 @@ Thanks for contributing.
 gleam deps download
 ```
 
-3. Bring up Postgres (choose one):
-
-```sh
-docker compose up -d postgres
-```
-
-or
-
-```sh
-podman compose up -d postgres
-```
-
-4. Create/update `supernova.yaml` (or run wizard):
+3. Create/update `supernova.yaml` (or run wizard):
 
 ```sh
 gleam run -m supernova/wizard_main

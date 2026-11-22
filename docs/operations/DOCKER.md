@@ -70,16 +70,6 @@ docker compose down
 docker compose down -v
 ```
 
-## Database initialization
-
-The `postgres` service auto-initializes the database on first run using `migrations/init.sql`.
-To reinitialize, stop the services and remove the volume:
-
-```sh
-docker compose down -v
-docker compose up -d
-```
-
 ## Building a custom image
 
 ```sh
@@ -94,13 +84,6 @@ services:
     image: supernova:custom
 ```
 
-## Accessing the database
-
-```sh
-# Connect to postgres
-docker compose exec postgres psql -U supernova -d supernova
-```
-
 ## Production deployment
 
 For production, use the systemd quickstart:
@@ -112,7 +95,6 @@ curl -fsSL https://raw.githubusercontent.com/manelsen/supernova/main/scripts/qui
 This provides:
 - Systemd service management with restart policies
 - Graceful shutdown handling
-- Local PostgreSQL installation
 - Proper separation of config and secrets
 - Idempotent, auditable installation
 
