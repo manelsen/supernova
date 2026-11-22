@@ -233,7 +233,10 @@ fn allow_control_command(
   role: access_types.Role,
   content: String,
 ) -> Option(types.GateResult) {
-  case pure.is_forget_command(content) {
+  // /esquecer and /agenda are answered without any LLM call, so they skip the
+  // rate limit and admission; a reached cap must not lock a person out of
+  // forgetting or of removing an agenda entry.
+  case pure.is_forget_command(content) || pure.is_agenda_command(content) {
     False -> None
     True ->
       Some(

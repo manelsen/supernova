@@ -1,7 +1,9 @@
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit
 import gleeunit/should
 import supernova/health/server
+import supernova/health/types as health_types
 import supernova/metrics/actor as metrics_actor
 
 pub fn main() {
@@ -10,7 +12,7 @@ pub fn main() {
 
 pub fn start_and_stop_health_server_test() {
   let assert Ok(metrics) = metrics_actor.start()
-  let health_server = server.start(0, metrics, fn() { ["discord", "telegram"] })
+  let health_server = server.start(0, metrics, fn() { [] })
 
   health_server.port |> should.equal(0)
   server.stop(health_server) |> should.equal(Nil)
@@ -26,12 +28,35 @@ pub fn health_reports_real_uptime_from_start_time_test() {
   string.contains(json, "\"uptime_seconds\":5") |> should.equal(True)
 }
 
-pub fn ready_reports_active_channels_from_callback_test() {
-  let start_ms = server.current_timestamp() - 2000
-  let json = server.render_ready_json(start_ms, fn() { ["discord", "slack"] })
+fn channel(name: String, ready: Bool, error) -> health_types.ChannelStatus {
+  health_types.ChannelStatus(name: name, ready: ready, error: error)
+}
 
+pub fn ready_reports_channel_state_from_callback_test() {
+  let start_ms = server.current_timestamp() - 2000
+  let #(code, json) =
+    server.ready_response(start_ms, fn() {
+      [channel("discord", True, None), channel("slack", True, None)]
+    })
+
+  code |> should.equal(200)
   string.contains(json, "\"status\":\"ok\"") |> should.equal(True)
   string.contains(json, "\"name\":\"discord\"") |> should.equal(True)
   string.contains(json, "\"name\":\"slack\"") |> should.equal(True)
   string.contains(json, "\"ready\":true") |> should.equal(True)
+}
+
+pub fn ready_is_503_when_a_channel_is_down_test() {
+  let start_ms = server.current_timestamp()
+  let #(code, json) =
+    server.ready_response(start_ms, fn() {
+      [
+        channel("discord", True, None),
+        channel("telegram", False, Some("telegram api error 401")),
+      ]
+    })
+
+  code |> should.equal(503)
+  string.contains(json, "\"status\":\"degraded\"") |> should.equal(True)
+  string.contains(json, "telegram api error 401") |> should.equal(True)
 }

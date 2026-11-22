@@ -10,13 +10,19 @@ The health server listens on port **8080** inside the container. The port is not
 |---|---|---|
 | `GET /health` | `{"status":"ok","uptime_seconds":N}` | People |
 | `GET /health/live` | `ok` | The compose healthcheck |
-| `GET /health/ready` | Status, uptime and the names of the enabled channels. Every channel is listed with `ready: true` and `error: null`: the endpoint does not check channel state, and it always answers 200. | People. For channel errors, read the logs. |
+| `GET /health/ready` | Status, uptime and each enabled channel with `ready` and `error`. 200 with `"status":"ok"` when every channel is ready; 503 with `"status":"degraded"` otherwise. | People and external monitors |
 
 ```sh
 docker exec supernova wget -qO- http://127.0.0.1:8080/health/ready
 ```
 
-A 200 from `/health/ready` shows that the process is up and which channels are configured. It does not show that a channel works.
+What `ready` means for each channel:
+
+- **Telegram** reports every `getUpdates`. A failed poll makes it not ready, with the error (for example `telegram api error 401: Unauthorized` for a bad token), until the next poll succeeds; failed polls are retried with backoff from 1 s to 30 s. A minute with no successful poll, for example because the polling process died, also makes it not ready.
+- **A channel that failed to start** (bad configuration, missing token) is listed as not ready, with the reason.
+- **The other channels** only report that they started. A Discord gateway that disconnects later still shows as ready.
+
+The compose healthcheck uses `/health/live`, so a channel that is down does not restart the container.
 
 The computer (`computador`) has its own `GET /health` on port 7070, and the compose healthcheck uses it. See [COMPUTADOR.md](COMPUTADOR.md).
 
@@ -51,7 +57,7 @@ The code is there, but the pilot shows nothing:
 
 ## What does not work yet
 
-- **`/health/ready` does not check channels.** It lists the configured channels as ready and always answers 200.
+- **Readiness only probes Telegram.** The other channels count as ready once they start.
 - **`/metrics` is empty in the pilot.** It answered 200 with an empty body after an hour of conversation. The cause has not been investigated.
 - **No spans in the logs.** The tracer starts at boot, but no `llm.chat` or `tool.execute` span reached the pilot's logs.
 - **No exporter.** There is no Prometheus scrape configuration, no OTLP collector and no dashboards.

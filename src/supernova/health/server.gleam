@@ -9,7 +9,6 @@ import gleam/http/response
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/option
 import mist.{type Connection, type ResponseData}
 
 import supernova/health/types as health_types
@@ -31,12 +30,12 @@ fn handle_request(
   req: request.Request(Connection),
   metrics: metrics_actor.Metrics,
   start_time_ms: Int,
-  get_ready_channels: fn() -> List(String),
+  get_channels: fn() -> List(health_types.ChannelStatus),
 ) -> response.Response(ResponseData) {
   case request.path_segments(req) {
     ["health"] -> handle_health(start_time_ms)
     ["health", "live"] -> handle_live()
-    ["health", "ready"] -> handle_ready(start_time_ms, get_ready_channels)
+    ["health", "ready"] -> handle_ready(start_time_ms, get_channels)
     ["metrics"] -> handle_metrics(req, metrics)
     _ -> handle_not_found()
   }
@@ -63,30 +62,38 @@ fn handle_live() -> response.Response(ResponseData) {
   |> response.set_body(mist.Bytes(bytes_tree.from_string("ok")))
 }
 
-pub fn render_ready_json(
+/// Status code and body of `/health/ready`: 200 when every known channel is
+/// ready, 503 otherwise.
+pub fn ready_response(
   start_time_ms: Int,
-  get_ready_channels: fn() -> List(String),
-) -> String {
-  let channels =
-    get_ready_channels()
-    |> list.map(fn(name) {
-      health_types.ChannelStatus(name: name, ready: True, error: option.None)
-    })
+  get_channels: fn() -> List(health_types.ChannelStatus),
+) -> #(Int, String) {
+  let channels = get_channels()
+  let all_ready = list.all(channels, fn(channel) { channel.ready })
   let status =
     health_types.ReadinessStatus(
-      status: "ok",
+      status: case all_ready {
+        True -> "ok"
+        False -> "degraded"
+      },
       uptime_seconds: uptime_seconds(start_time_ms),
       channels_ready: channels,
     )
-  health_types.readiness_status_to_json(status)
+  #(
+    case all_ready {
+      True -> 200
+      False -> 503
+    },
+    health_types.readiness_status_to_json(status),
+  )
 }
 
 fn handle_ready(
   start_time_ms: Int,
-  get_ready_channels: fn() -> List(String),
+  get_channels: fn() -> List(health_types.ChannelStatus),
 ) -> response.Response(ResponseData) {
-  let body = render_ready_json(start_time_ms, get_ready_channels)
-  response.new(200)
+  let #(code, body) = ready_response(start_time_ms, get_channels)
+  response.new(code)
   |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
   |> response.set_header("content-type", "application/json")
 }
@@ -110,13 +117,13 @@ fn handle_not_found() -> response.Response(ResponseData) {
 pub fn start(
   port: Int,
   metrics: metrics_actor.Metrics,
-  get_ready_channels: fn() -> List(String),
+  get_channels: fn() -> List(health_types.ChannelStatus),
 ) -> HealthServer {
   let start_time_ms = current_timestamp()
 
   let assert Ok(_) =
     fn(req: request.Request(Connection)) -> response.Response(ResponseData) {
-      handle_request(req, metrics, start_time_ms, get_ready_channels)
+      handle_request(req, metrics, start_time_ms, get_channels)
     }
     |> mist.new
     |> mist.bind("0.0.0.0")

@@ -11,6 +11,7 @@ import supernova/adapters/matrix_router
 import supernova/adapters/slack_router
 import supernova/adapters/telegram
 import supernova/adapters/telegram_router
+import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/channel/registry
 import supernova/config
@@ -2690,6 +2691,7 @@ pub fn stop_channels_stops_ingress_before_adapters_test() {
       id: "stop-order-test",
       channels: dict.from_list([#("test", adapter)]),
       streams: dict.new(),
+      health: channel_health.start(),
     )
 
   registry.stop_channels_with_timeout(registry, 10)

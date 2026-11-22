@@ -75,6 +75,9 @@ Decisões por tema:
 | Personas `bia`, `caio` e rubrica `provisorio` | Relatório H | Marcadas como provisórias de propósito: são fixtures dos testes do executor, não conteúdo real |
 | Computador da agente, fase 1: gVisor, shell, browser, visão | — | PR #34, `docs/operations/COMPUTADOR.md` |
 | Firewall do computador e rota da Supernova pela própria rede | — | PR #35; regras aplicadas e conferidas no host |
+| Boot recusa provedor sem chave | Revisão da #37 | `config.selected_provider`; a mensagem diz qual variável definir |
+| `/health/ready` com estado real: 503 quando um canal não está pronto; Telegram acompanhado a cada poll, com backoff nos erros | `production-ready-v1` REQ-2, auditoria P7 | `channel/health.gleam`; os outros canais seguem em 3.4 |
+| `/agenda` funciona com o teto estourado, como `/esquecer` | Revisão da #37 | `core/closed_group/runtime.gleam` |
 
 ---
 
@@ -156,7 +159,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **O que existe:** o executor registra contadores e histogramas de LLM e abre spans `llm.chat` e `tool.execute`; os atores `metrics` e `tracing` sobem no boot; os spans iriam para o stdout, e não há exportação OTLP.
   - **O que aparece no piloto:** o `/metrics` responde 200 e vem vazio depois de uma hora de conversa, e nenhum span aparece no log.
   - **Sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` não são importados por ninguém fora dos próprios módulos.
-- **Readiness de verdade.** O `/health/ready` lista os canais configurados como prontos e sempre responde 200, sem consultar o estado dos canais.
+- **Readiness dos outros canais.** O `/health/ready` responde 503 quando um canal não está pronto e acompanha o Telegram a cada poll. Os demais canais só informam que subiram: um gateway do Discord que cai depois continua aparecendo como pronto. Entra junto com a paridade do Discord.
 - **Benchmarks** (REQ-9). O código está em `test/bench/`, mas as metas de `BENCHMARKS.md` nunca foram medidas.
 - **Teste de carga** (REQ-8). O código está em `tests/load/` e `run_load_tests.sh`. A meta (100 usuários, p99 < 2 s, erro < 1%) nunca foi verificada.
 - **Verificação final da v1.** Faltam os critérios de `production-ready-v1`: spans visíveis, circuit breaker medido e nenhum `mock` em código de produção.
@@ -164,7 +167,6 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 ### 3.5 Qualidade
 
 - **Cobertura.** Medida em 22/11: 78,84% (14.114 de 17.903 linhas). O gate está em 75%, e a meta antiga era 85%. Os módulos com mais linhas descobertas são adaptadores de canal (Slack, WhatsApp, webhooks do Discord), `discord_events`, `channel_common_router` e `wizard`. Origem: retomada.
-- **Provedor sem chave.** A agente usa o provedor cujo nome vem primeiro em ordem alfabética, e nada confere se ele tem chave: a Supernova sobe e falha só na primeira conversa. O boot deveria recusar.
 - **Testes com Chromium real no CI.** Hoje só rodam com `SUPERNOVA_BROWSER_TESTS=1`. O computador já roda os testes dele no CI. Origem: auditoria 3.4.
 
 ### 3.6 Documentação

@@ -1540,10 +1540,7 @@ fn apply_provider_env_overrides(
   |> list.map(fn(pair) {
     let #(name, config) = pair
     // Provider-specific env var: SUPERNOVA_PROVIDER_{NAME}_API_KEY
-    let env_name = string.uppercase(name) |> string.replace("-", "_")
-    let env_key = "SUPERNOVA_PROVIDER_" <> env_name <> "_API_KEY"
-
-    let api_key = option.or(get_env(env_key), config.api_key)
+    let api_key = option.or(get_env(provider_env_key(name)), config.api_key)
 
     #(name, ProviderConfig(..config, api_key: api_key))
   })
@@ -1946,6 +1943,66 @@ pub fn provider_default_model(provider: Provider) -> String {
     ZaiCoding -> "glm-5.1"
     Mistral -> "deepseek-v4-1-flash-1017"
     Mock -> "mock-model"
+  }
+}
+
+/// Environment variable that holds the API key of the named provider.
+pub fn provider_env_key(name: String) -> String {
+  "SUPERNOVA_PROVIDER_"
+  <> { string.uppercase(name) |> string.replace("-", "_") }
+  <> "_API_KEY"
+}
+
+fn has_usable_key(provider_config: ProviderConfig) -> Bool {
+  case provider_config.api_key {
+    Some(key) -> string.trim(key) != ""
+    None -> False
+  }
+}
+
+/// The provider every agent uses: the first one by name.
+///
+/// Refuses a provider that needs an API key and has none, so a missing key
+/// stops the boot instead of failing the first conversation.
+pub fn selected_provider(
+  config: Config,
+) -> Result(#(String, ProviderConfig), String) {
+  let providers =
+    config.providers
+    |> dict.to_list
+    |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
+  case providers {
+    [] ->
+      Error(
+        "no LLM providers configured — add a provider to supernova.yaml or run the wizard (gleam run -m supernova/wizard_main)",
+      )
+    [#(name, chosen), ..others] ->
+      case
+        provider_requires_api_key(chosen.provider) && !has_usable_key(chosen)
+      {
+        False -> Ok(#(name, chosen))
+        True -> {
+          let keyed =
+            others
+            |> list.filter(fn(other) { has_usable_key(other.1) })
+            |> list.map(fn(other) { other.0 })
+          let hint = case keyed {
+            [] -> ""
+            _ ->
+              " Providers with a key: "
+              <> string.join(keyed, ", ")
+              <> "; remove the other provider blocks from supernova.yaml to use one of them."
+          }
+          Error(
+            "provider '"
+            <> name
+            <> "' is the one agents use (the first by name) and has no API key: set "
+            <> provider_env_key(name)
+            <> "."
+            <> hint,
+          )
+        }
+      }
   }
 }
 

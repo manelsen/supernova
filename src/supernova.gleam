@@ -29,6 +29,7 @@ import supernova/adapters/telegram_router
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/sweeper as agenda_sweeper
+import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/channel/registry
 import supernova/config
@@ -303,6 +304,7 @@ fn start_services(
         id: "registry:none",
         channels: dict.new(),
         streams: dict.new(),
+        health: channel_health.start(),
       )
     }
   }
@@ -401,9 +403,10 @@ fn start_services(
   }
 
   // Start health server with real channel state callback
-  let get_ready_channels = fn() { dict.keys(channel_reg.channels) }
-  let health_srv =
-    health_server.start(health_port(cfg), metrics, get_ready_channels)
+  let get_channels = fn() {
+    channel_health.snapshot(channel_reg.health, channel_health.now_ms())
+  }
+  let health_srv = health_server.start(health_port(cfg), metrics, get_channels)
   io.println(
     "✓ Health server started on port " <> int.to_string(health_port(cfg)),
   )
@@ -833,22 +836,8 @@ fn inbound_channel_name(inbound: port.ChannelInbound) -> String {
 fn default_channel_llm_config(
   cfg: config.Config,
 ) -> Result(provider.ProviderConfig, String) {
-  let provider_names =
-    cfg.providers
-    |> dict.keys
-    |> list.sort(string.compare)
-
-  case provider_names {
-    [name, ..] ->
-      case config.get_provider(cfg, name) {
-        Some(provider_config) -> Ok(provider_config_to_runtime(provider_config))
-        None -> Error("no configuration found for provider: " <> name)
-      }
-    [] ->
-      Error(
-        "no LLM providers configured — add a provider to supernova.yaml or run the wizard (gleam run -m supernova/wizard_main)",
-      )
-  }
+  config.selected_provider(cfg)
+  |> result.map(fn(selected) { provider_config_to_runtime(selected.1) })
 }
 
 fn provider_config_to_runtime(
