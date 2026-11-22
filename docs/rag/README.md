@@ -27,7 +27,6 @@ Downloads Gleam/OTP package documentation from HexDocs for RAG ingestion.
 | `gleam_http` | HTTP client/server |
 | `gleam_hackney` | HTTP requests |
 | `gleam_time` | Time/date utilities |
-| `pog` | PostgreSQL driver |
 
 ## LSP Integration
 
