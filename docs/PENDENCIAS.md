@@ -155,8 +155,6 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - tarefas longas assíncronas.
 - **Yield manual de sessão.** O checkpoint por orçamento e por tempo existe no executor. Uma ferramenta para a agente ceder a vez por conta própria nunca foi exposta. Origem: `IMPLEMENTATION_TODO.md` 2.5.
 
-- **Failover entre provedores existe, mas não está ligado.** `llm/failover.gleam` (com cooldown por provedor) está pronto, e o ator de cooldown sobe no boot, mas nenhum caminho chama `failover.chat`: a agente usa um provedor só. Fica no código para quando houver um segundo provedor. Origem: medição de cobertura de 22/11.
-
 ### 3.4 Observabilidade e desempenho
 
 - **Métricas e tracing** (`production-ready-v1` REQ-3/4/11/12). A instrumentação existe, mas no piloto não aparece nada, e a causa não foi investigada.
@@ -172,6 +170,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 - **Cobertura.** Medida em 22/11: 78,84% (14.114 de 17.903 linhas). O gate está em 75%, e a meta antiga era 85%. Os módulos com mais linhas descobertas são adaptadores de canal (Slack, WhatsApp, webhooks do Discord), `discord_events`, `channel_common_router` e `wizard`. Origem: retomada.
 - **Testes com Chromium real no CI.** Hoje só rodam com `SUPERNOVA_BROWSER_TESTS=1`. O computador já roda os testes dele no CI. Origem: auditoria 3.4.
+- **Failover entre provedores existe, mas não está ligado.** `llm/failover.gleam` (com cooldown por provedor) está pronto, e o ator de cooldown sobe no boot, mas nenhum caminho chama `failover.chat`: a agente usa um provedor só. Fica no código para quando houver um segundo provedor. Origem: medição de cobertura de 22/11.
 
 ### 3.6 Documentação
 
