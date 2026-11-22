@@ -14,6 +14,7 @@ import supernova/core/access/types as access_types
 import supernova/core/audit_log/types as audit_types
 import supernova/core/budget_policy/types as budget_types
 import supernova/core/capability_manifest/types as cap_types
+import supernova/core/closed_group/types
 import supernova/core/principal
 import supernova/core/resource_ledger/pure as ledger_pure
 import supernova/core/resource_ledger/types as ledger_types
@@ -660,5 +661,42 @@ pub fn is_chat_management_command(content: String) -> Bool {
     Some(access_types.RemoveChat(_)) -> True
     Some(access_types.ListChats) -> True
     _ -> False
+  }
+}
+
+/// Label of a gate decision, for metrics. `content` is the inbound text and
+/// `denied_reply` the configured refusal.
+pub fn decision_label(
+  result: types.GateResult,
+  content: String,
+  denied_reply: String,
+) -> String {
+  case result {
+    types.Allowed(_) -> "allowed"
+    types.Ignored("missing sender") -> "missing_sender"
+    types.Ignored("access denied") -> "denied"
+    types.Ignored("chat denied") -> "chat_denied"
+    types.Ignored("rate limited") -> "rate_limited"
+    types.Ignored(_) -> "ignored"
+    types.Reply(text) -> reply_label(text, content, denied_reply)
+  }
+}
+
+fn reply_label(text: String, content: String, denied_reply: String) -> String {
+  case
+    text == fail_closed_reply,
+    text == rate_limited_reply,
+    text == instance_cap_reply,
+    string.starts_with(text, budget_reply_prefix),
+    is_eu_command(content),
+    text == denied_reply
+  {
+    True, _, _, _, _, _ -> "fail_closed"
+    _, True, _, _, _, _ -> "rate_limited"
+    _, _, True, _, _, _ -> "instance_cap"
+    _, _, _, True, _, _ -> "budget"
+    _, _, _, _, True, _ -> "eu"
+    _, _, _, _, _, True -> "denied"
+    _, _, _, _, _, _ -> "command"
   }
 }

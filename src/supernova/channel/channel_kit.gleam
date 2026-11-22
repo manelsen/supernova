@@ -13,6 +13,8 @@ import supernova/channel/catalog
 import supernova/channel/chat_lanes
 import supernova/channel/chunking
 import supernova/channel/port
+import supernova/infra/safe_io
+import supernova/metrics/record
 
 /// Optional hooks for deterministic bootstrap tests.
 pub type StartHooks {
@@ -96,7 +98,18 @@ pub fn dispatch_inbound(
   turn_hard_timeout_ms: Int,
 ) -> Nil {
   let key = chat_lanes.key_for_registry(registry_id, inbound)
-  let _ =
+  let #(channel, kind) = case inbound {
+    port.InboundMessage(message) -> #(message.channel, "message")
+    port.InboundInteraction(interaction) -> #(
+      interaction.channel,
+      "interaction",
+    )
+  }
+  record.count("channel_messages_total", [
+    #("channel", channel),
+    #("kind", kind),
+  ])
+  let accepted =
     chat_lanes.submit(key, fn() {
       run_inbound_turn(
         handler,
@@ -107,6 +120,11 @@ pub fn dispatch_inbound(
         turn_hard_timeout_ms,
       )
     })
+  case accepted {
+    True -> Nil
+    // Too many pending turns in this chat, or too many chats at once.
+    False -> record.count("chat_lane_rejected_total", [#("channel", channel)])
+  }
   Nil
 }
 
@@ -118,17 +136,23 @@ fn run_inbound_turn(
   chat_key: String,
   turn_hard_timeout_ms: Int,
 ) -> Nil {
+  let started = current_timestamp()
+  let channel = case inbound {
+    port.InboundMessage(message) -> message.channel
+    port.InboundInteraction(interaction) -> interaction.channel
+  }
   let stream_events = process.new_subject()
 
-  case handler(inbound, stream_events) {
-    Ok(port.ImmediateReply(reply)) -> {
-      let _ = send_fn(reply)
-      Nil
-    }
+  let outcome = case handler(inbound, stream_events) {
+    Ok(port.ImmediateReply(reply)) ->
+      case send_fn(reply) {
+        Ok(_) -> "replied"
+        Error(error) -> send_failed(channel, error)
+      }
     Ok(port.StreamReply(base_reply)) -> {
       case stream_send_fn(base_reply, stream_events) {
-        Ok(_) -> Nil
-        Error(port.SendFailed("stream timed out")) ->
+        Ok(_) -> "streamed"
+        Error(port.SendFailed("stream timed out")) -> {
           await_late_terminal(
             stream_events,
             send_fn,
@@ -136,11 +160,36 @@ fn run_inbound_turn(
             chat_key,
             current_timestamp() + turn_hard_timeout_ms,
           )
-        Error(_) -> Nil
+          "stream_timeout"
+        }
+        Error(error) -> send_failed(channel, error)
       }
     }
-    Error(_) -> Nil
+    Error(port.Ignored(_)) -> "ignored"
+    Error(_) -> "handler_error"
   }
+  record.duration_ms("turn_duration_seconds", current_timestamp() - started, [
+    #("channel", channel),
+    #("outcome", outcome),
+  ])
+}
+
+/// A reply that did not reach the person: counted and logged, never silent.
+fn send_failed(channel: String, error: port.ChannelError) -> String {
+  let kind = case error {
+    port.RateLimited(_) -> "rate_limited"
+    port.NotConnected -> "not_connected"
+    port.SendFailed(_) -> "send_failed"
+    _ -> "other"
+  }
+  record.count("channel_send_errors_total", [
+    #("channel", channel),
+    #("error", kind),
+  ])
+  safe_io.println(
+    "warn: reply not delivered channel=" <> channel <> " error=" <> kind,
+  )
+  "send_error"
 }
 
 fn await_late_terminal(

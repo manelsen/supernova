@@ -1,0 +1,235 @@
+//// What Supernova now measures, through the real paths: a member's turn on
+//// Telegram, gate refusals, replies that fail, poll errors and the agenda.
+
+import e2e/e2e_support as support
+import exception
+import gleam/erlang/process
+import gleam/option.{Some}
+import gleam/string
+import gleeunit/should
+import supernova/agenda/store
+import supernova/agenda/sweeper
+import supernova/channel/channel_kit
+import supernova/channel/health as channel_health
+import supernova/channel/port
+import supernova/channel/registry
+import supernova/config
+import supernova/core/closed_group/pure as cg_pure
+import supernova/core/closed_group/types as cg_types
+import supernova/metrics/actor as metrics_actor
+import supernova/metrics/global as metrics_global
+import telegram_fake
+import test_workspace
+
+fn fresh_metrics() -> metrics_actor.Metrics {
+  let assert Ok(metrics) = metrics_actor.start()
+  metrics_global.set_metrics(metrics)
+  metrics
+}
+
+fn has(body: String, fragment: String) -> Nil {
+  case string.contains(body, fragment) {
+    True -> Nil
+    False -> panic as { "missing " <> fragment <> " in:\n" <> body }
+  }
+}
+
+/// Wait until the metrics body contains `fragment` (turns finish in their
+/// own lane process).
+fn await_metric(
+  metrics: metrics_actor.Metrics,
+  fragment: String,
+  attempts: Int,
+) -> String {
+  let body = metrics_actor.get_metrics(metrics)
+  case string.contains(body, fragment), attempts {
+    True, _ -> body
+    False, 0 -> body
+    False, _ -> {
+      process.sleep(20)
+      await_metric(metrics, fragment, attempts - 1)
+    }
+  }
+}
+
+pub fn a_member_turn_is_measured_end_to_end_test() {
+  let metrics = fresh_metrics()
+  let base = support.channel_config()
+  let cfg =
+    config.Config(..base, access: support.access_config([], ["telegram:123"]))
+  support.with_runtime_root(cfg, fn(root) {
+    support.seed_core(root, "telegram:123", "Núcleo de teste.")
+    let recorder = process.new_subject()
+    let channels =
+      support.telegram_start_registry(
+        support.channel_config(),
+        support.telegram_handler(support.mock_config()),
+        [support.telegram_update("123", "123", "oi")],
+        recorder,
+      )
+    support.await_content(recorder, "Mock response") |> should.equal(True)
+    let body =
+      await_metric(
+        metrics,
+        "turn_duration_seconds_count{channel=\"telegram\"",
+        100,
+      )
+    has(body, "channel_messages_total{channel=\"telegram\",kind=\"message\"} 1")
+    has(
+      body,
+      "gate_decisions_total{channel=\"telegram\",decision=\"allowed\"} 1",
+    )
+    has(body, "turn_duration_seconds_count{channel=\"telegram\",outcome=")
+    has(body, "llm_tokens_total{kind=\"prompt\",provider=\"mock\"")
+    has(body, "llm_tokens_total{kind=\"completion\",provider=\"mock\"")
+    has(body, "llm_cost_usd_micros_total{provider=\"mock\"")
+    registry.stop_channels(channels)
+  })
+}
+
+pub fn a_stranger_is_counted_as_denied_test() {
+  let metrics = fresh_metrics()
+  let base = support.channel_config()
+  let cfg =
+    config.Config(..base, access: support.access_config([], ["telegram:123"]))
+  support.with_runtime(cfg, fn() {
+    let recorder = process.new_subject()
+    let channels =
+      support.telegram_start_registry(
+        support.channel_config(),
+        support.telegram_handler(support.mock_config()),
+        [support.telegram_update("999", "999", "oi")],
+        recorder,
+      )
+    let body = await_metric(metrics, "decision=\"denied\"", 100)
+    has(
+      body,
+      "gate_decisions_total{channel=\"telegram\",decision=\"denied\"} 1",
+    )
+    registry.stop_channels(channels)
+  })
+}
+
+pub fn decision_labels_test() {
+  let denied = "Esta instância é privada."
+  let ctx =
+    cg_types.PrincipalContext(principal_id: "telegram:1", role: "member")
+  cg_pure.decision_label(cg_types.Allowed(ctx), "oi", denied)
+  |> should.equal("allowed")
+  cg_pure.decision_label(cg_types.Ignored("rate limited"), "oi", denied)
+  |> should.equal("rate_limited")
+  cg_pure.decision_label(
+    cg_types.Reply(cg_pure.instance_cap_reply),
+    "oi",
+    denied,
+  )
+  |> should.equal("instance_cap")
+  cg_pure.decision_label(
+    cg_types.Reply(cg_pure.budget_exhausted_reply(0)),
+    "oi",
+    denied,
+  )
+  |> should.equal("budget")
+  cg_pure.decision_label(
+    cg_types.Reply(cg_pure.fail_closed_reply),
+    "oi",
+    denied,
+  )
+  |> should.equal("fail_closed")
+  cg_pure.decision_label(cg_types.Reply("seu id"), "/eu", denied)
+  |> should.equal("eu")
+  cg_pure.decision_label(cg_types.Reply(denied), "oi", denied)
+  |> should.equal("denied")
+  cg_pure.decision_label(cg_types.Reply("Uso: ..."), "/uso", denied)
+  |> should.equal("command")
+}
+
+pub fn a_reply_that_fails_is_counted_test() {
+  let metrics = fresh_metrics()
+  let requests = process.new_subject()
+  let fake = telegram_fake.start(requests)
+  telegram_fake.queue(
+    fake,
+    "sendMessage",
+    403,
+    telegram_fake.error_body(403, "Forbidden: bot was blocked by the user"),
+  )
+  let base = config.default_config()
+  let cfg =
+    config.Config(
+      ..base,
+      telegram: config.TelegramConfig(
+        token: Some("123:abc"),
+        enabled: True,
+        base_url: Some(fake.base_url),
+      ),
+    )
+  let assert Ok(channels) =
+    registry.start_channels_with_handler_and_hooks(
+      cfg,
+      fn(inbound, _) {
+        let assert port.InboundMessage(message) = inbound
+        Ok(port.ImmediateReply(port.reply(to: message, content: "olá")))
+      },
+      channel_kit.StartHooks(
+        ..channel_kit.no_start_hooks(),
+        disable_telegram_polling: True,
+      ),
+    )
+  let assert Ok(Nil) =
+    registry.inject(
+      channels,
+      fn(inbound, _) {
+        let assert port.InboundMessage(message) = inbound
+        Ok(port.ImmediateReply(port.reply(to: message, content: "olá")))
+      },
+      port.inbound_message(port.ChannelMessage(
+        id: "1",
+        channel: "telegram",
+        channel_id: "42",
+        user_id: "42",
+        username: "",
+        content: "oi",
+        is_bot: False,
+        reply_to_id: option.None,
+      )),
+    )
+  let body = await_metric(metrics, "outcome=\"send_error\"", 100)
+  has(
+    body,
+    "channel_send_errors_total{channel=\"telegram\",error=\"send_failed\"} 1",
+  )
+  has(
+    body,
+    "turn_duration_seconds_count{channel=\"telegram\",outcome=\"send_error\"} 1",
+  )
+  registry.stop_channels(channels)
+}
+
+pub fn poll_errors_are_counted_test() {
+  let metrics = fresh_metrics()
+  let health = channel_health.start()
+  channel_health.started(health, "telegram", option.None, 0)
+  channel_health.report(health, "telegram", Error("telegram unreachable"), 1)
+  channel_health.report(health, "telegram", Ok(Nil), 2)
+  channel_health.report(health, "telegram", Error("telegram unreachable"), 3)
+  has(
+    metrics_actor.get_metrics(metrics),
+    "channel_poll_errors_total{channel=\"telegram\"} 2",
+  )
+}
+
+pub fn agenda_runs_are_counted_test() {
+  let metrics = fresh_metrics()
+  let dir = test_workspace.create_temp_dir("agenda-metrics")
+  use <- exception.defer(fn() { test_workspace.remove_dir_recursive(dir) })
+  let now = 1_795_273_200_000
+  let assert Ok(entry) =
+    store.add(dir, "telegram:1", "0 5 * * *", "Beber água", now, -180)
+  let inbox = process.new_subject()
+  sweeper.sweep(dir, -180, entry.next_run_at, process.send(inbox, _))
+  has(
+    metrics_actor.get_metrics(metrics),
+    "agenda_runs_total{outcome=\"ran\"} 1",
+  )
+}

@@ -16,6 +16,7 @@ import supernova/agenda/schedule
 import supernova/agenda/store
 import supernova/channel/port
 import supernova/core/agent_identity
+import supernova/metrics/record
 import supernova/self/epoch
 import supernova/self/incidents
 
@@ -80,6 +81,7 @@ pub fn sweep(
       }
     }
     list.each(skipped, fn(entry) {
+      record.count("agenda_runs_total", [#("outcome", "missed")])
       let _ =
         incidents.record_if(
           data_dir,
@@ -99,6 +101,7 @@ pub fn sweep(
       // Fail closed: an unreadable epoch never counts as unchanged.
       case still_current() {
         False -> {
+          record.count("agenda_runs_total", [#("outcome", "dropped")])
           io.println(
             "agenda: dropped after forget entry="
             <> int.to_string(entry.id)
@@ -115,6 +118,7 @@ pub fn sweep(
             <> principal,
           )
           deliver(wake_message(principal, entry, offset))
+          record.count("agenda_runs_total", [#("outcome", "ran")])
           count + 1
         }
       }
@@ -144,8 +148,10 @@ fn loop(
   process.sleep(interval_ms)
   case exception.rescue(fn() { sweep(data_dir, offset, clock(), deliver) }) {
     Ok(_) -> Nil
-    Error(error) ->
+    Error(error) -> {
+      record.count("agenda_runs_total", [#("outcome", "sweep_crashed")])
       io.println_error("error: agenda sweep crashed: " <> string.inspect(error))
+    }
   }
   loop(data_dir, offset, clock, deliver)
 }

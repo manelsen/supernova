@@ -1171,7 +1171,29 @@ pub fn run_stream(
   config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
 ) -> Subject(stream.StreamChunk) {
-  stream.start_stream_with_tools(messages, config, tools)
+  // The same span, circuit breaker and metrics as a non-streamed call.
+  stream.start_stream_from(fn() {
+    let start = current_timestamp()
+    let result =
+      with_llm_span(config.name, config.default_model, 0, fn() {
+        client.chat(messages, config, tools)
+      })
+    case result {
+      Ok(_) ->
+        record_llm_latency(
+          config.name,
+          config.default_model,
+          current_timestamp() - start,
+        )
+      Error(err) ->
+        record_llm_error(
+          config.name,
+          config.default_model,
+          error_type_name(err),
+        )
+    }
+    result
+  })
 }
 
 /// Run the executor in streaming mode with a mock provider.
