@@ -1,0 +1,13 @@
+{
+  "name": "supernova-computador",
+  "private": true,
+  "type": "module",
+  "description": "The agent's own computer: a small HTTP service that runs shell commands, reads and writes files, and drives a browser.",
+  "scripts": {
+    "start": "node agent.mjs",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "playwright": "1.48.0"
+  }
+}

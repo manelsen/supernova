@@ -25,6 +25,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/llm/client
 import supernova/llm/provider
+import supernova/llm/providers/openai
 
 // ============================================================================
 // Types
@@ -475,7 +476,7 @@ pub fn anthropic_stream_body(
 fn encode_message(msg: provider.ChatMessage) -> json.Json {
   let base = [
     #("role", json.string(msg.role)),
-    #("content", json.string(msg.content)),
+    #("content", openai.encode_content(msg)),
   ]
 
   let with_tool_call_id = case msg.tool_call_id {

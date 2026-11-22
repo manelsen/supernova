@@ -217,3 +217,42 @@ fn read_file(path: String) -> Result(String, String)
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")
 fn file_exists(path: String) -> Result(Bool, String)
+
+// Review of the computer PR: a computador path names a place inside the
+// agent's own computer, so the host workspace policy must not judge it.
+// Before the fix an absolute path outside the host workspace was refused
+// before the call reached the computer.
+pub fn computador_paths_skip_the_host_workspace_policy_test() {
+  test_workspace.with_isolated_workspace("tool-computador", fn(root) {
+    let assert Ok(policy) = policy_actor.start(root)
+    let manifests =
+      dict.from_list([
+        #(
+          "admin",
+          cap_types.CapabilityManifest(allowed_tools: ["*"], denied_tools: []),
+        ),
+      ])
+    let assert Ok(gateway) =
+      actor.start_with_capabilities(
+        option.Some(policy),
+        option.None,
+        option.None,
+        manifests,
+        fn(_, _) { Error("unused") },
+      )
+    let args = "{\"action\":\"read_file\",\"path\":\"/etc/hostname\"}"
+    actor.authorize_tool_call(gateway, "sim:a", "admin", "computador", args)
+    |> should.be_ok
+
+    // The host file tool still answers to the policy for the same path.
+    let host_args = "{\"action\":\"read\",\"path\":\"/etc/hostname\"}"
+    actor.authorize_tool_call(
+      gateway,
+      "sim:a",
+      "admin",
+      "file_system",
+      host_args,
+    )
+    |> should.be_error
+  })
+}

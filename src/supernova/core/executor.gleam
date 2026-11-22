@@ -32,6 +32,7 @@ import supernova/llm/client
 import supernova/llm/provider
 import supernova/llm/retry/types as retry
 import supernova/llm/stream
+import supernova/llm/tool_images
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
 import supernova/tracing/global as tracing_global
@@ -343,7 +344,7 @@ fn run_loop(
                       ),
                     ])
                   let history_with_results =
-                    list.append(updated_history, tool_results)
+                    append_tool_round(updated_history, tool_results)
 
                   // Recurse
                   run_loop(
@@ -426,7 +427,7 @@ fn run_loop_inner_with_checkpoint(
                 Ok(Nil) -> {
                   let tool_results = execute_tool_calls(calls, tools, context)
                   let history_with_results =
-                    list.append(updated_history, tool_results)
+                    append_tool_round(updated_history, tool_results)
                   run_loop_with_checkpoint(
                     history_with_results,
                     config,
@@ -614,8 +615,12 @@ fn message_token_estimate(message: provider.ChatMessage) -> Int {
       })
       |> list.fold(0, fn(acc, value) { acc + value })
   }
-  content + tool_calls
+  content + tool_calls + list.length(message.images) * image_token_estimate
 }
+
+/// Rough prompt cost of one attached image. A 1280x800 screenshot measured
+/// about 570 tokens on the pilot's provider; this rounds up for the budget.
+const image_token_estimate = 1000
 
 fn tool_definition_tokens(tool: provider.ToolDefinition) -> Int {
   let parameters =
@@ -793,16 +798,54 @@ fn record_llm_usage(
   }
 }
 
-/// Execute tool calls and return result messages.
+/// How many tool images stay in the history of one turn. Older ones are
+/// dropped so a long tool loop does not resend every screenshot.
+const kept_tool_images = 2
+
+/// Execute tool calls and return result messages. Images a tool attached to
+/// its result (see `tool_images`) go in one user message after the tool
+/// results.
 fn execute_tool_calls(
   calls: List(provider.ToolCall),
   tools: List(provider.ToolDefinition),
   context: RunContext,
 ) -> List(provider.ChatMessage) {
-  list.map(calls, fn(call) {
-    let content = execute_single_tool_call(call, tools, context)
-    provider.tool_result_message(call.id, content)
-  })
+  let results =
+    list.map(calls, fn(call) {
+      let #(text, images) =
+        tool_images.split(execute_single_tool_call(call, tools, context))
+      #(provider.tool_result_message(call.id, text), images)
+    })
+  list.append(
+    list.map(results, fn(result) { result.0 }),
+    tool_images.message(list.flat_map(results, fn(result) { result.1 })),
+  )
+}
+
+/// Append one round of tool calls and their results to the history.
+fn append_tool_round(
+  history: List(provider.ChatMessage),
+  tool_results: List(provider.ChatMessage),
+) -> List(provider.ChatMessage) {
+  list.append(history, tool_results)
+  |> tool_images.keep_recent(kept_tool_images)
+}
+
+/// Expose tool execution with a run context for unit tests.
+pub fn execute_tool_calls_with_context_for_test(
+  calls: List(provider.ToolCall),
+  tools: List(provider.ToolDefinition),
+  context: RunContext,
+) -> List(provider.ChatMessage) {
+  execute_tool_calls(calls, tools, context)
+}
+
+/// Expose how a round of tool results joins the history, for unit tests.
+pub fn append_tool_round_for_test(
+  history: List(provider.ChatMessage),
+  tool_results: List(provider.ChatMessage),
+) -> List(provider.ChatMessage) {
+  append_tool_round(history, tool_results)
 }
 
 /// Expose tool execution for unit tests.

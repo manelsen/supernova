@@ -19,6 +19,10 @@ services:
 
       # Runtime state: access.json, ledger/ and audit_log/
       SUPERNOVA_DATA_DIR: /data
+
+      # The agent's computer (optional; see docs/operations/COMPUTADOR.md)
+      SUPERNOVA_COMPUTER_URL: ${SUPERNOVA_COMPUTER_URL:-}
+      SUPERNOVA_COMPUTER_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health/live || exit 1"]
       interval: 10s
@@ -30,6 +34,40 @@ services:
     volumes:
       - ./supernova.yaml:/config/supernova.yaml:ro
       - supernova_data:/data
+    networks: [default, computador_net]
+
+  # The agent's computer: a Linux machine with a shell and a browser, apart
+  # from Supernova and holding none of its secrets. Off unless the
+  # "computador" profile is on (COMPOSE_PROFILES=computador in .env). Runs on
+  # gVisor (runsc) by default: see docs/operations/COMPUTADOR.md.
+  computador:
+    profiles: ["computador"]
+    container_name: supernova-computador
+    build: ./computador
+    runtime: ${SUPERNOVA_COMPUTER_RUNTIME:-runsc}
+    environment:
+      COMPUTADOR_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 512
+    shm_size: 1g
+    restart: unless-stopped
+    volumes:
+      - computador_home:/home/pwuser
+      # Docker's DNS does not answer inside gVisor on this network.
+      - ./computador/resolv.conf:/etc/resolv.conf:ro
+    networks: [computador_net]
+
+networks:
+  # The computer's own network. Its bridge has a fixed name so a host
+  # firewall rule can keep the computer away from the host and the local
+  # network (docs/operations/COMPUTADOR.md).
+  computador_net:
+    driver_opts:
+      com.docker.network.bridge.name: br-computador
 
 volumes:
   supernova_data:
+  computador_home:

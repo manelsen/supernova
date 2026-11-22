@@ -37,6 +37,7 @@ import supernova/core/syscall/types.{
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types as policy_types
 import supernova/tools/agenda
+import supernova/tools/computador
 import supernova/tools/file_system
 
 // ============================================================================
@@ -451,7 +452,8 @@ fn tool_audit_target(tool_name: String, args: String) -> String {
 
 /// The executor handed to the caller of a claimed reservation. A file_system
 /// call runs on the authorized path; an agenda call runs on the caller's own
-/// agenda; everything else keeps the configured executor.
+/// agenda; a computador call carries the caller to the computer; everything
+/// else keeps the configured executor.
 fn claimed_executor(
   configured: ToolExecutor,
   reservation: ToolReservation,
@@ -463,6 +465,9 @@ fn claimed_executor(
     "agenda", _ -> fn(_name, args) {
       agenda.execute(reservation.principal_id, args)
     }
+    "computador", _ -> fn(_name, args) {
+      computador.execute(reservation.principal_id, args)
+    }
     _, _ -> configured
   }
 }
@@ -473,7 +478,13 @@ fn tool_path_check(
   tool_name: String,
   args: String,
 ) -> Result(Option(String), String) {
-  case argument_path(args) {
+  // A computador path names a place inside the agent's own computer, not on
+  // this host: the host workspace policy does not apply to it.
+  let host_path = case tool_name {
+    "computador" -> None
+    _ -> argument_path(args)
+  }
+  case host_path {
     None -> Ok(None)
     Some(path) ->
       case actor_state.workspace_policy {
