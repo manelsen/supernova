@@ -348,6 +348,7 @@ pub fn late_terminal_keeps_lane_until_content_is_delivered_test() {
       outbound_records: Some(recorder),
       leave_group: None,
       leave_retry_ms: [5000, 30_000, 120_000],
+      leave_recheck_ms: 30_000,
     )
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(

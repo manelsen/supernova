@@ -168,9 +168,10 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 ### 3.5 Qualidade
 
-- **Cobertura, por risco.** Decidido em 22/11: cobrir primeiro o que tem mais risco, e subir o gate junto. Medida: 79,82% (14.349 de 17.976 linhas); gate em 79%.
-  - **Feito:** ciclo completo do circuit breaker; cliente real do Telegram contra uma Bot API local (`test/telegram_fake.gleam`): polling, offset, erros, backoff, streaming. Os testes acharam três defeitos, corrigidos: o breaker que só bloqueava uma vez, o stream abortado por "message is not modified" e o `retry_after` lido do lugar errado.
-  - **Próximo:** saída de grupos e alertas do Telegram, botões (`telegram_reply_markup`), `inject` do registry. O Discord entra com a paridade.
+- **Cobertura, por risco.** Decidido em 22/11: cobrir primeiro o que tem mais risco, e subir o gate junto. Gate em 79%.
+  - **Feito:** ciclo completo do circuit breaker; cliente real do Telegram contra uma Bot API local (`test/telegram_fake.gleam`): polling, offset, erros, backoff, streaming e "digitando", saída de grupos não autorizados com alerta e nova checagem, botões, erros de envio e o `inject` da agenda (`test/adapters/telegram_live_test.gleam`, `test/e2e/telegram_live_e2e_test.gleam`).
+  - **Defeitos achados e corrigidos:** o breaker que só bloqueava uma vez; o stream abortado por "message is not modified"; o `retry_after` lido do lugar errado; um botão com mais de 64 bytes de `callback_data` derrubava a mensagem inteira (o `/model` com um modelo de nome longo ficava sem resposta).
+  - **Próximo:** o Telegram restante são ramos de erro secundários. O Discord entra com a paridade.
   - `COVER_FUNCTIONS="modulo1 modulo2" make coverage` lista as funções descobertas de cada módulo.
   - Origem: retomada.
 - **Testes com Chromium real no CI.** Hoje só rodam com `SUPERNOVA_BROWSER_TESTS=1`. O computador já roda os testes dele no CI. Origem: auditoria 3.4.

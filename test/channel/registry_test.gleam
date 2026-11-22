@@ -272,6 +272,7 @@ fn test_hooks(
     outbound_records: None,
     leave_group: None,
     leave_retry_ms: [5000, 30_000, 120_000],
+    leave_recheck_ms: 30_000,
   )
 }
 
@@ -292,6 +293,7 @@ fn test_hooks_with_slack_inbound(
     outbound_records: Some(recorder),
     leave_group: None,
     leave_retry_ms: [5000, 30_000, 120_000],
+    leave_recheck_ms: 30_000,
   )
 }
 
@@ -312,6 +314,7 @@ fn test_hooks_with_matrix_inbound(
     outbound_records: Some(recorder),
     leave_group: None,
     leave_retry_ms: [5000, 30_000, 120_000],
+    leave_recheck_ms: 30_000,
   )
 }
 
@@ -347,6 +350,7 @@ fn test_hooks_with_recorder_and_keepalive(
     outbound_records: Some(recorder),
     leave_group: None,
     leave_retry_ms: [5000, 30_000, 120_000],
+    leave_recheck_ms: 30_000,
   )
 }
 
@@ -1727,6 +1731,7 @@ pub fn slack_inbound_event_dispatched_to_handler_test() {
         outbound_records: None,
         leave_group: None,
         leave_retry_ms: [5000, 30_000, 120_000],
+        leave_recheck_ms: 30_000,
       ),
     )
 
@@ -1880,6 +1885,7 @@ pub fn matrix_inbound_event_dispatched_to_handler_test() {
         outbound_records: None,
         leave_group: None,
         leave_retry_ms: [5000, 30_000, 120_000],
+        leave_recheck_ms: 30_000,
       ),
     )
 
@@ -2653,6 +2659,7 @@ fn test_hooks_with_timeouts(
     outbound_records: Some(recorder),
     leave_group: None,
     leave_retry_ms: [5000, 30_000, 120_000],
+    leave_recheck_ms: 30_000,
   )
 }
 

@@ -135,6 +135,13 @@ pub fn api_error_keeps_telegram_description_test() {
 }
 
 fn live_registry(fake: telegram_fake.Fake) -> registry.ChannelRegistry {
+  live_registry_with_keepalive(fake, 4000)
+}
+
+fn live_registry_with_keepalive(
+  fake: telegram_fake.Fake,
+  keepalive_ms: Int,
+) -> registry.ChannelRegistry {
   let base = config.default_config()
   let cfg =
     config.Config(
@@ -152,6 +159,7 @@ fn live_registry(fake: telegram_fake.Fake) -> registry.ChannelRegistry {
       channel_kit.StartHooks(
         ..channel_kit.no_start_hooks(),
         disable_telegram_polling: True,
+        typing_keepalive_ms: keepalive_ms,
       ),
     )
   channels
@@ -315,5 +323,35 @@ pub fn cleartext_base_url_keeps_telegram_from_starting_test() {
       ),
     )
   registry.is_channel_available(channels, "telegram") |> should.be_false()
+  registry.stop_channels(channels)
+}
+
+pub fn typing_is_renewed_while_the_model_thinks_test() {
+  let requests = process.new_subject()
+  let fake = telegram_fake.start(requests)
+  let channels = live_registry_with_keepalive(fake, 100)
+  let #(events, done) =
+    stream(channels, port.ChannelReply(..reply(""), typing: True))
+
+  // No event while the model thinks: the typing indicator is sent with the
+  // placeholder and then renewed every keepalive.
+  let _ = next_request(requests, "sendChatAction")
+  let _ = next_request(requests, "sendChatAction")
+  let _ = next_request(requests, "sendChatAction")
+  process.send(events, port.StreamComplete(reply("Pronto")))
+  process.receive(done, within: 5000) |> should.equal(Ok(Ok(Nil)))
+  registry.stop_channels(channels)
+}
+
+pub fn stream_failure_is_returned_to_the_caller_test() {
+  let requests = process.new_subject()
+  let fake = telegram_fake.start(requests)
+  let channels = live_registry(fake)
+  let #(events, done) = stream(channels, reply(""))
+
+  process.send(events, port.StreamUpdate(reply("Começo")))
+  process.send(events, port.StreamFailure(port.SendFailed("model failed")))
+  process.receive(done, within: 5000)
+  |> should.equal(Ok(Error(port.SendFailed("model failed"))))
   registry.stop_channels(channels)
 }
