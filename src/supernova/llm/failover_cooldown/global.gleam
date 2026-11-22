@@ -21,9 +21,6 @@ fn global_get(key: String) -> any
 @external(erlang, "supernova_global_ffi", "global_has")
 fn global_has(key: String) -> Bool
 
-@external(erlang, "supernova_global_ffi", "safe_is_process_alive")
-fn safe_check_alive(pid: any) -> Bool
-
 const cd_key = "supernova_global_cooldown"
 
 pub fn set_cooldown(cd: CooldownActor) -> Nil {
@@ -34,7 +31,7 @@ pub fn get_cooldown() -> option.Option(CooldownActor) {
   case global_has(cd_key) {
     True -> {
       let cd = global_get(cd_key)
-      case safe_check_alive(cd) {
+      case subject_alive(cd) {
         True -> option.Some(cd)
         False -> option.None
       }
@@ -68,5 +65,15 @@ pub fn record_success(provider: String) {
       Nil
     }
     option.None -> Nil
+  }
+}
+
+/// A global holds a `Subject`, not a pid: ask its owner process whether it
+/// is alive. (`erlang:is_process_alive` on a Subject raises, which made every
+/// lookup report the actor as missing.)
+fn subject_alive(subject: process.Subject(message)) -> Bool {
+  case process.subject_owner(subject) {
+    Ok(pid) -> process.is_alive(pid)
+    Error(_) -> False
   }
 }

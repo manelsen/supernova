@@ -1,5 +1,5 @@
 -module(supernova_global_ffi).
--export([global_put/2, global_get/1, global_has/1, global_erase/1, safe_is_process_alive/1]).
+-export([global_put/2, global_get/1, global_has/1, global_erase/1, safe_is_process_alive/1, safe_println/1]).
 
 %% Shared global storage using persistent_term.
 %% Unlike process dictionary, these are accessible from ALL processes.
@@ -34,4 +34,14 @@ safe_is_process_alive(Pid) ->
         error:system_limit -> false;
         error:badarith -> false;
         error:_ -> false
+    end.
+
+%% Print a line, ignoring an io device that is gone: a long-lived actor (the
+%% tracer) must not crash because the process that started it, and owned its
+%% group leader, has ended.
+safe_println(Line) ->
+    try io:put_chars([Line, $\n]) of
+        _ -> nil
+    catch
+        _:_ -> nil
     end.

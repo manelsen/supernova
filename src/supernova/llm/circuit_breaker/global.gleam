@@ -19,9 +19,6 @@ fn global_get(key: String) -> any
 @external(erlang, "supernova_global_ffi", "global_has")
 fn global_has(key: String) -> Bool
 
-@external(erlang, "supernova_global_ffi", "safe_is_process_alive")
-fn safe_check_alive(pid: any) -> Bool
-
 const cb_key = "supernova_global_circuit_breaker"
 
 pub fn set_circuit_breaker(cb: CircuitBreaker) -> Nil {
@@ -32,7 +29,7 @@ pub fn get_circuit_breaker() -> option.Option(CircuitBreaker) {
   case global_has(cb_key) {
     True -> {
       let cb = global_get(cb_key)
-      case safe_check_alive(cb) {
+      case subject_alive(cb) {
         True -> option.Some(cb)
         False -> option.None
       }
@@ -62,5 +59,15 @@ pub fn record_failure(provider: String) {
   case get_circuit_breaker() {
     option.Some(cb) -> cb_actor.record_failure(cb, provider)
     option.None -> Nil
+  }
+}
+
+/// A global holds a `Subject`, not a pid: ask its owner process whether it
+/// is alive. (`erlang:is_process_alive` on a Subject raises, which made every
+/// lookup report the actor as missing.)
+fn subject_alive(subject: process.Subject(message)) -> Bool {
+  case process.subject_owner(subject) {
+    Ok(pid) -> process.is_alive(pid)
+    Error(_) -> False
   }
 }

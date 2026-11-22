@@ -495,7 +495,7 @@ fn with_llm_span(
               tracing_global.end_span(span, tracing_types.SpanStatusOk)
             }
             Error(err) -> {
-              cb_global.record_failure(provider)
+              record_breaker_outcome(provider, err)
               tracing_global.end_span(
                 span,
                 tracing_types.SpanStatusError(error_type_name(err)),
@@ -508,12 +508,31 @@ fn with_llm_span(
           let result = f()
           case result {
             Ok(_) -> cb_global.record_success(provider)
-            Error(_) -> cb_global.record_failure(provider)
+            Error(err) -> record_breaker_outcome(provider, err)
           }
           result
         }
       }
     }
+  }
+}
+
+/// Only errors that say the provider is unavailable count against its
+/// breaker: network failures, 5xx and 429. A 4xx caused by the request (too
+/// long a context, a bad parameter) says nothing about the provider, and must
+/// not block every person's turns.
+fn record_breaker_outcome(provider: String, err: provider.LLMError) -> Nil {
+  case provider_unavailable(err) {
+    True -> cb_global.record_failure(provider)
+    False -> Nil
+  }
+}
+
+pub fn provider_unavailable(err: provider.LLMError) -> Bool {
+  case err {
+    provider.NetworkError(_) -> True
+    provider.APIError(status, _) -> status >= 500 || status == 429
+    _ -> False
   }
 }
 

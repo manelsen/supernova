@@ -5,11 +5,13 @@
 
 import gleam/erlang/process.{type Subject}
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
+
+@external(erlang, "supernova_global_ffi", "safe_println")
+fn safe_println(line: String) -> Nil
 
 import supernova/tracing/types as tracing_types
 
@@ -38,7 +40,7 @@ fn handle_message(
         Some(ctx) -> ctx.span_id
         None -> "none"
       }
-      io.println(
+      safe_println(
         "[TRACE] span started: name="
         <> name
         <> " kind="
@@ -81,7 +83,7 @@ fn handle_message(
             tracing_types.SpanStatusError(e) -> "error: " <> e
           }
           let duration = now - span.start_time_ms
-          io.println(
+          safe_println(
             "[TRACE] span ended: "
             <> span.name
             <> " duration_ms="
@@ -105,7 +107,7 @@ fn handle_message(
           let now = current_timestamp()
           let attrs_str =
             string.join(list.map(attributes, fn(a) { a.0 <> "=" <> a.1 }), ", ")
-          io.println(
+          safe_println(
             "[TRACE] event: "
             <> span.name
             <> "."
@@ -172,7 +174,7 @@ fn handle_message(
       actor.continue(state)
     }
     tracing_types.Shutdown(reply_to) -> {
-      io.println("[TRACE] tracer shutdown")
+      safe_println("[TRACE] tracer shutdown")
       actor.send(reply_to, Nil)
       actor.stop()
     }

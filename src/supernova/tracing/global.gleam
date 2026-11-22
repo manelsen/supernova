@@ -21,9 +21,6 @@ fn global_get(key: String) -> any
 @external(erlang, "supernova_global_ffi", "global_has")
 fn global_has(key: String) -> Bool
 
-@external(erlang, "supernova_global_ffi", "safe_is_process_alive")
-fn safe_check_alive(pid: any) -> Bool
-
 const tracer_key = "supernova_global_tracer"
 
 pub fn set_tracer(tracer: Tracer) -> Nil {
@@ -34,7 +31,7 @@ pub fn get_tracer() -> option.Option(Tracer) {
   case global_has(tracer_key) {
     True -> {
       let tracer = global_get(tracer_key)
-      case safe_check_alive(tracer) {
+      case subject_alive(tracer) {
         True -> option.Some(tracer)
         False -> option.None
       }
@@ -99,5 +96,15 @@ pub fn set_span_attributes(
         attributes,
       )
     option.None -> Nil
+  }
+}
+
+/// A global holds a `Subject`, not a pid: ask its owner process whether it
+/// is alive. (`erlang:is_process_alive` on a Subject raises, which made every
+/// lookup report the actor as missing.)
+fn subject_alive(subject: process.Subject(message)) -> Bool {
+  case process.subject_owner(subject) {
+    Ok(pid) -> process.is_alive(pid)
+    Error(_) -> False
   }
 }
