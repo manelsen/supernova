@@ -157,9 +157,10 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 ### 3.4 Observabilidade e desempenho
 
-- **Métricas e tracing** (`production-ready-v1` REQ-3/4/11/12). A instrumentação existe, mas no piloto não aparece nada, e a causa não foi investigada.
-  - **O que existe:** o executor registra contadores e histogramas de LLM e abre spans `llm.chat` e `tool.execute`; os atores `metrics` e `tracing` sobem no boot; os spans iriam para o stdout, e não há exportação OTLP.
-  - **O que aparece no piloto:** o `/metrics` responde 200 e vem vazio depois de uma hora de conversa, e nenhum span aparece no log.
+- **Observabilidade total.** Decidido em 22/11: Prometheus (histórico) e Grafana (painéis), acessíveis só pela máquina.
+  - **Etapa 1, feita:** exposição no formato do Prometheus (um `TYPE` por família, buckets cumulativos com `+Inf`, escape, newline final; antes o `TYPE` repetido fazia o Prometheus recusar o scrape inteiro, e os histogramas não tinham buckets); durações em segundos; `agents_active` como gauge; o score de complexidade saiu dos labels. O tracer e o circuit breaker nunca eram encontrados no global (a checagem de vida recebia o Subject, não o pid): nenhum span era aberto e o breaker nunca era consultado. Corrigido; o breaker conta só indisponibilidade do provedor (rede, 5xx, 429). O `/metrics` "vazio no piloto" era efeito de restart: depois de uma conversa, ele está preenchido.
+  - **Etapa 2:** medir canais, decisões do gate, custo e tokens do ledger, agenda, erros de poll do Telegram; instrumentar o caminho de streaming.
+  - **Etapa 3:** Prometheus e Grafana no compose, com painéis.
   - **Sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` não são importados por ninguém fora dos próprios módulos.
 - **Readiness dos outros canais.** O `/health/ready` responde 503 quando um canal não está pronto e acompanha o Telegram a cada poll. Os demais canais só informam que subiram: um gateway do Discord que cai depois continua aparecendo como pronto. Entra junto com a paridade do Discord.
 - **Benchmarks** (REQ-9). O código está em `test/bench/`, mas as metas de `BENCHMARKS.md` nunca foram medidas.

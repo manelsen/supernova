@@ -490,7 +490,7 @@ fn record_agent_spawned() {
   case metrics_global.get_metrics() {
     option.Some(metrics) -> {
       metrics_actor.inc_counter(metrics, "agents_spawned_total", [])
-      metrics_actor.inc_counter(metrics, "agents_active", [])
+      metrics_actor.add_gauge(metrics, "agents_active", 1, [])
     }
     option.None -> Nil
   }
@@ -502,7 +502,7 @@ fn record_agent_stopped(status: String) {
       metrics_actor.inc_counter(metrics, "agents_stopped_total", [
         #("status", status),
       ])
-      metrics_actor.inc_counter(metrics, "agents_active", [])
+      metrics_actor.add_gauge(metrics, "agents_active", -1, [])
     }
     option.None -> Nil
   }

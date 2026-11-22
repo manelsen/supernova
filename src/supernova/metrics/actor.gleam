@@ -14,6 +14,7 @@ pub type Metrics =
 pub type MetricsCommand {
   IncCounter(name: String, labels: List(#(String, String)))
   SetGauge(name: String, value: Int, labels: List(#(String, String)))
+  AddGauge(name: String, delta: Int, labels: List(#(String, String)))
   ObserveHistogram(name: String, value: Float, labels: List(#(String, String)))
   GetMetrics(reply_to: Subject(String))
   Reset(reply_to: Subject(Nil))
@@ -54,6 +55,17 @@ fn handle_message(
         histograms: state.histograms,
       ))
     }
+    AddGauge(name, delta, labels) -> {
+      let new_gauges = case find_gauge(state.gauges, name, labels) {
+        Ok(g) -> update_gauge(state.gauges, name, labels, g.value + delta)
+        Error(Nil) ->
+          list.prepend(
+            state.gauges,
+            metrics_types.GaugeMetric(name: name, value: delta, labels: labels),
+          )
+      }
+      actor.continue(metrics_types.MetricsRegistry(..state, gauges: new_gauges))
+    }
     ObserveHistogram(name, value, labels) -> {
       let new_histograms = case find_histogram(state.histograms, name, labels) {
         Ok(h) ->
@@ -63,6 +75,7 @@ fn handle_message(
             labels,
             h.count + 1,
             h.sum +. value,
+            metrics_types.observe_buckets(h.buckets, value),
           )
         Error(Nil) ->
           list.prepend(
@@ -71,7 +84,9 @@ fn handle_message(
               name: name,
               count: 1,
               sum: value,
-              buckets: default_buckets(),
+              buckets: metrics_types.buckets_for(name)
+                |> list.map(fn(upper) { #(upper, 0) })
+                |> metrics_types.observe_buckets(value),
               labels: labels,
             ),
           )
@@ -99,22 +114,6 @@ fn handle_message(
       )
     }
   }
-}
-
-fn default_buckets() -> List(#(Float, Int)) {
-  [
-    #(0.005, 0),
-    #(0.01, 0),
-    #(0.025, 0),
-    #(0.05, 0),
-    #(0.1, 0),
-    #(0.25, 0),
-    #(0.5, 0),
-    #(1.0, 0),
-    #(2.5, 0),
-    #(5.0, 0),
-    #(10.0, 0),
-  ]
 }
 
 fn find_counter(
@@ -209,6 +208,7 @@ fn update_histogram(
   labels: List(#(String, String)),
   new_count: Int,
   new_sum: Float,
+  new_buckets: List(#(Float, Int)),
 ) -> List(metrics_types.HistogramMetric) {
   list.map(histograms, fn(h) {
     case h.name == name && h.labels == labels {
@@ -217,7 +217,7 @@ fn update_histogram(
           name: h.name,
           count: new_count,
           sum: new_sum,
-          buckets: h.buckets,
+          buckets: new_buckets,
           labels: h.labels,
         )
       False -> h
@@ -256,6 +256,16 @@ pub fn set_gauge(
   labels: List(#(String, String)),
 ) {
   actor.send(metrics, SetGauge(name, value, labels))
+}
+
+/// Move a gauge up or down by `delta`.
+pub fn add_gauge(
+  metrics: Metrics,
+  name: String,
+  delta: Int,
+  labels: List(#(String, String)),
+) {
+  actor.send(metrics, AddGauge(name, delta, labels))
 }
 
 pub fn observe_histogram(
