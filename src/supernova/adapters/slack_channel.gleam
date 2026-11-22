@@ -69,7 +69,12 @@ fn slack_stream_send(
   ) {
     case hooks.outbound_records {
       Some(recorder) ->
-        record_slack_stream_for_test(recorder, base_reply, events)
+        record_slack_stream_for_test(
+          recorder,
+          base_reply,
+          events,
+          hooks.stream_timeout_ms,
+        )
       None -> stream_slack_reply(bot_token, base_reply, events)
     }
   }
@@ -101,18 +106,26 @@ fn consume_slack_stream_events(
     Ok(port.StreamUpdate(reply)) -> {
       let next_content =
         slack_progress_content_delta(session, reply.content, last_content)
-      use _ <- result.try(slack_adapter.append_progress(
-        bot_token,
-        session,
-        next_content,
-      ))
-      consume_slack_stream_events(
-        bot_token,
-        session,
-        events,
-        reply.content,
-        remaining_ms,
-      )
+      case slack_adapter.append_progress(bot_token, session, next_content) {
+        Ok(_) ->
+          consume_slack_stream_events(
+            bot_token,
+            session,
+            events,
+            reply.content,
+            remaining_ms,
+          )
+        Error(error) -> {
+          // Close the native stream, as the failure and timeout paths do.
+          let _ =
+            slack_adapter.finish_progress(
+              bot_token,
+              session,
+              slack_stream_failure_text(error),
+            )
+          Error(error)
+        }
+      }
     }
     Ok(port.StreamComplete(reply)) -> {
       let final_content =
@@ -140,6 +153,7 @@ fn record_slack_stream_for_test(
   recorder: process.Subject(channel_kit.OutboundRecord),
   base_reply: port.ChannelReply,
   events: process.Subject(port.ChannelStreamEvent),
+  timeout_ms: Int,
 ) -> Result(Nil, port.ChannelError) {
   case slack_adapter.progress_mode(base_reply) {
     slack_adapter.NativeStream -> {
@@ -159,7 +173,7 @@ fn record_slack_stream_for_test(
         events,
         message_id,
         "",
-        channel_kit.stream_timeout_ms,
+        timeout_ms,
       )
     }
     slack_adapter.MessageUpdateFallback ->
@@ -168,8 +182,8 @@ fn record_slack_stream_for_test(
         "slack",
         base_reply,
         events,
-        channel_kit.stream_timeout_ms,
-        channel_kit.stream_timeout_ms,
+        timeout_ms,
+        timeout_ms,
       )
   }
 }

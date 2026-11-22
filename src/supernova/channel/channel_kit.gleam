@@ -23,6 +23,8 @@ pub type StartHooks {
     matrix_inbound_events: List(port.ChannelInbound),
     disable_telegram_polling: Bool,
     typing_keepalive_ms: Int,
+    /// Timeout of recorded (test) streams. Live streams always wait
+    /// `stream_timeout_ms` (60 s).
     stream_timeout_ms: Int,
     turn_hard_timeout_ms: Int,
     registry_id: String,

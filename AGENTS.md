@@ -331,9 +331,9 @@ To add a new channel adapter (e.g., Matrix, Slack):
 2. **Normalize to port types** using `channel/port` contract
 3. **Declare the channel's traits** in `channel/traits/<name>.gleam` and `channel/catalog` (private chats, group keys, agenda delivery, help text). The core never matches on channel names.
 4. **Put the runtime** in `adapters/<name>_channel.gleam` and add a starter to `channel/registry`
-5. **Add configuration parsing** in config modules
+5. **Add configuration parsing** in config modules, and add the channel to `config.is_channel_enabled`: the registry runs a starter only when that returns `True`
 6. **Add tests** following the adapter test pattern
-7. **Add to router** if using shared routing logic
+7. **Add the channel to `route_channel_inbound_for_handler`** in `src/supernova.gleam` if the adapter passes inbound events to the production handler; any other name is `Ignored`
 
 The adapter should:
 - Translate inbound messages to `PortInboundMessage`

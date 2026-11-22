@@ -306,3 +306,34 @@ pub fn denied_tool_is_not_in_member_list_test() {
   list.any(visible, fn(tool) { tool.name == "safe_shell" })
   |> should.equal(False)
 }
+
+pub fn leave_retry_stops_when_group_is_authorized_meanwhile_test() {
+  support.with_runtime(cfg(["telegram:123"]), fn() {
+    let attempts = process.new_subject()
+    let assert Ok(channel_registry) =
+      registry.start_channels_with_handler_and_hooks(
+        support.channel_config(),
+        support.telegram_handler(support.mock_config()),
+        channel_kit.StartHooks(
+          ..channel_kit.no_start_hooks(),
+          telegram_updates: [
+            support.telegram_chat_member_update("-1003", "member"),
+          ],
+          disable_telegram_polling: True,
+          outbound_records: Some(process.new_subject()),
+          leave_group: Some(fn(chat_id) {
+            process.send(attempts, chat_id)
+            False
+          }),
+          leave_retry_ms: [300, 300],
+        ),
+      )
+
+    process.receive(attempts, within: 2000) |> should.equal(Ok("-1003"))
+    let assert Some(runtime) = closed_group_global.get_runtime()
+    let assert Ok(Nil) = access_actor.add_chat(runtime.access, "telegram:-1003")
+
+    process.receive(attempts, within: 1000) |> should.equal(Error(Nil))
+    registry.stop_channels(channel_registry)
+  })
+}

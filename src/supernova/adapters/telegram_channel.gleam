@@ -315,7 +315,28 @@ fn schedule_leave_retry(
       let _ =
         process.spawn_unlinked(fn() {
           process.sleep(delay)
-          leave_confirmed(telegram_config, chat_id, chat_key, leave_group, rest)
+          // An admin may have authorized the group during the wait.
+          case closed_group_global.chat_authorized_result(chat_key) {
+            Ok(True) -> Nil
+            Ok(False) ->
+              leave_confirmed(
+                telegram_config,
+                chat_id,
+                chat_key,
+                leave_group,
+                rest,
+              )
+            Error(_) -> {
+              record_chat_check_failed(chat_key)
+              schedule_leave_retry(
+                telegram_config,
+                chat_id,
+                chat_key,
+                leave_group,
+                rest,
+              )
+            }
+          }
         })
       Nil
     }

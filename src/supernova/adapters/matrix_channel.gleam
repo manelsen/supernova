@@ -132,20 +132,29 @@ fn consume_matrix_stream_events(
 ) -> Result(Nil, port.ChannelError) {
   case process.receive(events, within: remaining_ms) {
     Ok(port.StreamUpdate(reply)) -> {
-      let _ = case channel_kit.stream_update_fits("matrix", reply.content) {
+      // `last_content` is what the person sees: it advances only when an
+      // edit succeeds, so completion resends after a failed or skipped edit.
+      let delivered = case
+        channel_kit.stream_update_fits("matrix", reply.content)
+      {
         True -> {
           let edit_reply =
             port.ChannelReply(..reply, edit_message_id: Some(event_id))
-          matrix_adapter.send_reply(homeserver_url, access_token, edit_reply)
+          case
+            matrix_adapter.send_reply(homeserver_url, access_token, edit_reply)
+          {
+            Ok(_) -> reply.content
+            Error(_) -> last_content
+          }
         }
-        False -> Ok(Nil)
+        False -> last_content
       }
       consume_matrix_stream_events(
         homeserver_url,
         access_token,
         events,
         event_id,
-        reply.content,
+        delivered,
         remaining_ms,
       )
     }
