@@ -251,6 +251,16 @@ fn execute_goal(
   #(new_state, [])
 }
 
+fn is_terminal(status: SubAgentStatus) -> Bool {
+  case status {
+    SubAgentCompleted
+    | SubAgentCancelled
+    | SubAgentFailed(_)
+    | SubAgentTimedOut -> True
+    SubAgentInitializing | SubAgentRunning -> False
+  }
+}
+
 /// Cancel all child agents recursively (cascade cancellation).
 fn cancel_children(children: List(Subject(SubAgentMessage))) -> Nil {
   list.each(children, fn(child) {
@@ -336,11 +346,15 @@ fn handle_message(
       // Cancel all children first (cascade)
       cancel_children(state.children)
 
-      // Update own status
+      // The active gauge is lowered only on the first terminal transition:
+      // cancelling an agent that already finished does not lower it again.
+      case is_terminal(state.status) {
+        True -> Nil
+        False -> record_agent_stopped("cancelled")
+      }
       let new_state =
         SubAgentState(..state, status: SubAgentCancelled, children: [])
 
-      record_agent_stopped("cancelled")
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
     }

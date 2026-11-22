@@ -11,6 +11,9 @@ import supernova/metrics/actor as metrics_actor
 pub type Metrics =
   Subject(metrics_actor.MetricsCommand)
 
+@external(erlang, "supernova_global_ffi", "global_erase")
+fn global_erase(key: String) -> Nil
+
 @external(erlang, "supernova_global_ffi", "global_put")
 fn global_put(key: String, value: any) -> Nil
 
@@ -37,4 +40,9 @@ pub fn get_metrics() -> option.Option(Metrics) {
     }
     False -> option.None
   }
+}
+
+/// Forget the registered actor (tests restore the previous state with it).
+pub fn clear_metrics() -> Nil {
+  global_erase(metrics_key)
 }

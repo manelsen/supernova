@@ -10,6 +10,9 @@ import supernova/llm/circuit_breaker/actor as cb_actor
 pub type CircuitBreaker =
   Subject(cb_actor.CircuitBreakerCommand)
 
+@external(erlang, "supernova_global_ffi", "global_erase")
+fn global_erase(key: String) -> Nil
+
 @external(erlang, "supernova_global_ffi", "global_put")
 fn global_put(key: String, value: any) -> Nil
 
@@ -70,4 +73,9 @@ fn subject_alive(subject: process.Subject(message)) -> Bool {
     Ok(pid) -> process.is_alive(pid)
     Error(_) -> False
   }
+}
+
+/// Forget the registered actor (tests restore the previous state with it).
+pub fn clear_circuit_breaker() -> Nil {
+  global_erase(cb_key)
 }

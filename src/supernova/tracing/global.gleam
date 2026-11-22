@@ -12,6 +12,9 @@ import supernova/tracing/types as tracing_types
 pub type Tracer =
   Subject(tracing_types.TelemetryCommand)
 
+@external(erlang, "supernova_global_ffi", "global_erase")
+fn global_erase(key: String) -> Nil
+
 @external(erlang, "supernova_global_ffi", "global_put")
 fn global_put(key: String, value: any) -> Nil
 
@@ -107,4 +110,9 @@ fn subject_alive(subject: process.Subject(message)) -> Bool {
     Ok(pid) -> process.is_alive(pid)
     Error(_) -> False
   }
+}
+
+/// Forget the registered actor (tests restore the previous state with it).
+pub fn clear_tracer() -> Nil {
+  global_erase(tracer_key)
 }
