@@ -34,7 +34,13 @@ services:
     volumes:
       - ./supernova.yaml:/config/supernova.yaml:ro
       - supernova_data:/data
-    networks: [default, computador_net]
+    networks:
+      # Supernova's own traffic (model APIs, channels) must leave through
+      # its own network, not the computer's: the host firewall rules for
+      # br-computador would otherwise apply to Supernova too.
+      default:
+        gw_priority: 1
+      computador_net: {}
 
   # The agent's computer: a Linux machine with a shell and a browser, apart
   # from Supernova and holding none of its secrets. Off unless the

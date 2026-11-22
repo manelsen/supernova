@@ -61,6 +61,8 @@ Inside its network, the computer can reach the internet. Measured on the pilot h
 
 These two rules close that path. They match only traffic that enters from `br-computador`. Traffic inside that network (Supernova ↔ computer) and replies to established connections are left alone.
 
+Supernova is attached to both networks, but `docker-compose.yml` gives its own network the gateway (`gw_priority`), so Supernova's outbound traffic never enters through `br-computador` and these rules do not touch it. That setting needs Docker Engine 28 and Compose 2.33 or newer. Without it, Docker picks the gateway by network name, and `computador_net` sorts first.
+
 ```sh
 # The computer may not open connections to the host itself.
 sudo iptables -I INPUT -i br-computador -m conntrack --ctstate NEW -j DROP
