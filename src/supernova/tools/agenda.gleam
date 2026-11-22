@@ -13,6 +13,7 @@ import gleam/string
 import supernova/agenda/runtime
 import supernova/agenda/schedule
 import supernova/agenda/store
+import supernova/channel/catalog
 import supernova/llm/provider
 
 pub fn tool() -> provider.ToolDefinition {
@@ -54,7 +55,7 @@ pub fn execute(principal: String, args_json: String) -> Result(String, String) {
 /// Channels where the agenda can reach the person in a private chat.
 pub fn deliverable(principal: String) -> Bool {
   case string.split(principal, ":") {
-    ["telegram", ..] | ["sim", ..] -> True
+    [channel, _, ..] -> catalog.get(channel).private_delivery
     _ -> False
   }
 }

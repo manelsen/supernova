@@ -11,6 +11,7 @@ import supernova/adapters/matrix_router
 import supernova/adapters/slack_router
 import supernova/adapters/telegram
 import supernova/adapters/telegram_router
+import supernova/channel/channel_kit
 import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/channel/registry
@@ -105,7 +106,7 @@ fn inbound_channel_name(inbound: port.ChannelInbound) -> String {
 fn start_runtime_registry_with_recorder(
   discord_events: List(discord_gateway.DiscordEvent),
   telegram_updates: List(telegram.Update),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
 ) -> #(registry.ChannelRegistry, supervisor.SessionSupervisor) {
   start_runtime_registry_with_recorder_and_keepalive(
     discord_events,
@@ -117,7 +118,7 @@ fn start_runtime_registry_with_recorder(
 
 fn start_slack_runtime_registry_with_recorder(
   slack_events: List(port.ChannelInbound),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
 ) -> #(registry.ChannelRegistry, supervisor.SessionSupervisor) {
   let #(handler, session_sup) = runtime_handler_with_supervisor()
   let assert Ok(channel_registry) =
@@ -131,7 +132,7 @@ fn start_slack_runtime_registry_with_recorder(
 
 fn start_matrix_runtime_registry_with_recorder(
   matrix_events: List(port.ChannelInbound),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
 ) -> #(registry.ChannelRegistry, supervisor.SessionSupervisor) {
   let #(handler, session_sup) = runtime_handler_with_supervisor()
   let assert Ok(channel_registry) =
@@ -146,7 +147,7 @@ fn start_matrix_runtime_registry_with_recorder(
 fn start_runtime_registry_with_recorder_and_keepalive(
   discord_events: List(discord_gateway.DiscordEvent),
   telegram_updates: List(telegram.Update),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
   typing_keepalive_ms: Int,
 ) -> #(registry.ChannelRegistry, supervisor.SessionSupervisor) {
   let #(handler, session_sup) = runtime_handler_with_supervisor()
@@ -256,8 +257,8 @@ fn ignoring_handler(
 fn test_hooks(
   discord_events: List(discord_gateway.DiscordEvent),
   telegram_updates: List(telegram.Update),
-) -> registry.StartHooks {
-  registry.StartHooks(
+) -> channel_kit.StartHooks {
+  channel_kit.StartHooks(
     discord_events: discord_events,
     telegram_updates: telegram_updates,
     slack_inbound_events: [],
@@ -275,9 +276,9 @@ fn test_hooks(
 
 fn test_hooks_with_slack_inbound(
   slack_events: List(port.ChannelInbound),
-  recorder: process.Subject(registry.OutboundRecord),
-) -> registry.StartHooks {
-  registry.StartHooks(
+  recorder: process.Subject(channel_kit.OutboundRecord),
+) -> channel_kit.StartHooks {
+  channel_kit.StartHooks(
     discord_events: [],
     telegram_updates: [],
     slack_inbound_events: slack_events,
@@ -295,9 +296,9 @@ fn test_hooks_with_slack_inbound(
 
 fn test_hooks_with_matrix_inbound(
   matrix_events: List(port.ChannelInbound),
-  recorder: process.Subject(registry.OutboundRecord),
-) -> registry.StartHooks {
-  registry.StartHooks(
+  recorder: process.Subject(channel_kit.OutboundRecord),
+) -> channel_kit.StartHooks {
+  channel_kit.StartHooks(
     discord_events: [],
     telegram_updates: [],
     slack_inbound_events: [],
@@ -316,8 +317,8 @@ fn test_hooks_with_matrix_inbound(
 fn test_hooks_with_recorder(
   discord_events: List(discord_gateway.DiscordEvent),
   telegram_updates: List(telegram.Update),
-  recorder: process.Subject(registry.OutboundRecord),
-) -> registry.StartHooks {
+  recorder: process.Subject(channel_kit.OutboundRecord),
+) -> channel_kit.StartHooks {
   test_hooks_with_recorder_and_keepalive(
     discord_events,
     telegram_updates,
@@ -329,10 +330,10 @@ fn test_hooks_with_recorder(
 fn test_hooks_with_recorder_and_keepalive(
   discord_events: List(discord_gateway.DiscordEvent),
   telegram_updates: List(telegram.Update),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
   typing_keepalive_ms: Int,
-) -> registry.StartHooks {
-  registry.StartHooks(
+) -> channel_kit.StartHooks {
+  channel_kit.StartHooks(
     discord_events: discord_events,
     telegram_updates: telegram_updates,
     slack_inbound_events: [],
@@ -798,28 +799,28 @@ pub fn start_channels_streams_discord_reply_with_placeholder_and_edits_test() {
   let assert Ok(fourth) = process.receive(recorder, within: 1000)
 
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "typing",
     content: "",
     message_id: None,
   ))
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "send",
     content: "Thinking...",
     message_id: Some("discord-stream-1"),
   ))
   third
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "edit",
     content: "Mock ",
     message_id: Some("discord-stream-1"),
   ))
   fourth
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "edit",
     content: "Mock streaming response",
@@ -846,7 +847,7 @@ pub fn start_channels_refreshes_discord_typing_while_stream_waits_test() {
   let records = collect_registry_records(recorder, [])
   let assert Ok(first) = list.first(records)
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "typing",
     content: "",
@@ -855,19 +856,19 @@ pub fn start_channels_refreshes_discord_typing_while_stream_waits_test() {
   records
   |> list.filter(fn(record) { record.action != "typing" })
   |> should.equal([
-    registry.OutboundRecord(
+    channel_kit.OutboundRecord(
       channel: "discord",
       action: "send",
       content: "Thinking...",
       message_id: Some("discord-stream-1"),
     ),
-    registry.OutboundRecord(
+    channel_kit.OutboundRecord(
       channel: "discord",
       action: "edit",
       content: "Mock ",
       message_id: Some("discord-stream-1"),
     ),
-    registry.OutboundRecord(
+    channel_kit.OutboundRecord(
       channel: "discord",
       action: "edit",
       content: "Mock streaming response",
@@ -894,28 +895,28 @@ pub fn start_channels_streams_telegram_reply_with_send_and_edits_test() {
   let assert Ok(fourth) = process.receive(recorder, within: 1000)
 
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "typing",
     content: "",
     message_id: None,
   ))
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "send",
     content: "Thinking...",
     message_id: Some("telegram-stream-1"),
   ))
   third
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "edit",
     content: "Mock ",
     message_id: Some("telegram-stream-1"),
   ))
   fourth
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "edit",
     content: "Mock streaming response",
@@ -938,7 +939,7 @@ pub fn start_channels_refreshes_telegram_typing_while_stream_waits_test() {
   let records = collect_registry_records(recorder, [])
   let assert Ok(first) = list.first(records)
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "typing",
     content: "",
@@ -947,19 +948,19 @@ pub fn start_channels_refreshes_telegram_typing_while_stream_waits_test() {
   records
   |> list.filter(fn(record) { record.action != "typing" })
   |> should.equal([
-    registry.OutboundRecord(
+    channel_kit.OutboundRecord(
       channel: "telegram",
       action: "send",
       content: "Thinking...",
       message_id: Some("telegram-stream-1"),
     ),
-    registry.OutboundRecord(
+    channel_kit.OutboundRecord(
       channel: "telegram",
       action: "edit",
       content: "Mock ",
       message_id: Some("telegram-stream-1"),
     ),
-    registry.OutboundRecord(
+    channel_kit.OutboundRecord(
       channel: "telegram",
       action: "edit",
       content: "Mock streaming response",
@@ -1014,21 +1015,21 @@ pub fn start_channels_streams_slack_dm_reply_with_native_progress_test() {
   let assert Ok(third) = process.receive(recorder, within: 1000)
 
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "progress_start",
     content: "Thinking...",
     message_id: Some("slack-stream-1"),
   ))
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "progress_append",
     content: "Mock ",
     message_id: Some("slack-stream-1"),
   ))
   third
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "progress_stop",
     content: "Mock streaming response",
@@ -1082,21 +1083,21 @@ pub fn start_channels_streams_slack_channel_reply_with_fallback_updates_test() {
   let assert Ok(third) = process.receive(recorder, within: 1000)
 
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "send",
     content: "Thinking...",
     message_id: Some("slack-stream-1"),
   ))
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "edit",
     content: "Mock ",
     message_id: Some("slack-stream-1"),
   ))
   third
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "edit",
     content: "Mock streaming response",
@@ -1179,7 +1180,7 @@ pub fn e2e_discord_help_command_routes_from_adapter_to_reply_test() {
   let assert Ok(record) = process.receive(recorder, within: 1000)
 
   record
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "send",
     content: "Supernova AI Agent Framework\n\n"
@@ -1221,28 +1222,28 @@ pub fn e2e_telegram_model_selection_updates_ui_and_next_reply_test() {
   let assert Ok(fourth) = process.receive(recorder, within: 1000)
 
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "edit",
     content: "Model set to mock-alt-model for this session.",
     message_id: Some("171"),
   ))
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "typing",
     content: "",
     message_id: None,
   ))
   third
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "send",
     content: "Thinking...",
     message_id: Some("telegram-stream-1"),
   ))
   fourth
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "edit",
     content: "Mock response via mock-alt-model",
@@ -1275,21 +1276,21 @@ pub fn e2e_discord_stream_error_falls_back_to_non_streaming_reply_test() {
   let assert Ok(third) = process.receive(recorder, within: 1000)
 
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "typing",
     content: "",
     message_id: None,
   ))
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "send",
     content: "Thinking...",
     message_id: Some("discord-stream-1"),
   ))
   third
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "discord",
     action: "edit",
     content: "Mock fallback after stream error",
@@ -1315,21 +1316,21 @@ pub fn e2e_telegram_stream_timeout_falls_back_to_non_streaming_reply_test() {
   let assert Ok(third) = process.receive(recorder, within: 3000)
 
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "typing",
     content: "",
     message_id: None,
   ))
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "send",
     content: "Thinking...",
     message_id: Some("telegram-stream-1"),
   ))
   third
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "edit",
     content: "Mock fallback after stream timeout",
@@ -1708,7 +1709,7 @@ pub fn slack_inbound_event_dispatched_to_handler_test() {
     registry.start_channels_with_handler_and_hooks(
       enabled_slack_config(),
       ignoring_handler(received),
-      registry.StartHooks(
+      channel_kit.StartHooks(
         discord_events: [],
         telegram_updates: [],
         slack_inbound_events: [slack_fixture_message("hello slack")],
@@ -1752,7 +1753,7 @@ pub fn e2e_slack_help_command_routes_from_inbound_to_reply_test() {
   let assert Ok(record) = process.receive(recorder, within: 1000)
 
   record
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "send",
     content: "Supernova AI Agent Framework\n\n"
@@ -1830,14 +1831,14 @@ pub fn e2e_slack_model_selection_persists_for_session_test() {
   string.contains(first.content, "mock-alt-model") |> should.equal(True)
 
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "send",
     content: "Thinking...",
     message_id: Some("slack-stream-1"),
   ))
   third
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "slack",
     action: "edit",
     content: "Mock response via mock-alt-model",
@@ -1861,7 +1862,7 @@ pub fn matrix_inbound_event_dispatched_to_handler_test() {
     registry.start_channels_with_handler_and_hooks(
       enabled_matrix_config(),
       ignoring_handler(received),
-      registry.StartHooks(
+      channel_kit.StartHooks(
         discord_events: [],
         telegram_updates: [],
         slack_inbound_events: [],
@@ -1905,7 +1906,7 @@ pub fn e2e_matrix_help_command_routes_from_inbound_to_reply_test() {
   let assert Ok(record) = process.receive(recorder, within: 1000)
 
   record
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "matrix",
     action: "send",
     content: "Supernova AI Agent Framework\n\n"
@@ -1956,14 +1957,14 @@ pub fn e2e_matrix_follow_up_uses_session_history_test() {
   let assert Ok(second) = process.receive(recorder, within: 1000)
 
   first
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "matrix",
     action: "send",
     content: "Thinking...",
     message_id: Some("matrix-stream-1"),
   ))
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "matrix",
     action: "edit",
     content: "Mock response via mock-model",
@@ -2391,7 +2392,7 @@ pub fn send_stream_matrix_complete_without_updates_records_final_edit_test() {
   let assert Ok(second) = process.receive(recorder, within: 1000)
   first.action |> should.equal("send")
   second
-  |> should.equal(registry.OutboundRecord(
+  |> should.equal(channel_kit.OutboundRecord(
     channel: "matrix",
     action: "edit",
     content: "final",
@@ -2484,9 +2485,9 @@ fn telegram_fixture_update_without_text_and_caption() -> String {
 }
 
 fn collect_registry_records(
-  recorder: process.Subject(registry.OutboundRecord),
-  acc: List(registry.OutboundRecord),
-) -> List(registry.OutboundRecord) {
+  recorder: process.Subject(channel_kit.OutboundRecord),
+  acc: List(channel_kit.OutboundRecord),
+) -> List(channel_kit.OutboundRecord) {
   case process.receive(recorder, within: 2000) {
     Ok(record) -> collect_registry_records(recorder, [record, ..acc])
     Error(_) -> list.reverse(acc)
@@ -2509,7 +2510,7 @@ fn stream_test_reply(content: String) -> port.ChannelReply {
 pub fn split_delivery_treats_not_modified_as_success_test() {
   let delivered = process.new_subject()
   let result =
-    registry.finish_stream_in_parts_for_test(
+    channel_kit.finish_stream_in_parts_for_test(
       stream_test_reply(string.repeat("a", 500)),
       "placeholder",
       200,
@@ -2538,7 +2539,7 @@ pub fn split_delivery_retries_rate_limited_parts_test() {
   process.send(decisions, Ok(Nil))
 
   let result =
-    registry.finish_stream_in_parts_for_test(
+    channel_kit.finish_stream_in_parts_for_test(
       stream_test_reply(string.repeat("a", 500)),
       "placeholder",
       200,
@@ -2563,7 +2564,7 @@ pub fn split_delivery_sends_fallback_after_rate_limit_exhaustion_test() {
   })
 
   let result =
-    registry.finish_stream_in_parts_for_test(
+    channel_kit.finish_stream_in_parts_for_test(
       stream_test_reply(string.repeat("a", 500)),
       "placeholder",
       200,
@@ -2618,7 +2619,7 @@ pub fn oversized_stream_update_is_ignored_test() {
     )
 
   let records = collect_registry_records(recorder, [])
-  list.any(records, fn(entry: registry.OutboundRecord) {
+  list.any(records, fn(entry: channel_kit.OutboundRecord) {
     entry.content == string.repeat("X", 5000)
   })
   |> should.equal(False)
@@ -2630,11 +2631,11 @@ pub fn oversized_stream_update_is_ignored_test() {
 
 fn test_hooks_with_timeouts(
   telegram_updates: List(telegram.Update),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
   stream_timeout_ms: Int,
   turn_hard_timeout_ms: Int,
-) -> registry.StartHooks {
-  registry.StartHooks(
+) -> channel_kit.StartHooks {
+  channel_kit.StartHooks(
     discord_events: [],
     telegram_updates: telegram_updates,
     slack_inbound_events: [],

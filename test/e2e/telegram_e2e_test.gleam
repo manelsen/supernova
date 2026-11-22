@@ -2,8 +2,10 @@ import e2e/e2e_support as support
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
 import gleeunit/should
+import supernova/channel/channel_kit
 import supernova/channel/registry
 import supernova/config
 import supernova/core/access/actor as access_actor
@@ -27,9 +29,9 @@ fn cfg(members: List(String)) -> config.Config {
 }
 
 fn collect_records(
-  recorder: process.Subject(registry.OutboundRecord),
-  acc: List(registry.OutboundRecord),
-) -> List(registry.OutboundRecord) {
+  recorder: process.Subject(channel_kit.OutboundRecord),
+  acc: List(channel_kit.OutboundRecord),
+) -> List(channel_kit.OutboundRecord) {
   case process.receive(recorder, within: 500) {
     Ok(record) -> collect_records(recorder, [record, ..acc])
     Error(_) -> list.reverse(acc)
@@ -304,4 +306,42 @@ pub fn denied_tool_is_not_in_member_list_test() {
     )
   list.any(visible, fn(tool) { tool.name == "safe_shell" })
   |> should.equal(False)
+}
+
+pub fn leave_retry_stops_when_group_is_authorized_meanwhile_test() {
+  support.with_runtime(cfg(["telegram:123"]), fn() {
+    let attempts = process.new_subject()
+    let assert Ok(channel_registry) =
+      registry.start_channels_with_handler_and_hooks(
+        support.channel_config(),
+        support.telegram_handler(support.mock_config()),
+        channel_kit.StartHooks(
+          ..channel_kit.no_start_hooks(),
+          telegram_updates: [
+            support.telegram_chat_member_update("-1003", "member"),
+          ],
+          disable_telegram_polling: True,
+          outbound_records: Some(process.new_subject()),
+          // Each attempt waits for the test's go-ahead, so the chat is
+          // authorized before the retry delay starts.
+          leave_group: Some(fn(chat_id) {
+            let go = process.new_subject()
+            process.send(attempts, #(chat_id, go))
+            let _ = process.receive(go, within: 2000)
+            False
+          }),
+          leave_retry_ms: [300, 300],
+        ),
+      )
+
+    let assert Ok(#("-1003", go)) = process.receive(attempts, within: 2000)
+    let assert Some(runtime) = closed_group_global.get_runtime()
+    let assert Ok(Nil) = access_actor.add_chat(runtime.access, "telegram:-1003")
+    process.send(go, Nil)
+
+    process.receive(attempts, within: 1000)
+    |> result.is_error
+    |> should.be_true()
+    registry.stop_channels(channel_registry)
+  })
 }

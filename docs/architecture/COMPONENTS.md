@@ -18,6 +18,14 @@
 
 - `src/supernova/channel/port.gleam`
   - canonical channel contract used by adapters and routers.
+- `src/supernova/channel/traits.gleam`, `channel/traits/*`, `channel/catalog.gleam`
+  - what the core knows about each channel, declared by the channel.
+- `src/supernova/channel/registry.gleam`
+  - starts, stops and routes adapters; the starter table lists them.
+- `src/supernova/channel/channel_kit.gleam`
+  - start hooks, turn dispatch and generic streaming shared by channel runtimes.
+- `src/supernova/adapters/*_channel.gleam`
+  - per-channel runtime (Telegram, Discord, Slack, Matrix).
 - `src/supernova/adapters/*_router.gleam`
   - per-channel entrypoint routing inbound to common logic.
 - `src/supernova/adapters/channel_common_router.gleam`

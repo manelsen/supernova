@@ -6,8 +6,8 @@
 ////
 //// Format: `<channel>:<user_id>` (for example `telegram:123`).
 
-import gleam/list
 import gleam/string
+import supernova/channel/catalog
 
 /// A channel-scoped person identity.
 pub type Principal {
@@ -38,7 +38,7 @@ pub fn parse(id: String) -> Result(Principal, Nil) {
 pub fn is_valid_id(id: String) -> Bool {
   case parse(id) {
     Ok(principal) ->
-      list.contains(["telegram", "discord"], principal.channel)
+      catalog.get(principal.channel).has_principals
       && string.trim(id) == id
       && !string.contains(principal.user_id, " ")
       && !string.contains(principal.user_id, ":")
@@ -60,31 +60,14 @@ pub fn from_sender(channel: String, user_id: String) -> Result(Principal, Nil) {
   }
 }
 
-/// True when the message arrived in a private conversation.
-///
-/// Telegram private chat ids are positive; groups and supergroups are
-/// negative. Discord private channels are represented as `dm:<user_id>` by
-/// the adapter layer; guild channels do not have that prefix.
+/// True when the message arrived in a private conversation, by the rules of
+/// its channel.
 pub fn is_private_chat(channel: String, chat_id: String) -> Bool {
-  case channel {
-    "telegram" -> !string.starts_with(chat_id, "-") && chat_id != ""
-    "discord" -> string.starts_with(chat_id, "dm:")
-    _ -> False
-  }
+  catalog.get(channel).is_private_chat(chat_id)
 }
 
-/// Id used to authorize a group/server conversation.
+/// Id used to authorize a group/server conversation, by the rules of its
+/// channel.
 pub fn chat_principal(channel: String, chat_id: String) -> String {
-  case channel {
-    "discord" ->
-      case string.starts_with(chat_id, "dm:") {
-        True -> "discord:dm:" <> string.drop_start(chat_id, 3)
-        False ->
-          case string.split(chat_id, "@guild:") {
-            [_target, guild] -> "discord:guild:" <> guild
-            _ -> "discord:guild:" <> chat_id
-          }
-      }
-    _ -> channel <> ":" <> chat_id
-  }
+  catalog.get(channel).chat_key(chat_id)
 }

@@ -7,6 +7,7 @@ import envoy
 import gleam/int
 import gleam/list
 import gleam/string
+import supernova/channel/catalog
 import supernova/config
 import supernova/core/principal
 
@@ -78,6 +79,15 @@ pub fn check(config: config.Config) -> List(ConfigIssue) {
   ])
 }
 
+fn expected_forms(prefixes: List(String), suffix: String) -> String {
+  case list.reverse(list.map(prefixes, fn(prefix) { prefix <> suffix })) {
+    [] -> ""
+    [only] -> only
+    [last, second] -> second <> " or " <> last
+    [last, ..rest] -> string.join(list.reverse(rest), ", ") <> ", or " <> last
+  }
+}
+
 fn check_principals(field: String, ids: List(String)) -> List(ConfigIssue) {
   ids
   |> list.filter(fn(id) { !principal.is_valid_id(id) })
@@ -87,37 +97,26 @@ fn check_principals(field: String, ids: List(String)) -> List(ConfigIssue) {
       message: field
         <> ": invalid principal id '"
         <> id
-        <> "' (expected telegram:<id> or discord:<id>)",
+        <> "' (expected "
+        <> expected_forms(catalog.principal_channels(), ":<id>")
+        <> ")",
     )
   })
 }
 
 fn check_chats(chats: List(String)) -> List(ConfigIssue) {
   chats
-  |> list.filter(fn(chat) { !valid_chat_id(chat) })
+  |> list.filter(fn(chat) { !catalog.is_group_key(chat) })
   |> list.map(fn(chat) {
     ConfigIssue(
       level: Error,
       message: "access.allowed_chats: invalid chat id '"
         <> chat
-        <> "' (expected telegram:<id>, discord:guild:<id>, or sim:<id>)",
+        <> "' (expected "
+        <> expected_forms(catalog.group_key_prefixes(), "<id>")
+        <> ")",
     )
   })
-}
-
-fn valid_chat_id(chat: String) -> Bool {
-  case string.starts_with(chat, "telegram:") {
-    True -> string.length(chat) > string.length("telegram:")
-    False ->
-      case string.starts_with(chat, "discord:guild:") {
-        True -> string.length(chat) > string.length("discord:guild:")
-        False ->
-          case string.starts_with(chat, "sim:") {
-            True -> string.length(chat) > string.length("sim:")
-            False -> False
-          }
-      }
-  }
 }
 
 fn check_capabilities(

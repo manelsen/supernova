@@ -9,6 +9,7 @@ import supernova/adapters/discord_gateway
 import supernova/adapters/discord_router
 import supernova/adapters/telegram
 import supernova/adapters/telegram_router
+import supernova/channel/channel_kit
 import supernova/channel/port
 import supernova/channel/registry
 import supernova/config
@@ -184,13 +185,13 @@ pub fn telegram_start_registry(
   cfg: config.Config,
   handler: port.ChannelHandler,
   updates: List(telegram.Update),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
 ) -> registry.ChannelRegistry {
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       cfg,
       handler,
-      registry.StartHooks(
+      channel_kit.StartHooks(
         discord_events: [],
         telegram_updates: updates,
         slack_inbound_events: [],
@@ -226,14 +227,14 @@ pub fn telegram_start_registry_with_leave(
   cfg: config.Config,
   handler: port.ChannelHandler,
   updates: List(telegram.Update),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
   leave_recorder: process.Subject(String),
 ) -> registry.ChannelRegistry {
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       cfg,
       handler,
-      registry.StartHooks(
+      channel_kit.StartHooks(
         discord_events: [],
         telegram_updates: updates,
         slack_inbound_events: [],
@@ -287,13 +288,13 @@ pub fn discord_start_registry(
   cfg: config.Config,
   handler: port.ChannelHandler,
   events: List(discord_gateway.DiscordEvent),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
 ) -> registry.ChannelRegistry {
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       cfg,
       handler,
-      registry.StartHooks(
+      channel_kit.StartHooks(
         discord_events: events,
         telegram_updates: [],
         slack_inbound_events: [],
@@ -344,14 +345,14 @@ fn monotonic_ms() -> Int {
 }
 
 pub fn await_content(
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
   needle: String,
 ) -> Bool {
   await_content_loop(recorder, needle, monotonic_ms() + 5000)
 }
 
 fn await_content_loop(
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
   needle: String,
   deadline: Int,
 ) -> Bool {
@@ -379,7 +380,7 @@ pub fn telegram_start_registry_with_leave_result(
   cfg: config.Config,
   handler: port.ChannelHandler,
   updates: List(telegram.Update),
-  recorder: process.Subject(registry.OutboundRecord),
+  recorder: process.Subject(channel_kit.OutboundRecord),
   leave_result: Bool,
   retry_ms: List(Int),
 ) -> registry.ChannelRegistry {
@@ -387,7 +388,7 @@ pub fn telegram_start_registry_with_leave_result(
     registry.start_channels_with_handler_and_hooks(
       cfg,
       handler,
-      registry.StartHooks(
+      channel_kit.StartHooks(
         discord_events: [],
         telegram_updates: updates,
         slack_inbound_events: [],

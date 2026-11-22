@@ -88,6 +88,21 @@ The `sim` channel lets the harness (`src/supernova/harness/`) talk to agents the
 
 Adapters translate native provider/channel formats into this contract, allowing shared routing logic in common routers.
 
+### Channel traits
+
+The core never matches on channel names. What it needs to know about a channel is declared by the channel in `channel/traits/<name>.gleam` and read through `channel/catalog`:
+
+- whether people on it can be closed-group principals,
+- how to tell a private chat, and the key that authorizes a group,
+- whether the agenda can reach a person privately,
+- its `/help` and `/commands` text, its streaming edit limit and whether it shows typing.
+
+A channel without its own traits module gets `traits.generic`.
+
+### Channel runtimes
+
+`channel/registry.gleam` only starts, stops and routes: a table of starters is the one place that lists the adapters. The runtime of each channel lives with it: `adapters/telegram_channel.gleam` (polling worker, update conversion, leaving unauthorized groups, sending, streaming), `adapters/discord_channel.gleam` (gateway bridge, events and interactions, components), `adapters/slack_channel.gleam` and `adapters/matrix_channel.gleam`. What they share (start hooks, turn dispatch, generic streaming) is in `channel/channel_kit.gleam`, which knows no channel by name.
+
 ## Safety and Control Planes
 
 ### Budget Control
@@ -111,9 +126,11 @@ Adapters translate native provider/channel formats into this contract, allowing 
 A new channel/provider integration should:
 
 1. Implement adapter-side normalization into `channel/port` types.
-2. Reuse shared channel routing where possible.
-3. Add explicit configuration parsing/validation in config modules.
-4. Add contract and integration tests for inbound/outbound parity.
+2. Declare its traits in `channel/traits/<name>.gleam` and add them to `channel/catalog`, unless `traits.generic` fits.
+3. Put its runtime in `adapters/<name>_channel.gleam`, reusing `channel/channel_kit`, and add a starter to `channel/registry`.
+4. Reuse shared channel routing where possible.
+5. Add explicit configuration parsing/validation in config modules.
+6. Add contract and integration tests for inbound/outbound parity.
 
 ## Testing Strategy
 

@@ -142,6 +142,8 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 - **QQ nunca foi feito.** Origem: `IMPLEMENTATION_READY.md` 4.6.
 - **Matrix:** o limite de tamanho não é verificado nas edições. Origem: relatório B1.1.
 - **Discord:** um `retry_after` abaixo de um segundo é truncado para segundos. Origem: relatório B1.1.
+- **Slack, streaming nativo:** se o modelo cai no fallback sem streaming depois de já ter mandado texto, a conclusão pode não começar pelo texto já enviado. O `finish_progress` manda a resposta inteira, e a mensagem pode mostrar as duas versões. O caminho normal não é afetado. Corrigir pede uma decisão de desenho: reabrir a mensagem ou substituí-la. Origem: revisão da #40.
+- **`StartHooks` por canal.** Os hooks de teste ainda têm campos de Telegram, Discord, Slack e Matrix, e `config.channel_support` marca Telegram e Discord como suportados pelo nome. Origem: #40.
 
 ### 3.3 Interação e computador
 
