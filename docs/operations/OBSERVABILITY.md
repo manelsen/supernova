@@ -48,18 +48,32 @@ These are the most complete record of what happened. All of them live in the `su
 
 ## Metrics and tracing
 
-The code is there, but the pilot shows nothing:
+```sh
+docker exec supernova curl -sS http://127.0.0.1:8080/metrics
+docker compose logs supernova | grep '\[TRACE\]'
+```
 
-- The executor records `llm_requests_total`, latency and complexity histograms, and opens `llm.chat` and `tool.execute` spans.
-- Sub-agents count `agents_spawned_total` and `agents_stopped_total`.
-- `GET /metrics` serves the Prometheus text format.
-- Spans are written to stdout. There is no OTLP export.
+`GET /metrics` serves the Prometheus text exposition format: one `# TYPE` line per family, histograms as cumulative `_bucket` series ending in `le="+Inf"` plus `_sum` and `_count`, escaped label values. Durations are in seconds. The counters start from zero at every restart, as Prometheus expects.
+
+| Metric | Type | Labels |
+|---|---|---|
+| `llm_requests_total` | counter | `provider`, `model`, `status` (`success`, `error`), `error_type` on errors |
+| `llm_request_duration_seconds` | histogram | `provider`, `model` |
+| `tool_executions_total` | counter | `tool`, `status` |
+| `tool_execution_duration_seconds` | histogram | `tool` |
+| `complexity_score` | histogram | `tier` |
+| `complexity_selected_tier_total` | counter | `tier`, `model_used` |
+| `agents_spawned_total`, `agents_stopped_total` | counter | `status` on stops |
+| `agents_active` | gauge | |
+
+Spans are written to stdout as `[TRACE] span started/ended` lines: `llm.chat` for every model call (with its duration and status) and `tool.execute` for every tool call. There is no OTLP export.
+
+The circuit breaker opens for a provider after 5 consecutive failures that mean the provider is unavailable (network errors, 5xx, 429) and blocks its calls for 30 s; a request error (4xx) does not count. The person sees "o provedor do modelo ficou fora por um tempo, depois de várias falhas seguidas".
 
 ## What does not work yet
 
 - **Readiness only probes Telegram.** The other channels count as ready once they start.
-- **`/metrics` is empty in the pilot.** It answered 200 with an empty body after an hour of conversation. The cause has not been investigated.
-- **No spans in the logs.** The tracer starts at boot, but no `llm.chat` or `tool.execute` span reached the pilot's logs.
+- **Few things are measured.** Channels, gate decisions, ledger cost and tokens, the agenda and Telegram poll errors have no metrics yet. The streaming path (open access mode only) records no metric, opens no span and skips the circuit breaker.
 - **No exporter.** There is no Prometheus scrape configuration, no OTLP collector and no dashboards.
 - **Modules that nothing uses.** `core/telemetry`, `core/dashboard` and `core/alerts/actor` are not used outside their own modules.
 - **Performance never measured.** The benchmarks in `test/bench/` and the load test in `tests/load/` (`run_load_tests.sh`) exist. The targets from `docs/prd/production-ready-v1.md` (100 concurrent users, p99 under 2 s, under 1% errors) have never been checked.

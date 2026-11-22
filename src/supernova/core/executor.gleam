@@ -13,7 +13,6 @@
 
 import gleam/dict
 import gleam/erlang/process.{type Subject}
-import gleam/float
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -61,8 +60,8 @@ fn record_llm_latency(provider_name: String, model: String, latency_ms: Int) {
       let labels = [#("provider", provider_name), #("model", model)]
       metrics_actor.observe_histogram(
         metrics,
-        "llm_request_duration_ms",
-        int.to_float(latency_ms),
+        "llm_request_duration_seconds",
+        int.to_float(latency_ms) /. 1000.0,
         labels,
       )
       metrics_actor.inc_counter(metrics, "llm_requests_total", [
@@ -101,7 +100,6 @@ fn record_complexity_selection(
       metrics_actor.inc_counter(metrics, "complexity_selected_tier_total", [
         #("tier", complexity_router.tier_to_string(tier)),
         #("model_used", model_used),
-        #("complexity_score", float.to_string(score)),
       ])
     }
     option.None -> Nil
@@ -495,7 +493,7 @@ fn with_llm_span(
               tracing_global.end_span(span, tracing_types.SpanStatusOk)
             }
             Error(err) -> {
-              cb_global.record_failure(provider)
+              record_breaker_outcome(provider, err)
               tracing_global.end_span(
                 span,
                 tracing_types.SpanStatusError(error_type_name(err)),
@@ -508,12 +506,31 @@ fn with_llm_span(
           let result = f()
           case result {
             Ok(_) -> cb_global.record_success(provider)
-            Error(_) -> cb_global.record_failure(provider)
+            Error(err) -> record_breaker_outcome(provider, err)
           }
           result
         }
       }
     }
+  }
+}
+
+/// Only errors that say the provider is unavailable count against its
+/// breaker: network failures, 5xx and 429. A 4xx caused by the request (too
+/// long a context, a bad parameter) says nothing about the provider, and must
+/// not block every person's turns.
+fn record_breaker_outcome(provider: String, err: provider.LLMError) -> Nil {
+  case provider_unavailable(err) {
+    True -> cb_global.record_failure(provider)
+    False -> Nil
+  }
+}
+
+pub fn provider_unavailable(err: provider.LLMError) -> Bool {
+  case err {
+    provider.NetworkError(_) -> True
+    provider.APIError(status, _) -> status >= 500 || status == 429
+    _ -> False
   }
 }
 
@@ -903,8 +920,8 @@ fn record_tool_latency(tool_name: String, latency_ms: Int) {
     option.Some(metrics) -> {
       metrics_actor.observe_histogram(
         metrics,
-        "tool_execution_duration_ms",
-        int.to_float(latency_ms),
+        "tool_execution_duration_seconds",
+        int.to_float(latency_ms) /. 1000.0,
         [#("tool", tool_name)],
       )
       metrics_actor.inc_counter(metrics, "tool_executions_total", [

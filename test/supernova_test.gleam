@@ -1,3 +1,4 @@
+import exception
 import gleam/dict
 import gleam/erlang/process
 import gleam/option.{None, Some}
@@ -9,9 +10,11 @@ import supernova/channel/port
 import supernova/config
 import supernova/core/session/supervisor
 import supernova/llm/circuit_breaker/actor as cb_actor
+import supernova/llm/circuit_breaker/global as cb_global
 import supernova/llm/failover_cooldown/types as cd_types
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
+import supernova/tracing/global as tracing_global
 import supernova/tracing/types as tracing_types
 import test_workspace
 
@@ -119,6 +122,13 @@ pub fn wait_for_shutdown_blocks_until_exit_signal_test() {
 fn kill_pid(pid: process.Pid) -> Nil
 
 pub fn infrastructure_supervisor_restarts_killed_metrics_actor_test() {
+  // The supervisor registers a real breaker, tracer and metrics actor in the
+  // globals; forget them afterwards so later tests do not run against them.
+  use <- exception.defer(fn() {
+    cb_global.clear_circuit_breaker()
+    tracing_global.clear_tracer()
+    metrics_global.clear_metrics()
+  })
   let tracer_config =
     tracing_types.TracerConfig(
       service_name: "supernova-test",
