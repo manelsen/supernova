@@ -191,7 +191,13 @@ type Reservation {
 type ActorState {
   ActorState(
     counters: Dict(String, ResourceCounters),
+    /// Newest first: adding is O(1). It was appended to (a copy of every
+    /// event of the last 30 days on each new one, inside the actor every
+    /// turn goes through); readers that want recording order reverse it.
     events: List(UsageEvent),
+    /// LLM cost by (UTC day, principal), kept as events arrive, so a
+    /// person's daily cost is a lookup instead of a scan of every event.
+    person_day_totals: Dict(#(String, String), Float),
     directory: Option(String),
     now: fn() -> Int,
     day_key: fn(Int) -> String,
@@ -235,6 +241,25 @@ fn recompute_totals(
       ToolUsage(..) -> totals
     }
   })
+}
+
+fn recompute_person_day_totals(
+  events: List(UsageEvent),
+) -> Dict(#(String, String), Float) {
+  list.fold(events, dict.new(), add_person_day_cost)
+}
+
+fn add_person_day_cost(
+  totals: Dict(#(String, String), Float),
+  event: UsageEvent,
+) -> Dict(#(String, String), Float) {
+  case event {
+    LLMUsage(principal_id: principal_id, cost_usd: cost, ..) ->
+      dict.upsert(totals, #(pure.event_day(event), principal_id), fn(total) {
+        option.unwrap(total, 0.0) +. cost
+      })
+    ToolUsage(..) -> totals
+  }
 }
 
 fn recorded_call_ids(events: List(UsageEvent)) -> Dict(String, Bool) {
@@ -476,7 +501,11 @@ fn handle_message(
           actor.continue(
             ActorState(
               ..state,
-              events: pure.add_usage_event(state.events, event),
+              events: [event, ..state.events],
+              person_day_totals: add_person_day_cost(
+                state.person_day_totals,
+                event,
+              ),
               day_totals: totals,
               reservations: dict.delete(state.reservations, call_id),
               recorded_calls: case call_id {
@@ -558,18 +587,19 @@ fn handle_message(
       persist_event(state, event)
 
       actor.send(reply_to, Nil)
-      actor.continue(
-        ActorState(..state, events: pure.add_usage_event(state.events, event)),
-      )
+      actor.continue(ActorState(..state, events: [event, ..state.events]))
     }
 
     GetUsage(reply_to, principal_id) -> {
-      actor.send(reply_to, pure.usage_for(state.events, principal_id))
+      actor.send(
+        reply_to,
+        pure.usage_for(list.reverse(state.events), principal_id),
+      )
       actor.continue(state)
     }
 
     GetAllUsage(reply_to) -> {
-      actor.send(reply_to, state.events)
+      actor.send(reply_to, list.reverse(state.events))
       actor.continue(state)
     }
 
@@ -579,7 +609,11 @@ fn handle_message(
     }
 
     GetDailyCostFor(reply_to, day, principal_id) -> {
-      actor.send(reply_to, pure.daily_cost_for(state.events, day, principal_id))
+      actor.send(
+        reply_to,
+        dict.get(state.person_day_totals, #(day, principal_id))
+          |> result.unwrap(0.0),
+      )
       actor.continue(state)
     }
 
@@ -594,6 +628,10 @@ fn handle_message(
         ActorState(
           ..state,
           events: events,
+          person_day_totals: recompute_person_day_totals(events),
+          // Call ids older than the retention cannot come back; keeping
+          // them grew the map for as long as the process lived.
+          recorded_calls: recorded_call_ids(events),
           day_totals: recompute_totals(events, state.day_key),
           reservations: dict.filter(state.reservations, fn(_, reservation) {
             reservation.expires_at > now
@@ -668,9 +706,12 @@ fn initial_state(
   now: fn() -> Int,
   day_key: fn(Int) -> String,
 ) -> ActorState {
+  // Loaded oldest first; kept newest first.
+  let events = list.reverse(events)
   ActorState(
     counters: dict.new(),
     events: events,
+    person_day_totals: recompute_person_day_totals(events),
     directory: directory,
     now: now,
     day_key: day_key,

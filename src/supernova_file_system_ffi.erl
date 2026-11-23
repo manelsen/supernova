@@ -15,13 +15,13 @@ write_file(Path, Content) ->
   end.
 
 list_dir(Path) ->
-  case file:list_dir(Path) of
-    {ok, Files} -> {ok, [list_to_binary(F) || F <- Files]};
+  case supernova_rawfs:list_dir(Path) of
+    {ok, Files} -> {ok, [unicode:characters_to_binary(F) || F <- Files]};
     {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
   end.
 
 ensure_dir(Path) ->
-  case filelib:ensure_dir(filename:join(Path, "__placeholder__")) of
+  case supernova_rawfs:ensure_dir(Path) of
     ok -> {ok, nil};
     {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
   end.
@@ -33,19 +33,19 @@ append_file(Path, Content) ->
   end.
 
 delete_file(Path) ->
-  case file:delete(Path) of
+  case supernova_rawfs:delete(Path) of
     ok -> {ok, nil};
     {error, enoent} -> {ok, nil};
     {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
   end.
 
 file_exists(Path) ->
-  {ok, filelib:is_file(Path) orelse filelib:is_dir(Path)}.
+  {ok, supernova_rawfs:exists(Path)}.
 
 find_files(Directory0, Pattern0) ->
     Directory = to_list(Directory0),
     Pattern = to_list(Pattern0),
-    case filelib:is_dir(Directory) of
+    case supernova_rawfs:is_dir(Directory) of
         true -> [list_to_binary(Path) || Path <- filelib:wildcard(filename:join(Directory, Pattern))];
         false -> []
     end.

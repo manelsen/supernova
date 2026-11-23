@@ -22,6 +22,7 @@ import supernova/core/budget_policy/types as budget_types
 import supernova/core/checkpoint/actor as checkpoint_actor
 import supernova/core/checkpoint/types as checkpoint_types
 import supernova/core/complexity_router
+import supernova/core/exception_guard
 import supernova/core/prompt_log
 import supernova/core/tool_dispatch
 import supernova/core/turn_outcome
@@ -859,16 +860,68 @@ fn execute_tool_calls(
   tools: List(provider.ToolDefinition),
   context: RunContext,
 ) -> List(provider.ChatMessage) {
+  // The calls of one round are independent (the APIs ask for them together
+  // when the model needs them all), so they run at the same time.
   let results =
-    list.map(calls, fn(call) {
-      let #(text, images) =
-        tool_images.split(execute_single_tool_call(call, tools, context))
+    calls
+    |> run_concurrently(fn(call) {
+      execute_single_tool_call(call, tools, context)
+    })
+    |> list.zip(calls, _)
+    |> list.map(fn(pair) {
+      let #(call, output) = pair
+      let #(text, images) = tool_images.split(output)
       #(provider.tool_result_message(call.id, text), images)
     })
   list.append(
     list.map(results, fn(result) { result.0 }),
     tool_images.message(list.flat_map(results, fn(result) { result.1 })),
   )
+}
+
+/// Most tool calls of one round running at once; the rest wait for a slot.
+const max_concurrent_tools = 8
+
+/// `run` on each item, each in a process of its own, at most
+/// `max_concurrent_tools` at a time; the results in the items' order. A run
+/// that crashes, or whose process is killed, gives an error text instead of
+/// taking the turn down. One item runs here, with no process to start.
+fn run_concurrently(items: List(a), run: fn(a) -> String) -> List(String) {
+  items
+  |> list.sized_chunk(max_concurrent_tools)
+  |> list.flat_map(run_batch(_, run))
+}
+
+fn run_batch(items: List(a), run: fn(a) -> String) -> List(String) {
+  case items {
+    [] | [_] -> list.map(items, run)
+    _ ->
+      items
+      |> list.map(fn(item) {
+        let reply = process.new_subject()
+        let pid =
+          process.spawn_unlinked(fn() {
+            case exception_guard.run(fn() { process.send(reply, run(item)) }) {
+              Ok(Nil) -> Nil
+              Error(reason) ->
+                process.send(reply, "ERROR: tool crashed: " <> reason)
+            }
+          })
+        #(reply, process.monitor(pid))
+      })
+      |> list.map(fn(pending) {
+        let #(reply, monitor) = pending
+        let result =
+          process.new_selector()
+          |> process.select(reply)
+          |> process.select_specific_monitor(monitor, fn(down) {
+            "ERROR: tool stopped: " <> string.inspect(down)
+          })
+          |> process.selector_receive_forever
+        process.demonitor_process(monitor)
+        result
+      })
+  }
 }
 
 /// Append one round of tool calls and their results to the history.

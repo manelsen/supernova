@@ -42,6 +42,20 @@ pub fn step(
   generate: fn(String) -> Result(String, String),
   extract: fn(String) -> Result(String, String),
 ) -> Step {
+  case core.named(data_dir, principal) {
+    True -> AlreadyBorn
+    False -> step_unnamed(data_dir, principal, content, now, generate, extract)
+  }
+}
+
+fn step_unnamed(
+  data_dir: String,
+  principal: String,
+  content: String,
+  now: Int,
+  generate: fn(String) -> Result(String, String),
+  extract: fn(String) -> Result(String, String),
+) -> Step {
   case core.load(data_dir, principal) {
     Some(existing) ->
       case existing.name {

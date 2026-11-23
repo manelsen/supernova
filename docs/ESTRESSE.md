@@ -72,3 +72,14 @@ cada, e compare médias, não uma rodada contra outra.
 | O supervisor lia o histórico inteiro ao criar cada sessão | todo o canal esperava | a sessão lê sozinha, na primeira mensagem, só o fim do arquivo |
 | O store do sim anexava com cópia e varria tudo a cada leitura | o próprio teste virava o gargalo | eventos por chat, mais novos primeiro, até 10.000 |
 | O POST do sim sempre respondia 200 | turno que quebrou contava como respondido | o POST traz o desfecho |
+| O roteador lia arquivos a cada mensagem (época do `/esquecer`, persona, núcleo) | o canal inteiro esperava o disco, uma mensagem de cada vez | época e "agente nomeada" em cache ETS; no grupo fechado, persona não é relida |
+| `list_dir`, `ensure_dir`, `rename`, `delete`, `file_exists` passavam pelo `file_server_2` | um processo para a VM inteira virava fila | `supernova_rawfs`: direto ao disco |
+| O ledger anexava cada evento copiando os de 30 dias; os call ids cresciam para sempre | custo por turno crescendo com o tempo, dentro do ator que todo turno chama | eventos do mais novo para o mais antigo, custo por pessoa e dia em mapa, call ids podados na rotação |
+| Ferramentas da mesma rodada rodavam uma depois da outra | turnos com várias ferramentas esperavam a soma | rodam ao mesmo tempo, cada uma monitorada |
+
+Com tudo isso, 200 agentes × 12 mil mensagens, 150 workers e uma busca a cada
+cinco mensagens: de ~16 turnos/s (antes das correções do supervisor) para
+~40 turnos/s, sem turnos perdidos. O próximo teto é o roteador do canal, que
+ainda decide a fase anterior ao LLM de uma mensagem por vez:
+[PRD-P-paralelismo](prd/PRD-P-paralelismo.md).
+

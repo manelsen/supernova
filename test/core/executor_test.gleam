@@ -485,3 +485,81 @@ pub fn tool_definitions_and_calls_are_counted_in_estimates_test() {
   { tool_prompt > empty_prompt } |> should.equal(True)
   { tool_output > text_output } |> should.equal(True)
 }
+
+/// The calls of one round run at the same time: two that take 400 ms each
+/// finish together in about 400 ms, not 800; the results keep the calls'
+/// order; a call that crashes gives an error text and the others still
+/// answer.
+pub fn the_calls_of_a_round_run_concurrently_test() {
+  let tool = fn(name) {
+    provider.new_tool(name: name, description: "test", parameters: [])
+  }
+  let invoke = fn(name: String, _arguments: String) {
+    case name {
+      "boom" -> panic as "tool exploded"
+      _ -> {
+        process.sleep(400)
+        Ok("done " <> name)
+      }
+    }
+  }
+  let context =
+    executor.RunContext(
+      ..executor.empty_run_context(),
+      invoke_tool: Some(invoke),
+    )
+  let calls = [
+    provider.ToolCall(id: "c1", name: "slow_a", arguments: "{}"),
+    provider.ToolCall(id: "c2", name: "boom", arguments: "{}"),
+    provider.ToolCall(id: "c3", name: "slow_b", arguments: "{}"),
+  ]
+  let started = monotonic_ms()
+  let results =
+    executor.execute_tool_calls_with_context_for_test(
+      calls,
+      [tool("slow_a"), tool("boom"), tool("slow_b")],
+      context,
+    )
+  let elapsed = monotonic_ms() - started
+  { elapsed < 750 } |> should.be_true()
+  results
+  |> list.map(fn(message) {
+    #(message.tool_call_id, string.starts_with(message.content, "ERROR:"))
+  })
+  |> should.equal([
+    #(Some("c1"), False),
+    #(Some("c2"), True),
+    #(Some("c3"), False),
+  ])
+  let assert [first, ..] = results
+  first.content |> should.equal("done slow_a")
+}
+
+@external(erlang, "supernova_stress_ffi", "mono_ms")
+fn monotonic_ms() -> Int
+
+/// A round with more calls than the limit still answers every call, in
+/// order.
+pub fn a_large_round_answers_every_call_in_order_test() {
+  let invoke = fn(name: String, _arguments: String) { Ok("done " <> name) }
+  let context =
+    executor.RunContext(
+      ..executor.empty_run_context(),
+      invoke_tool: Some(invoke),
+    )
+  let names =
+    list.repeat(Nil, 20)
+    |> list.index_map(fn(_, i) { "t" <> string.inspect(i) })
+  let results =
+    executor.execute_tool_calls_with_context_for_test(
+      list.map(names, fn(n) {
+        provider.ToolCall(id: n, name: n, arguments: "{}")
+      }),
+      list.map(names, fn(n) {
+        provider.new_tool(name: n, description: "test", parameters: [])
+      }),
+      context,
+    )
+  list.map(results, fn(m) { m.content })
+  |> should.equal(list.map(names, fn(n) { "done " <> n }))
+}

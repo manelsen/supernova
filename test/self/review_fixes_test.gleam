@@ -365,7 +365,9 @@ pub fn template_renders_in_one_pass_test() {
   |> should.equal("{{unknown}} {{")
 }
 
-// 14. An unreadable epoch fails closed; a missing one is epoch 0.
+// 14. An unreadable epoch fails closed; a missing one is epoch 0. The epoch
+// is kept in memory once read (only bump writes it): a file damaged while
+// running is noticed on the next restart, when the memory is gone.
 pub fn unreadable_epoch_fails_closed_test() {
   support.with_runtime_root(cfg(), fn(root) {
     born(root, "sim:alice", at)
@@ -377,6 +379,8 @@ pub fn unreadable_epoch_fails_closed_test() {
     |> should.equal(Ok(False))
     let assert Ok(_) =
       write_file(root <> "/agents/sim_alice/self/forget_epoch", "garbage")
+    epoch.read(root, "sim:alice") |> should.equal(Ok(1))
+    epoch.drop_cached(root, "sim:alice")
     epoch.read(root, "sim:alice") |> should.be_error()
     epoch.unchanged(root, "sim:alice", 0) |> should.be_false()
     epoch.unchanged(root, "sim:alice", 1) |> should.be_false()
