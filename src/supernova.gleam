@@ -231,6 +231,7 @@ fn start_services(
     supervisor.start_with_history(history_store.HistoryStore(
       data_dir: cfg.data_dir,
       limit: cfg.conversation.history_limit,
+      kept: cfg.conversation.history_kept,
     ))
     |> result.map_error(fn(_) { "Failed to start session supervisor" }),
   )

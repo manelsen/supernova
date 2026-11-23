@@ -42,7 +42,7 @@ These are the most complete record of what happened. All of them live in the `su
 | Where | What |
 |---|---|
 | `/data/ledger/<date>.jsonl` | One line per LLM charge: who (`principal_id`), provider, model, prompt and completion tokens, cost in USD. The daily and instance ceilings are computed from it. |
-| `/data/agents/<principal>/conversations/` | One file per chat, `<session>.jsonl`: the most recent messages of the conversation (`conversation.history_limit`, 40 by default), reloaded after a restart. `/esquecer` deletes them. |
+| `/data/agents/<principal>/conversations/` | One file per chat, `<session>.jsonl`: the most recent messages of the conversation (`conversation.history_kept`, 1000 by default), reloaded after a restart; the model sees the last `conversation.history_limit` (100 by default). `/esquecer` deletes them. |
 | `/data/agents/<principal>/self/` | Per agent: `journal.jsonl` (turns not yet reflected), `experience.jsonl`, `pressure.jsonl`, `biography.jsonl`, `agenda.json`, and the core (`core.md`, `core.json`). |
 | `/uso`, `/uso todos` | Spending per person, from the ledger (admins see everyone). |
 | `/auditoria [n]` | The last audit events (20 by default). Admins only. |

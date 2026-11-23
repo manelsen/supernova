@@ -292,11 +292,15 @@ pub type ConversationConfig {
     /// Most recent messages (one per user turn, one per reply) the model
     /// sees and that are kept on disk, so a conversation survives restarts.
     history_limit: Int,
+    /// Most recent messages kept on disk per conversation (at least
+    /// `history_limit`): what is measured to tune the window, and what a
+    /// summary of older turns will be made from.
+    history_kept: Int,
   )
 }
 
 pub fn default_conversation_config() -> ConversationConfig {
-  ConversationConfig(history_limit: 40)
+  ConversationConfig(history_limit: 100, history_kept: 1000)
 }
 
 pub type ReflectionConfig {
@@ -1142,11 +1146,17 @@ fn decode_instance_budget(root: yay.Node) -> InstanceBudgetConfig {
 fn decode_conversation(root: yay.Node) -> ConversationConfig {
   let default = default_conversation_config()
   case yay.select_sugar(root, "conversation") {
-    Ok(node) ->
-      ConversationConfig(history_limit: int.max(
-        get_int_or(node, "history_limit", default.history_limit),
-        2,
-      ))
+    Ok(node) -> {
+      let limit =
+        int.max(get_int_or(node, "history_limit", default.history_limit), 2)
+      ConversationConfig(
+        history_limit: limit,
+        history_kept: int.max(
+          get_int_or(node, "history_kept", default.history_kept),
+          limit,
+        ),
+      )
+    }
     Error(_) -> default
   }
 }

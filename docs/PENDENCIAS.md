@@ -115,8 +115,9 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 - ~~**O histórico da conversa se perde quando a Supernova reinicia.**~~ Feito em 22/11:
   - cada conversa (pessoa × chat) fica em `data_dir/agents/<pessoa>/conversations/<sessão>.jsonl` e é recarregada quando a sessão volta;
-  - o modelo vê as últimas `conversation.history_limit` mensagens (padrão 40, abrindo sempre com uma fala da pessoa). Antes o histórico crescia sem limite e ia inteiro para o modelo a cada turno;
-  - o arquivo é compactado ao chegar ao dobro do limite;
+  - o modelo vê as últimas `conversation.history_limit` mensagens (padrão 100, abrindo sempre com uma fala da pessoa). Antes o histórico crescia sem limite e ia inteiro para o modelo a cada turno;
+  - o disco guarda mais do que o modelo vê: `conversation.history_kept` (padrão 1000 por conversa), compactado ao chegar ao dobro;
+  - **Próximo:** medir a janela em vez de chutar (decisão de 22/11). Com uma ou duas semanas de conversas guardadas: a distância até a mensagem anterior mais parecida com cada mensagem nova (só números, sem ler o conteúdo), a distribuição das pausas entre mensagens e, no harness, a curva qualidade × custo para janelas de 20 a 320;
   - o `/esquecer` apaga o diretório.
   - **Falta:** só o texto final do turno é guardado (as chamadas de ferramenta não). O que sai da janela não é resumido; isso fica para o item de deriva. As preferências da sessão (`/model`) ainda se perdem no restart.
 - **A fila de mensagens não é durável.** Um reinício perde as mensagens que estavam na fila, já confirmadas ao Telegram. O último lote buscado é reentregue, o que pode duplicar respostas. O `docker stop` provavelmente não passa pelo desligamento ordenado, e o tempo de dreno (até 35 s + 25 s) passa dos 30 s do `stop_grace_period`. Próxima entrega.

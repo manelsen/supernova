@@ -4,8 +4,8 @@
 //// One JSONL file per session (`channel:chat:user`), under the person's agent
 //// directory: `<data_dir>/agents/<person>/conversations/<session>.jsonl`.
 //// Each line is one message, `{"role", "content", "at"}`. Appends go to the
-//// end of the file; when it holds twice the limit, it is rewritten with the
-//// most recent `limit` messages (write to `.tmp`, then rename).
+//// end of the file; when it holds twice `kept`, it is rewritten with the most
+//// recent `kept` messages (write to `.tmp`, then rename).
 ////
 //// Only the session actor that owns a conversation writes to its file, so
 //// writes to one file never race. `/esquecer` removes the whole directory.
@@ -17,9 +17,11 @@ import gleam/result
 import gleam/string
 import supernova/core/agent_identity
 
-/// Where conversations live and how many messages each keeps.
+/// Where conversations live. `limit` is how many recent messages the model
+/// sees; `kept` is how many stay on disk (at least `limit`), the material
+/// for measuring how far back conversations reach and, later, summaries.
 pub type HistoryStore {
-  HistoryStore(data_dir: String, limit: Int)
+  HistoryStore(data_dir: String, limit: Int, kept: Int)
 }
 
 /// One stored message. `at` is the Unix time in milliseconds.
@@ -48,21 +50,31 @@ pub fn load(
   store: HistoryStore,
   session_id: String,
 ) -> #(List(StoredMessage), Int) {
+  let lines = read_lines(store, session_id)
+  let messages = list.filter_map(lines, decode_line)
+  #(trim(messages, store.limit) |> from_first_user, list.length(lines))
+}
+
+fn read_all(store: HistoryStore, session_id: String) -> List(StoredMessage) {
+  read_lines(store, session_id) |> list.filter_map(decode_line)
+}
+
+fn read_lines(store: HistoryStore, session_id: String) -> List(String) {
   case read_file(path(store, session_id)) {
-    Error(_) -> #([], 0)
-    Ok(text) -> {
-      let lines =
-        string.split(text, "\n")
-        |> list.filter(fn(line) { string.trim(line) != "" })
-      let messages = list.filter_map(lines, decode_line)
-      #(trim(messages, store.limit) |> from_first_user, list.length(lines))
-    }
+    Error(_) -> []
+    Ok(text) ->
+      string.split(text, "\n")
+      |> list.filter(fn(line) { string.trim(line) != "" })
   }
+}
+
+fn kept(store: HistoryStore) -> Int {
+  int_max(store.kept, store.limit)
 }
 
 /// Append messages to a session's file. `lines_on_disk` is how many lines
 /// the file held before; returns how many it holds after. When the file
-/// reaches twice the limit, it is rewritten with its last `limit` messages.
+/// reaches twice `kept`, it is rewritten with its last `kept` messages.
 pub fn append(
   store: HistoryStore,
   session_id: String,
@@ -78,10 +90,10 @@ pub fn append(
   )
   use _ <- result.try(append_file(file, encode_lines(messages)))
   let total = lines_on_disk + list.length(messages)
-  case total >= 2 * store.limit {
+  case total >= 2 * kept(store) {
     False -> Ok(total)
     True -> {
-      let #(recent, _) = load(store, session_id)
+      let recent = trim(read_all(store, session_id), kept(store))
       use _ <- result.try(write_file(file <> ".tmp", encode_lines(recent)))
       use _ <- result.map(rename(file <> ".tmp", file))
       list.length(recent)

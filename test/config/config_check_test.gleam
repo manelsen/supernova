@@ -212,7 +212,8 @@ pub fn every_builtin_tool_is_a_known_capability_test() {
 }
 
 pub fn conversation_history_limit_test() {
-  parsed("data_dir: d\n").conversation.history_limit |> should.equal(40)
+  parsed("data_dir: d\n").conversation.history_limit |> should.equal(100)
+  parsed("data_dir: d\n").conversation.history_kept |> should.equal(1000)
   parsed("conversation:\n  history_limit: 12\n").conversation.history_limit
   |> should.equal(12)
   // Below 2 there is no exchange to keep.
@@ -220,5 +221,9 @@ pub fn conversation_history_limit_test() {
   |> should.equal(2)
   let assert Ok(example) =
     config.parse_yaml(read_file("supernova.yaml.example"))
-  example.conversation.history_limit |> should.equal(40)
+  example.conversation.history_limit |> should.equal(100)
+  example.conversation.history_kept |> should.equal(1000)
+  // Never fewer on disk than the model sees.
+  parsed("conversation:\n  history_limit: 300\n  history_kept: 50\n").conversation.history_kept
+  |> should.equal(300)
 }
