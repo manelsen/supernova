@@ -325,6 +325,7 @@ fn seed(
       )
     })
   let session_id = session.sim_session_id(chat_id, persona.user_id)
+  // `limit` is only the window a session loads; append never prunes.
   use _ <- result.try(history_store.append(
     history_store.HistoryStore(data_dir: input.data_dir, limit: 1),
     session_id,
