@@ -286,6 +286,19 @@ pub type InstanceBudgetConfig {
   )
 }
 
+/// The conversation each person has with the agent in a chat.
+pub type ConversationConfig {
+  ConversationConfig(
+    /// Most recent messages (one per user turn, one per reply) the model
+    /// sees and that are kept on disk, so a conversation survives restarts.
+    history_limit: Int,
+  )
+}
+
+pub fn default_conversation_config() -> ConversationConfig {
+  ConversationConfig(history_limit: 40)
+}
+
 pub type ReflectionConfig {
   ReflectionConfig(
     every_turns: Int,
@@ -373,6 +386,8 @@ pub type Config {
     pricing: PricingConfig,
     /// Instance-wide daily spend cap
     instance_budget: InstanceBudgetConfig,
+    /// Conversation history kept per person and chat
+    conversation: ConversationConfig,
     /// Periodic reflection configuration
     reflection: ReflectionConfig,
     /// Slow trait drift configuration
@@ -439,6 +454,7 @@ pub fn default_config() -> Config {
     rate_limit: default_rate_limit_config(),
     pricing: default_pricing_config(),
     instance_budget: default_instance_budget_config(),
+    conversation: default_conversation_config(),
     reflection: default_reflection_config(),
     drift: default_drift_config(),
     data_dir: "data",
@@ -1123,6 +1139,18 @@ fn decode_instance_budget(root: yay.Node) -> InstanceBudgetConfig {
   }
 }
 
+fn decode_conversation(root: yay.Node) -> ConversationConfig {
+  let default = default_conversation_config()
+  case yay.select_sugar(root, "conversation") {
+    Ok(node) ->
+      ConversationConfig(history_limit: int.max(
+        get_int_or(node, "history_limit", default.history_limit),
+        2,
+      ))
+    Error(_) -> default
+  }
+}
+
 fn decode_reflection(root: yay.Node) -> ReflectionConfig {
   let default = default_reflection_config()
   case yay.select_sugar(root, "reflection") {
@@ -1203,6 +1231,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
   let rate_limit = decode_rate_limit(root)
   let pricing = decode_pricing(root)
   let instance_budget = decode_instance_budget(root)
+  let conversation = decode_conversation(root)
   let reflection = decode_reflection(root)
   let drift = decode_drift(root)
   let data_dir = get_string_or(root, "data_dir", "data")
@@ -1232,6 +1261,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     rate_limit: rate_limit,
     pricing: pricing,
     instance_budget: instance_budget,
+    conversation: conversation,
     reflection: reflection,
     drift: drift,
     data_dir: data_dir,
@@ -1523,6 +1553,7 @@ pub fn apply_env_overrides(config: Config) -> Config {
     rate_limit: config.rate_limit,
     pricing: config.pricing,
     instance_budget: config.instance_budget,
+    conversation: config.conversation,
     reflection: config.reflection,
     drift: config.drift,
     data_dir: data_dir,

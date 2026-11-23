@@ -10,6 +10,8 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/introspection/lesson
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
+import supernova/core/session/history_store
+import supernova/core/session/server as session_server
 import supernova/core/session/supervisor as session_supervisor
 import supernova/self/core as self_core
 import supernova/self/forget
@@ -181,6 +183,34 @@ pub fn forget_stops_sessions_of_the_owner_test() {
     session_supervisor.list_sessions(sup)
     |> list.contains("sim:group-1:bob")
     |> should.equal(True)
+    session_supervisor.stop(sup)
+  })
+}
+
+pub fn forget_deletes_the_owners_conversations_on_disk_test() {
+  support.with_runtime_root(cfg(), fn(root) {
+    seed(root)
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
+    let assert Ok(sup) = session_supervisor.start_with_history(store)
+    let said = [
+      session_server.ChatMessage(role: "user", content: "oi"),
+      session_server.ChatMessage(role: "assistant", content: "olá"),
+    ]
+    let assert Ok(alice) =
+      session_supervisor.start_session(sup, "sim:group-1:alice")
+    let assert Ok(Nil) = session_server.append_messages(alice, said)
+    let assert Ok(bob) =
+      session_supervisor.start_session(sup, "sim:group-1:bob")
+    let assert Ok(Nil) = session_server.append_messages(bob, said)
+
+    let assert Ok(_) = forget.forget(root, "sim:alice", Some(sup))
+
+    history_store.load(store, "sim:group-1:alice") |> should.equal(#([], 0))
+    let #(bob_kept, _) = history_store.load(store, "sim:group-1:bob")
+    list.length(bob_kept) |> should.equal(2)
+    let assert Ok(alice_again) =
+      session_supervisor.start_session(sup, "sim:group-1:alice")
+    session_server.get_history(alice_again) |> should.equal([])
     session_supervisor.stop(sup)
   })
 }

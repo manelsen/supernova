@@ -190,5 +190,12 @@ instance_budget:
   # Tokens reserved for the response when admitting an LLM call.
   reserve_output_tokens: 1000
 
+# Conversation history: the most recent messages (each user turn and each
+# reply counts as one) the model sees. Kept on disk under
+# data_dir/agents/<person>/conversations/, so a restart does not cut the
+# conversation; /esquecer deletes it.
+conversation:
+  history_limit: 40
+
 # Writable directory for access.json and the ledger
 data_dir: "data"

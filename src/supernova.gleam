@@ -49,6 +49,7 @@ import supernova/core/principal
 import supernova/core/prompt_log
 import supernova/core/rate_limit/actor as rate_limiter
 import supernova/core/resource_ledger/actor as ledger_actor
+import supernova/core/session/history_store
 import supernova/core/session/supervisor
 import supernova/core/syscall/actor as syscall_actor
 import supernova/core/tool_dispatch
@@ -227,7 +228,10 @@ fn start_services(
 
   // Start Session Supervisor
   use session_sup <- result.try(
-    supervisor.start()
+    supervisor.start_with_history(history_store.HistoryStore(
+      data_dir: cfg.data_dir,
+      limit: cfg.conversation.history_limit,
+    ))
     |> result.map_error(fn(_) { "Failed to start session supervisor" }),
   )
   io.println("✓ Session Supervisor started")

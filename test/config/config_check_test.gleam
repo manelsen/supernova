@@ -210,3 +210,15 @@ pub fn every_builtin_tool_is_a_known_capability_test() {
   |> list.map(fn(tool) { tool.name })
   |> should.equal([])
 }
+
+pub fn conversation_history_limit_test() {
+  parsed("data_dir: d\n").conversation.history_limit |> should.equal(40)
+  parsed("conversation:\n  history_limit: 12\n").conversation.history_limit
+  |> should.equal(12)
+  // Below 2 there is no exchange to keep.
+  parsed("conversation:\n  history_limit: 0\n").conversation.history_limit
+  |> should.equal(2)
+  let assert Ok(example) =
+    config.parse_yaml(read_file("supernova.yaml.example"))
+  example.conversation.history_limit |> should.equal(40)
+}

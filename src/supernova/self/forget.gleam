@@ -9,6 +9,7 @@ import supernova/core/audit_log/types as audit_types
 import supernova/core/introspection/lesson
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
+import supernova/core/session/history_store
 import supernova/core/session/supervisor as session_supervisor
 import supernova/self/audit
 import supernova/self/epoch
@@ -103,6 +104,8 @@ pub fn forget(
   ))
 
   let session_count = clear_sessions(supervisor, principal)
+  // The conversations kept on disk are what the owner said, word for word.
+  use _ <- result.try(clear_dir(history_store.dir(data_dir, principal)))
   // Files the agent wrote for the owner are also what came from the owner.
   use workspace_count <- result.try(
     clear_dir(agent_identity.workspace_dir(data_dir, principal)),
