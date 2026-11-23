@@ -31,6 +31,7 @@ import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/sweeper as agenda_sweeper
 import supernova/channel/channel_kit
 import supernova/channel/health as channel_health
+import supernova/channel/inbox
 import supernova/channel/port
 import supernova/channel/registry
 import supernova/config
@@ -64,6 +65,7 @@ import supernova/llm/pricing
 import supernova/llm/provider
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
+import supernova/metrics/record
 import supernova/self/reflection
 import supernova/tools/browser
 import supernova/tracing/actor as tracing_actor
@@ -299,6 +301,11 @@ fn start_services(
   )
   io.println("✓ Closed-group policy actors started")
 
+  // The durable inbox opens before any channel delivers a message, and
+  // what the last stop left waiting is taken now: a message that arrives
+  // once channels start is never part of it.
+  let left_waiting = start_inbox(cfg.data_dir)
+
   // Start channel adapters based on config
   io.println("")
   io.println("Starting channel adapters...")
@@ -321,6 +328,7 @@ fn start_services(
     registry.list_channels(channel_reg),
     default_channel_llm_config(cfg),
   )
+  replay_inbox(channel_reg, channel_handler, left_waiting)
 
   closed_group_global.set_alert_sender(fn(principal_id, text) {
     case principal.parse(principal_id) {
@@ -846,6 +854,58 @@ fn inbound_channel_name(inbound: port.ChannelInbound) -> String {
   }
 }
 
+/// Open the inbox and take what the last stop left waiting.
+fn start_inbox(data_dir: String) -> List(inbox.Pending) {
+  case inbox.start(data_dir) {
+    Ok(box) -> {
+      inbox.set_global(box)
+      io.println("✓ Durable inbox opened")
+      inbox.recover(box, channel_kit.current_timestamp())
+    }
+    Error(_) -> {
+      io.println(
+        "Warning: durable inbox not opened; a restart loses queued messages",
+      )
+      []
+    }
+  }
+}
+
+/// Answer what was still waiting when Supernova last stopped (`pending`,
+/// from `inbox.recover` before the channels started).
+pub fn replay_inbox(
+  channel_reg: registry.ChannelRegistry,
+  handler: port.ChannelHandler,
+  pending: List(inbox.Pending),
+) -> Nil {
+  case inbox.global() {
+    None -> Nil
+    Some(box) -> {
+      list.each(pending, fn(entry) {
+        let outcome = case
+          registry.replay(channel_reg, handler, entry.message)
+        {
+          Ok(Nil) -> "replayed"
+          Error(_) -> {
+            inbox.done(box, entry.key, channel_kit.current_timestamp())
+            "channel_missing"
+          }
+        }
+        record.count("inbox_recovered_total", [#("outcome", outcome)])
+      })
+      case pending {
+        [] -> Nil
+        _ ->
+          io.println(
+            "✓ Answering "
+            <> int.to_string(list.length(pending))
+            <> " message(s) left waiting by the last stop",
+          )
+      }
+    }
+  }
+}
+
 /// Publish the series Supernova knows it will record at zero, so the
 /// first event after a restart reaches the dashboard (see `record.declare`).
 pub fn declare_boot_metrics(
@@ -857,6 +917,9 @@ pub fn declare_boot_metrics(
     closed_group_runtime.declare_gate_metrics(channel)
   })
   agenda_sweeper.declare_metrics()
+  list.each(["replayed", "channel_missing"], fn(outcome) {
+    record.declare("inbox_recovered_total", [#("outcome", outcome)])
+  })
   case llm {
     Ok(llm) -> {
       executor.declare_metrics(llm.name, llm.default_model)
@@ -916,6 +979,15 @@ pub fn shutdown(services: Runtime) -> Nil {
 
   // 6. Unpublish the closed-group runtime so a later boot starts clean.
   closed_group_global.clear_runtime()
+
+  // 7. The lanes have drained: write the inbox's last marks and stop it, so
+  // the next boot (or an in-process one) is the file's only owner. The file
+  // stays: it is what the next boot recovers.
+  case inbox.global() {
+    Some(box) -> inbox.stop(box)
+    None -> Nil
+  }
+  inbox.clear_global()
 
   io.println("✓ Shutdown complete")
 }

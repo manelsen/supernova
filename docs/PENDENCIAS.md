@@ -117,10 +117,25 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - cada conversa (pessoa × chat) fica em `data_dir/agents/<pessoa>/conversations/<sessão>.jsonl` e é recarregada quando a sessão volta;
   - o modelo vê as últimas `conversation.history_limit` mensagens (padrão 100, abrindo sempre com uma fala da pessoa). Antes o histórico crescia sem limite e ia inteiro para o modelo a cada turno;
   - o disco guarda mais do que o modelo vê: `conversation.history_kept` (padrão 1000 por conversa), compactado ao chegar ao dobro;
-  - **Próximo:** medir a janela em vez de chutar (decisão de 22/11). Com uma ou duas semanas de conversas guardadas: a distância até a mensagem anterior mais parecida com cada mensagem nova (só números, sem ler o conteúdo), a distribuição das pausas entre mensagens e, no harness, a curva qualidade × custo para janelas de 20 a 320;
+  - **Próximo:** medir a janela em vez de chutar (decisão de 22/11). Com uma ou duas semanas de conversas guardadas:
+    - a distância até a mensagem anterior mais parecida com cada mensagem nova, só números, sem ler o conteúdo;
+    - a distribuição das pausas entre mensagens.
+
+    Os dois saem de `scripts/janela/medir_janela.py`, que só lê os arquivos e imprime números. O modo de rodar está no cabeçalho do script, e os testes, com conversas sintéticas, rodam com `python3 -I -m unittest discover -s scripts/janela`. Falta ainda a curva qualidade × custo no harness, para janelas de 20 a 320;
   - o `/esquecer` apaga o diretório.
   - **Falta:** só o texto final do turno é guardado (as chamadas de ferramenta não). O que sai da janela não é resumido; isso fica para o item de deriva. As preferências da sessão (`/model`) ainda se perdem no restart.
-- **A fila de mensagens não é durável.** Um reinício perde as mensagens que estavam na fila, já confirmadas ao Telegram. O último lote buscado é reentregue, o que pode duplicar respostas. O `docker stop` provavelmente não passa pelo desligamento ordenado, e o tempo de dreno (até 35 s + 25 s) passa dos 30 s do `stop_grace_period`. Próxima entrega.
+- ~~**A fila de mensagens não é durável.**~~ Feito em 23/11:
+  - **Desligamento ordenado.** O `docker stop` era ignorado: o `gleam run`, como PID 1, não repassava o SIGTERM. O container era morto depois de 30 s (exit 137), sem dreno. Agora a BEAM roda como PID 1 e o SIGTERM vira o desligamento da Supernova. Medido num container de teste: 1 s, exit 0.
+  - **Fila durável.** Cada mensagem é gravada em `data_dir/inbox.jsonl` antes de entrar na fila do chat e marcada quando o turno termina. No boot, o que ficou pendente é respondido uma vez. Se falhar de novo, ou se tiver mais de um dia, é descartado com aviso no log.
+  - **Sem duplicatas.** O último lote que o Telegram reentrega é reconhecido pela chave canal|chat|id.
+  - **Tempo de dreno.** Os turnos em andamento têm 40 s para terminar, e o `stop_grace_period` passou para 60 s. O desligamento não espera mais a leitura longa do Telegram em andamento, que levava até 35 s.
+  - **Limite.** Um turno cortado no meio é refeito do começo, então uma ação que ele tomou (agendar, gravar arquivo) pode acontecer duas vezes. Interações (botões) não são guardadas, para não repetir uma ação.
+  - **Depende da fila funcionando.** Se ela não abrir no boot, ou parar de responder, a mensagem segue sem registro e o log avisa. Nesse caso, um restart pode perder o que estava esperando.
+  - **`/esquecer`.** Apaga também as mensagens da pessoa que estão esperando na fila e reescreve o arquivo na hora, sem o texto dos turnos terminados.
+- **A escolha de modelo (`/model`) se perde no restart.** Achado em 23/11.
+  - A escolha é gravada no estado da pessoa (`self_state.preferences.model_override`, por `persist_model_preference_for_user`) e lida do disco, mas nada a usa para escolher o modelo. Valem só a memória da sessão e o padrão do `supernova.yaml`.
+  - Só o nome do modelo é gravado, não o provedor. Aplicar um modelo de outro provedor ao provedor padrão quebraria a chamada.
+  - **Para decidir:** guardar provedor e modelo, e aplicar no boot da sessão; ou abandonar a preferência persistida, já que o piloto usa um provedor só.
 - **A mudança lenta não dispara com uma pessoa só.**
   - **Situação:** com reflexão semanal de força 0,25, a pressão efetiva máxima em um ano é 0,38, para um limiar de 3,0. Pessoas diferentes somam sem desconto, então na prática só várias pessoas juntas mudam a agente.
   - **Para estudar:** a intenção é "uma pessoa sozinha nunca muda a agente" (e então está funcionando) ou "meses de convivência mudam devagar" (e então o limiar ou o desconto precisam de recalibração)?
@@ -136,6 +151,10 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 ### 3.2 Canais
 
+- **O menu de comandos do Telegram e o `/help` não batem com o que a Supernova faz.** Visto pelo mantenedor em 22/11.
+  - O menu mostra `start`, `new`, `stop`, `restart`, `status`, `dream`, `dream_log`, `dream_restore` e `help`. A Supernova nunca chama `setMyCommands`, então o Telegram guarda a lista de outro programa que usou o mesmo token.
+  - O `/help` é o texto genérico de `core/ux.gleam` ("Supernova AI Agent Framework", `/reasoning`, `/commands`...). Ele não lista os comandos do grupo fechado (`/uso`, `/esquecer`, `/agenda`, `/eu`, `/auditoria`...).
+  - **Para fazer:** registrar o menu no boot a partir de `traits.command_list`, um por papel se o Telegram permitir (`BotCommandScope`), e gerar o `/help` da mesma lista, conforme o papel de quem pergunta.
 - **A pessoa não consegue mandar imagens, áudio nem documentos.** O Telegram ignora `photo` na entrada, e no Discord os `attachments` chegam sempre vazios. O caminho de imagem até o modelo já existe, desde a PR #34.
 - **O grupo fechado só existe em Telegram e Discord.**
   - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais".

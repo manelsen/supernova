@@ -29,7 +29,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    stop_grace_period: 30s
+    # Turns in progress get 40 s to finish (channel/registry.drain_timeout_ms);
+    # what does not finish is answered after the restart.
+    stop_grace_period: 60s
     restart: unless-stopped
     volumes:
       - ./supernova.yaml:/config/supernova.yaml:ro
