@@ -1,5 +1,6 @@
 //// Smoke tests for shared channel routers.
 
+import catalog_support
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
@@ -173,6 +174,10 @@ pub fn generic_router_channel_mismatch_test() {
 
 pub fn matrix_router_model_command_falls_back_to_text_test() {
   use _ <- test_workspace.with_isolated_workspace("new-router")
+  use <- catalog_support.with_alt_model(
+    mock_provider_config(),
+    "mock-alt-model",
+  )
   let assert Ok(router) = matrix_router.start(mock_provider_config())
   let msg =
     port.ChannelMessage(
@@ -191,9 +196,10 @@ pub fn matrix_router_model_command_falls_back_to_text_test() {
       reply.interactive |> should.equal(None)
       reply.content
       |> should.equal(
-        "Current selection: Mock / mock-model\n"
-        <> "Interactive picker is unavailable in matrix. "
-        <> "Available models for Mock: mock-model, mock-alt-model",
+        "Em uso: Mock / mock-model\n\n"
+        <> "Disponíveis:\n"
+        <> "Mock: mock-model, mock-alt-model\n\n"
+        <> "Para trocar: /model <modelo>, ou /model <provedor> <modelo>.",
       )
     }
     Error(_) -> should.fail()

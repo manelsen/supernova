@@ -8,6 +8,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import supernova/adapters/model_picker
 import supernova/adapters/telegram
 import supernova/channel/channel_kit
 import supernova/channel/chunking
@@ -630,14 +631,31 @@ fn telegram_callback_query_message_id(
   }
 }
 
-fn telegram_callback_action(callback_data: String) -> #(String, List(String)) {
-  let model_select_prefix = "picker_model_select:"
+/// The model list's data is `m:<value>`, short so that long model names
+/// still fit in Telegram's 64 bytes. Other lists keep `<action>:<value>`.
+fn select_callback_data(action_id: String, value: String) -> String {
+  case action_id == model_picker.model_action {
+    True -> model_select_short <> value
+    False -> action_id <> ":" <> value
+  }
+}
 
-  case string.starts_with(callback_data, model_select_prefix) {
-    True -> #("picker_model_select", [
-      string.drop_start(callback_data, string.length(model_select_prefix)),
+const model_select_short = "m:"
+
+fn telegram_callback_action(callback_data: String) -> #(String, List(String)) {
+  // Buttons sent before the short form still carry the long prefix.
+  let long_prefix = model_picker.model_action <> ":"
+  case
+    string.starts_with(callback_data, model_select_short),
+    string.starts_with(callback_data, long_prefix)
+  {
+    True, _ -> #(model_picker.model_action, [
+      string.drop_start(callback_data, string.length(model_select_short)),
     ])
-    False -> #(callback_data, [])
+    _, True -> #(model_picker.model_action, [
+      string.drop_start(callback_data, string.length(long_prefix)),
+    ])
+    False, False -> #(callback_data, [])
   }
 }
 
@@ -950,15 +968,23 @@ fn telegram_reply_markup(
         list.map(buttons, telegram_button),
         ..rows
       ]
-      port.InteractionSelect(action_id, _, options) -> [
-        list.map(options, fn(option) {
-          telegram.inline_keyboard_button(
-            port.select_option_label(option),
-            action_id <> ":" <> port.select_option_value(option),
-          )
-        }),
-        ..rows
-      ]
+      // One option per row: model names are long, and side by side they
+      // get cut.
+      port.InteractionSelect(action_id, _, options) ->
+        list.fold(options, rows, fn(rows, option) {
+          [
+            [
+              telegram.inline_keyboard_button(
+                port.select_option_label(option),
+                select_callback_data(
+                  action_id,
+                  port.select_option_value(option),
+                ),
+              ),
+            ],
+            ..rows
+          ]
+        })
     }
   })
   |> list.reverse

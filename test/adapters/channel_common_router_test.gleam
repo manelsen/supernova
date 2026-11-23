@@ -73,7 +73,7 @@ fn interaction(
 
 pub fn new_interactive_state_starts_empty_test() {
   let state = router.new_interactive_state()
-  dict.size(state.session_configs) |> should.equal(0)
+  dict.size(state.agent_choices) |> should.equal(0)
   dict.size(state.session_profiles) |> should.equal(0)
 }
 
@@ -108,9 +108,11 @@ pub fn handle_inbound_start_and_status_commands_test() {
 
   case status_result {
     Ok(reply) -> {
-      string.contains(reply.content, "Session status: ready")
+      string.contains(reply.content, "Sessão: pronta")
       |> should.equal(True)
-      string.contains(reply.content, "Provider: Mock") |> should.equal(True)
+      string.contains(reply.content, "Provedor: Mock") |> should.equal(True)
+      string.contains(reply.content, "Modelo: mock-model")
+      |> should.equal(True)
     }
     Error(_) -> should.fail()
   }
@@ -148,151 +150,8 @@ pub fn handle_inbound_model_command_supported_and_fallback_channels_test() {
     )
   case matrix_result {
     Ok(reply) ->
-      string.contains(
-        reply.content,
-        "Interactive picker is unavailable in matrix",
-      )
+      string.contains(reply.content, "Para trocar: /model <modelo>")
       |> should.equal(True)
-    Error(_) -> should.fail()
-  }
-}
-
-pub fn handle_inbound_interaction_provider_selection_paths_test() {
-  use _ <- test_workspace.with_isolated_workspace("common-router")
-  let cfg = default_llm_config()
-  let state0 = router.new_interactive_state()
-
-  let #(_, unknown_provider_result) =
-    router.handle_inbound(
-      "discord",
-      port.inbound_interaction(interaction(
-        "discord",
-        "c-30",
-        "u-30",
-        "picker_provider:unknown",
-        [],
-        None,
-        False,
-      )),
-      cfg,
-      state0,
-      resolve_session_id,
-    )
-  case unknown_provider_result {
-    Error(port.UnsupportedInteraction(reason)) ->
-      string.contains(reason, "Unknown provider selection: unknown")
-      |> should.equal(True)
-    _ -> should.fail()
-  }
-
-  let #(state1, supported_provider_result) =
-    router.handle_inbound(
-      "discord",
-      port.inbound_interaction(interaction(
-        "discord",
-        "c-30",
-        "u-30",
-        "picker_provider:minimax",
-        [],
-        None,
-        False,
-      )),
-      cfg,
-      state0,
-      resolve_session_id,
-    )
-  case supported_provider_result {
-    Ok(reply) ->
-      string.contains(reply.content, "Provider set to MiniMax. Select a model.")
-      |> should.equal(True)
-    Error(_) -> should.fail()
-  }
-
-  case dict.get(state1.session_configs, "c-30:u-30") {
-    Ok(config) -> config.name |> should.equal("minimax")
-    Error(_) -> should.fail()
-  }
-}
-
-pub fn handle_inbound_interaction_model_selection_paths_test() {
-  use _ <- test_workspace.with_isolated_workspace("common-router")
-  let cfg = default_llm_config()
-  let state0 = router.new_interactive_state()
-
-  let #(_, missing_values_result) =
-    router.handle_inbound(
-      "discord",
-      port.inbound_interaction(interaction(
-        "discord",
-        "c-40",
-        "u-40",
-        "picker_model_select",
-        [],
-        None,
-        False,
-      )),
-      cfg,
-      state0,
-      resolve_session_id,
-    )
-  case missing_values_result {
-    Error(port.UnsupportedInteraction(reason)) ->
-      string.contains(reason, "missing values") |> should.equal(True)
-    _ -> should.fail()
-  }
-
-  let #(state1, fallback_result) =
-    router.handle_inbound(
-      "discord",
-      port.inbound_interaction(interaction(
-        "discord",
-        "c-41",
-        "u-41",
-        "picker_model_select",
-        ["unknown|whatever"],
-        None,
-        False,
-      )),
-      cfg,
-      state0,
-      resolve_session_id,
-    )
-  case fallback_result {
-    Ok(reply) ->
-      reply.content |> should.equal("Model set to mock-model for this session.")
-    Error(_) -> should.fail()
-  }
-  case dict.get(state1.session_configs, "c-41:u-41") {
-    Ok(config) -> {
-      config.name |> should.equal("mock")
-      config.default_model |> should.equal("mock-model")
-    }
-    Error(_) -> should.fail()
-  }
-
-  let #(_, telegram_result) =
-    router.handle_inbound(
-      "telegram",
-      port.inbound_interaction(interaction(
-        "telegram",
-        "c-42",
-        "u-42",
-        "picker_model_select",
-        ["mock|mock-alt-model"],
-        Some("origin-message"),
-        False,
-      )),
-      cfg,
-      state0,
-      resolve_session_id,
-    )
-  case telegram_result {
-    Ok(reply) -> {
-      reply.edit_message_id |> should.equal(Some("origin-message"))
-      reply.reply_to_id |> should.equal(Some("origin-message"))
-      reply.content
-      |> should.equal("Model set to mock-alt-model for this session.")
-    }
     Error(_) -> should.fail()
   }
 }
@@ -415,7 +274,7 @@ pub fn handle_inbound_with_session_supervisor_wrappers_test() {
     )
   case reply_result {
     Ok(reply) ->
-      string.contains(reply.content, "Session status:") |> should.equal(True)
+      string.contains(reply.content, "Provedor:") |> should.equal(True)
     Error(_) -> should.fail()
   }
 
@@ -639,7 +498,7 @@ pub fn handle_inbound_bootstrap_progression_with_reset_identity_test() {
     )
   case status_result {
     Ok(reply) ->
-      string.contains(reply.content, "Session status: ready")
+      string.contains(reply.content, "Sessão: pronta")
       |> should.equal(True)
     Error(_) -> should.fail()
   }
@@ -781,89 +640,14 @@ pub fn handle_inbound_models_alias_returns_interactive_for_slack_test() {
 
   case result {
     Ok(reply) -> {
-      string.contains(reply.content, "Current selection:")
+      string.contains(reply.content, "Em uso: Mock / mock-model")
       |> should.equal(True)
+      // One provider configured: no provider buttons, only its models.
       case reply.interactive {
         Some(interactive) ->
-          interactive.blocks |> list.length |> should.equal(3)
+          interactive.blocks |> list.length |> should.equal(2)
         None -> should.fail()
       }
-    }
-    Error(_) -> should.fail()
-  }
-}
-
-pub fn handle_inbound_interaction_model_selection_without_provider_prefix_test() {
-  use _ <- test_workspace.with_isolated_workspace("common-router")
-  let cfg = default_llm_config()
-  let state0 = router.new_interactive_state()
-
-  let #(state1, result) =
-    router.handle_inbound(
-      "discord",
-      port.inbound_interaction(interaction(
-        "discord",
-        "c-112",
-        "u-112",
-        "picker_model_select",
-        ["mock-alt-model"],
-        None,
-        False,
-      )),
-      cfg,
-      state0,
-      resolve_session_id,
-    )
-
-  case result {
-    Ok(reply) ->
-      reply.content
-      |> should.equal("Model set to mock-alt-model for this session.")
-    Error(_) -> should.fail()
-  }
-
-  case dict.get(state1.session_configs, "c-112:u-112") {
-    Ok(config) -> {
-      config.name |> should.equal("mock")
-      config.default_model |> should.equal("mock-alt-model")
-    }
-    Error(_) -> should.fail()
-  }
-}
-
-pub fn handle_inbound_interaction_provider_selection_opencode_zen_test() {
-  use _ <- test_workspace.with_isolated_workspace("common-router")
-  let cfg = default_llm_config()
-  let state0 = router.new_interactive_state()
-
-  let #(state1, result) =
-    router.handle_inbound(
-      "discord",
-      port.inbound_interaction(interaction(
-        "discord",
-        "c-113",
-        "u-113",
-        "picker_provider:opencode_zen",
-        [],
-        None,
-        False,
-      )),
-      cfg,
-      state0,
-      resolve_session_id,
-    )
-
-  case result {
-    Ok(reply) ->
-      string.contains(reply.content, "Provider set to OpenCode Zen.")
-      |> should.equal(True)
-    Error(_) -> should.fail()
-  }
-
-  case dict.get(state1.session_configs, "c-113:u-113") {
-    Ok(config) -> {
-      config.name |> should.equal("opencode_zen")
-      should.equal(string.length(config.default_model) > 0, True)
     }
     Error(_) -> should.fail()
   }

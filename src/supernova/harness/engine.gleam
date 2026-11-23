@@ -132,6 +132,7 @@ fn build_config(
       api_key: input.agent.api_key,
       base_url: input.agent.base_url,
       model: Some(input.agent.default_model),
+      models: [],
       timeout_ms: 120_000,
     )
   let members =

@@ -68,7 +68,7 @@ fn handle_message(
         RouterState(
           ..state,
           interactive_state: channel_common_router.InteractiveRouterState(
-            session_configs: next_state.session_configs,
+            agent_choices: next_state.agent_choices,
             session_profiles: next_state.session_profiles,
             forget_pending: next_state.forget_pending,
           ),

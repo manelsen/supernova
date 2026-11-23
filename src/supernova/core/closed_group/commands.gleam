@@ -33,13 +33,13 @@ pub const all = [
   Command(
     name: "model",
     description: "Escolher o modelo",
-    usage: "/model — escolher provedor e modelo.",
+    usage: "/model — ver e trocar o modelo; /model <modelo> troca direto.",
     admin_only: False,
   ),
   Command(
     name: "status",
     description: "Estado da sessão",
-    usage: "/status — estado da sessão, provedor e modelo.",
+    usage: "/status — provedor e modelo em uso.",
     admin_only: False,
   ),
   Command(

@@ -2,6 +2,7 @@ import gleam/dict
 import gleam/list
 import gleam/string
 import gleeunit/should
+import supernova/harness/calibration
 import supernova/harness/scenario
 import test_workspace
 
@@ -32,6 +33,29 @@ fn scenario_json(steps: String, checks: String) -> String {
   <> "],\"checks\":["
   <> checks
   <> "],\"rubric\":\"minha\"}"
+}
+
+/// Every scenario in `priv/harness` loads: its personas, rubric and checks
+/// exist and are valid, and its rubric has a pass and a fail transcript for
+/// calibration.
+pub fn every_shipped_scenario_loads_test() {
+  let assert Ok(files) = list_dir("priv/harness/scenarios")
+  let ids =
+    files
+    |> list.filter(fn(name) { string.ends_with(name, ".json") })
+    |> list.map(fn(name) { string.drop_end(name, 5) })
+  list.contains(ids, "nao_inventar") |> should.be_true()
+  list.each(ids, fn(id) {
+    case scenario.load("priv/harness", id) {
+      Ok(loaded) -> {
+        let assert Ok(cases) =
+          calibration.load("priv/harness", loaded.scenario.rubric)
+        list.any(cases, fn(c) { c.should_pass }) |> should.be_true()
+        list.any(cases, fn(c) { !c.should_pass }) |> should.be_true()
+      }
+      Error(reason) -> panic as { id <> ": " <> reason }
+    }
+  })
 }
 
 pub fn loads_provisional_scenario_test() {
@@ -152,3 +176,6 @@ fn ensure_dir(path: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "list_dir")
+fn list_dir(path: String) -> Result(List(String), String)

@@ -56,6 +56,7 @@ import supernova/core/syscall/actor as syscall_actor
 import supernova/core/tool_dispatch
 import supernova/core/workspace_policy/actor as workspace_policy_actor
 import supernova/health/server as health_server
+import supernova/llm/catalog
 import supernova/llm/circuit_breaker/actor as cb_actor
 import supernova/llm/circuit_breaker/global as cb_global
 import supernova/llm/failover_cooldown/actor as cd_actor
@@ -306,6 +307,10 @@ fn start_services(
   // once channels start is never part of it.
   let left_waiting = start_inbox(cfg.data_dir)
 
+  // What /model may offer: every configured provider with a key, each with
+  // its own models. Published before any channel hands over a message.
+  publish_model_catalog(cfg)
+
   // Start channel adapters based on config
   io.println("")
   io.println("Starting channel adapters...")
@@ -326,7 +331,8 @@ fn start_services(
 
   declare_boot_metrics(
     registry.list_channels(channel_reg),
-    default_channel_llm_config(cfg),
+    default_channel_llm_config(cfg)
+      |> result.map(fn(default) { catalog.choices(catalog.current(default)) }),
   )
   replay_inbox(channel_reg, channel_handler, left_waiting)
 
@@ -910,7 +916,7 @@ pub fn replay_inbox(
 /// first event after a restart reaches the dashboard (see `record.declare`).
 pub fn declare_boot_metrics(
   channels: List(String),
-  llm: Result(provider.ProviderConfig, String),
+  llm: Result(List(catalog.Choice), String),
 ) -> Nil {
   list.each(channels, fn(channel) {
     channel_kit.declare_metrics(channel)
@@ -921,10 +927,14 @@ pub fn declare_boot_metrics(
     record.declare("inbox_recovered_total", [#("outcome", outcome)])
   })
   case llm {
-    Ok(llm) -> {
-      executor.declare_metrics(llm.name, llm.default_model)
-      closed_group_runtime.declare_usage_metrics(llm.name, llm.default_model)
-    }
+    Ok(choices) ->
+      list.each(choices, fn(choice) {
+        executor.declare_metrics(choice.provider, choice.model)
+        closed_group_runtime.declare_usage_metrics(
+          choice.provider,
+          choice.model,
+        )
+      })
     Error(_) -> Nil
   }
 }
@@ -933,21 +943,38 @@ fn default_channel_llm_config(
   cfg: config.Config,
 ) -> Result(provider.ProviderConfig, String) {
   config.selected_provider(cfg)
-  |> result.map(fn(selected) { provider_config_to_runtime(selected.1) })
+  |> result.map(fn(selected) { catalog.runtime_config(selected.1) })
 }
 
-fn provider_config_to_runtime(
-  provider_config: config.ProviderConfig,
-) -> provider.ProviderConfig {
-  provider.ProviderConfig(
-    name: config.provider_runtime_name(provider_config.provider),
-    api_key: provider_config.api_key,
-    base_url: provider_config.base_url,
-    default_model: case provider_config.model {
-      Some(model) -> model
-      None -> config.provider_default_model(provider_config.provider)
-    },
-  )
+fn publish_model_catalog(cfg: config.Config) -> Nil {
+  case default_channel_llm_config(cfg) {
+    Ok(default) -> {
+      let cat = catalog.from_config(cfg, default)
+      catalog.set_global(cat)
+      warn_unpriced_models(cfg, cat)
+    }
+    Error(_) -> catalog.clear_global()
+  }
+}
+
+/// A model without its own price is charged at the default price, which
+/// can understate what an expensive model costs against the ceilings.
+fn warn_unpriced_models(cfg: config.Config, cat: catalog.Catalog) -> Nil {
+  case dict.is_empty(cfg.pricing.models) {
+    True -> Nil
+    False ->
+      catalog.choices(cat)
+      |> list.filter(fn(choice) {
+        !dict.has_key(cfg.pricing.models, choice.model)
+      })
+      |> list.each(fn(choice) {
+        io.println(
+          "Warning: model "
+          <> choice.model
+          <> " has no entry under pricing.models; its cost counts at the default price",
+        )
+      })
+  }
 }
 
 /// Block until SIGTERM or shutdown signal is received.
@@ -988,6 +1015,7 @@ pub fn shutdown(services: Runtime) -> Nil {
     None -> Nil
   }
   inbox.clear_global()
+  catalog.clear_global()
 
   io.println("✓ Shutdown complete")
 }

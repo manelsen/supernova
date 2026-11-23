@@ -179,6 +179,7 @@ pub fn interaction_from_member_still_works_test() {
 
     let assert Ok(port.ImmediateReply(reply)) =
       handler(telegram_click("123", "picker_provider:mock"), events)
-    string.contains(reply.content, "Provider set to") |> should.equal(True)
+    string.contains(reply.content, "Já está em uso: Mock / mock-model")
+    |> should.equal(True)
   })
 }

@@ -15,6 +15,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import supernova/adapters/model_picker
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
@@ -40,12 +41,9 @@ import supernova/core/prompt_assembly
 import supernova/core/session/server as rich_session
 import supernova/core/session/supervisor as session_supervisor
 import supernova/core/ux
+import supernova/llm/catalog
 import supernova/llm/provider
-import supernova/llm/providers/minimax
 import supernova/llm/providers/openai_compatible
-import supernova/llm/providers/opencode_zen
-import supernova/llm/providers/openrouter
-import supernova/llm/providers/zhipu
 import supernova/llm/stream as llm_stream
 import supernova/self/audit as self_audit
 import supernova/self/birth
@@ -71,7 +69,9 @@ pub type ResolveSessionFromParticipant =
 /// Interactive router state scoped by session.
 pub type InteractiveRouterState {
   InteractiveRouterState(
-    session_configs: Dict(String, provider.ProviderConfig),
+    /// Provider and model picked with /model, by agent. The state file keeps
+    /// them across restarts; this spares reading it again.
+    agent_choices: Dict(String, provider.ProviderConfig),
     session_profiles: Dict(String, SessionProfile),
     forget_pending: Dict(String, Int),
   )
@@ -95,7 +95,7 @@ pub type SessionProfile {
 /// Create a new empty interactive router state.
 pub fn new_interactive_state() -> InteractiveRouterState {
   InteractiveRouterState(
-    session_configs: dict.new(),
+    agent_choices: dict.new(),
     session_profiles: dict.new(),
     forget_pending: dict.new(),
   )
@@ -215,7 +215,6 @@ fn handle_inbound_internal(
         default_llm_config,
         state,
         resolve_session,
-        supervisor,
       )
   }
 }
@@ -251,7 +250,6 @@ fn handle_inbound_internal_for_handler(
           default_llm_config,
           state,
           resolve_session,
-          supervisor,
         )
 
       #(next_state, map_reply_result_to_handler(result))
@@ -431,11 +429,10 @@ fn handle_inbound_message_allowed_for_handler(
                   rich_session,
                 )
               let llm_config =
-                session_config_for_session(
+                agent_llm_config(
                   state_with_profile,
-                  session_id,
+                  profile.agent_id,
                   default_llm_config,
-                  rich_session,
                 )
 
               case
@@ -501,48 +498,21 @@ fn handle_inbound_message_allowed_for_handler(
                             }
                           }
                         None ->
-                          case is_model_picker_command(msg.content) {
-                            True -> {
-                              let picker =
-                                build_model_picker(
-                                  llm_config,
-                                  default_llm_config,
-                                )
-                              let content =
-                                picker_intro(
-                                  llm_config.name,
-                                  llm_config.default_model,
-                                )
-                              case
-                                channel_supports_interactions(expected_channel)
-                              {
-                                True -> #(
-                                  state_with_profile,
-                                  Ok(
-                                    port.ImmediateReply(
-                                      port.reply_with_interactions(
-                                        to: msg,
-                                        content: content,
-                                        interactive: picker,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                                False -> #(
-                                  state_with_profile,
-                                  Ok(
-                                    port.ImmediateReply(port.reply(
-                                      to: msg,
-                                      content: model_picker_fallback_text(
-                                        expected_channel,
-                                        llm_config,
-                                      ),
-                                    )),
-                                  ),
-                                )
-                              }
-                            }
-                            False ->
+                          case
+                            model_command_reply(
+                              expected_channel,
+                              msg,
+                              profile,
+                              llm_config,
+                              default_llm_config,
+                              state_with_profile,
+                            )
+                          {
+                            Some(#(next_state, reply)) -> #(
+                              next_state,
+                              Ok(port.ImmediateReply(reply)),
+                            )
+                            None ->
                               case
                                 maybe_handle_legacy_bootstrap(
                                   msg,
@@ -652,11 +622,10 @@ fn handle_inbound_message_allowed(
                   rich_session,
                 )
               let llm_config =
-                session_config_for_session(
+                agent_llm_config(
                   state_with_profile,
-                  session_id,
+                  profile.agent_id,
                   default_llm_config,
-                  rich_session,
                 )
 
               case
@@ -682,37 +651,18 @@ fn handle_inbound_message_allowed(
                         session_id,
                       )
                     None ->
-                      case is_model_picker_command(msg.content) {
-                        True -> {
-                          let picker =
-                            build_model_picker(llm_config, default_llm_config)
-                          let content =
-                            picker_intro(
-                              llm_config.name,
-                              llm_config.default_model,
-                            )
-                          case channel_supports_interactions(expected_channel) {
-                            True -> #(
-                              state_with_profile,
-                              Ok(port.reply_with_interactions(
-                                to: msg,
-                                content: content,
-                                interactive: picker,
-                              )),
-                            )
-                            False -> #(
-                              state_with_profile,
-                              Ok(port.reply(
-                                to: msg,
-                                content: model_picker_fallback_text(
-                                  expected_channel,
-                                  llm_config,
-                                ),
-                              )),
-                            )
-                          }
-                        }
-                        False ->
+                      case
+                        model_command_reply(
+                          expected_channel,
+                          msg,
+                          profile,
+                          llm_config,
+                          default_llm_config,
+                          state_with_profile,
+                        )
+                      {
+                        Some(#(next_state, reply)) -> #(next_state, Ok(reply))
+                        None ->
                           case
                             maybe_handle_legacy_bootstrap(
                               msg,
@@ -815,22 +765,25 @@ fn handle_bootstrap_command(
     }
     StatusCommand -> {
       let profile = session_profile_for_session(state, session_id, msg.user_id)
-      let status = case profile.bootstrapped {
-        True -> "ready"
-        False -> "not started"
+      // The closed group has no /start: its agents are born ready.
+      let session_line = case
+        closed_self_dir_for_agent(profile.agent_id),
+        profile.bootstrapped
+      {
+        Some(_), _ -> ""
+        None, True -> "\nSessão: pronta"
+        None, False -> "\nSessão: não iniciada (/start)"
       }
       #(
         state,
         Ok(port.reply(
           to: msg,
-          content: "Session status: "
-            <> status
-            <> "\nAgent: "
+          content: "Agente: "
             <> profile.agent_id
-            <> "\nProvider: "
-            <> provider_display_name(llm_config.name)
-            <> "\nModel: "
-            <> llm_config.default_model,
+            <> "\n"
+            <> model_picker.status_lines(llm_config)
+            <> session_line
+            <> "\nPara trocar: /model",
         )),
       )
     }
@@ -1537,7 +1490,6 @@ fn handle_inbound_interaction(
   default_llm_config: provider.ProviderConfig,
   state: InteractiveRouterState,
   resolve_session: ResolveSessionFromParticipant,
-  supervisor: Option(session_supervisor.SessionSupervisor),
 ) -> #(InteractiveRouterState, Result(port.ChannelReply, port.ChannelError)) {
   case interaction.channel != expected_channel {
     True -> #(
@@ -1567,7 +1519,6 @@ fn handle_inbound_interaction(
                 default_llm_config,
                 state,
                 resolve_session,
-                supervisor,
               )
           }
       }
@@ -1581,17 +1532,22 @@ fn handle_allowed_interaction(
   default_llm_config: provider.ProviderConfig,
   state: InteractiveRouterState,
   resolve_session: ResolveSessionFromParticipant,
-  supervisor: Option(session_supervisor.SessionSupervisor),
 ) -> #(InteractiveRouterState, Result(port.ChannelReply, port.ChannelError)) {
   let session_id = resolve_session(interaction.channel_id, interaction.user_id)
-  let rich_session = ensure_rich_session(supervisor, session_id)
-  let active_config =
-    session_config_for_session(
-      state,
-      session_id,
-      default_llm_config,
-      rich_session,
+  let profile =
+    session_profile_for_session(state, session_id, interaction.user_id)
+  let cat = catalog.current(default_llm_config)
+  let active = agent_llm_config(state, profile.agent_id, default_llm_config)
+  let answer = fn(next_state, content, shown) {
+    #(
+      next_state,
+      Ok(interaction_reply(
+        interaction,
+        content,
+        Some(model_picker.picker(cat, shown)),
+      )),
     )
+  }
 
   case channel_supports_interactions(expected_channel) {
     False -> #(
@@ -1602,59 +1558,56 @@ fn handle_allowed_interaction(
       )),
     )
     True ->
-      case parse_provider_action(interaction.event.action_id) {
-        Some(provider_name) -> {
-          case
-            is_supported_provider(
-              provider_name,
-              active_config.name,
-              default_llm_config.name,
-            )
-          {
-            True -> {
-              let next_config =
-                build_provider_config(provider_name, default_llm_config)
-              persist_session_llm_config(rich_session, next_config)
-              persist_model_preference_for_user(
-                state,
-                session_id,
-                interaction.user_id,
-                next_config.default_model,
+      case model_picker.parse_provider_action(interaction.event.action_id) {
+        // A provider button switches to that provider's configured model and
+        // shows its list.
+        Some(provider_name) ->
+          case catalog.provider_config(cat, provider_name) {
+            Some(_) if provider_name == active.name ->
+              answer(state, model_picker.unchanged_text(active), active)
+            Some(chosen) ->
+              answer(
+                choose_model(state, profile.agent_id, chosen),
+                model_picker.chosen_text(chosen),
+                chosen,
               )
-              let next_state =
-                put_session_config(state, session_id, next_config)
-              let picker = build_model_picker(next_config, default_llm_config)
-              let content =
-                "Provider set to "
-                <> provider_display_name(provider_name)
-                <> ". Select a model."
-
-              #(
-                next_state,
-                Ok(interaction_reply(interaction, content, Some(picker))),
-              )
-            }
-            False -> #(
+            None -> #(
               state,
               Error(port.UnsupportedInteraction(
                 reason: "Unknown provider selection: " <> provider_name,
               )),
             )
           }
-        }
         None ->
-          case interaction.event.action_id == "picker_model_select" {
-            True -> {
-              handle_model_selection(
-                interaction,
-                default_llm_config,
-                state,
-                session_id,
-                active_config,
-                rich_session,
-              )
-            }
-            False -> #(
+          case
+            interaction.event.action_id == model_picker.model_action,
+            interaction.event.values
+          {
+            True, [value, ..] ->
+              case
+                catalog.resolve(
+                  cat,
+                  model_picker.decode_selection(value, active.name),
+                )
+              {
+                Some(chosen) if chosen == active ->
+                  answer(state, model_picker.unchanged_text(active), active)
+                Some(chosen) ->
+                  answer(
+                    choose_model(state, profile.agent_id, chosen),
+                    model_picker.chosen_text(chosen),
+                    chosen,
+                  )
+                None ->
+                  answer(state, model_picker.unavailable_text(active), active)
+              }
+            True, [] -> #(
+              state,
+              Error(port.UnsupportedInteraction(
+                reason: "Model selection interaction missing values",
+              )),
+            )
+            False, _ -> #(
               state,
               Error(port.UnsupportedInteraction(
                 reason: "Unsupported interaction action: "
@@ -1666,79 +1619,102 @@ fn handle_allowed_interaction(
   }
 }
 
-fn handle_model_selection(
-  interaction: port.ChannelInteractionMessage,
-  default_llm_config: provider.ProviderConfig,
+/// The provider and model this agent uses: the one picked with /model, when
+/// it is still configured, else the default.
+fn agent_llm_config(
   state: InteractiveRouterState,
-  session_id: String,
-  active_config: provider.ProviderConfig,
-  rich_session: Option(rich_session.Session),
-) -> #(InteractiveRouterState, Result(port.ChannelReply, port.ChannelError)) {
-  case interaction.event.values {
-    [selected_value, ..] -> {
-      let #(provider_name, model_name) =
-        decode_model_selection_value(selected_value, active_config.name)
-
-      case
-        is_supported_provider(
-          provider_name,
-          active_config.name,
-          default_llm_config.name,
-        )
-      {
-        True -> {
-          let base_config = case provider_name == active_config.name {
-            True -> active_config
-            False -> build_provider_config(provider_name, default_llm_config)
+  agent_id: String,
+  default_llm_config: provider.ProviderConfig,
+) -> provider.ProviderConfig {
+  let cat = catalog.current(default_llm_config)
+  case dict.get(state.agent_choices, agent_id) {
+    Ok(config) -> config
+    Error(_) -> {
+      let preferences = load_self_state_for_agent(agent_id).preferences
+      case preferences.model_override {
+        Some(model) -> {
+          // Files written before the provider was kept: the model belonged
+          // to the default provider.
+          let provider_name =
+            option.unwrap(preferences.provider_override, cat.default.name)
+          case catalog.resolve(cat, catalog.Choice(provider_name, model)) {
+            Some(config) -> config
+            None -> cat.default
           }
-          let next_config =
-            provider.ProviderConfig(..base_config, default_model: model_name)
-          persist_session_llm_config(rich_session, next_config)
-          persist_model_preference_for_user(
-            state,
-            session_id,
-            interaction.user_id,
-            next_config.default_model,
-          )
-          let next_state = put_session_config(state, session_id, next_config)
-          let picker = build_model_picker(next_config, default_llm_config)
-          let content = "Model set to " <> model_name <> " for this session."
-          #(
-            next_state,
-            Ok(interaction_reply(interaction, content, Some(picker))),
-          )
         }
-        False -> {
-          let fallback_config =
-            build_provider_config(default_llm_config.name, default_llm_config)
-          persist_session_llm_config(rich_session, fallback_config)
-          persist_model_preference_for_user(
-            state,
-            session_id,
-            interaction.user_id,
-            fallback_config.default_model,
-          )
-          let next_state =
-            put_session_config(state, session_id, fallback_config)
-          let picker = build_model_picker(fallback_config, default_llm_config)
-          let content =
-            "Model set to "
-            <> fallback_config.default_model
-            <> " for this session."
-
-          #(
-            next_state,
-            Ok(interaction_reply(interaction, content, Some(picker))),
-          )
-        }
+        None -> cat.default
       }
     }
-    [] -> #(
-      state,
-      Error(port.UnsupportedInteraction(
-        reason: "Model selection interaction missing values",
-      )),
-    )
+  }
+}
+
+/// Keep the choice for the agent, in memory and in its state file.
+fn choose_model(
+  state: InteractiveRouterState,
+  agent_id: String,
+  chosen: provider.ProviderConfig,
+) -> InteractiveRouterState {
+  let current = load_self_state_for_agent(agent_id)
+  save_self_state_for_agent(
+    agent_id,
+    self_state.set_model_choice(current, chosen.name, chosen.default_model),
+  )
+  InteractiveRouterState(
+    ..state,
+    agent_choices: dict.insert(state.agent_choices, agent_id, chosen),
+  )
+}
+
+/// /model alone shows what is in use and the choices; /model <modelo> picks.
+fn model_command_reply(
+  expected_channel: String,
+  msg: port.ChannelMessage,
+  profile: SessionProfile,
+  active: provider.ProviderConfig,
+  default_llm_config: provider.ProviderConfig,
+  state: InteractiveRouterState,
+) -> Option(#(InteractiveRouterState, port.ChannelReply)) {
+  let cat = catalog.current(default_llm_config)
+  case model_picker.parse(msg.content) {
+    None -> None
+    Some(model_picker.Show) ->
+      case channel_supports_interactions(expected_channel) {
+        True ->
+          Some(#(
+            state,
+            port.reply_with_interactions(
+              to: msg,
+              content: model_picker.intro(active),
+              interactive: model_picker.picker(cat, active),
+            ),
+          ))
+        False ->
+          Some(#(
+            state,
+            port.reply(to: msg, content: model_picker.text_choices(cat, active)),
+          ))
+      }
+    Some(model_picker.Pick(argument)) ->
+      case model_picker.resolve_typed(cat, active, argument) {
+        Some(chosen) if chosen == active ->
+          Some(#(
+            state,
+            port.reply(to: msg, content: model_picker.unchanged_text(active)),
+          ))
+        Some(chosen) ->
+          Some(#(
+            choose_model(state, profile.agent_id, chosen),
+            port.reply(to: msg, content: model_picker.chosen_text(chosen)),
+          ))
+        None ->
+          Some(#(
+            state,
+            port.reply(
+              to: msg,
+              content: model_picker.unknown_text(cat, active, argument),
+            ),
+          ))
+      }
   }
 }
 
@@ -2017,234 +1993,8 @@ fn map_reply_result_to_handler(
   }
 }
 
-fn is_model_picker_command(content: String) -> Bool {
-  case ux.resolve_shortcut(content) {
-    Ok(ux.Models) -> True
-    _ -> {
-      let command = string.trim(content) |> string.lowercase
-      command == "/model" || command == "/models"
-    }
-  }
-}
-
-fn picker_intro(provider_name: String, model_name: String) -> String {
-  "Current selection: "
-  <> provider_display_name(provider_name)
-  <> " / "
-  <> model_name
-  <> "\nChoose provider and model for this session."
-}
-
-fn model_picker_fallback_text(
-  channel: String,
-  selected_config: provider.ProviderConfig,
-) -> String {
-  let models_summary =
-    models_for_provider(selected_config.name, selected_config.default_model)
-    |> list.take(5)
-    |> string.join(", ")
-
-  "Current selection: "
-  <> provider_display_name(selected_config.name)
-  <> " / "
-  <> selected_config.default_model
-  <> "\nInteractive picker is unavailable in "
-  <> channel
-  <> ". Available models for "
-  <> provider_display_name(selected_config.name)
-  <> ": "
-  <> models_summary
-}
-
 fn channel_supports_interactions(channel: String) -> Bool {
   channel == "discord" || channel == "telegram" || channel == "slack"
-}
-
-fn parse_provider_action(action_id: String) -> Option(String) {
-  let prefix = "picker_provider:"
-  case string.starts_with(action_id, prefix) {
-    True -> Some(string.drop_start(action_id, string.length(prefix)))
-    False -> None
-  }
-}
-
-fn decode_model_selection_value(
-  value: String,
-  fallback_provider: String,
-) -> #(String, String) {
-  case string.split(value, "|") {
-    [provider_name, model_name] -> #(provider_name, model_name)
-    _ -> #(fallback_provider, value)
-  }
-}
-
-fn is_supported_provider(
-  provider_name: String,
-  selected_provider: String,
-  default_provider: String,
-) -> Bool {
-  list.contains(
-    provider_names(selected_provider, default_provider),
-    provider_name,
-  )
-}
-
-fn build_model_picker(
-  selected_config: provider.ProviderConfig,
-  default_llm_config: provider.ProviderConfig,
-) -> port.ChannelInteractiveReply {
-  let provider_buttons =
-    provider_names(selected_config.name, default_llm_config.name)
-    |> list.map(fn(name) {
-      port.button(
-        label: provider_display_name(name),
-        action_id: "picker_provider:" <> name,
-        style: provider_button_style(name, selected_config.name),
-      )
-    })
-
-  let model_options =
-    models_for_provider(selected_config.name, selected_config.default_model)
-    |> list.map(fn(model_name) {
-      port.select_option(
-        label: model_label(model_name, selected_config.default_model),
-        value: selected_config.name <> "|" <> model_name,
-      )
-    })
-
-  port.interactive_reply([
-    port.text_block("Provider: " <> provider_display_name(selected_config.name)),
-    port.buttons_block(provider_buttons),
-    port.select_block(
-      action_id: "picker_model_select",
-      placeholder: Some("Select model"),
-      options: model_options,
-    ),
-  ])
-}
-
-fn model_label(model_name: String, selected_model: String) -> String {
-  case model_name == selected_model {
-    True -> "[active] " <> model_name
-    False -> model_name
-  }
-}
-
-fn provider_button_style(
-  provider_name: String,
-  selected_provider: String,
-) -> port.ChannelButtonStyle {
-  case provider_name == selected_provider {
-    True -> port.ButtonSuccess
-    False -> port.ButtonPrimary
-  }
-}
-
-fn provider_display_name(provider_name: String) -> String {
-  case provider_name {
-    "openai" -> "OpenAI"
-    "anthropic" -> "Anthropic"
-    "openrouter" -> "OpenRouter"
-    "opencode_zen" -> "OpenCode Zen"
-    "zhipu" -> "Zhipu"
-    "zhipu_coding" -> "Zhipu Coding"
-    "minimax" -> "MiniMax"
-    "mock" -> "Mock"
-    _ -> provider_name
-  }
-}
-
-fn known_provider_names() -> List(String) {
-  [
-    "openai",
-    "anthropic",
-    "openrouter",
-    "opencode_zen",
-    "zhipu",
-    "zhipu_coding",
-    "minimax",
-    "mock",
-  ]
-}
-
-fn provider_names(
-  selected_provider: String,
-  default_provider: String,
-) -> List(String) {
-  let with_default =
-    ensure_provider_name(known_provider_names(), default_provider)
-  let with_selected = ensure_provider_name(with_default, selected_provider)
-  let rest = list.filter(with_selected, fn(name) { name != selected_provider })
-  [selected_provider, ..rest]
-}
-
-fn ensure_provider_name(
-  names: List(String),
-  provider_name: String,
-) -> List(String) {
-  case list.contains(names, provider_name) {
-    True -> names
-    False -> [provider_name, ..names]
-  }
-}
-
-fn models_for_provider(
-  provider_name: String,
-  selected_model: String,
-) -> List(String) {
-  let defaults = case provider_name {
-    "openai" -> ["gpt-5-mini", "gpt-4.1", "gpt-4o"]
-    "anthropic" -> ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-5"]
-    "openrouter" -> [
-      openrouter.default_model,
-      "openai/gpt-4o",
-      "anthropic/claude-opus-4-6",
-    ]
-    "opencode_zen" -> [opencode_zen.default_model, "glm-4.7", "kimi-k2"]
-    "zhipu" -> [zhipu.default_model, "glm-4-air", "glm-4-flash"]
-    "zhipu_coding" -> [zhipu.default_coding_model, "codegeex-4.6"]
-    "minimax" -> [minimax.default_model, "abab6.5s-chat", "abab6.5g-chat"]
-    "mock" -> ["mock-model", "mock-alt-model"]
-    _ -> [selected_model]
-  }
-
-  let with_selected = case list.contains(defaults, selected_model) {
-    True -> defaults
-    False -> [selected_model, ..defaults]
-  }
-
-  list.take(with_selected, 25)
-}
-
-fn session_config_for_session(
-  state: InteractiveRouterState,
-  session_id: String,
-  default_llm_config: provider.ProviderConfig,
-  rich_session: Option(rich_session.Session),
-) -> provider.ProviderConfig {
-  case dict.get(state.session_configs, session_id) {
-    Ok(config) -> config
-    Error(_) ->
-      case rich_session {
-        Some(session) ->
-          case rich_session.get_llm_config(session) {
-            Some(config) -> config
-            None -> default_llm_config
-          }
-        None -> default_llm_config
-      }
-  }
-}
-
-fn put_session_config(
-  state: InteractiveRouterState,
-  session_id: String,
-  llm_config: provider.ProviderConfig,
-) -> InteractiveRouterState {
-  InteractiveRouterState(
-    ..state,
-    session_configs: dict.insert(state.session_configs, session_id, llm_config),
-  )
 }
 
 /// Commands answered without the model: /agenda first, then /esquecer.
@@ -2582,32 +2332,6 @@ fn provider_message_from_session_history(
   }
 }
 
-fn persist_session_llm_config(
-  rich_session: Option(rich_session.Session),
-  llm_config: provider.ProviderConfig,
-) -> Nil {
-  case rich_session {
-    Some(session) -> {
-      let _ = rich_session.set_llm_config(session, llm_config)
-      Nil
-    }
-    None -> Nil
-  }
-}
-
-fn persist_model_preference_for_user(
-  state: InteractiveRouterState,
-  session_id: String,
-  user_id: String,
-  model_name: String,
-) -> Nil {
-  let profile = session_profile_for_session(state, session_id, user_id)
-  let current = load_self_state_for_agent(profile.agent_id)
-  let updated = self_state.set_model_override(current, Some(model_name))
-  save_self_state_for_agent(profile.agent_id, updated)
-  Nil
-}
-
 fn toggle_reasoning_preference(profile: SessionProfile, enabled: Bool) -> Bool {
   let current = load_self_state_for_agent(profile.agent_id)
   let toggled = !current.preferences.reasoning_visible
@@ -2860,38 +2584,6 @@ fn apply_relationship_event(
       Nil
     }
     False -> Nil
-  }
-}
-
-fn build_provider_config(
-  provider_name: String,
-  base_config: provider.ProviderConfig,
-) -> provider.ProviderConfig {
-  provider.ProviderConfig(
-    name: provider_name,
-    api_key: base_config.api_key,
-    base_url: base_config.base_url,
-    default_model: default_model_for_provider(
-      provider_name,
-      base_config.default_model,
-    ),
-  )
-}
-
-fn default_model_for_provider(
-  provider_name: String,
-  fallback_model: String,
-) -> String {
-  case provider_name {
-    "openai" -> "gpt-5-mini"
-    "anthropic" -> "claude-sonnet-4-5"
-    "openrouter" -> openrouter.default_model
-    "opencode_zen" -> opencode_zen.default_model
-    "zhipu" -> zhipu.default_model
-    "zhipu_coding" -> zhipu.default_coding_model
-    "minimax" -> minimax.default_model
-    "mock" -> "mock-model"
-    _ -> fallback_model
   }
 }
 

@@ -18,6 +18,7 @@ fn provider(kind: config.Provider, key) -> config.ProviderConfig {
     api_key: key,
     base_url: None,
     model: None,
+    models: [],
     timeout_ms: 1000,
   )
 }

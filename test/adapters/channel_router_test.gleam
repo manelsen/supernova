@@ -9,10 +9,12 @@ import supernova/adapters/discord_router
 import supernova/adapters/telegram_router
 import supernova/channel/port
 import supernova/channel/session
+import supernova/core/introspection/self_state
 import supernova/core/persona/loader as persona_loader
 import supernova/core/session/history_store
 import supernova/core/session/server
 import supernova/core/session/supervisor
+import supernova/llm/catalog
 import supernova/llm/provider
 import test_workspace
 
@@ -233,8 +235,34 @@ pub fn discord_router_channel_mismatch_test() {
   }
 }
 
+/// Two providers, each with its own key, as a boot publishes them.
+fn with_mock_catalog(run: fn() -> a) -> a {
+  let default = mock_provider_config()
+  catalog.set_global(
+    catalog.Catalog(default: default, entries: [
+      catalog.Entry(config: default, models: ["mock-model", "mock-alt-model"]),
+      catalog.Entry(
+        config: provider.ProviderConfig(
+          name: "openai",
+          api_key: Some("openai-key"),
+          base_url: None,
+          default_model: "gpt-x",
+        ),
+        models: ["gpt-x", "gpt-y"],
+      ),
+    ]),
+  )
+  let result = run()
+  catalog.clear_global()
+  result
+}
+
+const chosen_suffix =
+  ". Vale para as próximas mensagens, também depois de reiniciar."
+
 pub fn telegram_router_model_command_returns_interactive_picker_test() {
   use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
   let assert Ok(router) = telegram_router.start(mock_provider_config())
   let msg =
     message(
@@ -247,92 +275,45 @@ pub fn telegram_router_model_command_returns_interactive_picker_test() {
       False,
     )
 
-  case telegram_router.route(router, msg) {
-    Ok(reply) -> {
-      reply.channel_id |> should.equal("chat-model")
-      reply.content
-      |> should.equal(
-        "Current selection: Mock / mock-model\n"
-        <> "Choose provider and model for this session.",
-      )
-      case reply.interactive {
-        Some(interactive) ->
-          case interactive.blocks {
-            [
-              port.InteractionText(text: "Provider: Mock"),
-              port.InteractionButtons(buttons),
-              port.InteractionSelect(
-                action_id: "picker_model_select",
-                placeholder: Some("Select model"),
-                options: options,
-              ),
-            ] -> {
-              buttons
-              |> should.equal([
-                port.ChannelButton(
-                  label: "Mock",
-                  action_id: "picker_provider:mock",
-                  style: port.ButtonSuccess,
-                ),
-                port.ChannelButton(
-                  label: "OpenAI",
-                  action_id: "picker_provider:openai",
-                  style: port.ButtonPrimary,
-                ),
-                port.ChannelButton(
-                  label: "Anthropic",
-                  action_id: "picker_provider:anthropic",
-                  style: port.ButtonPrimary,
-                ),
-                port.ChannelButton(
-                  label: "OpenRouter",
-                  action_id: "picker_provider:openrouter",
-                  style: port.ButtonPrimary,
-                ),
-                port.ChannelButton(
-                  label: "OpenCode Zen",
-                  action_id: "picker_provider:opencode_zen",
-                  style: port.ButtonPrimary,
-                ),
-                port.ChannelButton(
-                  label: "Zhipu",
-                  action_id: "picker_provider:zhipu",
-                  style: port.ButtonPrimary,
-                ),
-                port.ChannelButton(
-                  label: "Zhipu Coding",
-                  action_id: "picker_provider:zhipu_coding",
-                  style: port.ButtonPrimary,
-                ),
-                port.ChannelButton(
-                  label: "MiniMax",
-                  action_id: "picker_provider:minimax",
-                  style: port.ButtonPrimary,
-                ),
-              ])
-              options
-              |> should.equal([
-                port.ChannelSelectOption(
-                  label: "[active] mock-model",
-                  value: "mock|mock-model",
-                ),
-                port.ChannelSelectOption(
-                  label: "mock-alt-model",
-                  value: "mock|mock-alt-model",
-                ),
-              ])
-            }
-            _ -> should.fail()
-          }
-        None -> should.fail()
-      }
-    }
-    Error(_) -> should.fail()
-  }
+  let assert Ok(reply) = telegram_router.route(router, msg)
+  reply.channel_id |> should.equal("chat-model")
+  reply.content |> should.equal("Em uso: Mock / mock-model\nEscolha abaixo.")
+  let assert Some(interactive) = reply.interactive
+  interactive.blocks
+  |> should.equal([
+    port.InteractionText(text: "Provedor: Mock"),
+    port.InteractionButtons([
+      port.ChannelButton(
+        label: "Mock",
+        action_id: "picker_provider:mock",
+        style: port.ButtonSuccess,
+      ),
+      port.ChannelButton(
+        label: "OpenAI",
+        action_id: "picker_provider:openai",
+        style: port.ButtonPrimary,
+      ),
+    ]),
+    port.InteractionSelect(
+      action_id: "picker_model_select",
+      placeholder: Some("Escolha o modelo"),
+      options: [
+        port.ChannelSelectOption(
+          label: "✓ mock-model",
+          value: "mock|mock-model",
+        ),
+        port.ChannelSelectOption(
+          label: "mock-alt-model",
+          value: "mock|mock-alt-model",
+        ),
+      ],
+    ),
+  ])
 }
 
 pub fn telegram_router_model_selection_updates_session_picker_test() {
   use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
   let assert Ok(router) = telegram_router.start(mock_provider_config())
 
   let model_selection =
@@ -345,18 +326,13 @@ pub fn telegram_router_model_selection_updates_session_picker_test() {
       ["mock|mock-alt-model"],
     )
 
-  case
+  let assert Ok(reply) =
     telegram_router.route_inbound(
       router,
       port.inbound_interaction(model_selection),
     )
-  {
-    Ok(reply) -> {
-      reply.content
-      |> should.equal("Model set to mock-alt-model for this session.")
-    }
-    Error(_) -> should.fail()
-  }
+  reply.content
+  |> should.equal("Modelo trocado para Mock / mock-alt-model" <> chosen_suffix)
 
   let show_picker =
     message(
@@ -368,30 +344,18 @@ pub fn telegram_router_model_selection_updates_session_picker_test() {
       "/models",
       False,
     )
-
-  case telegram_router.route(router, show_picker) {
-    Ok(reply) ->
-      case reply.interactive {
-        Some(interactive) ->
-          case interactive.blocks {
-            [_, _, port.InteractionSelect(options: options, ..)] ->
-              options
-              |> should.equal([
-                port.ChannelSelectOption(
-                  label: "mock-model",
-                  value: "mock|mock-model",
-                ),
-                port.ChannelSelectOption(
-                  label: "[active] mock-alt-model",
-                  value: "mock|mock-alt-model",
-                ),
-              ])
-            _ -> should.fail()
-          }
-        None -> should.fail()
-      }
-    Error(_) -> should.fail()
-  }
+  let assert Ok(reply) = telegram_router.route(router, show_picker)
+  let assert Some(interactive) = reply.interactive
+  let assert [_, _, port.InteractionSelect(options: options, ..)] =
+    interactive.blocks
+  options
+  |> should.equal([
+    port.ChannelSelectOption(label: "mock-model", value: "mock|mock-model"),
+    port.ChannelSelectOption(
+      label: "✓ mock-alt-model",
+      value: "mock|mock-alt-model",
+    ),
+  ])
 
   let status_msg =
     message(
@@ -403,22 +367,22 @@ pub fn telegram_router_model_selection_updates_session_picker_test() {
       "/status",
       False,
     )
-
-  case telegram_router.route(router, status_msg) {
-    Ok(reply) ->
-      reply.content
-      |> should.equal(
-        "Session status: not started\n"
-        <> "Agent: telegram:user-42\n"
-        <> "Provider: Mock\n"
-        <> "Model: mock-alt-model",
-      )
-    Error(_) -> should.fail()
-  }
+  let assert Ok(reply) = telegram_router.route(router, status_msg)
+  reply.content
+  |> should.equal(
+    "Agente: telegram:user-42\n"
+    <> "Provedor: Mock\n"
+    <> "Modelo: mock-alt-model\n"
+    <> "Sessão: não iniciada (/start)\n"
+    <> "Para trocar: /model",
+  )
 }
 
-pub fn telegram_router_invalid_provider_selection_falls_back_to_default_test() {
+/// A button for a provider or model that is no longer configured (or a
+/// forged one) changes nothing.
+pub fn telegram_router_unknown_selection_keeps_current_model_test() {
   use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
   let assert Ok(router) = telegram_router.start(mock_provider_config())
 
   let selection =
@@ -430,15 +394,27 @@ pub fn telegram_router_invalid_provider_selection_falls_back_to_default_test() {
       "picker_model_select",
       ["ghost|strange-model"],
     )
-
-  case
+  let assert Ok(reply) =
     telegram_router.route_inbound(router, port.inbound_interaction(selection))
-  {
-    Ok(reply) ->
-      reply.content
-      |> should.equal("Model set to mock-model for this session.")
-    Error(_) -> should.fail()
-  }
+  reply.content
+  |> should.equal(
+    "Essa opção não está mais disponível. Continua em uso: Mock / mock-model.",
+  )
+
+  // A model of another provider, sent as if it were this provider's.
+  let forged =
+    interaction(
+      "telegram",
+      "chat-fallback",
+      "user-42",
+      "alice",
+      "picker_model_select",
+      ["mock|gpt-y"],
+    )
+  let assert Ok(reply) =
+    telegram_router.route_inbound(router, port.inbound_interaction(forged))
+  string.starts_with(reply.content, "Essa opção não está mais disponível.")
+  |> should.equal(True)
 
   let status_msg =
     message(
@@ -450,22 +426,13 @@ pub fn telegram_router_invalid_provider_selection_falls_back_to_default_test() {
       "/status",
       False,
     )
-
-  case telegram_router.route(router, status_msg) {
-    Ok(reply) ->
-      reply.content
-      |> should.equal(
-        "Session status: not started\n"
-        <> "Agent: telegram:user-42\n"
-        <> "Provider: Mock\n"
-        <> "Model: mock-model",
-      )
-    Error(_) -> should.fail()
-  }
+  let assert Ok(reply) = telegram_router.route(router, status_msg)
+  string.contains(reply.content, "Modelo: mock-model\n") |> should.equal(True)
 }
 
 pub fn telegram_router_interaction_reply_edits_source_message_test() {
   use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
   let assert Ok(router) = telegram_router.start(mock_provider_config())
 
   let selection =
@@ -483,21 +450,17 @@ pub fn telegram_router_interaction_reply_edits_source_message_test() {
       ),
     )
 
-  case
+  let assert Ok(reply) =
     telegram_router.route_inbound(router, port.inbound_interaction(selection))
-  {
-    Ok(reply) -> {
-      reply.content
-      |> should.equal("Model set to mock-alt-model for this session.")
-      reply.reply_to_id |> should.equal(Some("55"))
-      reply.edit_message_id |> should.equal(Some("55"))
-    }
-    Error(_) -> should.fail()
-  }
+  reply.content
+  |> should.equal("Modelo trocado para Mock / mock-alt-model" <> chosen_suffix)
+  reply.reply_to_id |> should.equal(Some("55"))
+  reply.edit_message_id |> should.equal(Some("55"))
 }
 
 pub fn discord_router_provider_interaction_returns_openai_picker_test() {
   use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
   let assert Ok(router) = discord_router.start(mock_provider_config())
 
   let provider_selection =
@@ -510,44 +473,116 @@ pub fn discord_router_provider_interaction_returns_openai_picker_test() {
       [],
     )
 
-  case
+  let assert Ok(reply) =
     discord_router.route_inbound(
       router,
       port.inbound_interaction(provider_selection),
     )
-  {
-    Ok(reply) -> {
-      reply.content |> should.equal("Provider set to OpenAI. Select a model.")
-      case reply.interactive {
-        Some(interactive) ->
-          case interactive.blocks {
-            [
-              port.InteractionText(text: "Provider: OpenAI"),
-              _,
-              port.InteractionSelect(options: options, ..),
-            ] ->
-              options
-              |> should.equal([
-                port.ChannelSelectOption(
-                  label: "[active] gpt-5-mini",
-                  value: "openai|gpt-5-mini",
-                ),
-                port.ChannelSelectOption(
-                  label: "gpt-4.1",
-                  value: "openai|gpt-4.1",
-                ),
-                port.ChannelSelectOption(
-                  label: "gpt-4o",
-                  value: "openai|gpt-4o",
-                ),
-              ])
-            _ -> should.fail()
-          }
-        None -> should.fail()
-      }
-    }
-    Error(_) -> should.fail()
+  reply.content
+  |> should.equal("Modelo trocado para OpenAI / gpt-x" <> chosen_suffix)
+  let assert Some(interactive) = reply.interactive
+  let assert [
+    port.InteractionText(text: "Provedor: OpenAI"),
+    _,
+    port.InteractionSelect(options: options, ..),
+  ] = interactive.blocks
+  options
+  |> should.equal([
+    port.ChannelSelectOption(label: "✓ gpt-x", value: "openai|gpt-x"),
+    port.ChannelSelectOption(label: "gpt-y", value: "openai|gpt-y"),
+  ])
+}
+
+/// Providers that are not configured are not offered, and a click on one
+/// changes nothing.
+pub fn discord_router_unconfigured_provider_is_refused_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
+  let assert Ok(router) = discord_router.start(mock_provider_config())
+  let click =
+    interaction(
+      "discord",
+      "channel-ux",
+      "user-9",
+      "bob",
+      "picker_provider:anthropic",
+      [],
+    )
+  case discord_router.route_inbound(router, port.inbound_interaction(click)) {
+    Error(port.UnsupportedInteraction(reason)) ->
+      reason |> should.equal("Unknown provider selection: anthropic")
+    _ -> should.fail()
   }
+}
+
+fn tg(id: String, user: String, content: String) -> port.ChannelMessage {
+  message(id, "telegram", "chat-" <> user, user, "alice", content, False)
+}
+
+/// Typed, /model works where there are no buttons too.
+pub fn typed_model_command_picks_and_refuses_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("t1", "typed", "/model gpt-y"))
+  reply.content
+  |> should.equal("Modelo trocado para OpenAI / gpt-y" <> chosen_suffix)
+
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("t2", "typed", "/model gpt-y"))
+  reply.content |> should.equal("Já está em uso: OpenAI / gpt-y.")
+
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("t3", "typed", "/model claude-x"))
+  string.starts_with(reply.content, "Não conheço o modelo \"claude-x\".")
+  |> should.equal(True)
+  string.contains(reply.content, "Em uso: OpenAI / gpt-y") |> should.equal(True)
+
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("t4", "typed", "/model mock mock-model"))
+  reply.content
+  |> should.equal("Modelo trocado para Mock / mock-model" <> chosen_suffix)
+}
+
+/// The choice belongs to the agent: other people keep theirs.
+pub fn model_choice_is_per_agent_test() {
+  use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+  let assert Ok(_) =
+    telegram_router.route(router, tg("a1", "ana", "/model gpt-x"))
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("b1", "bia", "/status"))
+  string.contains(reply.content, "Modelo: mock-model\n") |> should.equal(True)
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("a2", "ana", "/status"))
+  string.contains(reply.content, "Modelo: gpt-x\n") |> should.equal(True)
+}
+
+/// A state file from before the provider was kept names only the model: it
+/// belongs to the default provider. A model no longer configured gives way
+/// to the default.
+pub fn kept_choice_from_older_files_and_removed_models_test() {
+  use root <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
+  let old =
+    self_state.set_model_override(self_state.default(), Some("mock-alt-model"))
+  let assert Ok(_) = self_state.save(root <> "/telegram:old", old)
+  let gone =
+    self_state.set_model_choice(self_state.default(), "openai", "gpt-retired")
+  let assert Ok(_) = self_state.save(root <> "/telegram:gone", gone)
+
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("o1", "old", "/status"))
+  string.contains(reply.content, "Provedor: Mock\nModelo: mock-alt-model\n")
+  |> should.equal(True)
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("g1", "gone", "/status"))
+  string.contains(reply.content, "Provedor: Mock\nModelo: mock-model\n")
+  |> should.equal(True)
 }
 
 pub fn discord_router_unknown_interaction_returns_error_test() {
@@ -614,10 +649,11 @@ pub fn telegram_router_status_reports_bootstrap_state_test() {
     Ok(reply) ->
       reply.content
       |> should.equal(
-        "Session status: not started\n"
-        <> "Agent: telegram:user-status\n"
-        <> "Provider: Mock\n"
-        <> "Model: mock-model",
+        "Agente: telegram:user-status\n"
+        <> "Provedor: Mock\n"
+        <> "Modelo: mock-model\n"
+        <> "Sessão: não iniciada (/start)\n"
+        <> "Para trocar: /model",
       )
     Error(_) -> should.fail()
   }
@@ -649,10 +685,11 @@ pub fn telegram_router_status_reports_bootstrap_state_test() {
     Ok(reply) ->
       reply.content
       |> should.equal(
-        "Session status: ready\n"
-        <> "Agent: telegram:user-status\n"
-        <> "Provider: Mock\n"
-        <> "Model: mock-model",
+        "Agente: telegram:user-status\n"
+        <> "Provedor: Mock\n"
+        <> "Modelo: mock-model\n"
+        <> "Sessão: pronta\n"
+        <> "Para trocar: /model",
       )
     Error(_) -> should.fail()
   }
@@ -731,10 +768,11 @@ pub fn discord_router_status_reports_bootstrap_state_test() {
     Ok(reply) ->
       reply.content
       |> should.equal(
-        "Session status: not started\n"
-        <> "Agent: discord:user-status\n"
-        <> "Provider: Mock\n"
-        <> "Model: mock-model",
+        "Agente: discord:user-status\n"
+        <> "Provedor: Mock\n"
+        <> "Modelo: mock-model\n"
+        <> "Sessão: não iniciada (/start)\n"
+        <> "Para trocar: /model",
       )
     Error(_) -> should.fail()
   }
@@ -766,10 +804,11 @@ pub fn discord_router_status_reports_bootstrap_state_test() {
     Ok(reply) ->
       reply.content
       |> should.equal(
-        "Session status: ready\n"
-        <> "Agent: discord:user-status\n"
-        <> "Provider: Mock\n"
-        <> "Model: mock-model",
+        "Agente: discord:user-status\n"
+        <> "Provedor: Mock\n"
+        <> "Modelo: mock-model\n"
+        <> "Sessão: pronta\n"
+        <> "Para trocar: /model",
       )
     Error(_) -> should.fail()
   }
@@ -793,31 +832,24 @@ pub fn discord_router_model_command_returns_interactive_picker_test() {
     Ok(reply) -> {
       reply.channel_id |> should.equal("channel-model")
       reply.content
-      |> should.equal(
-        "Current selection: Mock / mock-model\n"
-        <> "Choose provider and model for this session.",
-      )
+      |> should.equal("Em uso: Mock / mock-model\nEscolha abaixo.")
+      // Only the default provider is configured: no provider buttons.
       case reply.interactive {
         Some(interactive) ->
           case interactive.blocks {
             [
-              port.InteractionText(text: "Provider: Mock"),
-              port.InteractionButtons(_),
+              port.InteractionText(text: "Provedor: Mock"),
               port.InteractionSelect(
                 action_id: "picker_model_select",
-                placeholder: Some("Select model"),
+                placeholder: Some("Escolha o modelo"),
                 options: options,
               ),
             ] ->
               options
               |> should.equal([
                 port.ChannelSelectOption(
-                  label: "[active] mock-model",
+                  label: "✓ mock-model",
                   value: "mock|mock-model",
-                ),
-                port.ChannelSelectOption(
-                  label: "mock-alt-model",
-                  value: "mock|mock-alt-model",
                 ),
               ])
             _ -> should.fail()
@@ -1168,8 +1200,11 @@ pub fn telegram_router_updates_self_state_after_successful_turn_test() {
   |> should.equal(False)
 }
 
+/// The choice is kept in the agent's state file: a whole new process (new
+/// sessions, new router) still uses it.
 pub fn discord_router_selected_model_survives_router_restart_test() {
   use _ <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
   let assert Ok(session_sup) = supervisor.start()
   let assert Ok(router) =
     discord_router.start_with_session_supervisor(
@@ -1182,16 +1217,27 @@ pub fn discord_router_selected_model_survives_router_restart_test() {
       "channel-persist",
       "user-persist",
       "bob",
-      "picker_model_select",
-      ["mock|mock-alt-model"],
+      "picker_provider:openai",
+      [],
     )
-
+  let assert Ok(_) =
+    discord_router.route_inbound(router, port.inbound_interaction(selection))
+  let selection =
+    interaction(
+      "discord",
+      "channel-persist",
+      "user-persist",
+      "bob",
+      "picker_model_select",
+      ["openai|gpt-y"],
+    )
   let assert Ok(_) =
     discord_router.route_inbound(router, port.inbound_interaction(selection))
 
+  let assert Ok(new_sup) = supervisor.start()
   let assert Ok(restarted_router) =
     discord_router.start_with_session_supervisor(
-      session_sup,
+      new_sup,
       mock_provider_config(),
     )
   let status_msg =
@@ -1204,23 +1250,9 @@ pub fn discord_router_selected_model_survives_router_restart_test() {
       "/status",
       False,
     )
-
-  case discord_router.route(restarted_router, status_msg) {
-    Ok(reply) ->
-      reply.content
-      |> should.equal(
-        "Session status: not started\n"
-        <> "Agent: discord:user-persist\n"
-        <> "Provider: Mock\n"
-        <> "Model: mock-alt-model",
-      )
-    Error(_) -> should.fail()
-  }
-
-  let session_id = session.discord_session_id("channel-persist", "user-persist")
-  let assert Ok(session) = supervisor.get_session(session_sup, session_id)
-  server.get_model(session)
-  |> should.equal(Some("mock-alt-model"))
+  let assert Ok(reply) = discord_router.route(restarted_router, status_msg)
+  string.contains(reply.content, "Provedor: OpenAI\nModelo: gpt-y\n")
+  |> should.equal(True)
 }
 
 pub fn discord_router_help_uses_channel_specific_text_test() {
