@@ -10,6 +10,7 @@ import gleam/string
 import gleeunit/should
 import supernova/agenda/runtime
 import supernova/config
+import supernova/core/agent_identity
 import supernova/core/capability_manifest/types as cap_types
 import supernova/core/session/history_store.{HistoryStore, StoredMessage}
 import supernova/core/syscall/actor
@@ -193,3 +194,55 @@ pub fn members_may_search_by_default_test() {
   |> list.contains("buscar_conversa")
   |> should.be_true()
 }
+
+pub fn fold_test() {
+  buscar_conversa.fold("Ação ÉPICA, Ñandu") |> should.equal("acao epica, nandu")
+}
+
+@external(erlang, "erlang", "list_to_binary")
+fn raw_bytes(bytes: List(Int)) -> String
+
+/// Bytes that are not UTF-8 come back as they are, instead of crashing.
+pub fn fold_leaves_invalid_utf8_alone_test() {
+  let bad = raw_bytes([255, 65])
+  buscar_conversa.fold(bad) |> should.equal(bad)
+}
+
+pub fn chat_label_test() {
+  let label = fn(session) {
+    buscar_conversa.chat_label(agent_identity.encode_principal(session))
+  }
+  label("telegram:42:42") |> should.equal("privado")
+  label("telegram:-100:42") |> should.equal("grupo")
+  label("sim:group-1:alice") |> should.equal("grupo")
+  // Chat ids with colons: the user is the last part.
+  label("matrix:!room:server:alice") |> should.equal("grupo")
+  label("matrix:a:b:a:b") |> should.equal("grupo")
+}
+
+/// A directory that cannot be read is an error, never "not said". A plain
+/// file where the directory should be fails the same way for any user.
+pub fn unreadable_directory_is_an_error_test() {
+  use dir <- with_dir
+  let conversations = history_store.dir(dir, "telegram:42")
+  let assert Ok(Nil) = ensure_dir(dir <> "/agents")
+  let assert Ok(Nil) = ensure_dir(agent_identity.agent_dir(dir, "telegram:42"))
+  let assert Ok(Nil) = write_file(conversations, "not a directory")
+  case
+    buscar_conversa.execute_for(dir, "telegram:42", 0, "{\"terms\":\"oi\"}")
+  {
+    Error(reason) ->
+      string.starts_with(
+        reason,
+        "buscar_conversa could not read the conversations",
+      )
+      |> should.be_true()
+    Ok(_) -> should.fail()
+  }
+}
+
+@external(erlang, "supernova_file_system_ffi", "ensure_dir")
+fn ensure_dir(path: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_file(path: String, content: String) -> Result(Nil, String)

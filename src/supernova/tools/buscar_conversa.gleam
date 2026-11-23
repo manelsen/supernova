@@ -11,6 +11,7 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
 import supernova/agenda/runtime
 import supernova/agenda/schedule
@@ -68,7 +69,9 @@ pub fn execute_for(
     Ok(raw) ->
       case words(raw) {
         [] -> Error("buscar_conversa needs at least one term")
-        terms -> Ok(search(data_dir, principal, terms) |> render(raw, offset))
+        terms ->
+          search(data_dir, principal, terms)
+          |> result.map(render(_, raw, offset))
       }
   }
 }
@@ -82,28 +85,35 @@ pub type Found {
 }
 
 /// Every message of the person's conversations holding all `terms`; the
-/// most recent `max_results`, oldest first.
+/// most recent `max_results`, oldest first. Each file is read whole and
+/// filtered before the next, so only matches accumulate; a call still reads
+/// the person's whole history, which is never pruned. No conversations yet is
+/// no match; a directory that cannot be read is an error, never "not said".
 pub fn search(
   data_dir: String,
   principal: String,
   terms: List(String),
-) -> Found {
+) -> Result(Found, String) {
   let folded = list.map(terms, fold)
   let dir = history_store.dir(data_dir, principal)
+  let files = case list_dir(dir) {
+    Ok(files) -> Ok(files)
+    Error("no such file or directory") -> Ok([])
+    Error(reason) ->
+      Error("buscar_conversa could not read the conversations: " <> reason)
+  }
+  use files <- result.map(files)
   let all =
-    case list_dir(dir) {
-      Ok(files) -> files
-      Error(_) -> []
-    }
+    files
     |> list.filter(fn(file) { string.ends_with(file, ".jsonl") })
     |> list.flat_map(fn(file) {
       let chat = chat_label(string.drop_end(file, 6))
       history_store.read_file_messages(dir <> "/" <> file)
+      |> list.filter(fn(message) {
+        let content = fold(message.content)
+        list.all(folded, fn(term) { string.contains(content, term) })
+      })
       |> list.map(fn(message) { Match(chat: chat, message: message) })
-    })
-    |> list.filter(fn(match) {
-      let content = fold(match.message.content)
-      list.all(folded, fn(term) { string.contains(content, term) })
     })
     |> list.sort(fn(a, b) { int.compare(a.message.at, b.message.at) })
   let total = list.length(all)
@@ -111,11 +121,19 @@ pub fn search(
 }
 
 /// "privado" for the one-on-one chat, "grupo" otherwise. A session is
-/// `channel:chat:user`; in a private chat the chat is the person.
-fn chat_label(encoded_session: String) -> String {
+/// `channel:chat:user`, the user being the last part (chat ids may hold
+/// colons); in a private chat the chat is the person.
+pub fn chat_label(encoded_session: String) -> String {
   case string.split(agent_identity.decode_principal(encoded_session), ":") {
-    [_, chat, user] if chat == user -> "privado"
-    [_, _, _] -> "grupo"
+    [_, _, _, ..] as parts -> {
+      let assert [user, ..chat_reversed] = list.reverse(parts)
+      let chat =
+        chat_reversed |> list.reverse |> list.drop(1) |> string.join(":")
+      case chat == user {
+        True -> "privado"
+        False -> "grupo"
+      }
+    }
     _ -> "privado"
   }
 }
@@ -177,8 +195,9 @@ fn words(raw: String) -> List(String) {
   |> list.filter(fn(word) { word != "" })
 }
 
+/// Case folded and without accents; invalid UTF-8 comes back unchanged.
 @external(erlang, "supernova_text_ffi", "fold")
-fn fold(text: String) -> String
+pub fn fold(text: String) -> String
 
 @external(erlang, "supernova_file_system_ffi", "list_dir")
 fn list_dir(path: String) -> Result(List(String), String)
