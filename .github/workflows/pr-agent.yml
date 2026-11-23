@@ -64,7 +64,7 @@ jobs:
           # always sends "max" as "xhigh"; with it the model thought until the
           # 128k cap and answered nothing (finish_reason: length), even on a
           # 7k-token diff. "high" is the highest level that arrives as itself.
-          config.reasoning_effort: "high"
+          config.reasoning_effort: "low"
           # Full names, as in config.model. PR-Agent also matches the bare
           # name as a suffix, but the full form needs no knowing that.
           config.additional_reasoning_effort_models: '["openrouter/deepseek/deepseek-v4.1-flash-1017"]'
