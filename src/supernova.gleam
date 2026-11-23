@@ -29,6 +29,7 @@ import supernova/adapters/telegram_router
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/sweeper as agenda_sweeper
+import supernova/channel/channel_kit
 import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/channel/registry
@@ -41,6 +42,8 @@ import supernova/core/audit_log/actor as audit_actor
 import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure as closed_group_pure
+import supernova/core/closed_group/runtime as closed_group_runtime
+import supernova/core/executor
 import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/principal
 import supernova/core/prompt_log
@@ -308,6 +311,11 @@ fn start_services(
       )
     }
   }
+
+  declare_boot_metrics(
+    registry.list_channels(channel_reg),
+    default_channel_llm_config(cfg),
+  )
 
   closed_group_global.set_alert_sender(fn(principal_id, text) {
     case principal.parse(principal_id) {
@@ -830,6 +838,26 @@ fn inbound_channel_name(inbound: port.ChannelInbound) -> String {
   case inbound {
     port.InboundMessage(message) -> message.channel
     port.InboundInteraction(interaction) -> interaction.channel
+  }
+}
+
+/// Publish the series Supernova knows it will record at zero, so the
+/// first event after a restart reaches the dashboard (see `record.declare`).
+pub fn declare_boot_metrics(
+  channels: List(String),
+  llm: Result(provider.ProviderConfig, String),
+) -> Nil {
+  list.each(channels, fn(channel) {
+    channel_kit.declare_metrics(channel)
+    closed_group_runtime.declare_gate_metrics(channel)
+  })
+  agenda_sweeper.declare_metrics()
+  case llm {
+    Ok(llm) -> {
+      executor.declare_metrics(llm.name, llm.default_model)
+      closed_group_runtime.declare_usage_metrics(llm.name, llm.default_model)
+    }
+    Error(_) -> Nil
   }
 }
 

@@ -18,6 +18,7 @@ pub type MetricsCommand {
   SetGauge(name: String, value: Int, labels: List(#(String, String)))
   AddGauge(name: String, delta: Int, labels: List(#(String, String)))
   ObserveHistogram(name: String, value: Float, labels: List(#(String, String)))
+  DeclareHistogram(name: String, labels: List(#(String, String)))
   GetMetrics(reply_to: Subject(String))
   Reset(reply_to: Subject(Nil))
 }
@@ -105,6 +106,27 @@ fn handle_message(
         histograms: new_histograms,
       ))
     }
+    DeclareHistogram(name, labels) ->
+      case find_histogram(state.histograms, name, labels) {
+        Ok(_) -> actor.continue(state)
+        Error(Nil) ->
+          actor.continue(
+            metrics_types.MetricsRegistry(
+              ..state,
+              histograms: list.prepend(
+                state.histograms,
+                metrics_types.HistogramMetric(
+                  name: name,
+                  count: 0,
+                  sum: 0.0,
+                  buckets: metrics_types.buckets_for(name)
+                    |> list.map(fn(upper) { #(upper, 0) }),
+                  labels: labels,
+                ),
+              ),
+            ),
+          )
+      }
     GetMetrics(reply_to) -> {
       let output =
         metrics_types.format_metrics(
@@ -293,6 +315,15 @@ pub fn observe_histogram(
   labels: List(#(String, String)),
 ) {
   actor.send(metrics, ObserveHistogram(name, value, labels))
+}
+
+/// Publish a histogram series with no observations yet, if it is missing.
+pub fn declare_histogram(
+  metrics: Metrics,
+  name: String,
+  labels: List(#(String, String)),
+) -> Nil {
+  actor.send(metrics, DeclareHistogram(name, labels))
 }
 
 pub fn get_metrics(metrics: Metrics) -> String {

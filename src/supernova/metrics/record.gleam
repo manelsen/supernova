@@ -36,6 +36,20 @@ pub fn duration_ms(
   })
 }
 
+/// Publish a counter series at zero before its first event. Prometheus's
+/// `increase` only counts what comes after a series' first sample, so a
+/// series born at 1 loses that first event; declared at boot, it does not.
+pub fn declare(name: String, labels: List(#(String, String))) -> Nil {
+  count_by(name, 0, labels)
+}
+
+/// Publish a `_seconds` histogram series with no observations yet.
+pub fn declare_duration(name: String, labels: List(#(String, String))) -> Nil {
+  with_metrics(fn(metrics) {
+    metrics_actor.declare_histogram(metrics, name, labels)
+  })
+}
+
 fn with_metrics(record: fn(metrics_actor.Metrics) -> Nil) -> Nil {
   case metrics_global.get_metrics() {
     option.Some(metrics) -> record(metrics)

@@ -22,6 +22,13 @@ import supernova/self/incidents
 
 pub const interval_ms = 30_000
 
+/// Publish every agenda outcome at zero (see `record.declare`).
+pub fn declare_metrics() -> Nil {
+  list.each(["ran", "dropped", "missed", "sweep_crashed"], fn(outcome) {
+    record.declare("agenda_runs_total", [#("outcome", outcome)])
+  })
+}
+
 /// The message the agent receives when an entry comes due.
 pub fn wake_message(
   principal: String,

@@ -664,6 +664,12 @@ pub fn is_chat_management_command(content: String) -> Bool {
   }
 }
 
+/// Every label `decision_label` can return.
+pub const decision_labels = [
+  "allowed", "denied", "chat_denied", "rate_limited", "budget", "instance_cap",
+  "fail_closed", "eu", "command", "missing_sender", "ignored",
+]
+
 /// Label of a gate decision, for metrics. `content` is the inbound text and
 /// `denied_reply` the configured refusal.
 pub fn decision_label(
