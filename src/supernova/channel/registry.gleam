@@ -25,6 +25,7 @@ import supernova/channel/chat_lanes
 import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/config
+import supernova/core/closed_group/commands as closed_group_commands
 
 /// A registry of all channel adapters, keyed by channel name.
 pub type ChannelRegistry {
@@ -178,12 +179,19 @@ fn starters(
       |> result.map(fn(pair) { #(pair.0, None) })
     }),
     Starter("telegram", True, fn() {
-      streaming(telegram_channel.start_telegram_channel(
-        cfg.telegram,
-        handler,
-        hooks,
-        health,
-      ))
+      let started =
+        telegram_channel.start_telegram_channel(
+          cfg.telegram,
+          handler,
+          hooks,
+          health,
+        )
+      // Tests drive Telegram without polling; they do not publish a menu.
+      case started, hooks.disable_telegram_polling {
+        Ok(_), False -> publish_telegram_menu(cfg)
+        _, _ -> Nil
+      }
+      streaming(started)
     }),
     Starter("slack", False, fn() {
       streaming(slack_channel.start_slack_channel(cfg.slack, handler, hooks))
@@ -390,4 +398,29 @@ pub fn inject(
       Ok(Nil)
     }
   }
+}
+
+/// The closed group's commands as the Telegram menu, in the background: the
+/// boot does not wait on Telegram.
+fn publish_telegram_menu(cfg: config.Config) -> Nil {
+  let pairs = fn(is_admin) {
+    closed_group_commands.for_role(is_admin)
+    |> list.map(fn(command) { #(command.name, command.description) })
+  }
+  let admin_ids =
+    list.filter_map(cfg.access.admins, fn(principal) {
+      case principal {
+        "telegram:" <> id -> Ok(id)
+        _ -> Error(Nil)
+      }
+    })
+  process.spawn_unlinked(fn() {
+    telegram_channel.publish_menu(
+      cfg.telegram,
+      pairs(False),
+      pairs(True),
+      admin_ids,
+    )
+  })
+  Nil
 }
