@@ -55,14 +55,27 @@ const default_retry_config =
   )
 
 /// Publish the default model's request series at zero (see `record.declare`).
+///
+/// The error series are declared too, one per error type: the alert on
+/// model failures counts them with `increase`, which misses a series' first
+/// sample.
 pub fn declare_metrics(provider_name: String, model: String) -> Nil {
   case metrics_global.get_metrics() {
-    option.Some(metrics) ->
+    option.Some(metrics) -> {
       metrics_actor.add_counter(metrics, "llm_requests_total", 0, [
         #("provider", provider_name),
         #("model", model),
         #("status", "success"),
       ])
+      list.each(error_type_names, fn(error_type) {
+        metrics_actor.add_counter(metrics, "llm_requests_total", 0, [
+          #("provider", provider_name),
+          #("model", model),
+          #("status", "error"),
+          #("error_type", error_type),
+        ])
+      })
+    }
     option.None -> Nil
   }
 }
@@ -463,6 +476,12 @@ fn run_loop_inner_with_checkpoint(
     }
   }
 }
+
+/// Every label `error_type_name` can return.
+const error_type_names = [
+  "api_error", "network_error", "config_error", "provider_not_found",
+  "not_implemented", "circuit_open",
+]
 
 fn error_type_name(err: provider.LLMError) -> String {
   case err {

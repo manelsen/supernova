@@ -151,10 +151,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 ### 3.2 Canais
 
-- **O menu de comandos do Telegram e o `/help` não batem com o que a Supernova faz.** Visto pelo mantenedor em 22/11.
-  - O menu mostra `start`, `new`, `stop`, `restart`, `status`, `dream`, `dream_log`, `dream_restore` e `help`. A Supernova nunca chama `setMyCommands`, então o Telegram guarda a lista de outro programa que usou o mesmo token.
-  - O `/help` é o texto genérico de `core/ux.gleam` ("Supernova AI Agent Framework", `/reasoning`, `/commands`...). Ele não lista os comandos do grupo fechado (`/uso`, `/esquecer`, `/agenda`, `/eu`, `/auditoria`...).
-  - **Para fazer:** registrar o menu no boot a partir de `traits.command_list`, um por papel se o Telegram permitir (`BotCommandScope`), e gerar o `/help` da mesma lista, conforme o papel de quem pergunta.
+- ~~**O menu de comandos do Telegram e o `/help` não batem com o que a Supernova faz.**~~ Feito em 23/11 (#51): `core/closed_group/commands` é a lista única; o `/help` responde por papel, e o boot publica o menu (`setMyCommands`) nos escopos default, privados e grupos, sem idioma, em pt e em en, e o de admin no chat de cada admin do `supernova.yaml`. Um admin adicionado depois por `/acesso` vê o menu de membro até o próximo boot.
 - **A pessoa não consegue mandar imagens, áudio nem documentos.** O Telegram ignora `photo` na entrada, e no Discord os `attachments` chegam sempre vazios. O caminho de imagem até o modelo já existe, desde a PR #34.
 - **O grupo fechado só existe em Telegram e Discord.**
   - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais".
@@ -183,7 +180,8 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **Etapa 1, feita:** exposição no formato do Prometheus (um `TYPE` por família, buckets cumulativos com `+Inf`, escape, newline final; antes o `TYPE` repetido fazia o Prometheus recusar o scrape inteiro, e os histogramas não tinham buckets); durações em segundos; `agents_active` como gauge; o score de complexidade saiu dos labels. O tracer e o circuit breaker nunca eram encontrados no global (a checagem de vida recebia o Subject, não o pid): nenhum span era aberto e o breaker nunca era consultado. Corrigido; o breaker conta só indisponibilidade do provedor (rede, 5xx, 429). O `/metrics` "vazio no piloto" era efeito de restart: depois de uma conversa, ele está preenchido.
   - **Etapa 2, feita:** mensagens por canal, duração e desfecho de cada turno, respostas que não chegaram (antes descartadas em silêncio), recusas de fila, decisões do gate, tokens e custo, agenda, erros de poll; o caminho de streaming passa pelo mesmo span, breaker e métricas. Um log não derruba mais um turno cujo group leader morreu (`infra/safe_io`).
   - **Etapa 3, feita:** Prometheus (90 dias, até 2 GB) e Grafana no compose, no perfil `observabilidade`, só no loopback do host (acesso por túnel SSH), com o painel Supernova provisionado. O Prometheus 3 recusa scrape sem `Content-Type` reconhecido; o do `/metrics` agora tem teste.
-  - **Próximos:** alertas (Grafana avisando no Telegram quando a Supernova cai, respostas não chegam ou o custo do dia passa de um limite); exportação OTLP dos spans.
+  - **Alertas, feitos (23/11):** cinco regras no Grafana (Supernova fora do ar, respostas que não chegaram, falhas do modelo, canal sem conexão, custo do dia), na tela de Alerting sempre e no Telegram quando `SUPERNOVA_ALERT_TELEGRAM_CHAT` está no `.env`.
+  - **Próximo:** exportação OTLP dos spans.
   - **Sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` não são importados por ninguém fora dos próprios módulos.
 - **Readiness dos outros canais.** O `/health/ready` responde 503 quando um canal não está pronto e acompanha o Telegram a cada poll. Os demais canais só informam que subiram: um gateway do Discord que cai depois continua aparecendo como pronto. Entra junto com a paridade do Discord.
 - **Benchmarks** (REQ-9). O código está em `test/bench/`, mas as metas de `BENCHMARKS.md` nunca foram medidas.

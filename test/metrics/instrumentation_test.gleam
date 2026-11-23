@@ -137,6 +137,14 @@ pub fn boot_declares_series_at_zero_and_turns_add_to_them_test() {
     declared,
     "llm_cost_usd_micros_total{provider=\"mock\",model=\"mock-model\"} 0",
   )
+  has(
+    declared,
+    "llm_requests_total{provider=\"mock\",model=\"mock-model\",status=\"error\",error_type=\"network_error\"} 0",
+  )
+  has(
+    declared,
+    "llm_requests_total{provider=\"mock\",model=\"mock-model\",status=\"error\",error_type=\"circuit_open\"} 0",
+  )
   has(declared, "agenda_runs_total{outcome=\"ran\"} 0")
   has(declared, "channel_poll_errors_total{channel=\"telegram\"} 0")
   has(declared, "chat_lane_rejected_total{channel=\"telegram\"} 0")

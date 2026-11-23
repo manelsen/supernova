@@ -1,0 +1,136 @@
+# Alert rules over Supernova's metrics. grafana-start.sh copies them into
+# Grafana's provisioning, replacing __DAILY_USD__. They always show on
+# Grafana's Alerting page; telegram.yml delivers them once a chat is set.
+# See docs/operations/OBSERVABILITY.md.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: supernova
+    folder: Supernova
+    interval: 1m
+    rules:
+      - uid: supernova-fora
+        title: Supernova fora do ar
+        condition: C
+        for: 2m
+        noDataState: Alerting
+        execErrState: Alerting
+        annotations:
+          summary: A Supernova não responde ao Prometheus há 2 minutos.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: max(up{job="supernova"})
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      - uid: supernova-respostas-nao-entregues
+        title: Respostas que não chegaram
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Uma ou mais respostas não chegaram a quem perguntou nos últimos 15 minutos.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: sum(increase(channel_send_errors_total[15m]))
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+
+      - uid: supernova-falhas-do-modelo
+        title: Falhas do modelo
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Três ou mais chamadas ao modelo falharam nos últimos 15 minutos.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: sum(increase(llm_requests_total{status="error"}[15m]))
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [2.5] }
+
+      - uid: supernova-canal-sem-conexao
+        title: Canal sem conexão
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: O canal não consegue buscar mensagens há mais de 5 minutos.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: sum(increase(channel_poll_errors_total[10m]))
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [2.5] }
+
+      - uid: supernova-custo-do-dia
+        title: Custo do dia
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: O custo das últimas 24 horas passou de US$ __DAILY_USD__.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 86400, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: sum(increase(llm_cost_usd_micros_total[24h])) / 1e6
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [__DAILY_USD__] }

@@ -1,0 +1,11 @@
+# Written by grafana-start.sh when no Telegram chat is set: removes the
+# Telegram contact point and policy a previous start may have provisioned
+# (Grafana keeps them in its database after their file is gone).
+apiVersion: 1
+
+resetPolicies:
+  - 1
+
+deleteContactPoints:
+  - orgId: 1
+    uid: supernova-telegram
