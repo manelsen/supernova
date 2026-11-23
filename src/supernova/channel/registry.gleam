@@ -176,7 +176,7 @@ fn starters(
       plain(start_whatsapp_channel(cfg, handler, hooks, health))
     }),
     Starter("sim", False, fn() {
-      sim_adapter.start(cfg.sim, handler)
+      sim_adapter.start(cfg.sim, handler, hooks.registry_id)
       |> result.map(fn(pair) { #(pair.0, None) })
     }),
     Starter("telegram", True, fn() {

@@ -108,8 +108,44 @@ pub fn dispatch_inbound(
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Nil {
+  let _ =
+    dispatch_inbound_outcome(
+      handler,
+      send_fn,
+      stream_send_fn,
+      inbound,
+      registry_id,
+      turn_hard_timeout_ms,
+    )
+  Nil
+}
+
+/// What became of a message handed to `dispatch_inbound_outcome`.
+pub type Dispatched {
+  /// In the chat's lane: the turn runs, and its replies go through the
+  /// send functions.
+  Queued
+  /// The channel delivered it before: nothing runs.
+  Duplicate
+  /// The chat's lane is full, or there are too many lanes: nothing runs.
+  Refused
+  /// Supernova is stopping: it stays in the inbox and runs after restart.
+  Stopping
+}
+
+/// Like `dispatch_inbound`, telling what became of the message. A caller
+/// that waits for the turn (the sim channel) needs to know when there is
+/// no turn to wait for.
+pub fn dispatch_inbound_outcome(
+  handler: port.ChannelHandler,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  stream_send_fn: StreamSendFn,
+  inbound: port.ChannelInbound,
+  registry_id: String,
+  turn_hard_timeout_ms: Int,
+) -> Dispatched {
   case admit(inbound) {
-    False -> Nil
+    False -> Duplicate
     True ->
       dispatch_admitted(
         handler,
@@ -132,14 +168,16 @@ pub fn dispatch_recovered(
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Nil {
-  dispatch_admitted(
-    handler,
-    send_fn,
-    stream_send_fn,
-    port.InboundMessage(message),
-    registry_id,
-    turn_hard_timeout_ms,
-  )
+  let _ =
+    dispatch_admitted(
+      handler,
+      send_fn,
+      stream_send_fn,
+      port.InboundMessage(message),
+      registry_id,
+      turn_hard_timeout_ms,
+    )
+  Nil
 }
 
 /// Record a message in the inbox; False when the channel delivered it again.
@@ -188,7 +226,7 @@ fn dispatch_admitted(
   inbound: port.ChannelInbound,
   registry_id: String,
   turn_hard_timeout_ms: Int,
-) -> Nil {
+) -> Dispatched {
   let key = chat_lanes.key_for_registry(registry_id, inbound)
   let #(channel, kind) = case inbound {
     port.InboundMessage(message) -> #(message.channel, "message")
@@ -215,10 +253,10 @@ fn dispatch_admitted(
     })
   }
   case submit() {
-    chat_lanes.Accepted -> Nil
+    chat_lanes.Accepted -> Queued
     // Supernova is stopping: the message stays pending in the inbox and is
     // answered after the restart.
-    chat_lanes.Draining -> Nil
+    chat_lanes.Draining -> Stopping
     // Too many pending turns in this chat, or too many chats at once. The
     // message is not marked done: it is submitted again in the background,
     // and stays pending in the inbox until a lane takes it (PRD-E, E-01).
@@ -230,10 +268,9 @@ fn dispatch_admitted(
             notify_busy(send_fn, inbound)
           })
         })
-      Nil
+      Refused
     }
   }
-  Nil
 }
 
 /// How a refused turn ended.
