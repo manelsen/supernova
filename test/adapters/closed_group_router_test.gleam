@@ -5,11 +5,17 @@
 import e2e/e2e_support as support
 import envoy
 import gleam/erlang/process
+import gleam/list
 import gleam/option.{None}
 import gleam/string
 import gleeunit/should
+import supernova/adapters/channel_common_router as router
+import supernova/adapters/telegram_router
 import supernova/channel/port
 import supernova/config
+import supernova/core/session/history_store
+import supernova/core/session/server as session_server
+import supernova/core/session/supervisor
 
 fn cfg(members: List(String), member_tokens: Int) -> config.Config {
   let base = support.channel_config()
@@ -182,4 +188,72 @@ pub fn interaction_from_member_still_works_test() {
     string.contains(reply.content, "Já está em uso: Mock / mock-model")
     |> should.equal(True)
   })
+}
+
+/// The tool calls of a turn stay in the conversation, between the person's
+/// message and the reply, so the next turns see what the reply was built on.
+/// (With the default member capabilities the mock calls an allowed tool.)
+pub fn tool_calls_stay_in_the_conversation_test() {
+  support.with_runtime_root(cfg(["telegram:123"], 50_000), fn(root) {
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+    let store = history_store.HistoryStore(data_dir: root, limit: 100)
+    let assert Ok(sup) = supervisor.start_with_history(store)
+    let assert Ok(router) =
+      telegram_router.start_with_session_supervisor(sup, support.mock_config())
+    let handler = fn(inbound, events) {
+      telegram_router.route_inbound_for_handler(router, inbound, events)
+    }
+    ensure_born(handler, "123")
+    let events = process.new_subject()
+    let assert Ok(_) = handler(telegram_message("123", "faz algo"), events)
+    await_final_content(events)
+    |> string.contains("Mock")
+    |> should.be_true()
+
+    let history = history_store.load(store, "telegram:123:123")
+    let assert [call, result, reply] =
+      history
+      |> list.drop_while(fn(m) { m.content != "faz algo" })
+      |> list.drop(1)
+    call.role |> should.equal("tool_call")
+    call.content |> string.contains("\"name\":\"canvas\"") |> should.be_true()
+    result.role |> should.equal("tool")
+    result.content |> should.equal("tool-ok")
+    reply.role |> should.equal("assistant")
+    supervisor.stop(sup)
+  })
+}
+
+/// Kept tool calls go back to the model as a call and its answer sharing a
+/// nine-character id (Mistral's rule); a call without its result, or a
+/// result without its call, is left out, as the APIs refuse them.
+pub fn kept_tool_calls_become_calls_and_answers_test() {
+  let m = fn(role, content) {
+    session_server.ChatMessage(role: role, content: content)
+  }
+  let messages =
+    router.provider_messages_from_session_history([
+      m("tool", "órfão"),
+      m("user", "procura"),
+      m("tool_call", "{\"name\":\"buscar_conversa\",\"arguments\":\"{}\"}"),
+      m("tool", "achei"),
+      m("assistant", "aqui está"),
+      m("user", "de novo"),
+      m("tool_call", "{\"name\":\"buscar_conversa\",\"arguments\":\"{}\"}"),
+      m("assistant", "sem resultado"),
+    ])
+  let assert [user1, call, answer, reply1, user2, reply2] = messages
+  user1.content |> should.equal("procura")
+  let assert option.Some([tool_call]) = call.tool_calls
+  tool_call.name |> should.equal("buscar_conversa")
+  string.length(tool_call.id) |> should.equal(9)
+  answer.role |> should.equal("tool")
+  answer.tool_call_id |> should.equal(option.Some(tool_call.id))
+  answer.content |> should.equal("achei")
+  reply1.content |> should.equal("aqui está")
+  user2.content |> should.equal("de novo")
+  reply2.content |> should.equal("sem resultado")
 }

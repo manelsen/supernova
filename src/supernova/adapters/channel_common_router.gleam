@@ -9,8 +9,10 @@
 
 import envoy
 import gleam/dict.{type Dict}
+import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -287,19 +289,71 @@ fn closed_group_gate_for(
   }
 }
 
+/// One tool call of a turn and what it returned, kept in the conversation
+/// so the next turns see the evidence the reply was built on.
+pub type ToolRound {
+  ToolRound(name: String, arguments: String, result: String)
+}
+
+/// A turn: the reply, and the tool calls made on the way to it.
 fn run_executor_for_context(
   messages: List(provider.ChatMessage),
   llm_config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
   context: Option(closed_group_types.PrincipalContext),
-) -> Result(provider.ChatResponse, executor.ExecutorError) {
-  run_executor_for_context_with_purpose(
-    messages,
-    llm_config,
-    tools,
-    context,
-    "turn",
-  )
+) -> #(Result(provider.ChatResponse, executor.ExecutorError), List(ToolRound)) {
+  case context, closed_group_global.get_runtime() {
+    Some(turn), Some(runtime) -> {
+      // Owned by this turn's process: the gateway calls report here, and
+      // the turn collects them once the executor is done.
+      let rounds = process.new_subject()
+      let run_context =
+        executor.RunContext(
+          ..closed_group_runtime.run_context(runtime, turn),
+          purpose: "turn",
+        )
+      let recorded =
+        executor.RunContext(
+          ..run_context,
+          invoke_tool: option.map(run_context.invoke_tool, fn(invoke) {
+            fn(name, arguments) {
+              let result = invoke(name, arguments)
+              process.send(
+                rounds,
+                ToolRound(
+                  name: name,
+                  arguments: arguments,
+                  result: case result {
+                    Ok(output) -> output
+                    Error(reason) -> "ERROR: " <> reason
+                  },
+                ),
+              )
+              result
+            }
+          }),
+        )
+      let result =
+        executor.run_with_context(
+          messages,
+          llm_config,
+          closed_group_runtime.tools_for(runtime, turn.role, tools),
+          recorded,
+        )
+      #(result, drain_rounds(rounds, []))
+    }
+    _, _ -> #(executor.run(messages, llm_config, tools), [])
+  }
+}
+
+fn drain_rounds(
+  rounds: process.Subject(ToolRound),
+  acc: List(ToolRound),
+) -> List(ToolRound) {
+  case process.receive(rounds, within: 0) {
+    Ok(round) -> drain_rounds(rounds, [round, ..acc])
+    Error(Nil) -> list.reverse(acc)
+  }
 }
 
 fn run_executor_for_context_with_purpose(
@@ -680,18 +734,19 @@ fn handle_inbound_message_allowed(
                                   msg.content,
                                   profile,
                                 )
-                              case
+                              let #(turn_result, rounds) =
                                 run_executor_for_context(
                                   messages,
                                   llm_config,
                                   executor.builtin_tools(),
                                   context,
                                 )
-                              {
+                              case turn_result {
                                 Ok(chat_response) -> {
                                   record_session_turn(
                                     rich_session,
                                     msg.content,
+                                    rounds,
                                     chat_response.content,
                                   )
                                   apply_success_self_state(
@@ -1909,7 +1964,7 @@ fn consume_executor_stream(
       )
     Ok(llm_stream.Done) -> {
       let final_content = default_response(msg.content, session_id, accumulated)
-      record_session_turn(rich_session, msg.content, final_content)
+      record_session_turn(rich_session, msg.content, [], final_content)
       apply_success_self_state(
         profile,
         session_id,
@@ -1960,11 +2015,13 @@ fn fallback_to_non_streaming_reply(
   profile: SessionProfile,
   context: Option(closed_group_types.PrincipalContext),
 ) -> Nil {
-  case run_executor_for_context(messages, llm_config, tools, context) {
+  let #(turn_result, rounds) =
+    run_executor_for_context(messages, llm_config, tools, context)
+  case turn_result {
     Ok(chat_response) -> {
       let final_content =
         default_response(msg.content, session_id, chat_response.content)
-      record_session_turn(rich_session, msg.content, final_content)
+      record_session_turn(rich_session, msg.content, rounds, final_content)
       apply_success_self_state(
         profile,
         session_id,
@@ -2189,7 +2246,7 @@ fn executor_messages_for_turn(
     Some(session) ->
       list.append(
         rich_session.get_history(session)
-          |> list.map(provider_message_from_session_history),
+          |> provider_messages_from_session_history,
         [provider.user_message(content)],
       )
     None -> [provider.user_message(content)]
@@ -2334,18 +2391,66 @@ fn core_context_fallback(
   )
 }
 
-fn provider_message_from_session_history(
-  message: rich_session.ChatMessage,
-) -> provider.ChatMessage {
-  case message {
-    rich_session.ChatMessage(role: "system", content: content) ->
-      provider.system_message(content)
-    rich_session.ChatMessage(role: "assistant", content: content) ->
-      provider.assistant_message(content)
-    rich_session.ChatMessage(role: "tool", content: content) ->
-      provider.tool_result_message("session-history-tool", content)
-    rich_session.ChatMessage(_, content) -> provider.user_message(content)
-  }
+/// The conversation as the model receives it. A kept tool call becomes an
+/// assistant message calling the tool, and the result that follows it a
+/// tool message answering that call, with an id both share (nine letters
+/// and digits: Mistral refuses any other shape). A result whose call is not
+/// there (cut by the window) is left out, as the APIs refuse it.
+pub fn provider_messages_from_session_history(
+  history: List(rich_session.ChatMessage),
+) -> List(provider.ChatMessage) {
+  history
+  |> list.index_map(fn(message, index) { #(index, message) })
+  |> list.fold(#([], None), fn(acc, item) {
+    // `pending` is a call waiting for its result: both go out together, or
+    // neither does.
+    let #(out, pending) = acc
+    let #(index, message) = item
+    case message {
+      rich_session.ChatMessage(role: "tool_call", content: content) ->
+        case json.parse(content, kept_tool_call_decoder()) {
+          Ok(#(name, arguments)) -> {
+            let id = "h" <> string.pad_start(int.to_string(index), 8, "0")
+            let call =
+              provider.ChatMessage(
+                ..provider.assistant_message(""),
+                tool_calls: Some([
+                  provider.ToolCall(id: id, name: name, arguments: arguments),
+                ]),
+              )
+            #(out, Some(#(id, call)))
+          }
+          Error(_) -> #(out, None)
+        }
+      rich_session.ChatMessage(role: "tool", content: content) ->
+        case pending {
+          Some(#(id, call)) -> #(
+            [provider.tool_result_message(id, content), call, ..out],
+            None,
+          )
+          None -> #(out, None)
+        }
+      rich_session.ChatMessage(role: "system", content: content) -> #(
+        [provider.system_message(content), ..out],
+        None,
+      )
+      rich_session.ChatMessage(role: "assistant", content: content) -> #(
+        [provider.assistant_message(content), ..out],
+        None,
+      )
+      rich_session.ChatMessage(_, content) -> #(
+        [provider.user_message(content), ..out],
+        None,
+      )
+    }
+  })
+  |> fn(acc) { list.reverse(acc.0) }
+}
+
+fn kept_tool_call_decoder() -> decode.Decoder(#(String, String)) {
+  use name <- decode.field("name", decode.string)
+  use arguments <- decode.field("arguments", decode.string)
+  decode.success(#(name, arguments))
 }
 
 fn toggle_reasoning_preference(profile: SessionProfile, enabled: Bool) -> Bool {
@@ -2357,24 +2462,63 @@ fn toggle_reasoning_preference(profile: SessionProfile, enabled: Bool) -> Bool {
   toggled
 }
 
+/// The person's message, the turn's tool calls (each a "tool_call" with
+/// its name and arguments, then a "tool" with what it returned, cut to
+/// `max_tool_result_chars`), and the reply.
 fn record_session_turn(
   rich_session: Option(rich_session.Session),
   user_content: String,
+  rounds: List(ToolRound),
   assistant_content: String,
 ) -> Nil {
   case rich_session {
     Some(session) -> {
+      let tool_messages =
+        list.flat_map(rounds, fn(round) {
+          [
+            rich_session.ChatMessage(
+              role: "tool_call",
+              content: json.to_string(
+                json.object([
+                  #("name", json.string(round.name)),
+                  #("arguments", json.string(round.arguments)),
+                ]),
+              ),
+            ),
+            rich_session.ChatMessage(
+              role: "tool",
+              content: cut_tool_result(round.result),
+            ),
+          ]
+        })
       let _ =
-        rich_session.append_messages(session, [
-          rich_session.ChatMessage(role: "user", content: user_content),
-          rich_session.ChatMessage(
-            role: "assistant",
-            content: assistant_content,
-          ),
-        ])
+        rich_session.append_messages(
+          session,
+          list.flatten([
+            [rich_session.ChatMessage(role: "user", content: user_content)],
+            tool_messages,
+            [
+              rich_session.ChatMessage(
+                role: "assistant",
+                content: assistant_content,
+              ),
+            ],
+          ]),
+        )
       Nil
     }
     None -> Nil
+  }
+}
+
+/// A tool result kept in the conversation is cut here: it is sent again on
+/// every turn while it stays in the window.
+const max_tool_result_chars = 4000
+
+fn cut_tool_result(result: String) -> String {
+  case string.length(result) > max_tool_result_chars {
+    True -> string.slice(result, 0, max_tool_result_chars) <> " …(cortado)"
+    False -> result
   }
 }
 

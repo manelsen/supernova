@@ -326,3 +326,23 @@ pub fn json_keys_are_not_matched_test() {
   |> string.contains("1 mensagem encontrada")
   |> should.be_true()
 }
+
+/// The tool calls kept in the conversation are not searched: a search must
+/// not find the results of an earlier search, only what was said.
+pub fn kept_tool_calls_are_not_searched_test() {
+  use dir <- with_dir
+  say(dir, "telegram:42:42", [
+    #("user", "procura o médico", 0),
+    #("tool_call", "{\"name\":\"buscar_conversa\",\"arguments\":\"{}\"}", 1),
+    #("tool", "1 mensagem encontrada: dr. Otávio Lacerda", 2),
+    #("assistant", "Achei.", 3),
+  ])
+  run(dir, "telegram:42", "lacerda")
+  |> should.equal("Nada encontrado para \"lacerda\" nas conversas guardadas.")
+  run(dir, "telegram:42", "medico")
+  |> should.equal(
+    "1 mensagem encontrada, em 1 trecho:\n\n"
+    <> "» [26/11/2026 09:00] pessoa: procura o médico\n"
+    <> "  [26/11/2026 09:03] você: Achei.",
+  )
+}
