@@ -14,8 +14,8 @@ concurrency:
 jobs:
   pr_agent_job:
     # Skip events raised by bots (including PR-Agent itself). Comment commands
-    # spend the OpenRouter key, so only PR comments from people with write
-    # access to the repo run them. Fork PRs get no secrets, so they are skipped
+    # spend the OpenRouter key, so only PR comments from the owner, members and
+    # collaborators run them (in this personal repo, collaborators can push). Fork PRs get no secrets, so they are skipped
     # rather than failing.
     if: >-
       ${{ github.event.sender.type != 'Bot' && (
@@ -26,6 +26,8 @@ jobs:
         )
       ) }}
     runs-on: ubuntu-latest
+    # A hung run would otherwise hold a runner for six hours.
+    timeout-minutes: 15
     permissions:
       contents: read
       issues: write
