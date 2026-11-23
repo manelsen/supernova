@@ -129,6 +129,50 @@ pub fn provider_refusal_keeps_no_conversation_text_test() {
   |> should.equal("não consegui falar com o provedor do modelo (falha de rede)")
 }
 
+/// Every way a turn can fail becomes a plain description the agent reads
+/// about itself, and none carries what the provider sent back.
+pub fn every_failure_has_its_own_description_test() {
+  let cases = [
+    #(
+      executor.LLMError(provider.APIError(503, "SEGREDO do corpo")),
+      "o provedor do modelo respondeu com erro (status 503)",
+    ),
+    #(
+      executor.LLMError(provider.CircuitOpen("mistral")),
+      "o provedor do modelo ficou fora por um tempo, depois de várias falhas seguidas",
+    ),
+    #(
+      executor.LLMError(provider.ConfigError("SEGREDO")),
+      "a configuração do provedor do modelo está inválida",
+    ),
+    #(
+      executor.LLMError(provider.ProviderNotFound("zeta")),
+      "o provedor do modelo não foi encontrado (zeta)",
+    ),
+    #(
+      executor.LLMError(provider.NotImplemented("SEGREDO")),
+      "o provedor do modelo não oferece esse recurso",
+    ),
+    #(
+      executor.ToolError("agenda", "horário inválido"),
+      "a ferramenta agenda falhou: horário inválido",
+    ),
+    #(
+      executor.MaxDepthExceeded(12),
+      "a tarefa ficou longa demais e parei no meio (limite de 12 passos)",
+    ),
+    #(executor.YieldAborted("x"), "a execução foi interrompida no meio"),
+    #(executor.YieldPaused("x"), "a execução foi pausada no meio"),
+    #(
+      executor.PolicyDenied("teto do dia"),
+      "a Supernova não permitiu: teto do dia",
+    ),
+  ]
+  list.each(cases, fn(pair) {
+    router.incident_text(pair.0) |> should.equal(pair.1)
+  })
+}
+
 pub fn recent_is_ordered_by_time_test() {
   use dir <- with_data_dir
   let assert Ok(_) = incidents.record(dir, owner, now + 2 * hour, "depois")
