@@ -23,6 +23,7 @@ gleam run -m supernova/stress/run -- \
 | `--seconds` | `120` | duração da carga |
 | `--search-every` | `5` | uma em cada N mensagens pede `buscar_conversa` |
 | `--no-chaos` | desligado | sem matar sessões nem reiniciar o runtime |
+| `--parallel` | desligado | `routing.parallel: true`: a fase anterior ao LLM roda na fila de cada chat (PRD-P) |
 | `--out` | `stress-out` | diretório da execução |
 
 O relatório fica em `<out>/<instante>/report.md`. O `data_dir` da execução fica ao

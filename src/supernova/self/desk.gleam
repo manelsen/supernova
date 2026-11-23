@@ -194,6 +194,7 @@ fn handle_desk(
     }
     ForgetBegin(reply, forgetter, waiting_ms) if waiting_ms <= 0 -> {
       // Exclusive work that does not wait for turns (the birth).
+      view_put(forgetting_key(state.data_dir, state.principal), True)
       let monitor = process.monitor(forgetter)
       actor.send(reply, Nil)
       actor.continue(
@@ -205,6 +206,7 @@ fn handle_desk(
       )
     }
     ForgetBegin(reply, forgetter, waiting_ms) -> {
+      view_put(forgetting_key(state.data_dir, state.principal), True)
       let monitor = process.monitor(forgetter)
       let forgetting = Forgetting(forgetter, monitor, Some(reply))
       process.send_after(state.me, waiting_ms, ForgetDeadline(forgetter))
@@ -289,6 +291,7 @@ fn end_forgetting(state: DeskState, forgetter: Pid) -> DeskState {
   case state.forgetting {
     Some(Forgetting(who, monitor, _)) if who == forgetter -> {
       process.demonitor_process(monitor)
+      view_delete(forgetting_key(state.data_dir, state.principal))
       let started =
         list.fold(list.reverse(state.held), state, fn(acc, held) {
           let #(reply, turn) = held
@@ -645,6 +648,22 @@ fn relationship_key(
   user_id: String,
 ) -> #(String, String, String) {
   #(data_dir, principal, "relationship:" <> user_id)
+}
+
+fn forgetting_key(
+  data_dir: String,
+  principal: String,
+) -> #(String, String, String) {
+  #("forgetting", data_dir, principal)
+}
+
+/// Whether an /esquecer (or other exclusive work) is under way for the
+/// agent.
+pub fn is_forgetting(data_dir: String, principal: String) -> Bool {
+  case view_get(forgetting_key(data_dir, principal)) {
+    Ok(True) -> True
+    _ -> False
+  }
 }
 
 fn view_put(key: k, value: v) -> Nil {

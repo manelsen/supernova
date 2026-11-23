@@ -20,6 +20,7 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import supernova/adapters/channel_router
+import supernova/adapters/direct_routers
 import supernova/adapters/mcp/config_loader
 import supernova/adapters/mcp_manager
 import supernova/agenda/runtime as agenda_runtime
@@ -799,6 +800,39 @@ pub fn build_channel_handler(
   session_supervisor: supervisor.SessionSupervisor,
 ) -> Result(port.ChannelHandler, String) {
   use llm_config <- result.try(default_channel_llm_config(cfg))
+  case cfg.routing.parallel {
+    True -> Ok(direct_channel_handler(session_supervisor, llm_config))
+    False -> actor_channel_handler(session_supervisor, llm_config)
+  }
+}
+
+/// `routing.parallel`: the pre-LLM phase runs in each chat's lane (PRD-P,
+/// P-05). One state per channel, in ETS, shared by the lanes. The table comes
+/// from the adapters layer; the core never names a channel (PRD-C, C-01).
+fn direct_channel_handler(
+  session_supervisor: supervisor.SessionSupervisor,
+  llm_config: provider.ProviderConfig,
+) -> port.ChannelHandler {
+  let handlers = direct_routers.handlers(session_supervisor, llm_config)
+  fn(inbound, stream_events) {
+    let channel = inbound_channel_name(inbound)
+    case dict.get(handlers, channel) {
+      Ok(handler) -> handler(inbound, stream_events)
+      Error(Nil) -> {
+        io.println("⚠ Received message for unconfigured channel: " <> channel)
+        Error(port.Ignored("channel not configured: " <> channel))
+      }
+    }
+  }
+}
+
+/// The pre-LLM phase in each channel's router actor, one message at a time
+/// per channel. The table comes from the channel catalog: every channel whose
+/// traits say it routes inbound (PRD-C, C-01).
+fn actor_channel_handler(
+  session_supervisor: supervisor.SessionSupervisor,
+  llm_config: provider.ProviderConfig,
+) -> Result(port.ChannelHandler, String) {
   use routers <- result.try(
     channel_catalog.all()
     |> list.filter(fn(channel) { channel.routes_inbound })

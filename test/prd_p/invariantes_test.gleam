@@ -25,6 +25,7 @@ import supernova/core/prompt_log
 import supernova/core/session/history_store
 import supernova/harness/sim_client
 import supernova/self/core as self_core
+import supernova/self/desk
 import supernova/self/sampler
 import test_workspace
 
@@ -41,7 +42,9 @@ fn principal(user: String) -> String {
 /// Boot the whole Supernova for `members` (born and named) and `unborn`
 /// (members without a core yet), with private chats `dm-<user>` and one
 /// group `grp` holding everyone.
-fn with_supernova(
+/// `parallel`: `routing.parallel`, the pre-LLM phase in each chat's lane.
+fn with_supernova_routing(
+  parallel: Bool,
   members: List(String),
   unborn: List(String),
   body: fn(Ctx) -> a,
@@ -60,6 +63,7 @@ fn with_supernova(
       config.Config(
         ..base,
         environment: "harness",
+        routing: config.RoutingConfig(parallel: parallel),
         data_dir: data_dir,
         providers: dict.from_list([
           #(
@@ -196,8 +200,8 @@ fn wait_until(ready: fn() -> Bool, ms: Int) -> Bool {
 
 /// Messages sent to the same chat at the same time never overlap: the
 /// conversation alternates each message and its own reply.
-pub fn i1_turns_of_a_chat_never_overlap_test() {
-  use ctx <- with_supernova(["ana"], [])
+fn i1_turns_of_a_chat_never_overlap(parallel: Bool) {
+  use ctx <- with_supernova_routing(parallel, ["ana"], [])
   let contents =
     list.repeat(Nil, 12)
     |> list.index_map(fn(_, i) { "[mock-eco] mensagem " <> int.to_string(i) })
@@ -226,8 +230,8 @@ pub fn i1_turns_of_a_chat_never_overlap_test() {
 
 /// Two first messages of the same person, in two chats at once, before the
 /// agent exists: one birth, one call to the model to be born.
-pub fn i2_two_first_messages_one_birth_test() {
-  use ctx <- with_supernova([], ["carla"])
+fn i2_two_first_messages_one_birth(parallel: Bool) {
+  use ctx <- with_supernova_routing(parallel, [], ["carla"])
   let _ =
     say_all(ctx, [
       #("carla", "dm-carla", "oi"),
@@ -275,8 +279,8 @@ fn forget_with_a_turn_in_flight(ctx: Ctx) -> String {
 
 /// Nothing said before a confirmed /esquecer survives in her conversations,
 /// even with a turn of hers in flight in another chat.
-pub fn i3_nothing_said_before_forgetting_survives_test() {
-  use ctx <- with_supernova(["ana"], [])
+fn i3_nothing_said_before_forgetting_survives(parallel: Bool) {
+  use ctx <- with_supernova_routing(parallel, ["ana"], [])
   let _ = forget_with_a_turn_in_flight(ctx)
   let dir = history_store.dir(ctx.data_dir, principal("ana"))
   case list_dir(dir) {
@@ -292,8 +296,8 @@ pub fn i3_nothing_said_before_forgetting_survives_test() {
 
 /// The turn in flight is answered: /esquecer waits for it (D2, P-03) and
 /// erases it too (the test above).
-pub fn i3_the_turn_in_flight_is_answered_test() {
-  use ctx <- with_supernova(["ana"], [])
+fn i3_the_turn_in_flight_is_answered(parallel: Bool) {
+  use ctx <- with_supernova_routing(parallel, ["ana"], [])
   forget_with_a_turn_in_flight(ctx) |> should.equal("ok")
 }
 
@@ -305,8 +309,8 @@ pub fn i3_the_turn_in_flight_is_answered_test() {
 /// the group, each count once in the relationship: the end of every turn
 /// changes it through the agent's process (P-02). The deterministic test of
 /// that process is in `self/desk_test`; this one checks the whole path.
-pub fn i4_every_turn_counts_once_test() {
-  use ctx <- with_supernova(["ana"], [])
+fn i4_every_turn_counts_once(parallel: Bool) {
+  use ctx <- with_supernova_routing(parallel, ["ana"], [])
   let messages =
     list.repeat(Nil, 30)
     |> list.index_map(fn(_, i) {
@@ -331,8 +335,8 @@ pub fn i4_every_turn_counts_once_test() {
 
 /// Every turn answered at the same time, across chats and people, is in its
 /// conversation.
-pub fn i5_every_answered_turn_is_kept_test() {
-  use ctx <- with_supernova(["ana", "bia"], [])
+fn i5_every_answered_turn_is_kept(parallel: Bool) {
+  use ctx <- with_supernova_routing(parallel, ["ana", "bia"], [])
   let messages =
     list.flat_map(["ana", "bia"], fn(user) {
       list.repeat(Nil, 6)
@@ -361,8 +365,8 @@ pub fn i5_every_answered_turn_is_kept_test() {
 
 /// With the closed group's runtime gone, a message is refused, never let
 /// through.
-pub fn i6_the_gate_fails_closed_test() {
-  use ctx <- with_supernova(["ana"], [])
+fn i6_the_gate_fails_closed(parallel: Bool) {
+  use ctx <- with_supernova_routing(parallel, ["ana"], [])
   say(ctx, "ana", "dm-ana", "[mock-eco] antes") |> should.equal("ok")
   // The closed group still in force, its runtime gone.
   closed_group_global.clear_runtime()
@@ -379,8 +383,8 @@ pub fn i6_the_gate_fails_closed_test() {
 
 /// One person's search never reaches another's conversation, even with
 /// both talking at the same time.
-pub fn i7_a_search_never_reaches_another_person_test() {
-  use ctx <- with_supernova(["ana", "bia"], [])
+fn i7_a_search_never_reaches_another_person(parallel: Bool) {
+  use ctx <- with_supernova_routing(parallel, ["ana", "bia"], [])
   let _ =
     say_all(ctx, [
       #("ana", "dm-ana", "[mock-eco] meu segredo é abacaxi"),
@@ -426,3 +430,116 @@ fn write_file(path: String, content: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_stress_ffi", "open_client")
 fn open_client(workers: Int) -> Nil
+
+pub fn i1_turns_of_a_chat_never_overlap_test() {
+  i1_turns_of_a_chat_never_overlap(False)
+}
+
+pub fn i1_turns_of_a_chat_never_overlap_parallel_test() {
+  i1_turns_of_a_chat_never_overlap(True)
+}
+
+pub fn i2_two_first_messages_one_birth_test() {
+  i2_two_first_messages_one_birth(False)
+}
+
+pub fn i2_two_first_messages_one_birth_parallel_test() {
+  i2_two_first_messages_one_birth(True)
+}
+
+pub fn i3_nothing_said_before_forgetting_survives_test() {
+  i3_nothing_said_before_forgetting_survives(False)
+}
+
+pub fn i3_nothing_said_before_forgetting_survives_parallel_test() {
+  i3_nothing_said_before_forgetting_survives(True)
+}
+
+pub fn i3_the_turn_in_flight_is_answered_test() {
+  i3_the_turn_in_flight_is_answered(False)
+}
+
+pub fn i3_the_turn_in_flight_is_answered_parallel_test() {
+  i3_the_turn_in_flight_is_answered(True)
+}
+
+pub fn i4_every_turn_counts_once_test() {
+  i4_every_turn_counts_once(False)
+}
+
+pub fn i4_every_turn_counts_once_parallel_test() {
+  i4_every_turn_counts_once(True)
+}
+
+pub fn i5_every_answered_turn_is_kept_test() {
+  i5_every_answered_turn_is_kept(False)
+}
+
+pub fn i5_every_answered_turn_is_kept_parallel_test() {
+  i5_every_answered_turn_is_kept(True)
+}
+
+pub fn i6_the_gate_fails_closed_test() {
+  i6_the_gate_fails_closed(False)
+}
+
+pub fn i6_the_gate_fails_closed_parallel_test() {
+  i6_the_gate_fails_closed(True)
+}
+
+pub fn i7_a_search_never_reaches_another_person_test() {
+  i7_a_search_never_reaches_another_person(False)
+}
+
+pub fn i7_a_search_never_reaches_another_person_parallel_test() {
+  i7_a_search_never_reaches_another_person(True)
+}
+
+// ============================================================================
+// P-05: a held chat does not hold another
+// ============================================================================
+
+/// Ana's /esquecer waits, in her private chat's pre-LLM phase, for her slow
+/// turn in the group. With the pre-LLM phase in each chat's lane, Bia's
+/// message in her own chat is answered meanwhile; with the channel's router
+/// actor, it waits for Ana's /esquecer.
+fn a_held_chat_and_another(parallel: Bool) -> Bool {
+  use ctx <- with_supernova_routing(parallel, ["ana", "bia"], [])
+  let slow = process.new_subject()
+  process.spawn(fn() {
+    process.send(
+      slow,
+      say(ctx, "ana", "grp", "[mock-delay-ms=3000] [mock-eco] lento"),
+    )
+  })
+  wait_until(
+    fn() {
+      prompt_log.read_all(ctx.data_dir)
+      |> list.any(string.contains(_, "lento"))
+    },
+    5000,
+  )
+  |> should.be_true()
+  let assert "ok" = say(ctx, "ana", "dm-ana", "/esquecer")
+  let forgot = process.new_subject()
+  process.spawn(fn() {
+    process.send(forgot, say(ctx, "ana", "dm-ana", "/esquecer confirmo"))
+  })
+  wait_until(fn() { desk.is_forgetting(ctx.data_dir, principal("ana")) }, 5000)
+  |> should.be_true()
+  say(ctx, "bia", "dm-bia", "[mock-eco] oi") |> should.equal("ok")
+  // Was Ana's /esquecer still waiting when Bia got her answer?
+  let answered_meanwhile = desk.is_forgetting(ctx.data_dir, principal("ana"))
+  let assert Ok("ok") = process.receive(slow, within: 30_000)
+  let assert Ok("ok") = process.receive(forgot, within: 30_000)
+  answered_meanwhile
+}
+
+pub fn a_held_chat_does_not_hold_another_parallel_test() {
+  a_held_chat_and_another(True) |> should.be_true()
+}
+
+/// The old path, for contrast: the router actor holds every chat.
+pub fn a_held_chat_holds_another_in_the_router_actor_test() {
+  a_held_chat_and_another(False) |> should.be_false()
+}

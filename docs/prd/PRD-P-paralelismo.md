@@ -347,15 +347,22 @@ dicionários internos. A/B (2 rodadas intercaladas, carga 10–11): base
 O handler roda no processo da fila (seção 6.4), atrás de `routing.parallel`
 (D4).
 
+O teste do chat parado usa um `/esquecer` esperando um turno lento da mesma
+pessoa: ele segura a fase anterior ao LLM do chat da Ana por um sinal (o
+processo da agente), sem gate falso.
+
 **Aceite:**
-- [ ] Com `routing.parallel: true`, I1 a I7 passam.
-- [ ] Teste: uma mensagem lenta no chat A (gate segurado por um sinal) não
+- [x] Com `routing.parallel: true`, I1 a I7 passam.
+- [x] Teste: uma mensagem lenta no chat A (gate segurado por um sinal) não
       atrasa a resposta de uma mensagem do chat B.
-- [ ] Com `false`, a suíte inteira passa sem mudança.
+- [x] Com `false`, a suíte inteira passa sem mudança.
 - [ ] A/B com `true` contra a linha de base: **turnos/s ≥ 2×**; o roteador
-      não é mais o processo com a maior fila.
-- [ ] Rodada com caos: zero turnos faltando.
-- [ ] Commit: `perf(router): a fase anterior ao LLM roda na fila do chat`.
+      não é mais o processo com a maior fila. **Parcial:** 1,5× (base 73,1 e
+      107,5; nova 136,6 e 132,2 turnos/s), p95 de 2,8–4,4 s para 1,6–1,9 s.
+      O roteador saiu do topo; quem está lá é a fila durável, sozinha
+      (27–28 amostras). Os 2× ficam para depois da P-06.
+- [x] Rodada com caos: zero turnos faltando (11.530 respondidos, 94,9/s).
+- [x] Commit: `perf(router): a fase anterior ao LLM roda na fila do chat`.
 
 ### P-06: O próximo teto: a fila durável ou o gate
 
