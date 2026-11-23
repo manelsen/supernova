@@ -456,13 +456,15 @@ pub type RoutingConfig {
   RoutingConfig(
     /// The pre-LLM phase (gate, session, birth, commands, model) runs in the
     /// chat's own lane, so chats no longer wait for each other in the
-    /// channel's router. Off by default until the PRD-P's P-07.
+    /// channel's router. On by default since the PRD-P's P-07; `false`
+    /// brings back the channel's router actor, until the old path is
+    /// removed.
     parallel: Bool,
   )
 }
 
 pub fn default_routing_config() -> RoutingConfig {
-  RoutingConfig(parallel: False)
+  RoutingConfig(parallel: True)
 }
 
 pub type ReflectionConfig {

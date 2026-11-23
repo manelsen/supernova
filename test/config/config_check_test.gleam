@@ -212,6 +212,15 @@ pub fn every_builtin_tool_is_a_known_capability_test() {
   |> should.equal([])
 }
 
+pub fn routing_parallel_test() {
+  parsed("data_dir: d\n").routing.parallel |> should.be_true()
+  parsed("routing:\n  parallel: false\n").routing.parallel
+  |> should.be_false()
+  let assert Ok(example) =
+    config.parse_yaml(read_file("supernova.yaml.example"))
+  example.routing.parallel |> should.be_true()
+}
+
 pub fn conversation_history_limit_test() {
   parsed("data_dir: d\n").conversation.history_limit |> should.equal(100)
   parsed("conversation:\n  history_limit: 12\n").conversation.history_limit

@@ -56,7 +56,7 @@ pub fn default_options() -> Options {
     seconds: 120,
     search_every: 5,
     chaos: True,
-    parallel: False,
+    parallel: True,
     out: "stress-out",
   )
 }
@@ -88,6 +88,8 @@ fn parse_loop(args: List(String), o: Options) -> Result(Options, String) {
       number(v, rest, fn(n) { Options(..o, search_every: n) })
     ["--no-chaos", ..rest] -> parse_loop(rest, Options(..o, chaos: False))
     ["--parallel", ..rest] -> parse_loop(rest, Options(..o, parallel: True))
+    ["--router-actor", ..rest] ->
+      parse_loop(rest, Options(..o, parallel: False))
     ["--out", v, ..rest] -> parse_loop(rest, Options(..o, out: v))
     [unknown, ..] -> Error("unknown argument: " <> unknown)
   }

@@ -50,6 +50,20 @@ Since v0.4.0 an instance runs as a closed group: it denies everyone who is not o
 
 Every charge goes to `core/resource_ledger` (`/data/ledger/<date>.jsonl`). Every decision goes to `core/audit_log`.
 
+## Concurrency (PRD-P)
+
+A message goes: channel adapter → **durable inbox** (`channel/inbox`, one append per batch of what is waiting, before the message enters a lane) → its **chat's lane** (one process per chat, in arrival order) → the **pre-LLM phase** (gate, session, birth, commands, model) → the **turn**, in a process of its own. Three scopes:
+
+| Scope | Guarantees | Mechanism |
+|---|---|---|
+| Chat | messages in order; the session's history consistent | the chat's lane |
+| Agent | one birth; one `/esquecer` at a time, waiting for the person's turns in flight; no lost write of `self_state` or the relationship | the **agent's process** (`self/desk`): the only writer of the agent's state, one change at a time; it counts the turns in flight (each monitored) |
+| Instance | concurrent reads of shared state | ETS tables (`supernova_table_ffi`, `supernova_known_ffi`) |
+
+With `routing.parallel: true` (the default) the pre-LLM phase runs in the chat's lane: chats never wait for each other. The router's state (session profiles, model choices, pending `/esquecer`) is a scope in an ETS table, not data in a process. `false` brings back one router actor per channel, until that path is removed.
+
+File I/O goes through raw calls (`supernova_file_system_ffi`, `supernova_rawfs`): no `file_server` round trip and no I/O process per call.
+
 ## The Agent's Self
 
 Each person gets their own agent, with a private self under `/data/agents/<principal>/self/` (`src/supernova/self/`):

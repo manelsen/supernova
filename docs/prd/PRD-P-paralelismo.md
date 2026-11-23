@@ -426,10 +426,16 @@ máquina mais livre.
 - Atualize `docs/ESTRESSE.md` (números novos), o `PENDENCIAS` e
   `docs/architecture`.
 
+**Feito.** Resultado e critérios em
+[relatorios/PRD-P.md](../relatorios/PRD-P.md): 1,73× sem buscas (meta 2×,
+não atingida, com a máquina compartilhada limitando a CPU), p50 4× menor,
+p95 igual (a cauda é a fila dos grupos, por I1), zero turnos faltando em 16
+rodadas. A remoção da chave fica no PENDENCIAS.
+
 **Aceite:**
-- [ ] Relatório final em `docs/relatorios/PRD-P.md`: tabela da linha de base
+- [x] Relatório final em `docs/relatorios/PRD-P.md`: tabela da linha de base
       contra o final, com as mesmas cargas.
-- [ ] Commit: `feat(router): caminho paralelo por padrão`.
+- [x] Commit: `feat(router): caminho paralelo por padrão`.
 
 ## 9. Critérios de aceite da PRD
 

@@ -30,7 +30,9 @@
 - `src/supernova/adapters/*_router.gleam`
   - per-channel entrypoint routing inbound to common logic.
 - `src/supernova/adapters/channel_common_router.gleam`
-  - shared command/runtime path across channels.
+  - shared command/runtime path across channels; its state is a scope in an ETS table, so each chat's lane runs it (`routing.parallel`).
+- `src/supernova/channel/inbox.gleam`
+  - durable inbox: a message is on disk before it enters its lane; writes are grouped.
 
 ## Kernel Layer
 
@@ -76,6 +78,7 @@
 ## The Agent's Self
 
 - `self/*`: birth, core, journal, reflection, drift, forgetting and incidents, stored per agent under `/data/agents/<principal>/self/`.
+- `self/desk`: the agent's process, the only writer of its `self_state` and relationships; it serializes birth and `/esquecer` and counts the turns in flight.
 - `priv/constellation/`, `priv/reflection/`: maintainer-owned content used by `self/*`.
 
 ## Agenda and Tools
