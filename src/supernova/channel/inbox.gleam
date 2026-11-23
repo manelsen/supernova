@@ -179,7 +179,9 @@ fn write(state: State, lines: List(String), now: Int) -> State {
     }
   }
   let state = State(..state, lines: state.lines + appended)
-  case state.lines >= compact_after {
+  // Compact when the log is twice what it must keep, so a busy day (more
+  // keys to remember than `compact_after`) does not rewrite it every time.
+  case state.lines >= compact_after + dict.size(state.seen) {
     False -> state
     True -> compact(state, now)
   }

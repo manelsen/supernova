@@ -95,24 +95,60 @@ pub fn a_message_older_than_a_day_is_not_answered_test() {
 pub fn the_log_is_compacted_and_forgets_finished_text_test() {
   use dir <- with_dir
   let assert Ok(box) = inbox.start(dir)
-  int.range(from: 1, to: 1101, with: Nil, run: fn(_, n) {
+  // Each message is two lines; the log compacts when it holds 2000 more
+  // lines than keys to remember, around the 2000th message.
+  int.range(from: 1, to: 2201, with: Nil, run: fn(_, n) {
     let message = msg(string.inspect(n), "texto " <> string.inspect(n))
     let _ = inbox.receive(box, message, n)
     inbox.done(box, inbox.key(message), n)
   })
-  let _ = inbox.receive(box, msg("pending", "ainda esperando"), 2000)
-  inbox.count(box) |> should.equal(#(1, 1101))
+  let _ = inbox.receive(box, msg("pending", "ainda esperando"), 3000)
+  inbox.count(box) |> should.equal(#(1, 2201))
 
   let assert Ok(text) = read_file(dir <> "/inbox.jsonl")
   let lines = string.split(text, "\n") |> list.filter(fn(l) { l != "" })
-  { list.length(lines) < 2000 } |> should.equal(True)
+  { list.length(lines) < 2 * 2201 } |> should.equal(True)
   string.contains(text, "texto 1\"") |> should.equal(False)
   string.contains(text, "ainda esperando") |> should.equal(True)
 
   let assert Ok(after) = inbox.start(dir)
-  inbox.receive(after, msg("5", "texto 5"), 3000) |> should.equal(False)
-  let assert [entry] = inbox.recover(after, 3000)
+  inbox.receive(after, msg("5", "texto 5"), 4000) |> should.equal(False)
+  let assert [entry] = inbox.recover(after, 4000)
   entry.message.content |> should.equal("ainda esperando")
+}
+
+/// An inbox that does not answer must not take the channel down: the
+/// message still reaches its lane.
+pub fn a_stuck_inbox_does_not_stop_the_channel_test() {
+  let previous = inbox.global()
+  use <- exception.defer(fn() {
+    case previous {
+      Some(previous) -> inbox.set_global(previous)
+      None -> inbox.clear_global()
+    }
+  })
+  let ready = process.new_subject()
+  process.spawn(fn() {
+    process.send(ready, process.new_subject())
+    process.sleep(60_000)
+  })
+  let assert Ok(stuck) = process.receive(ready, 1000)
+  inbox.set_global(stuck)
+
+  let calls = process.new_subject()
+  let handler = fn(inbound, _events) {
+    process.send(calls, inbound)
+    Error(port.Ignored("test"))
+  }
+  channel_kit.dispatch_inbound(
+    handler,
+    fn(_) { Ok(Nil) },
+    fn(_, _) { Ok(Nil) },
+    port.InboundMessage(msg("stuck", "oi")),
+    "registry:inbox-stuck",
+    1000,
+  )
+  let assert Ok(_) = process.receive(calls, 2000)
 }
 
 pub fn a_damaged_line_is_skipped_test() {

@@ -1,6 +1,7 @@
 //// Plumbing shared by the channel runtimes: start hooks, turn dispatch and
 //// generic streaming. Nothing here knows a specific channel.
 
+import exception
 import gleam/erlang/process
 import gleam/int
 import gleam/io
@@ -138,16 +139,29 @@ pub fn dispatch_recovered(
 }
 
 /// Record a message in the inbox; False when the channel delivered it again.
+/// An inbox that does not answer (a stuck disk) must not take the channel
+/// down with it: the message goes on, unrecorded, and the log says so.
 fn admit(inbound: port.ChannelInbound) -> Bool {
   case inbound, inbox.global() {
     port.InboundMessage(message), Some(box) ->
-      case inbox.receive(box, message, current_timestamp()) {
-        True -> True
-        False -> {
+      case
+        exception.rescue(fn() {
+          inbox.receive(box, message, current_timestamp())
+        })
+      {
+        Ok(True) -> True
+        Ok(False) -> {
           record.count("inbox_duplicates_total", [
             #("channel", message.channel),
           ])
           False
+        }
+        Error(_) -> {
+          safe_io.println(
+            "warn: inbox did not answer; message not kept channel="
+            <> message.channel,
+          )
+          True
         }
       }
     _, _ -> True
