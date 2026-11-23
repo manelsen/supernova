@@ -314,3 +314,37 @@ pub fn get_by_operation_test() {
   audit_actor.stop(log)
   process.sleep(100)
 }
+
+// ============================================================================
+// Disk
+// ============================================================================
+
+/// The entry reaches the disk even when neither the log root nor the agent's
+/// directory exists yet (as on a fresh data_dir): the directories are made.
+pub fn entries_reach_the_disk_on_a_fresh_root_test() {
+  use root <- test_workspace.with_isolated_workspace("audit-disk")
+  let log_root = root <> "/audit_log"
+  let assert Ok(log) = audit_actor.start(log_root)
+  audit_actor.log_entry(
+    log,
+    types.AuditEntry(
+      timestamp: 1000,
+      agent_id: "sim:ana",
+      operation: "tool_call",
+      target: "buscar_conversa",
+      result: types.AuditSuccess,
+      details: "ok",
+    ),
+  )
+  // A call after the cast: the actor handled the entry before answering.
+  let _ = audit_actor.recent(log, "sim:ana", 1)
+  audit_actor.stop(log)
+  let assert Ok(raw) = read_file(log_root <> "/sim:ana/.supernova/audit.log")
+  raw
+  |> should.equal(
+    "1000 | sim:ana | tool_call | buscar_conversa | success | ok\n",
+  )
+}
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read_file(path: String) -> Result(String, String)
