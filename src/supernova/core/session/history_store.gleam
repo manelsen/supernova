@@ -4,8 +4,8 @@
 //// One JSONL file per session (`channel:chat:user`), under the person's agent
 //// directory: `<data_dir>/agents/<person>/conversations/<session>.jsonl`.
 //// Each line is one message, `{"role", "content", "at"}`. Appends go to the
-//// end of the file; when it holds twice `kept`, it is rewritten with the most
-//// recent `kept` messages (write to `.tmp`, then rename).
+//// end of the file, and nothing is ever pruned: the model sees the last
+//// `limit` messages, and the agent searches the rest with `buscar_conversa`.
 ////
 //// Only the session actor that owns a conversation writes to its file, so
 //// writes to one file never race. `/esquecer` removes the whole directory.
@@ -18,10 +18,9 @@ import gleam/string
 import supernova/core/agent_identity
 
 /// Where conversations live. `limit` is how many recent messages the model
-/// sees; `kept` is how many stay on disk (at least `limit`), the material
-/// for measuring how far back conversations reach and, later, summaries.
+/// sees; the disk keeps all of them.
 pub type HistoryStore {
-  HistoryStore(data_dir: String, limit: Int, kept: Int)
+  HistoryStore(data_dir: String, limit: Int)
 }
 
 /// One stored message. `at` is the Unix time in milliseconds.
@@ -43,62 +42,38 @@ pub fn path(store: HistoryStore, session_id: String) -> String {
 }
 
 /// The most recent messages of a session, oldest first, cut to the limit and
-/// opening with a user message.
-/// Also returns how many lines the file holds. A missing file is an empty
-/// conversation; a damaged line is skipped.
-pub fn load(
-  store: HistoryStore,
-  session_id: String,
-) -> #(List(StoredMessage), Int) {
-  let lines = read_lines(store, session_id)
-  let messages = list.filter_map(lines, decode_line)
-  #(trim(messages, store.limit) |> from_first_user, list.length(lines))
+/// opening with a user message. A missing file is an empty conversation; a
+/// damaged line is skipped.
+pub fn load(store: HistoryStore, session_id: String) -> List(StoredMessage) {
+  read_file_messages(path(store, session_id))
+  |> trim(store.limit)
+  |> from_first_user
 }
 
-fn read_all(store: HistoryStore, session_id: String) -> List(StoredMessage) {
-  read_lines(store, session_id) |> list.filter_map(decode_line)
-}
-
-fn read_lines(store: HistoryStore, session_id: String) -> List(String) {
-  case read_file(path(store, session_id)) {
+/// Every message in one conversation file, oldest first.
+pub fn read_file_messages(file: String) -> List(StoredMessage) {
+  case read_file(file) {
     Error(_) -> []
     Ok(text) ->
       string.split(text, "\n")
       |> list.filter(fn(line) { string.trim(line) != "" })
+      |> list.filter_map(decode_line)
   }
 }
 
-fn kept(store: HistoryStore) -> Int {
-  int_max(store.kept, store.limit)
-}
-
-/// Append messages to a session's file. `lines_on_disk` is how many lines
-/// the file held before; returns how many it holds after. When the file
-/// reaches twice `kept`, it is rewritten with its last `kept` messages.
+/// Append messages to the end of a session's file.
 pub fn append(
   store: HistoryStore,
   session_id: String,
   messages: List(StoredMessage),
-  lines_on_disk: Int,
-) -> Result(Int, String) {
-  let file = path(store, session_id)
+) -> Result(Nil, String) {
   use _ <- result.try(
     ensure_dir(dir(
       store.data_dir,
       agent_identity.principal_from_session_id(session_id),
     )),
   )
-  use _ <- result.try(append_file(file, encode_lines(messages)))
-  let total = lines_on_disk + list.length(messages)
-  case total >= 2 * kept(store) {
-    False -> Ok(total)
-    True -> {
-      let recent = trim(read_all(store, session_id), kept(store))
-      use _ <- result.try(write_file(file <> ".tmp", encode_lines(recent)))
-      use _ <- result.map(rename(file <> ".tmp", file))
-      list.length(recent)
-    }
-  }
+  append_file(path(store, session_id), encode_lines(messages))
 }
 
 /// The last `limit` messages.
@@ -146,14 +121,8 @@ fn decode_line(line: String) -> Result(StoredMessage, Nil) {
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read_file(path: String) -> Result(String, String)
 
-@external(erlang, "supernova_file_system_ffi", "write_file")
-fn write_file(path: String, content: String) -> Result(Nil, String)
-
 @external(erlang, "supernova_file_system_ffi", "append_file")
 fn append_file(path: String, content: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
 fn ensure_dir(path: String) -> Result(Nil, String)
-
-@external(erlang, "supernova_self_ffi", "rename_file")
-fn rename(from: String, to: String) -> Result(Nil, String)

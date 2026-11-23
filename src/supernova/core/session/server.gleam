@@ -121,8 +121,6 @@ type SessionState {
     /// Where the conversation is kept on disk; None keeps it only in memory,
     /// with no limit.
     store: Option(HistoryStore),
-    /// Lines the conversation file holds, to know when to compact it.
-    lines_on_disk: Int,
   )
 }
 
@@ -269,13 +267,8 @@ fn add_messages(
             at: now,
           )
         })
-      let lines_on_disk =
-        history_store.append(
-          store,
-          state.session_id,
-          stored,
-          state.lines_on_disk,
-        )
+      let _ =
+        history_store.append(store, state.session_id, stored)
         |> result.map_error(fn(reason) {
           safe_io.println(
             "warn: conversation not saved session="
@@ -284,12 +277,7 @@ fn add_messages(
             <> reason,
           )
         })
-        |> result.unwrap(state.lines_on_disk)
-      SessionState(
-        ..state,
-        history: cut(history, store.limit),
-        lines_on_disk: lines_on_disk,
-      )
+      SessionState(..state, history: cut(history, store.limit))
     }
   }
 }
@@ -311,7 +299,7 @@ fn now_ms() -> Int
 ///
 /// Returns the session actor subject on success.
 pub fn new(session_id: String) -> Result(Session, actor.StartError) {
-  start_with(session_id, None, [], 0)
+  start_with(session_id, None, [])
 }
 
 /// Create a session whose conversation is kept in `store`: it starts with
@@ -320,19 +308,18 @@ pub fn new_with_store(
   session_id: String,
   store: HistoryStore,
 ) -> Result(Session, actor.StartError) {
-  let #(stored, lines_on_disk) = history_store.load(store, session_id)
+  let stored = history_store.load(store, session_id)
   let history =
     list.map(stored, fn(message) {
       ChatMessage(role: message.role, content: message.content)
     })
-  start_with(session_id, Some(store), history, lines_on_disk)
+  start_with(session_id, Some(store), history)
 }
 
 fn start_with(
   session_id: String,
   store: Option(HistoryStore),
   history: List(ChatMessage),
-  lines_on_disk: Int,
 ) -> Result(Session, actor.StartError) {
   let initial_state =
     SessionState(
@@ -343,7 +330,6 @@ fn start_with(
       llm_config_override: None,
       preferences: default_preferences(),
       store: store,
-      lines_on_disk: lines_on_disk,
     )
 
   actor.new(initial_state)

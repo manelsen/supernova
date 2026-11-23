@@ -12,6 +12,7 @@ import gleam/string
 import supernova/llm/provider
 import supernova/tools/agenda
 import supernova/tools/browser
+import supernova/tools/buscar_conversa
 import supernova/tools/canvas
 import supernova/tools/computador
 import supernova/tools/file_system
@@ -40,6 +41,7 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     git_inspect.tool(),
     file_system.tool(),
     agenda.tool(),
+    buscar_conversa.tool(),
     ..computer
   ]
 }
@@ -67,6 +69,7 @@ pub fn execute(name: String, args_json: String) -> Result(String, String) {
     // The agenda belongs to a person: only the syscall gateway, which knows
     // the caller, runs it (see claimed_executor).
     "agenda" -> Error("agenda needs the caller's identity")
+    "buscar_conversa" -> Error("buscar_conversa needs the caller's identity")
     "computador" -> Error("computador needs the caller's identity")
     _ -> Error("Tool '" <> name <> "' is not wired in executor")
   }

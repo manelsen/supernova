@@ -292,17 +292,14 @@ pub type InstanceBudgetConfig {
 pub type ConversationConfig {
   ConversationConfig(
     /// Most recent messages (one per user turn, one per reply) the model
-    /// sees and that are kept on disk, so a conversation survives restarts.
+    /// sees. The disk keeps every message, so a conversation survives
+    /// restarts and the agent can search what is older.
     history_limit: Int,
-    /// Most recent messages kept on disk per conversation (at least
-    /// `history_limit`): what is measured to tune the window, and what a
-    /// summary of older turns will be made from.
-    history_kept: Int,
   )
 }
 
 pub fn default_conversation_config() -> ConversationConfig {
-  ConversationConfig(history_limit: 100, history_kept: 1000)
+  ConversationConfig(history_limit: 100)
 }
 
 pub type ReflectionConfig {
@@ -491,7 +488,10 @@ pub fn default_role_budgets_config() -> RoleBudgetsConfig {
 pub fn default_capabilities_config() -> CapabilitiesConfig {
   CapabilitiesConfig(
     member: RoleCapabilitiesConfig(
-      allowed: ["web", "web_fetch", "file_system", "canvas", "github", "agenda"],
+      allowed: [
+        "web", "web_fetch", "file_system", "canvas", "github", "agenda",
+        "buscar_conversa",
+      ],
       denied: ["safe_shell", "process", "browser", "gateway", "computador"],
     ),
     admin: RoleCapabilitiesConfig(allowed: ["*"], denied: []),
@@ -1157,13 +1157,7 @@ fn decode_conversation(root: yay.Node) -> ConversationConfig {
     Ok(node) -> {
       let limit =
         int.max(get_int_or(node, "history_limit", default.history_limit), 2)
-      ConversationConfig(
-        history_limit: limit,
-        history_kept: int.max(
-          get_int_or(node, "history_kept", default.history_kept),
-          limit,
-        ),
-      )
+      ConversationConfig(history_limit: limit)
     }
     Error(_) -> default
   }

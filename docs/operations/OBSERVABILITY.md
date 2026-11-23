@@ -43,7 +43,7 @@ These are the most complete record of what happened. All of them live in the `su
 |---|---|
 | `/data/ledger/<date>.jsonl` | One line per LLM charge: who (`principal_id`), provider, model, prompt and completion tokens, cost in USD. The daily and instance ceilings are computed from it. |
 | `/data/inbox.jsonl` | The durable inbox: messages waiting for their turn, and the keys of the last day's messages (to recognise a second delivery). The text of a message leaves the file once its turn is done and the file is compacted. See [DOCKER.md](DOCKER.md#what-a-restart-does-to-conversations). |
-| `/data/agents/<principal>/conversations/` | One file per chat, `<session>.jsonl`: the most recent messages of the conversation (`conversation.history_kept`, 1000 by default), reloaded after a restart; the model sees the last `conversation.history_limit` (100 by default). `/esquecer` deletes them. |
+| `/data/agents/<principal>/conversations/` | One file per chat, `<session>.jsonl`: every message of the conversation, never pruned, reloaded after a restart. The model sees the last `conversation.history_limit` (100 by default) and searches the rest with the `buscar_conversa` tool. `/esquecer` deletes them. |
 | `/data/agents/<principal>/self/` | Per agent: `journal.jsonl` (turns not yet reflected), `experience.jsonl`, `pressure.jsonl`, `biography.jsonl`, `agenda.json`, and the core (`core.md`, `core.json`). |
 | `/uso`, `/uso todos` | Spending per person, from the ledger (admins see everyone). |
 | `/auditoria [n]` | The last audit events (20 by default). Admins only. |

@@ -15,7 +15,7 @@ In closed-group mode, each authorized person has their own agent.
 3. **Memory.** Each turn goes to the agent's journal. A periodic reflection turns the journal into experiences and pressures. The pressures can, slowly, add to the core ("drift").
 4. **What the agent sees.** In a group, the agent sees only its own person's messages and does not talk to the other agents.
 
-The conversation survives a restart: each person's conversation in each chat is kept on disk, and the model sees its last 100 messages (`conversation.history_limit`). A message that was waiting when Supernova stopped is answered after the restart, once ([DOCKER.md](DOCKER.md#what-a-restart-does-to-conversations)). The core, memories, files and agenda survive too.
+The conversation survives a restart: each person's conversation in each chat is kept whole on disk, and the model sees its last 100 messages (`conversation.history_limit`). For anything older, the agent searches with the `buscar_conversa` tool, which reads only that person's conversations, private and in groups. A message that was waiting when Supernova stopped is answered after the restart, once ([DOCKER.md](DOCKER.md#what-a-restart-does-to-conversations)). The core, memories, files and agenda survive too.
 
 ## Commands
 
