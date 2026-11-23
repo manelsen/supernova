@@ -151,10 +151,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 
 ### 3.2 Canais
 
-- **O menu de comandos do Telegram e o `/help` não batem com o que a Supernova faz.** Visto pelo mantenedor em 22/11.
-  - O menu mostra `start`, `new`, `stop`, `restart`, `status`, `dream`, `dream_log`, `dream_restore` e `help`. A Supernova nunca chama `setMyCommands`, então o Telegram guarda a lista de outro programa que usou o mesmo token.
-  - O `/help` é o texto genérico de `core/ux.gleam` ("Supernova AI Agent Framework", `/reasoning`, `/commands`...). Ele não lista os comandos do grupo fechado (`/uso`, `/esquecer`, `/agenda`, `/eu`, `/auditoria`...).
-  - **Para fazer:** registrar o menu no boot a partir de `traits.command_list`, um por papel se o Telegram permitir (`BotCommandScope`), e gerar o `/help` da mesma lista, conforme o papel de quem pergunta.
+- ~~**O menu de comandos do Telegram e o `/help` não batem com o que a Supernova faz.**~~ Feito em 23/11 (#51): `core/closed_group/commands` é a lista única; o `/help` responde por papel, e o boot publica o menu (`setMyCommands`) nos escopos default, privados e grupos, sem idioma, em pt e em en, e o de admin no chat de cada admin do `supernova.yaml`. Um admin adicionado depois por `/acesso` vê o menu de membro até o próximo boot.
 - **A pessoa não consegue mandar imagens, áudio nem documentos.** O Telegram ignora `photo` na entrada, e no Discord os `attachments` chegam sempre vazios. O caminho de imagem até o modelo já existe, desde a PR #34.
 - **O grupo fechado só existe em Telegram e Discord.**
   - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais".
