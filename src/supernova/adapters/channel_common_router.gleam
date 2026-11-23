@@ -1296,7 +1296,9 @@ fn maybe_handle_birth(
               Error(_) -> Error("name extraction failed")
             }
           }
-          let step =
+          // One birth per agent, even with first messages from two chats or
+          // channels at once (D3): the second sees the agent born.
+          let run_step = fn() {
             birth.step(
               cfg.data_dir,
               principal_id,
@@ -1305,6 +1307,13 @@ fn maybe_handle_birth(
               generate,
               extract,
             )
+          }
+          // A named agent is the common case and needs no lock (the check is
+          // a cached read); otherwise, inside it, birth.step checks again.
+          let step = case self_core.named(cfg.data_dir, principal_id) {
+            True -> birth.AlreadyBorn
+            False -> desk.exclusive(cfg.data_dir, principal_id, run_step)
+          }
           case step {
             birth.AskName(text) -> Some(port.reply(to: msg, content: text))
             birth.ConfirmName(name) ->
@@ -1883,8 +1892,18 @@ fn start_streamed_message_reply(
   // the base reply only carries the typing indicator, and the spawned
   // worker emits the final content (or the policy refusal) as an event.
   let base_reply = port.reply(to: msg, content: "") |> port.with_typing(True)
+  // The turn counts among the agent's turns in flight before it runs, so an
+  // /esquecer that comes after waits for it (and one in progress makes it
+  // wait). The router waits for that, so no /esquecer slips in between.
+  let counted = process.new_subject()
   let _ =
     process.spawn_unlinked(fn() {
+      case closed_data_dir() {
+        Some(data_dir) ->
+          desk.turn_started(data_dir, profile.agent_id, process.self())
+        None -> Nil
+      }
+      process.send(counted, Nil)
       case
         exception_guard.run(fn() {
           run_streamed_message_reply(
@@ -1906,6 +1925,7 @@ fn start_streamed_message_reply(
           )
       }
     })
+  let _ = process.receive(counted, within: desk.forget_wait_ms + 30_000)
   port.StreamReply(base_reply: base_reply)
 }
 
@@ -2368,9 +2388,17 @@ fn maybe_handle_forget(
                   ))
                 True -> {
                   let cfg = closed_group_global.get_config()
+                  // After the person's turns in flight end (D2): their replies
+                  // arrive, and what they said is erased too.
                   let result = case cfg {
                     Some(cfg) ->
-                      forget.forget(cfg.data_dir, profile.agent_id, supervisor)
+                      desk.forgetting(cfg.data_dir, profile.agent_id, fn() {
+                        forget.forget(
+                          cfg.data_dir,
+                          profile.agent_id,
+                          supervisor,
+                        )
+                      })
                     None -> Error("runtime unavailable")
                   }
                   let next_state =

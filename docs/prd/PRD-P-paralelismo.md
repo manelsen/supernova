@@ -287,10 +287,10 @@ Escreva os testes de I1 a I7 contra o código atual.
   corrige, e a falha vai registrada no commit.
 
 **Aceite:**
-- [ ] Um teste por invariante.
-- [ ] Os testes de corrida provocam a concorrência com sinais de prontidão,
+- [x] Um teste por invariante.
+- [x] Os testes de corrida provocam a concorrência com sinais de prontidão,
       nunca com `sleep`.
-- [ ] Commit: `test(prd-p): invariantes do caminho da mensagem`.
+- [x] Commit: `test(prd-p): invariantes do caminho da mensagem`.
 
 ### P-02: O processo da agente
 
@@ -300,12 +300,12 @@ ETS e a vitrine de leitura (seção 6.2). Mova para ele as gravações de
 `/reasoning` e `/esquecer` mandam mudanças em vez de gravar.
 
 **Aceite:**
-- [ ] I4 passa.
-- [ ] Um ator da agente morto no meio de uma gravação é recriado, e o
+- [x] I4 passa.
+- [x] Um ator da agente morto no meio de uma gravação é recriado, e o
       arquivo fica coerente (escrita em `.tmp` e depois `rename`, como hoje).
-- [ ] As leituras do `self_state` no caminho da mensagem vêm da vitrine, não
+- [x] As leituras do `self_state` no caminho da mensagem vêm da vitrine, não
       do disco.
-- [ ] Commit: `feat(self): um processo por agente grava o estado dela`.
+- [x] Commit: `feat(self): um processo por agente grava o estado dela`.
 
 ### P-03: Nascimento e esquecimento pela agente
 
@@ -313,12 +313,16 @@ Mova para o processo da agente o `birth.step`, o `forget_pending`, a contagem
 de turnos em andamento e a execução do `/esquecer` com espera (D2).
 
 **Aceite:**
-- [ ] I2 e I3 passam.
-- [ ] O `/esquecer` com um turno da mesma pessoa preso em outro chat espera o
+- [x] I2 e I3 passam.
+- [x] O `/esquecer` com um turno da mesma pessoa preso em outro chat espera o
       turno, apaga depois, e a resposta do turno chega à pessoa.
-- [ ] Um turno que morre sem avisar não trava o `/esquecer`: o monitor
+- [x] Um turno que morre sem avisar não trava o `/esquecer`: o monitor
       desconta o turno.
-- [ ] Commit: `feat(self): nascimento e esquecimento serializados por agente`.
+**Feito.** O `forget_pending` (a confirmação pendente) continua no
+roteador e sai dele na P-04, junto com o resto do estado do roteador:
+enquanto o roteador for um ator, ele já é serializado por canal.
+
+- [x] Commit: `feat(self): nascimento e esquecimento serializados por agente`.
 
 ### P-04: Roteador sem estado
 

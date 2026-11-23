@@ -18,6 +18,7 @@
 
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Pid, type Subject}
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
@@ -39,7 +40,22 @@ pub opaque type DeskMessage {
     change: fn(RelationshipState) -> RelationshipState,
   )
   Reset(reply: Subject(Result(Nil, String)), work: fn() -> Result(Nil, String))
+  TurnStarted(reply: Subject(Nil), turn: Pid)
+  ForgetBegin(reply: Subject(Nil), forgetter: Pid, waiting_ms: Int)
+  ForgetDeadline(forgetter: Pid)
+  ForgetEnd(forgetter: Pid)
+  Down(process.Down)
   Tick
+}
+
+/// An /esquecer in progress: who runs it, and whether it is still waiting
+/// for the turns in flight to end.
+type Forgetting {
+  Forgetting(
+    forgetter: Pid,
+    monitor: process.Monitor,
+    waiting: Option(Subject(Nil)),
+  )
 }
 
 type Desk =
@@ -53,6 +69,12 @@ type DeskState {
     relationships: Dict(String, RelationshipState),
     last_touch: Int,
     me: Desk,
+    /// The agent's turns in flight, each monitored: one that dies without
+    /// saying so is no longer counted.
+    turns: Dict(Pid, process.Monitor),
+    forgetting: Option(Forgetting),
+    /// Turns that asked to start during an /esquecer: they start after it.
+    held: List(#(Subject(Nil), Pid)),
   )
 }
 
@@ -67,14 +89,24 @@ fn start_desk(
 ) -> Result(Desk, actor.StartError) {
   actor.new_with_initialiser(5000, fn(me) {
     process.send_after(me, tick_ms, Tick)
-    actor.initialised(DeskState(
-      data_dir: data_dir,
-      principal: principal,
-      current: None,
-      relationships: dict.new(),
-      last_touch: now_ms(),
-      me: me,
-    ))
+    let selector =
+      process.new_selector()
+      |> process.select(me)
+      |> process.select_monitors(Down)
+    actor.initialised(
+      DeskState(
+        data_dir: data_dir,
+        principal: principal,
+        current: None,
+        relationships: dict.new(),
+        last_touch: now_ms(),
+        me: me,
+        turns: dict.new(),
+        forgetting: None,
+        held: [],
+      ),
+    )
+    |> actor.selecting(selector)
     |> actor.returning(me)
     |> Ok
   })
@@ -140,14 +172,132 @@ fn handle_desk(
         ),
       )
     }
+    TurnStarted(reply, turn) ->
+      case state.forgetting {
+        Some(_) ->
+          actor.continue(
+            DeskState(..state, held: [#(reply, turn), ..state.held]),
+          )
+        None -> {
+          actor.send(reply, Nil)
+          actor.continue(start_turn(state, turn))
+        }
+      }
+    ForgetBegin(reply, forgetter, waiting_ms) if state.forgetting != None -> {
+      // One /esquecer at a time: this one begins when the current one ends.
+      process.send_after(
+        state.me,
+        50,
+        ForgetBegin(reply, forgetter, waiting_ms),
+      )
+      actor.continue(state)
+    }
+    ForgetBegin(reply, forgetter, waiting_ms) if waiting_ms <= 0 -> {
+      // Exclusive work that does not wait for turns (the birth).
+      let monitor = process.monitor(forgetter)
+      actor.send(reply, Nil)
+      actor.continue(
+        DeskState(
+          ..state,
+          forgetting: Some(Forgetting(forgetter, monitor, None)),
+          last_touch: now_ms(),
+        ),
+      )
+    }
+    ForgetBegin(reply, forgetter, waiting_ms) -> {
+      let monitor = process.monitor(forgetter)
+      let forgetting = Forgetting(forgetter, monitor, Some(reply))
+      process.send_after(state.me, waiting_ms, ForgetDeadline(forgetter))
+      actor.continue(release_forgetter(
+        DeskState(..state, forgetting: Some(forgetting), last_touch: now_ms()),
+      ))
+    }
+    ForgetDeadline(forgetter) ->
+      case state.forgetting {
+        Some(Forgetting(who, monitor, Some(reply))) if who == forgetter -> {
+          // Turns still running after the wait: the forgetting goes on, and
+          // what they write after it is discarded by the epoch.
+          safe_io.println(
+            "warn: /esquecer did not wait for every turn agent="
+            <> state.principal
+            <> " still_running="
+            <> string.inspect(dict.size(state.turns)),
+          )
+          actor.send(reply, Nil)
+          actor.continue(
+            DeskState(..state, forgetting: Some(Forgetting(who, monitor, None))),
+          )
+        }
+        _ -> actor.continue(state)
+      }
+    ForgetEnd(forgetter) -> actor.continue(end_forgetting(state, forgetter))
+    Down(process.ProcessDown(monitor, pid, _)) ->
+      case state.forgetting {
+        Some(Forgetting(who, mine, _)) if mine == monitor ->
+          actor.continue(end_forgetting(state, who))
+        _ ->
+          case dict.get(state.turns, pid) {
+            Ok(_) ->
+              actor.continue(release_forgetter(
+                DeskState(..state, turns: dict.delete(state.turns, pid)),
+              ))
+            Error(Nil) -> actor.continue(state)
+          }
+      }
+    Down(process.PortDown(..)) -> actor.continue(state)
     Tick ->
-      case now_ms() - state.last_touch > idle_ms {
+      case
+        now_ms() - state.last_touch > idle_ms
+        && dict.is_empty(state.turns)
+        && state.forgetting == None
+      {
         True -> actor.stop()
         False -> {
           process.send_after(state.me, tick_ms, Tick)
           actor.continue(state)
         }
       }
+  }
+}
+
+fn start_turn(state: DeskState, turn: Pid) -> DeskState {
+  case dict.has_key(state.turns, turn) {
+    True -> state
+    False ->
+      DeskState(
+        ..state,
+        turns: dict.insert(state.turns, turn, process.monitor(turn)),
+        last_touch: now_ms(),
+      )
+  }
+}
+
+/// With no turn in flight, the /esquecer waiting for them may go on.
+fn release_forgetter(state: DeskState) -> DeskState {
+  case state.forgetting, dict.is_empty(state.turns) {
+    Some(Forgetting(who, monitor, Some(reply))), True -> {
+      actor.send(reply, Nil)
+      DeskState(..state, forgetting: Some(Forgetting(who, monitor, None)))
+    }
+    _, _ -> state
+  }
+}
+
+/// The /esquecer is done (or its process died): the turns held meanwhile
+/// start now.
+fn end_forgetting(state: DeskState, forgetter: Pid) -> DeskState {
+  case state.forgetting {
+    Some(Forgetting(who, monitor, _)) if who == forgetter -> {
+      process.demonitor_process(monitor)
+      let started =
+        list.fold(list.reverse(state.held), state, fn(acc, held) {
+          let #(reply, turn) = held
+          actor.send(reply, Nil)
+          start_turn(acc, turn)
+        })
+      DeskState(..started, forgetting: None, held: [])
+    }
+    _ -> state
   }
 }
 
@@ -237,6 +387,60 @@ pub fn read_relationship(
         agent_identity.self_dir(data_dir, principal),
         user_id,
       )
+  }
+}
+
+/// Count `turn` among the agent's turns in flight, until it ends (a monitor
+/// sees that). During an /esquecer this waits for it to finish, so the turn
+/// starts after it. Without a supervisor, nothing is counted.
+pub fn turn_started(data_dir: String, principal: String, turn: Pid) -> Nil {
+  case desk_for(data_dir, principal) {
+    Some(desk) ->
+      actor.call(desk, waiting: forget_wait_ms + 30_000, sending: TurnStarted(
+        _,
+        turn,
+      ))
+    None -> Nil
+  }
+}
+
+/// How long an /esquecer waits for the turns in flight (D2).
+pub const forget_wait_ms = 60_000
+
+/// Run `work` (the /esquecer) once the agent's turns in flight have ended,
+/// waiting up to `forget_wait_ms`; turns that start meanwhile wait for it.
+/// `work` runs in the caller's process and may change the agent's state.
+pub fn forgetting(data_dir: String, principal: String, work: fn() -> a) -> a {
+  forgetting_within(data_dir, principal, forget_wait_ms, work)
+}
+
+/// Run `work` alone for the agent: another `exclusive` or an /esquecer
+/// waits for it, and so do turns that start meanwhile; turns already in
+/// flight are not waited for. The birth runs like this (D3): two first
+/// messages at once make one agent.
+pub fn exclusive(data_dir: String, principal: String, work: fn() -> a) -> a {
+  forgetting_within(data_dir, principal, 0, work)
+}
+
+pub fn forgetting_within(
+  data_dir: String,
+  principal: String,
+  waiting_ms: Int,
+  work: fn() -> a,
+) -> a {
+  case desk_for(data_dir, principal) {
+    Some(desk) -> {
+      let me = process.self()
+      actor.call(desk, waiting: waiting_ms + 30_000, sending: ForgetBegin(
+        _,
+        me,
+        waiting_ms,
+      ))
+      let done = work()
+      process.send(desk, ForgetEnd(me))
+      done
+    }
+    None -> work()
   }
 }
 

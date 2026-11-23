@@ -138,3 +138,123 @@ pub fn without_supervisor_changes_go_direct_test() {
 
 @external(erlang, "supernova_file_system_ffi", "delete_file")
 fn delete_file(path: String) -> Result(Nil, String)
+
+// ============================================================================
+// Turns in flight and /esquecer (P-03)
+// ============================================================================
+
+/// A turn that runs until told to end, counted by the desk.
+fn a_turn(data_dir: String) -> process.Subject(Nil) {
+  let ready = process.new_subject()
+  process.spawn(fn() {
+    let end = process.new_subject()
+    desk.turn_started(data_dir, principal, process.self())
+    process.send(ready, end)
+    let _ = process.receive(end, within: 30_000)
+    Nil
+  })
+  let assert Ok(end) = process.receive(ready, within: 5000)
+  end
+}
+
+/// Start an /esquecer in its own process; `log` gets "forget" when its work
+/// runs.
+fn forget_async(
+  data_dir: String,
+  waiting_ms: Int,
+  log: process.Subject(String),
+) -> Nil {
+  process.spawn(fn() {
+    desk.forgetting_within(data_dir, principal, waiting_ms, fn() {
+      process.send(log, "forget")
+    })
+  })
+  Nil
+}
+
+/// /esquecer runs only after the turn in flight ends.
+pub fn forgetting_waits_for_the_turn_in_flight_test() {
+  use data_dir <- with_desks()
+  let log = process.new_subject()
+  let end = a_turn(data_dir)
+  forget_async(data_dir, 30_000, log)
+  // Nothing forgotten while the turn runs.
+  process.receive(log, within: 200) |> should.equal(Error(Nil))
+  process.send(end, Nil)
+  process.receive(log, within: 5000) |> should.equal(Ok("forget"))
+}
+
+/// A turn that dies without saying so does not hold the /esquecer.
+pub fn a_dead_turn_does_not_hold_forgetting_test() {
+  use data_dir <- with_desks()
+  let log = process.new_subject()
+  let ready = process.new_subject()
+  let turn =
+    process.spawn_unlinked(fn() {
+      desk.turn_started(data_dir, principal, process.self())
+      process.send(ready, Nil)
+      process.sleep_forever()
+    })
+  let assert Ok(Nil) = process.receive(ready, within: 5000)
+  forget_async(data_dir, 30_000, log)
+  process.receive(log, within: 200) |> should.equal(Error(Nil))
+  process.kill(turn)
+  process.receive(log, within: 5000) |> should.equal(Ok("forget"))
+}
+
+/// A turn stuck past the wait does not hold the /esquecer forever.
+pub fn forgetting_goes_on_after_the_wait_test() {
+  use data_dir <- with_desks()
+  let log = process.new_subject()
+  let end = a_turn(data_dir)
+  forget_async(data_dir, 100, log)
+  process.receive(log, within: 5000) |> should.equal(Ok("forget"))
+  process.send(end, Nil)
+}
+
+/// A turn that starts during an /esquecer starts after it.
+pub fn a_turn_during_forgetting_starts_after_it_test() {
+  use data_dir <- with_desks()
+  let log = process.new_subject()
+  let began = process.new_subject()
+  process.spawn(fn() {
+    desk.forgetting(data_dir, principal, fn() {
+      let release = process.new_subject()
+      process.send(began, release)
+      let _ = process.receive(release, within: 30_000)
+      process.send(log, "forget")
+    })
+  })
+  let assert Ok(release) = process.receive(began, within: 5000)
+  process.spawn(fn() {
+    desk.turn_started(data_dir, principal, process.self())
+    process.send(log, "turn")
+  })
+  process.receive(log, within: 200) |> should.equal(Error(Nil))
+  process.send(release, Nil)
+  process.receive(log, within: 5000) |> should.equal(Ok("forget"))
+  process.receive(log, within: 5000) |> should.equal(Ok("turn"))
+}
+
+/// Two exclusive works for the same agent never overlap (the birth).
+pub fn exclusive_work_never_overlaps_test() {
+  use data_dir <- with_desks()
+  let log = process.new_subject()
+  let began = process.new_subject()
+  process.spawn(fn() {
+    desk.exclusive(data_dir, principal, fn() {
+      let release = process.new_subject()
+      process.send(began, release)
+      let _ = process.receive(release, within: 30_000)
+      process.send(log, "first")
+    })
+  })
+  let assert Ok(release) = process.receive(began, within: 5000)
+  process.spawn(fn() {
+    desk.exclusive(data_dir, principal, fn() { process.send(log, "second") })
+  })
+  process.receive(log, within: 200) |> should.equal(Error(Nil))
+  process.send(release, Nil)
+  process.receive(log, within: 5000) |> should.equal(Ok("first"))
+  process.receive(log, within: 5000) |> should.equal(Ok("second"))
+}

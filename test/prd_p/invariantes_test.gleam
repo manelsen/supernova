@@ -290,10 +290,9 @@ pub fn i3_nothing_said_before_forgetting_survives_test() {
   }
 }
 
-/// PENDENTE até a P-03 (D2): the turn in flight is answered; /esquecer
-/// waits for it and erases it too. Today the turn fails when its session is
-/// stopped, and she gets no reply.
-pub fn i3_the_turn_in_flight_is_answered_p03() {
+/// The turn in flight is answered: /esquecer waits for it (D2, P-03) and
+/// erases it too (the test above).
+pub fn i3_the_turn_in_flight_is_answered_test() {
   use ctx <- with_supernova(["ana"], [])
   forget_with_a_turn_in_flight(ctx) |> should.equal("ok")
 }
