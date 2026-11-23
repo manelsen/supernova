@@ -2,11 +2,15 @@
 ////
 //// Verifies session lifecycle management: start, stop, list, and error cases.
 
+import exception
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{Some}
 import gleeunit/should
+import supernova/core/session/history_store
 import supernova/core/session/server
 import supernova/core/session/supervisor
+import test_workspace
 
 pub fn start_and_list_sessions_test() {
   let assert Ok(sup) = supervisor.start()
@@ -97,4 +101,50 @@ pub fn session_not_found_lookup_test() {
   let result = supervisor.get_session(sup, "ghost")
   result
   |> should.be_error
+}
+
+/// A session that dies (here, killed mid-life) leaves the registry; the
+/// supervisor survives, and the next start brings the conversation back
+/// from disk. Before, the dead session's link took the supervisor, and with
+/// it the whole runtime, down.
+pub fn a_dead_session_does_not_take_the_supervisor_down_test() {
+  let dir = test_workspace.create_temp_dir("session_supervisor_kill")
+  use <- exception.defer(fn() { test_workspace.remove_dir_recursive(dir) })
+  let store = history_store.HistoryStore(data_dir: dir, limit: 40)
+  let assert Ok(sup) = supervisor.start_with_history(store)
+  let assert Ok(session) = supervisor.start_session(sup, "sim:dm:u1")
+  let assert Ok(Nil) =
+    server.append_messages(session, [
+      server.ChatMessage(role: "user", content: "oi"),
+      server.ChatMessage(role: "assistant", content: "olá"),
+    ])
+  let assert Ok(_) = supervisor.start_session(sup, "sim:dm:u2")
+
+  let assert Ok(pid) = process.subject_owner(session)
+  process.kill(pid)
+  wait_until(fn() { !list.contains(supervisor.list_sessions(sup), "sim:dm:u1") })
+
+  supervisor.list_sessions(sup) |> should.equal(["sim:dm:u2"])
+  let assert Ok(again) = supervisor.start_session(sup, "sim:dm:u1")
+  server.get_history(again)
+  |> list.map(fn(message) { message.content })
+  |> should.equal(["oi", "olá"])
+  supervisor.stop(sup)
+}
+
+/// Polls `ready` (the supervisor handles the exit on its own schedule), up
+/// to two seconds.
+fn wait_until(ready: fn() -> Bool) -> Nil {
+  wait_loop(ready, 100)
+}
+
+fn wait_loop(ready: fn() -> Bool, tries: Int) -> Nil {
+  case ready(), tries {
+    True, _ -> Nil
+    False, 0 -> panic as "condition not reached"
+    False, _ -> {
+      process.sleep(20)
+      wait_loop(ready, tries - 1)
+    }
+  }
 }

@@ -45,10 +45,16 @@ pub fn path(store: HistoryStore, session_id: String) -> String {
 /// opening with a user message. A missing file is an empty conversation; a
 /// damaged line is skipped.
 pub fn load(store: HistoryStore, session_id: String) -> List(StoredMessage) {
-  read_file_messages(path(store, session_id))
-  |> trim(store.limit)
-  |> from_first_user
+  // Only the end of the file is read: the window never reaches further, and
+  // the file keeps the whole conversation.
+  case read_tail_lines(path(store, session_id), store.limit) {
+    Ok(lines) -> list.filter_map(lines, decode_line) |> from_first_user
+    Error(_) -> []
+  }
 }
+
+@external(erlang, "supernova_tail_ffi", "read_tail_lines")
+fn read_tail_lines(path: String, count: Int) -> Result(List(String), String)
 
 /// Every message in one conversation file, oldest first; a missing or
 /// unreadable file is an empty conversation.
