@@ -126,6 +126,10 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **Sem duplicatas.** O último lote que o Telegram reentrega é reconhecido pela chave canal|chat|id.
   - **Tempo de dreno.** Os turnos em andamento têm 40 s para terminar, e o `stop_grace_period` passou para 60 s. O desligamento não espera mais a leitura longa do Telegram em andamento, que levava até 35 s.
   - **Limite.** Um turno cortado no meio é refeito do começo, então uma ação que ele tomou (agendar, gravar arquivo) pode acontecer duas vezes. Interações (botões) não são guardadas, para não repetir uma ação.
+- **A escolha de modelo (`/model`) se perde no restart.** Achado em 23/11.
+  - A escolha é gravada no estado da pessoa (`self_state.preferences.model_override`, por `persist_model_preference_for_user`) e lida do disco, mas nada a usa para escolher o modelo. Valem só a memória da sessão e o padrão do `supernova.yaml`.
+  - Só o nome do modelo é gravado, não o provedor. Aplicar um modelo de outro provedor ao provedor padrão quebraria a chamada.
+  - **Para decidir:** guardar provedor e modelo, e aplicar no boot da sessão; ou abandonar a preferência persistida, já que o piloto usa um provedor só.
 - **A mudança lenta não dispara com uma pessoa só.**
   - **Situação:** com reflexão semanal de força 0,25, a pressão efetiva máxima em um ano é 0,38, para um limiar de 3,0. Pessoas diferentes somam sem desconto, então na prática só várias pessoas juntas mudam a agente.
   - **Para estudar:** a intenção é "uma pessoa sozinha nunca muda a agente" (e então está funcionando) ou "meses de convivência mudam devagar" (e então o limiar ou o desconto precisam de recalibração)?
