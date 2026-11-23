@@ -4,6 +4,7 @@
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
@@ -172,6 +173,43 @@ fn run_inbound_turn(
     #("channel", channel),
     #("outcome", outcome),
   ])
+}
+
+const turn_outcomes = [
+  "replied", "streamed", "stream_timeout", "send_error", "ignored",
+  "handler_error",
+]
+
+const send_error_kinds = [
+  "send_failed",
+  "rate_limited",
+  "not_connected",
+  "other",
+]
+
+/// Publish a channel's series at zero, so the first event after a restart is
+/// counted too (see `record.declare`). Called at boot for every channel.
+pub fn declare_metrics(channel: String) -> Nil {
+  list.each(["message", "interaction"], fn(kind) {
+    record.declare("channel_messages_total", [
+      #("channel", channel),
+      #("kind", kind),
+    ])
+  })
+  record.declare("chat_lane_rejected_total", [#("channel", channel)])
+  record.declare("channel_poll_errors_total", [#("channel", channel)])
+  list.each(send_error_kinds, fn(kind) {
+    record.declare("channel_send_errors_total", [
+      #("channel", channel),
+      #("error", kind),
+    ])
+  })
+  list.each(turn_outcomes, fn(outcome) {
+    record.declare_duration("turn_duration_seconds", [
+      #("channel", channel),
+      #("outcome", outcome),
+    ])
+  })
 }
 
 /// A reply that did not reach the person: counted and logged, never silent.

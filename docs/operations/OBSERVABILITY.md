@@ -53,7 +53,7 @@ docker exec supernova curl -sS http://127.0.0.1:8080/metrics
 docker compose logs supernova | grep '\[TRACE\]'
 ```
 
-`GET /metrics` serves the Prometheus text exposition format: one `# TYPE` line per family, histograms as cumulative `_bucket` series ending in `le="+Inf"` plus `_sum` and `_count`, escaped label values. Durations are in seconds. The counters start from zero at every restart, as Prometheus expects.
+`GET /metrics` serves the Prometheus text exposition format: one `# TYPE` line per family, histograms as cumulative `_bucket` series ending in `le="+Inf"` plus `_sum` and `_count`, escaped label values. Durations are in seconds. The counters start from zero at every restart, as Prometheus expects. At boot, every series Supernova knows in advance is published at zero: per channel (messages, gate decisions, turn outcomes, send errors, polling errors, full queues), the default model's requests, tokens and cost, and the agenda outcomes. Prometheus's `increase` only counts what comes after a series' first sample, so without this the first message after each restart would not show on the dashboard. A series that only appears later, such as another model chosen with `/model` or an error type, still loses its first event.
 
 | Metric | Type | Labels |
 |---|---|---|

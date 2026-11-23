@@ -41,6 +41,24 @@ import supernova/metrics/record
 // Gate
 // ============================================================================
 
+/// Publish a channel's gate decisions at zero (see `record.declare`).
+pub fn declare_gate_metrics(channel: String) -> Nil {
+  list.each(pure.decision_labels, fn(decision) {
+    record.declare("gate_decisions_total", [
+      #("channel", channel),
+      #("decision", decision),
+    ])
+  })
+}
+
+/// Publish the usage series of the default model at zero.
+pub fn declare_usage_metrics(provider_name: String, model: String) -> Nil {
+  let labels = [#("provider", provider_name), #("model", model)]
+  record.declare("llm_tokens_total", [#("kind", "prompt"), ..labels])
+  record.declare("llm_tokens_total", [#("kind", "completion"), ..labels])
+  record.declare("llm_cost_usd_micros_total", labels)
+}
+
 /// Gate one inbound message before any LLM or tool work. Every decision is
 /// counted in `gate_decisions_total`.
 pub fn gate(

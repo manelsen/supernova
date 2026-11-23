@@ -54,6 +54,19 @@ const default_retry_config =
     jitter_factor: 0.2,
   )
 
+/// Publish the default model's request series at zero (see `record.declare`).
+pub fn declare_metrics(provider_name: String, model: String) -> Nil {
+  case metrics_global.get_metrics() {
+    option.Some(metrics) ->
+      metrics_actor.add_counter(metrics, "llm_requests_total", 0, [
+        #("provider", provider_name),
+        #("model", model),
+        #("status", "success"),
+      ])
+    option.None -> Nil
+  }
+}
+
 fn record_llm_latency(provider_name: String, model: String, latency_ms: Int) {
   case metrics_global.get_metrics() {
     option.Some(metrics) -> {
