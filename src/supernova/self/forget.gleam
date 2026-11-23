@@ -4,6 +4,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import supernova/agenda/store as agenda_store
+import supernova/channel/inbox
 import supernova/core/agent_identity
 import supernova/core/audit_log/types as audit_types
 import supernova/core/introspection/lesson
@@ -104,6 +105,15 @@ pub fn forget(
   ))
 
   let session_count = clear_sessions(supervisor, principal)
+  // Messages still waiting in the durable inbox are what the owner said too;
+  // erasing them rewrites the inbox log without the text of finished turns.
+  case inbox.global() {
+    Some(box) -> {
+      let _ = inbox.forget(box, principal, now_ms())
+      Nil
+    }
+    None -> Nil
+  }
   // The conversations kept on disk are what the owner said, word for word.
   use _ <- result.try(clear_dir(history_store.dir(data_dir, principal)))
   // Files the agent wrote for the owner are also what came from the owner.
@@ -175,3 +185,6 @@ fn delete_file(path: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")
 fn file_exists(path: String) -> Result(Bool, String)
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn now_ms() -> Int

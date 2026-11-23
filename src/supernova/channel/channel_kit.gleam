@@ -1,6 +1,7 @@
 //// Plumbing shared by the channel runtimes: start hooks, turn dispatch and
 //// generic streaming. Nothing here knows a specific channel.
 
+import exception
 import gleam/erlang/process
 import gleam/int
 import gleam/io
@@ -13,6 +14,7 @@ import supernova/adapters/telegram
 import supernova/channel/catalog
 import supernova/channel/chat_lanes
 import supernova/channel/chunking
+import supernova/channel/inbox
 import supernova/channel/port
 import supernova/infra/safe_io
 import supernova/metrics/record
@@ -90,7 +92,92 @@ pub fn no_start_hooks() -> StartHooks {
 /// The polling loop must never wait for a turn: a slow LLM or tool call
 /// would hold every other chat of the channel. Turns of the same chat stay
 /// ordered inside their lane.
+///
+/// A message goes through the durable inbox first (when one is running): it
+/// is written to disk before entering the lane and marked done when its turn
+/// ends, and a message the channel delivers twice is answered once.
 pub fn dispatch_inbound(
+  handler: port.ChannelHandler,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  stream_send_fn: StreamSendFn,
+  inbound: port.ChannelInbound,
+  registry_id: String,
+  turn_hard_timeout_ms: Int,
+) -> Nil {
+  case admit(inbound) {
+    False -> Nil
+    True ->
+      dispatch_admitted(
+        handler,
+        send_fn,
+        stream_send_fn,
+        inbound,
+        registry_id,
+        turn_hard_timeout_ms,
+      )
+  }
+}
+
+/// Answer a message the inbox kept from before a restart. It is already on
+/// disk, so it skips the duplicate check that would otherwise drop it.
+pub fn dispatch_recovered(
+  handler: port.ChannelHandler,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  stream_send_fn: StreamSendFn,
+  message: port.ChannelMessage,
+  registry_id: String,
+  turn_hard_timeout_ms: Int,
+) -> Nil {
+  dispatch_admitted(
+    handler,
+    send_fn,
+    stream_send_fn,
+    port.InboundMessage(message),
+    registry_id,
+    turn_hard_timeout_ms,
+  )
+}
+
+/// Record a message in the inbox; False when the channel delivered it again.
+/// An inbox that does not answer (a stuck disk) must not take the channel
+/// down with it: the message goes on, unrecorded, and the log says so.
+fn admit(inbound: port.ChannelInbound) -> Bool {
+  case inbound, inbox.global() {
+    port.InboundMessage(message), Some(box) ->
+      case
+        exception.rescue(fn() {
+          inbox.receive(box, message, current_timestamp())
+        })
+      {
+        Ok(True) -> True
+        Ok(False) -> {
+          record.count("inbox_duplicates_total", [
+            #("channel", message.channel),
+          ])
+          False
+        }
+        Error(_) -> {
+          safe_io.println(
+            "warn: inbox did not answer; message not kept channel="
+            <> message.channel,
+          )
+          True
+        }
+      }
+    _, _ -> True
+  }
+}
+
+/// The turn of a message ended, answered or not: it leaves the inbox.
+fn finish(inbound: port.ChannelInbound) -> Nil {
+  case inbound, inbox.global() {
+    port.InboundMessage(message), Some(box) ->
+      inbox.done(box, inbox.key(message), current_timestamp())
+    _, _ -> Nil
+  }
+}
+
+fn dispatch_admitted(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: StreamSendFn,
@@ -110,8 +197,8 @@ pub fn dispatch_inbound(
     #("channel", channel),
     #("kind", kind),
   ])
-  let accepted =
-    chat_lanes.submit(key, fn() {
+  let outcome =
+    chat_lanes.submit_outcome(key, fn() {
       run_inbound_turn(
         handler,
         send_fn,
@@ -120,11 +207,18 @@ pub fn dispatch_inbound(
         key,
         turn_hard_timeout_ms,
       )
+      finish(inbound)
     })
-  case accepted {
-    True -> Nil
+  case outcome {
+    chat_lanes.Accepted -> Nil
+    // Supernova is stopping: the message stays pending in the inbox and is
+    // answered after the restart.
+    chat_lanes.Draining -> Nil
     // Too many pending turns in this chat, or too many chats at once.
-    False -> record.count("chat_lane_rejected_total", [#("channel", channel)])
+    chat_lanes.Rejected -> {
+      record.count("chat_lane_rejected_total", [#("channel", channel)])
+      finish(inbound)
+    }
   }
   Nil
 }
@@ -197,6 +291,7 @@ pub fn declare_metrics(channel: String) -> Nil {
     ])
   })
   record.declare("chat_lane_rejected_total", [#("channel", channel)])
+  record.declare("inbox_duplicates_total", [#("channel", channel)])
   record.declare("channel_poll_errors_total", [#("channel", channel)])
   list.each(send_error_kinds, fn(kind) {
     record.declare("channel_send_errors_total", [
