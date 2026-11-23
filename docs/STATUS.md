@@ -38,7 +38,7 @@ Neither Telegram nor Discord accepts images, audio or documents from the person 
 | LLM: 11 providers, circuit breaker, failover cooldown, retry | In use (Mistral serving DeepSeek V4.1 Flash) |
 | Images in the conversation (from tools) | In use (OpenAI-compatible providers; the Anthropic encoder ignores images) |
 | The agent's computer (`computador`) | Phase 1 in use: gVisor, shell, browser, vision, host firewall. Phase 2 is decided. |
-| Conversation history | In memory only: a restart clears it. The core, memories, files and agenda survive. Keeping it is decided. |
+| Conversation history | Kept whole on disk, per person and chat, and reloaded after a restart. The model sees the last 100 messages; the agent searches the rest with `buscar_conversa`. |
 | Health endpoints | Working |
 | Metrics and tracing | Instrumented, but nothing shows in the pilot ([OBSERVABILITY.md](operations/OBSERVABILITY.md)) |
 | Persistence | Files under `/data` (ledger, access, agents' selves, workspaces). There is no database. |

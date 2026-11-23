@@ -935,7 +935,7 @@ pub fn telegram_router_records_history_in_supervised_session_test() {
 /// conversation: the next turn continues it, and the model sees it.
 pub fn telegram_router_conversation_survives_a_restart_test() {
   use dir <- test_workspace.with_isolated_workspace("channel-router-restart")
-  let store = history_store.HistoryStore(data_dir: dir, limit: 40, kept: 40)
+  let store = history_store.HistoryStore(data_dir: dir, limit: 40)
   let turn = fn(id, text) {
     message(id, "telegram", "chat-r", "user-r", "alice", text, False)
   }

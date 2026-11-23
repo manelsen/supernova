@@ -190,7 +190,7 @@ pub fn forget_stops_sessions_of_the_owner_test() {
 pub fn forget_deletes_the_owners_conversations_on_disk_test() {
   support.with_runtime_root(cfg(), fn(root) {
     seed(root)
-    let store = history_store.HistoryStore(data_dir: root, limit: 40, kept: 40)
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
     let assert Ok(sup) = session_supervisor.start_with_history(store)
     let said = [
       session_server.ChatMessage(role: "user", content: "oi"),
@@ -205,8 +205,8 @@ pub fn forget_deletes_the_owners_conversations_on_disk_test() {
 
     let assert Ok(_) = forget.forget(root, "sim:alice", Some(sup))
 
-    history_store.load(store, "sim:group-1:alice") |> should.equal(#([], 0))
-    let #(bob_kept, _) = history_store.load(store, "sim:group-1:bob")
+    history_store.load(store, "sim:group-1:alice") |> should.equal([])
+    let bob_kept = history_store.load(store, "sim:group-1:bob")
     list.length(bob_kept) |> should.equal(2)
     let assert Ok(alice_again) =
       session_supervisor.start_session(sup, "sim:group-1:alice")

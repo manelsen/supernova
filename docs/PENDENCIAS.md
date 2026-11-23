@@ -116,7 +116,8 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 - ~~**O histórico da conversa se perde quando a Supernova reinicia.**~~ Feito em 22/11:
   - cada conversa (pessoa × chat) fica em `data_dir/agents/<pessoa>/conversations/<sessão>.jsonl` e é recarregada quando a sessão volta;
   - o modelo vê as últimas `conversation.history_limit` mensagens (padrão 100, abrindo sempre com uma fala da pessoa). Antes o histórico crescia sem limite e ia inteiro para o modelo a cada turno;
-  - o disco guarda mais do que o modelo vê: `conversation.history_kept` (padrão 1000 por conversa), compactado ao chegar ao dobro;
+  - o disco guarda a conversa inteira, sem poda (decisão de 23/11: a Supernova não pretende ser minúscula). O antigo `conversation.history_kept`, de 1000 mensagens compactadas ao chegar ao dobro, saiu;
+  - **busca** (23/11): a ferramenta `buscar_conversa` procura termos em todas as conversas da pessoa, privadas e de grupo, sem diferenciar maiúsculas nem acentos. Devolve trechos: cada mensagem encontrada (marcada com »), a anterior e as duas seguintes, porque a resposta costuma vir logo depois da palavra. Mostra até 10 trechos e 60 linhas, os mais recentes, com data, hora e quem falou, e informa o total. O primeiro teste no harness mostrou a necessidade: a busca por "cardiologista" achava a mensagem, e o nome do médico estava duas mensagens depois. Lê só o diretório da própria pessoa, e o `/esquecer` apaga o que ela lê. Faz parte das ferramentas de membro por padrão; num `supernova.yaml` com lista própria, é preciso acrescentá-la em `capabilities.member.allowed`;
   - **Próximo:** medir a janela em vez de chutar (decisão de 22/11). Com uma ou duas semanas de conversas guardadas:
     - a distância até a mensagem anterior mais parecida com cada mensagem nova, só números, sem ler o conteúdo;
     - a distribuição das pausas entre mensagens.
