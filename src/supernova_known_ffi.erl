@@ -19,8 +19,12 @@ get(Key) ->
 
 put(Key, Value) ->
     ensure_table(),
-    true = ets:insert(?TABLE, {Key, Value}),
-    nil.
+    %% A cache: if the table could not be made, the value is not kept and the
+    %% next read goes to the disk, instead of crashing the caller.
+    case ets:whereis(?TABLE) of
+        undefined -> nil;
+        _ -> ets:insert(?TABLE, {Key, Value}), nil
+    end.
 
 delete(Key) ->
     case ets:whereis(?TABLE) of

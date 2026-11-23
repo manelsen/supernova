@@ -537,3 +537,29 @@ pub fn the_calls_of_a_round_run_concurrently_test() {
 
 @external(erlang, "supernova_stress_ffi", "mono_ms")
 fn monotonic_ms() -> Int
+
+/// A round with more calls than the limit still answers every call, in
+/// order.
+pub fn a_large_round_answers_every_call_in_order_test() {
+  let invoke = fn(name: String, _arguments: String) { Ok("done " <> name) }
+  let context =
+    executor.RunContext(
+      ..executor.empty_run_context(),
+      invoke_tool: Some(invoke),
+    )
+  let names =
+    list.repeat(Nil, 20)
+    |> list.index_map(fn(_, i) { "t" <> string.inspect(i) })
+  let results =
+    executor.execute_tool_calls_with_context_for_test(
+      list.map(names, fn(n) {
+        provider.ToolCall(id: n, name: n, arguments: "{}")
+      }),
+      list.map(names, fn(n) {
+        provider.new_tool(name: n, description: "test", parameters: [])
+      }),
+      context,
+    )
+  list.map(results, fn(m) { m.content })
+  |> should.equal(list.map(names, fn(n) { "done " <> n }))
+}

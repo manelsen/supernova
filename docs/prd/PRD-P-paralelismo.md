@@ -1,9 +1,9 @@
 [PRD]
 # PRD P: Paralelismo no caminho da mensagem
 
-> **Situação em 23/11/2026:** proposta. Faltam as decisões D1–D4 da seção 5.
-> Depende das PRs #60 a #62: a ferramenta de estresse e a primeira rodada de
-> desserialização.
+> **Situação em 23/11/2026:** aprovada. As decisões D1–D4 seguem as
+> recomendações (seção 5). Depende das PRs #60 a #62: a ferramenta de
+> estresse e a primeira rodada de desserialização.
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality
@@ -154,8 +154,7 @@ memória máxima e processo com a maior fila.
 
 ## 5. Decisões do mantenedor
 
-Cada uma tem uma recomendação, e a recomendação é o que o executor segue se a
-decisão não vier.
+Aprovadas em 23/11: as quatro seguem a recomendação.
 
 - **D1. A mesma pessoa no privado e num grupo ao mesmo tempo.**
   - (a) Os dois turnos rodam em paralelo; só as operações da agente (seção 6)

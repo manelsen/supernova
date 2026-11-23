@@ -879,11 +879,20 @@ fn execute_tool_calls(
   )
 }
 
-/// `run` on each item, each in a process of its own; the results in the
-/// items' order. A run that crashes, or whose process is killed, gives an
-/// error text instead of taking the turn down. One item runs here, with no
-/// process to start.
+/// Most tool calls of one round running at once; the rest wait for a slot.
+const max_concurrent_tools = 8
+
+/// `run` on each item, each in a process of its own, at most
+/// `max_concurrent_tools` at a time; the results in the items' order. A run
+/// that crashes, or whose process is killed, gives an error text instead of
+/// taking the turn down. One item runs here, with no process to start.
 fn run_concurrently(items: List(a), run: fn(a) -> String) -> List(String) {
+  items
+  |> list.sized_chunk(max_concurrent_tools)
+  |> list.flat_map(run_batch(_, run))
+}
+
+fn run_batch(items: List(a), run: fn(a) -> String) -> List(String) {
   case items {
     [] | [_] -> list.map(items, run)
     _ ->
