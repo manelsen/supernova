@@ -2,6 +2,7 @@
 
 import gleam/bit_array
 import gleam/bytes_tree
+import gleam/dict.{type Dict}
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/http/request
@@ -42,9 +43,15 @@ pub type StoreMessage {
   Stop
 }
 
+/// Events by chat, newest first, at most `max_events_per_chat` each.
+/// Appending used to copy the whole list (quadratic under load), and every
+/// read scanned every chat's events.
 type StoreState {
-  StoreState(events: List(SimEvent), next_seq: Int)
+  StoreState(events: Dict(String, List(SimEvent)), next_seq: Int)
 }
+
+/// Older events of a chat are dropped past this; a reader polls well before.
+const max_events_per_chat = 10_000
 
 pub type SimChannel {
   SimChannel(store: Subject(StoreMessage), port: Int)
@@ -61,7 +68,7 @@ pub fn start(
         None -> Error("Sim is enabled but no token is configured")
         Some(token) -> {
           let assert Ok(store) =
-            actor.new(StoreState(events: [], next_seq: 1))
+            actor.new(StoreState(events: dict.new(), next_seq: 1))
             |> actor.on_message(handle_store)
             |> actor.start
           let store = store.data
@@ -125,7 +132,7 @@ fn handle_store(
           message_id: reply.edit_message_id,
         )
       actor.continue(StoreState(
-        events: list.append(state.events, [event]),
+        events: push(state.events, event),
         next_seq: state.next_seq + 1,
       ))
     }
@@ -144,25 +151,46 @@ fn handle_store(
           message_id: None,
         )
       actor.continue(StoreState(
-        events: list.append(state.events, [event]),
+        events: push(state.events, event),
         next_seq: state.next_seq + 1,
       ))
     }
     Get(reply_to, chat_id, after) -> {
       let events =
-        state.events
-        |> list.filter(fn(event) {
-          event.chat_id == chat_id && event.seq > after
-        })
+        case dict.get(state.events, chat_id) {
+          Ok(newest_first) -> newest_first
+          Error(Nil) -> []
+        }
+        |> list.take_while(fn(event) { event.seq > after })
+        |> list.reverse
       actor.send(reply_to, events)
       actor.continue(state)
     }
     All(reply_to) -> {
-      actor.send(reply_to, state.events)
+      let events =
+        dict.values(state.events)
+        |> list.flatten
+        |> list.sort(fn(a, b) { int.compare(a.seq, b.seq) })
+      actor.send(reply_to, events)
       actor.continue(state)
     }
     Stop -> actor.stop()
   }
+}
+
+fn push(
+  events: Dict(String, List(SimEvent)),
+  event: SimEvent,
+) -> Dict(String, List(SimEvent)) {
+  let chat = case dict.get(events, event.chat_id) {
+    Ok(newest_first) -> newest_first
+    Error(Nil) -> []
+  }
+  dict.insert(
+    events,
+    event.chat_id,
+    list.take([event, ..chat], max_events_per_chat),
+  )
 }
 
 pub fn all_events(sim: SimChannel) -> List(SimEvent) {
