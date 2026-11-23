@@ -36,7 +36,7 @@ fn handle_request(
     ["health"] -> handle_health(start_time_ms)
     ["health", "live"] -> handle_live()
     ["health", "ready"] -> handle_ready(start_time_ms, get_channels)
-    ["metrics"] -> handle_metrics(req, metrics)
+    ["metrics"] -> metrics_response(metrics)
     _ -> handle_not_found()
   }
 }
@@ -98,11 +98,11 @@ fn handle_ready(
   |> response.set_header("content-type", "application/json")
 }
 
-fn handle_metrics(
-  req: request.Request(Connection),
+/// The /metrics response. Prometheus 3 refuses a scrape whose content type
+/// it does not recognise, so the header is part of the contract.
+pub fn metrics_response(
   metrics: metrics_actor.Metrics,
 ) -> response.Response(ResponseData) {
-  let _ = req
   let body = metrics_actor.get_metrics(metrics)
   response.new(200)
   |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))

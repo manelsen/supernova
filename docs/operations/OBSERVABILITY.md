@@ -4,7 +4,7 @@ How to see what Supernova is doing, and what is still missing. The maintainer de
 
 ## Health endpoints
 
-The health server listens on port **8080** inside the container. The port is not published to the host. Query it with `docker exec`, or publish it yourself in a compose override.
+The health server listens on port **8080** inside the container. The port is not published to the host. Query it with `docker exec`; Prometheus reaches it through the compose network.
 
 | Endpoint | Answers | Used by |
 |---|---|---|
@@ -81,9 +81,46 @@ Spans are written to stdout as `[TRACE] span started/ended` lines: `llm.chat` fo
 
 The circuit breaker opens for a provider after 5 consecutive failures that mean the provider is unavailable (network errors, 5xx, 429) and blocks its calls for 30 s; a request error (4xx) does not count. The person sees "o provedor do modelo ficou fora por um tempo, depois de várias falhas seguidas".
 
+## Prometheus and Grafana
+
+Two optional containers turn `/metrics` into history and charts:
+
+- **Prometheus** reads `/metrics` every 15 s and keeps what it reads for 90 days (at most 2 GB). Since the counters start from zero at every restart, Prometheus is what lets you see a week or a month.
+- **Grafana** draws charts from Prometheus. It starts with a ready dashboard, **Supernova**, which is also its home page.
+
+They are off unless the `observabilidade` profile is on. In `.env`, profiles are separated by commas:
+
+```sh
+COMPOSE_PROFILES=computador,observabilidade
+```
+
+Then `docker compose up -d`. Each container is limited to 512 MB of memory.
+
+Both listen only on the host's loopback (`127.0.0.1:3000` for Grafana, `127.0.0.1:9090` for Prometheus), never on the public network. From your own computer, open an SSH tunnel to the server and keep it open:
+
+```sh
+ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 user@server
+```
+
+Then open <http://localhost:3000> in the browser. The user is `admin`; the password is `SUPERNOVA_GRAFANA_PASSWORD` from `.env`, or `admin` if it is not set, and Grafana asks for a new one on the first login. Prometheus itself (<http://localhost:9090>) is only needed to write your own queries.
+
+The dashboard has four parts. The time range in the top right corner (24 hours by default) applies to all of them.
+
+| Part | Shows |
+|---|---|
+| Summary | Whether Supernova is up, messages received, response time (p95: 95% of turns finished within it), cost, replies that did not reach the person, and failed model calls, all for the chosen range |
+| Conversation | Messages per channel, response time (p50 and p95), the gate's decisions, and how each turn ended |
+| Model and cost | Cost and tokens per hour, model calls by result, and the provider's latency |
+| Problems and routine | Replies not delivered, channel polling errors, messages refused because the chat's queue was full, agenda runs, and tools used and failed |
+
+The panels count with Prometheus's `increase`, which estimates from samples taken every 15 s. Over a short range, or right after a restart, the numbers can be off by a little; the ledger (`/uso`) is the exact record of spending.
+
+The dashboard is provisioned from `monitoring/grafana/dashboards/supernova.json` and cannot be changed from Grafana's screen. To keep your own changes, save a copy of the dashboard ("Save as") in another folder.
+
 ## What does not work yet
 
 - **Readiness only probes Telegram.** The other channels count as ready once they start.
-- **No exporter.** There is no Prometheus scrape configuration, no OTLP collector and no dashboards.
+- **No OTLP export.** Spans only go to stdout; there is no collector and no trace viewer.
+- **No alerts.** Grafana shows the problems but does not warn anyone yet.
 - **Modules that nothing uses.** `core/telemetry`, `core/dashboard` and `core/alerts/actor` are not used outside their own modules.
 - **Performance never measured.** The benchmarks in `test/bench/` and the load test in `tests/load/` (`run_load_tests.sh`) exist. The targets from `docs/prd/production-ready-v1.md` (100 concurrent users, p99 under 2 s, under 1% errors) have never been checked.

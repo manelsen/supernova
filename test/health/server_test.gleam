@@ -1,3 +1,4 @@
+import gleam/http/response
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit
@@ -59,4 +60,17 @@ pub fn ready_is_503_when_a_channel_is_down_test() {
   code |> should.equal(503)
   string.contains(json, "\"status\":\"degraded\"") |> should.equal(True)
   string.contains(json, "telegram api error 401") |> should.equal(True)
+}
+
+pub fn metrics_response_has_a_content_type_prometheus_accepts_test() {
+  let assert Ok(metrics) = metrics_actor.start()
+  metrics_actor.inc_counter(metrics, "channel_messages_total", [
+    #("channel", "telegram"),
+    #("kind", "message"),
+  ])
+  let resp = server.metrics_response(metrics)
+
+  resp.status |> should.equal(200)
+  response.get_header(resp, "content-type")
+  |> should.equal(Ok("text/plain; version=0.0.4"))
 }
