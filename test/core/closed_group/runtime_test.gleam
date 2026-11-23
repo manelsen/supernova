@@ -894,6 +894,7 @@ pub fn admission_uses_routed_model_price_test() {
       api_key: None,
       base_url: None,
       model: Some(model),
+      models: [],
       timeout_ms: 1000,
     )
   }
@@ -942,6 +943,7 @@ pub fn admission_reserves_routed_model_estimate_test() {
             api_key: None,
             base_url: None,
             model: Some("expensive-model"),
+            models: [],
             timeout_ms: 1000,
           ),
         ),

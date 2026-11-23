@@ -18,6 +18,7 @@ import supernova/channel/registry
 import supernova/config
 import supernova/core/closed_group/pure as cg_pure
 import supernova/core/closed_group/types as cg_types
+import supernova/llm/catalog
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
 import telegram_fake
@@ -103,7 +104,10 @@ pub fn a_member_turn_is_measured_end_to_end_test() {
 /// otherwise Prometheus's `increase` loses the first event after a restart.
 pub fn boot_declares_series_at_zero_and_turns_add_to_them_test() {
   use metrics <- with_metrics
-  supernova.declare_boot_metrics(["telegram"], Ok(support.mock_config()))
+  supernova.declare_boot_metrics(
+    ["telegram"],
+    Ok([catalog.Choice("mock", "mock-model")]),
+  )
   let declared = metrics_actor.get_metrics(metrics)
   has(
     declared,

@@ -16,6 +16,9 @@ pub type ResponseLength {
 
 pub type SessionPreferences {
   SessionPreferences(
+    /// Provider of `model_override`. None in files written before /model kept
+    /// the provider: the model then belongs to the default provider.
+    provider_override: Option(String),
     model_override: Option(String),
     thinking_enabled: Bool,
     reasoning_visible: Bool,
@@ -39,6 +42,7 @@ pub type SelfState {
 
 pub fn default_preferences() -> SessionPreferences {
   SessionPreferences(
+    provider_override: None,
     model_override: None,
     thinking_enabled: False,
     reasoning_visible: False,
@@ -142,6 +146,21 @@ pub fn set_model_override(
 ) -> SelfState {
   let preferences =
     SessionPreferences(..state.preferences, model_override: model_override)
+  SelfState(..state, preferences: preferences)
+}
+
+/// The provider and model picked with /model, kept between restarts.
+pub fn set_model_choice(
+  state: SelfState,
+  provider_name: String,
+  model: String,
+) -> SelfState {
+  let preferences =
+    SessionPreferences(
+      ..state.preferences,
+      provider_override: Some(provider_name),
+      model_override: Some(model),
+    )
   SelfState(..state, preferences: preferences)
 }
 
@@ -259,7 +278,9 @@ fn encode(state: SelfState) -> String {
 
 fn encode_preferences(preferences: SessionPreferences) -> String {
   "{"
-  <> "\"model_override\":"
+  <> "\"provider_override\":"
+  <> encode_optional_string(preferences.provider_override)
+  <> ",\"model_override\":"
   <> encode_optional_string(preferences.model_override)
   <> ",\"thinking_enabled\":"
   <> bool_to_json(preferences.thinking_enabled)
@@ -373,6 +394,11 @@ fn mood_decoder() -> decode.Decoder(mood.Mood) {
 }
 
 fn preferences_decoder() -> decode.Decoder(SessionPreferences) {
+  use provider_override <- decode.optional_field(
+    "provider_override",
+    None,
+    decode.optional(decode.string),
+  )
   use model_override <- decode.optional_field(
     "model_override",
     None,
@@ -396,6 +422,7 @@ fn preferences_decoder() -> decode.Decoder(SessionPreferences) {
   )
 
   decode.success(SessionPreferences(
+    provider_override: provider_override,
     model_override: model_override,
     thinking_enabled: thinking_enabled,
     reasoning_visible: reasoning_visible,

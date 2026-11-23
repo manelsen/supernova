@@ -62,6 +62,8 @@ pub type ProviderConfig {
     base_url: Option(String),
     /// Model to use
     model: Option(String),
+    /// Other models people may pick with /model, besides `model`
+    models: List(String),
     /// Request timeout in milliseconds
     timeout_ms: Int,
   )
@@ -564,6 +566,7 @@ pub fn default_provider_config(provider: Provider) -> ProviderConfig {
     api_key: None,
     base_url: None,
     model: None,
+    models: [],
     timeout_ms: 30_000,
   )
 }
@@ -688,6 +691,10 @@ fn decode_provider_config(
   let api_key = get_optional_string(node, "api_key")
   let base_url = get_optional_string(node, "base_url")
   let model = get_optional_string(node, "model")
+  let models =
+    get_string_list(node, "models")
+    |> list.map(string.trim)
+    |> list.filter(fn(name) { name != "" })
   let timeout_ms = get_int_or(node, "timeout_ms", 30_000)
 
   Ok(ProviderConfig(
@@ -695,6 +702,7 @@ fn decode_provider_config(
     api_key: api_key,
     base_url: base_url,
     model: model,
+    models: models,
     timeout_ms: timeout_ms,
   ))
 }
@@ -1912,6 +1920,12 @@ pub fn provider_env_key(name: String) -> String {
   "SUPERNOVA_PROVIDER_"
   <> { string.uppercase(name) |> string.replace("-", "_") }
   <> "_API_KEY"
+}
+
+/// Whether the provider can be called: it has a key, or needs none.
+pub fn provider_usable(provider_config: ProviderConfig) -> Bool {
+  !provider_requires_api_key(provider_config.provider)
+  || has_usable_key(provider_config)
 }
 
 fn has_usable_key(provider_config: ProviderConfig) -> Bool {

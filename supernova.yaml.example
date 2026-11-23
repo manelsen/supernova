@@ -15,12 +15,19 @@ log_level: info
 # API keys can use env var placeholders: "${VAR_NAME}"
 # The agents use the provider whose name sorts first. Keep only the providers
 # you use; with every block below, "anthropic" would win over "mistral".
+#
+# /model offers every provider here that has a key, each with its `model`
+# and the optional `models` list. The choice is per agent and survives
+# restarts. Give each extra model a price under `pricing.models`, or its cost
+# counts at the default price against the ceilings.
 providers:
 
   # https://mistral.ai — also serves DeepSeek; the agents run on it.
   mistral:
     api_key: "${SUPERNOVA_PROVIDER_MISTRAL_API_KEY}"
     model: "deepseek-v4-1-flash-1017"
+    # models:
+    #   - "mistral-large-latest"
 
   # https://platform.openai.com
   openai:

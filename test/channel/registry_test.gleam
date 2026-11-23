@@ -1,3 +1,4 @@
+import catalog_support
 import gleam/dict
 import gleam/erlang/process
 import gleam/list
@@ -758,10 +759,20 @@ pub fn start_channels_routes_telegram_update_to_handler_test() {
   registry.stop_channels(channel_registry)
 }
 
+/// Model buttons carry `m:<provider|model>`; buttons sent before that
+/// carry the long prefix. Both reach the router as the model list's action.
 pub fn start_channels_routes_telegram_callback_query_to_handler_test() {
+  routes_model_callback(telegram_fixture_callback_query_update())
+  routes_model_callback(string.replace(
+    telegram_fixture_callback_query_update(),
+    "picker_model_select:mock|mock-alt-model",
+    "m:mock|mock-alt-model",
+  ))
+}
+
+fn routes_model_callback(fixture: String) -> Nil {
   let received = process.new_subject()
-  let assert Ok(update) =
-    telegram.parse_update(telegram_fixture_callback_query_update())
+  let assert Ok(update) = telegram.parse_update(fixture)
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       enabled_discord_and_telegram_config(),
@@ -1211,6 +1222,10 @@ pub fn e2e_discord_help_command_routes_from_adapter_to_reply_test() {
 
 pub fn e2e_telegram_model_selection_updates_ui_and_next_reply_test() {
   use _ <- test_workspace.with_isolated_workspace("registry-e2e")
+  use <- catalog_support.with_alt_model(
+    mock_provider_config(),
+    "mock-alt-model",
+  )
   let recorder = process.new_subject()
   let assert Ok(callback_update) =
     telegram.parse_update(telegram_fixture_callback_query_update())
@@ -1234,7 +1249,7 @@ pub fn e2e_telegram_model_selection_updates_ui_and_next_reply_test() {
   |> should.equal(channel_kit.OutboundRecord(
     channel: "telegram",
     action: "edit",
-    content: "Model set to mock-alt-model for this session.",
+    content: "Modelo trocado para Mock / mock-alt-model. Vale para as próximas mensagens, também depois de reiniciar.",
     message_id: Some("171"),
   ))
   second
@@ -1822,6 +1837,10 @@ pub fn e2e_slack_model_command_returns_interactive_picker_test() {
 
 pub fn e2e_slack_model_selection_persists_for_session_test() {
   use _ <- test_workspace.with_isolated_workspace("registry-e2e")
+  use <- catalog_support.with_alt_model(
+    mock_provider_config(),
+    "mock-alt-model",
+  )
   let recorder = process.new_subject()
   let #(channel_registry, session_sup) =
     start_slack_runtime_registry_with_recorder(

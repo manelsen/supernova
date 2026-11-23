@@ -180,7 +180,7 @@ pub fn buttons_and_selects_become_an_inline_keyboard_test() {
   |> should.be_true()
   string.contains(
     sent.body,
-    "\"callback_data\":\"picker_model_select:mistral|deepseek-v4-1-flash-1017\"",
+    "\"callback_data\":\"m:mistral|deepseek-v4-1-flash-1017\"",
   )
   |> should.be_true()
   registry.stop_channels(channels)
@@ -190,7 +190,8 @@ pub fn a_button_too_long_for_telegram_does_not_sink_the_message_test() {
   let requests = process.new_subject()
   let fake = telegram_fake.start(requests)
   let channels = start(cfg(fake), [], [5], 30_000)
-  let long_model = "openrouter|meta-llama/llama-3.3-70b-instruct:free-extended"
+  let long_model =
+    "openrouter|meta-llama/llama-3.3-70b-instruct:free-extended-preview"
   let keyboard =
     port.interactive_reply([
       port.select_block(
