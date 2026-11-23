@@ -5,6 +5,10 @@
 //// reads its own person's conversations (`agents/<person>/conversations/`):
 //// the private chat and the person's side of each group. Matching ignores
 //// case and accents; a message matches when it holds every term.
+////
+//// Each match comes with the messages around it: what was said right after
+//// a word is often the answer ("o cardiologista... guarda o nome dele? é o
+//// dr. Fulano"), and a match alone would hide it.
 
 import gleam/dynamic/decode
 import gleam/int
@@ -15,20 +19,28 @@ import gleam/result
 import gleam/string
 import supernova/agenda/runtime
 import supernova/agenda/schedule
-import supernova/core/agent_identity
 import supernova/core/session/history_store
 import supernova/llm/provider
 
-/// Most matches shown; the total is always given.
-pub const max_results = 20
+/// Most excerpts shown, the most recent; the totals are always given.
+pub const max_excerpts = 10
 
-/// Longest excerpt of one message, in characters.
+/// Messages shown before and after each match.
+pub const before = 1
+
+pub const after = 2
+
+/// Most lines shown in all; past it, the oldest excerpts go first, and an
+/// excerpt longer than this keeps its last lines.
+pub const max_lines = 60
+
+/// Longest text of one message, in characters.
 pub const max_chars = 600
 
 pub fn tool() -> provider.ToolDefinition {
   provider.new_tool(
     name: "buscar_conversa",
-    description: "Search everything your person and you have said to each other, in every chat, beyond the recent messages you see. Returns the matching messages with date, time and who said it. Use it when asked about something said earlier, or to check what was actually said, instead of guessing. Finding nothing means it was not said, or was forgotten with /esquecer.",
+    description: "Search everything your person and you have said to each other, in every chat, beyond the recent messages you see. Returns excerpts: each matching message (marked ») with the message before it and the two after it, with date, time and who said it, since the answer is often in the next message. Use it when asked about something said earlier, or to check what was actually said, instead of guessing. If the first words find nothing useful, try others. Finding nothing means it was not said, or was forgotten with /esquecer.",
     parameters: [
       provider.string_param(
         "terms",
@@ -76,19 +88,27 @@ pub fn execute_for(
   }
 }
 
-pub type Match {
-  Match(chat: String, message: history_store.StoredMessage)
+/// One message of an excerpt; `hit` when it holds every term.
+pub type Line {
+  Line(message: history_store.StoredMessage, hit: Bool)
+}
+
+/// Consecutive messages of one conversation around one or more matches.
+pub type Excerpt {
+  Excerpt(lines: List(Line))
 }
 
 pub type Found {
-  Found(matches: List(Match), total: Int)
+  /// The most recent excerpts that fit, oldest first; `matches` and
+  /// `excerpts` count everything found; `trimmed` when some was left out.
+  Found(shown: List(Excerpt), matches: Int, excerpts: Int, trimmed: Bool)
 }
 
-/// Every message of the person's conversations holding all `terms`; the
-/// most recent `max_results`, oldest first. Each file is read whole and
-/// filtered before the next, so only matches accumulate; a call still reads
-/// the person's whole history, which is never pruned. No conversations yet is
-/// no match; a directory that cannot be read is an error, never "not said".
+/// Every message of the person's conversations holding all `terms`, with
+/// its neighbours. Each file is read whole and cut to its excerpts before
+/// the next, so only excerpts accumulate; a call still reads the person's
+/// whole history, which is never pruned. No conversations yet is no match;
+/// a directory or file that cannot be read is an error, never "not said".
 pub fn search(
   data_dir: String,
   principal: String,
@@ -111,85 +131,147 @@ pub fn search(
     files
     |> list.filter(fn(file) { string.ends_with(file, ".jsonl") })
     |> list.try_map(fn(file) {
-      let chat = chat_label(string.drop_end(file, 6))
       history_store.read_file_strict(dir <> "/" <> file)
       |> result.map_error(unreadable)
       |> result.map(fn(messages) {
-        messages
-        |> list.filter(fn(message) {
+        excerpts(messages, fn(message) {
           let content = fold(message.content)
           list.all(folded, fn(term) { string.contains(content, term) })
         })
-        |> list.map(fn(message) { Match(chat: chat, message: message) })
       })
     }),
   )
   let all =
     list.flatten(per_file)
-    |> list.sort(fn(a, b) { int.compare(a.message.at, b.message.at) })
-  let total = list.length(all)
-  Found(matches: list.drop(all, int.max(total - max_results, 0)), total: total)
+    |> list.sort(fn(a, b) { int.compare(first_at(a), first_at(b)) })
+  let count = list.length(all)
+  let recent = list.drop(all, int.max(count - max_excerpts, 0))
+  let shown = cap_lines(recent)
+  Found(
+    shown: shown,
+    matches: all
+      |> list.map(fn(excerpt) { list.count(excerpt.lines, fn(l) { l.hit }) })
+      |> int.sum,
+    excerpts: count,
+    trimmed: count > max_excerpts || line_count(shown) < line_count(recent),
+  )
 }
 
-/// "privado" for the one-on-one chat, "grupo" otherwise. A session is
-/// `channel:chat:user`, the user being the last part (chat ids may hold
-/// colons); in a private chat the chat is the person.
-pub fn chat_label(encoded_session: String) -> String {
-  case string.split(agent_identity.decode_principal(encoded_session), ":") {
-    [_, _, _, ..] as parts -> {
-      let assert [user, ..chat_reversed] = list.reverse(parts)
-      let chat =
-        chat_reversed |> list.reverse |> list.drop(1) |> string.join(":")
-      case chat == user {
-        True -> "privado"
-        False -> "grupo"
-      }
+fn line_count(excerpts: List(Excerpt)) -> Int {
+  excerpts |> list.map(fn(excerpt) { list.length(excerpt.lines) }) |> int.sum
+}
+
+/// The most recent excerpts that fit in `max_lines`, oldest first.
+fn cap_lines(excerpts: List(Excerpt)) -> List(Excerpt) {
+  list.reverse(excerpts)
+  |> list.fold(#([], 0), fn(acc, excerpt) {
+    let #(kept, used) = acc
+    let room = max_lines - used
+    let size = list.length(excerpt.lines)
+    case room, size <= room {
+      0, _ -> acc
+      _, True -> #([excerpt, ..kept], used + size)
+      _, False -> #(
+        [Excerpt(lines: list.drop(excerpt.lines, size - room)), ..kept],
+        max_lines,
+      )
     }
-    _ -> "privado"
+  })
+  |> fn(acc) { acc.0 }
+}
+
+fn first_at(excerpt: Excerpt) -> Int {
+  case excerpt.lines {
+    [first, ..] -> first.message.at
+    [] -> 0
   }
 }
 
+/// The excerpts of one conversation: each match widened by `before` and
+/// `after` messages, overlapping windows merged.
+pub fn excerpts(
+  messages: List(history_store.StoredMessage),
+  matches: fn(history_store.StoredMessage) -> Bool,
+) -> List(Excerpt) {
+  let indexed = list.index_map(messages, fn(message, i) { #(i, message) })
+  let hits =
+    indexed
+    |> list.filter(fn(pair) { matches(pair.1) })
+    |> list.map(fn(pair) { pair.0 })
+  let windows =
+    list.fold(hits, [], fn(acc, i) {
+      let start = int.max(i - before, 0)
+      let stop = i + after
+      case acc {
+        [#(s, e), ..rest] if start <= e + 1 -> [#(s, int.max(e, stop)), ..rest]
+        _ -> [#(start, stop), ..acc]
+      }
+    })
+    |> list.reverse
+  list.map(windows, fn(window) {
+    let #(start, stop) = window
+    Excerpt(
+      lines: indexed
+      |> list.filter(fn(pair) { pair.0 >= start && pair.0 <= stop })
+      |> list.map(fn(pair) {
+        Line(message: pair.1, hit: list.contains(hits, pair.0))
+      }),
+    )
+  })
+}
+
 fn render(found: Found, raw: String, offset: Int) -> String {
-  case found.total {
+  case found.matches {
     0 ->
       "Nada encontrado para \""
       <> string.trim(raw)
       <> "\" nas conversas guardadas."
-    total -> {
-      let header = case total > max_results {
-        True ->
-          int.to_string(total)
-          <> " mensagens encontradas; as "
-          <> int.to_string(max_results)
-          <> " mais recentes, da mais antiga para a mais nova. Use termos mais específicos para as outras."
-        False -> int.to_string(total) <> " mensagens encontradas:"
-      }
-      [header, ..list.map(found.matches, line(_, offset))]
-      |> string.join("\n")
+    matches -> {
+      let header =
+        int.to_string(matches)
+        <> plural(matches, " mensagem encontrada", " mensagens encontradas")
+        <> ", em "
+        <> int.to_string(found.excerpts)
+        <> plural(found.excerpts, " trecho", " trechos")
+        <> case found.trimmed {
+          True ->
+            "; abaixo, só os mais recentes. Use termos mais específicos para ver os outros."
+          False -> ":"
+        }
+      [header, ..list.map(found.shown, render_excerpt(_, offset))]
+      |> string.join("\n\n")
     }
   }
 }
 
-fn line(match: Match, offset: Int) -> String {
-  let when = case match.message.at {
-    0 -> "data desconhecida"
-    at -> schedule.format_local(at, offset)
+fn plural(n: Int, one: String, many: String) -> String {
+  case n {
+    1 -> one
+    _ -> many
   }
-  let who = case match.message.role {
-    "user" -> "pessoa"
-    _ -> "você"
-  }
-  "["
-  <> when
-  <> ", "
-  <> match.chat
-  <> "] "
-  <> who
-  <> ": "
-  <> excerpt(match.message.content)
 }
 
-fn excerpt(content: String) -> String {
+fn render_excerpt(excerpt: Excerpt, offset: Int) -> String {
+  excerpt.lines
+  |> list.map(fn(line) {
+    let when = case line.message.at {
+      0 -> "data desconhecida"
+      at -> schedule.format_local(at, offset)
+    }
+    let who = case line.message.role {
+      "user" -> "pessoa"
+      _ -> "você"
+    }
+    let mark = case line.hit {
+      True -> "» "
+      False -> "  "
+    }
+    mark <> "[" <> when <> "] " <> who <> ": " <> text(line.message.content)
+  })
+  |> string.join("\n")
+}
+
+fn text(content: String) -> String {
   let flat = string.replace(content, "\n", " ")
   case string.length(flat) > max_chars {
     True -> string.slice(flat, 0, max_chars) <> "…"

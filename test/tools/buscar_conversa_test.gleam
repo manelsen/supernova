@@ -60,12 +60,14 @@ pub fn finds_in_private_and_group_by_every_term_test() {
     #("user", "Gente, a reunião é na rua das Flores.", 5),
   ])
 
+  // The matches (») come with the message after them.
   let text = run(dir, "telegram:42", "aurora 210")
   text
   |> should.equal(
-    "2 mensagens encontradas:\n"
-    <> "[26/11/2026 09:00, privado] pessoa: A consulta da minha mãe é na Rua Aurora 210, às 15h.\n"
-    <> "[26/11/2026 09:01, privado] você: Guardado: rua Aurora 210, 15h.",
+    "2 mensagens encontradas, em 1 trecho:\n\n"
+    <> "» [26/11/2026 09:00] pessoa: A consulta da minha mãe é na Rua Aurora 210, às 15h.\n"
+    <> "» [26/11/2026 09:01] você: Guardado: rua Aurora 210, 15h.\n"
+    <> "  [26/11/2026 09:02] pessoa: Comprei pão.",
   )
 
   // Case and accents are ignored, in the terms and in the text.
@@ -73,7 +75,7 @@ pub fn finds_in_private_and_group_by_every_term_test() {
   |> string.contains("A consulta da minha mãe")
   |> should.be_true()
   run(dir, "telegram:42", "reuniao")
-  |> string.contains("[26/11/2026 09:05, grupo] pessoa: Gente, a reunião")
+  |> string.contains("» [26/11/2026 09:05] pessoa: Gente, a reunião")
   |> should.be_true()
   // Every term must be in the same message.
   run(dir, "telegram:42", "aurora flores")
@@ -91,29 +93,77 @@ pub fn only_the_callers_conversations_test() {
   let text = run(dir, "telegram:42", "segredo")
   text |> string.contains("abacaxi") |> should.be_true()
   text |> string.contains("melancia") |> should.be_false()
-  text |> string.contains("grupo") |> should.be_false()
+  text |> string.contains("Bia") |> should.be_false()
   run(dir, "telegram:44", "segredo")
   |> should.equal("Nada encontrado para \"segredo\" nas conversas guardadas.")
 }
 
-pub fn shows_the_most_recent_twenty_with_the_total_test() {
+/// The answer is often right after the word: "cardiologista" finds the
+/// message, and the name comes in the next one.
+pub fn a_match_comes_with_what_was_said_next_test() {
+  use dir <- with_dir
+  say(dir, "telegram:42:42", [
+    #("user", "levei minha mãe no cardiologista", 0),
+    #("assistant", "Como foi?", 1),
+    #("user", "guarda o nome dele? é o dr. Otávio Lacerda", 2),
+    #("assistant", "Guardado.", 3),
+    #("user", "fiz bolo", 10),
+    #("assistant", "Que bom.", 11),
+  ])
+  run(dir, "telegram:42", "cardiologista")
+  |> should.equal(
+    "1 mensagem encontrada, em 1 trecho:\n\n"
+    <> "» [26/11/2026 09:00] pessoa: levei minha mãe no cardiologista\n"
+    <> "  [26/11/2026 09:01] você: Como foi?\n"
+    <> "  [26/11/2026 09:02] pessoa: guarda o nome dele? é o dr. Otávio Lacerda",
+  )
+}
+
+/// Far-apart matches are separate excerpts; only the most recent ten are
+/// shown, and the header says so.
+pub fn shows_the_most_recent_excerpts_with_the_totals_test() {
   use dir <- with_dir
   say(
     dir,
     "telegram:42:42",
-    list.repeat(Nil, 25)
+    list.repeat(Nil, 60)
       |> list.index_map(fn(_, i) {
-        #("user", "nota número " <> string.inspect(i + 1), i)
+        case i % 5 {
+          0 -> #("user", "nota número " <> string.inspect(i / 5 + 1), i)
+          _ -> #("assistant", "ok", i)
+        }
       }),
   )
-  let lines = run(dir, "telegram:42", "nota") |> string.split("\n")
-  let assert [header, first, ..] = lines
+  let text = run(dir, "telegram:42", "nota")
+  let assert [header, first, ..] = string.split(text, "\n\n")
   header
   |> should.equal(
-    "25 mensagens encontradas; as 20 mais recentes, da mais antiga para a mais nova. Use termos mais específicos para as outras.",
+    "12 mensagens encontradas, em 12 trechos; abaixo, só os mais recentes. Use termos mais específicos para ver os outros.",
   )
-  first |> string.ends_with("pessoa: nota número 6") |> should.be_true()
-  list.length(lines) |> should.equal(21)
+  first |> string.contains("nota número 3") |> should.be_true()
+  string.split(text, "\n\n") |> list.length |> should.equal(11)
+}
+
+/// A run of matches merges into one excerpt, cut to its last lines.
+pub fn a_long_run_of_matches_keeps_its_last_lines_test() {
+  use dir <- with_dir
+  say(
+    dir,
+    "telegram:42:42",
+    list.repeat(Nil, 100)
+      |> list.index_map(fn(_, i) {
+        #("user", "linha " <> string.inspect(i + 1), i)
+      }),
+  )
+  let text = run(dir, "telegram:42", "linha")
+  let assert [header, body] = string.split(text, "\n\n")
+  header
+  |> string.starts_with("100 mensagens encontradas, em 1 trecho; abaixo")
+  |> should.be_true()
+  let lines = string.split(body, "\n")
+  list.length(lines) |> should.equal(buscar_conversa.max_lines)
+  let assert Ok(last) = list.last(lines)
+  last |> string.ends_with("pessoa: linha 100") |> should.be_true()
 }
 
 pub fn long_messages_are_cut_test() {
@@ -122,7 +172,7 @@ pub fn long_messages_are_cut_test() {
     #("user", "palavra " <> string.repeat("x", 1000), 0),
   ])
   let assert [_, line] =
-    run(dir, "telegram:42", "palavra") |> string.split("\n")
+    run(dir, "telegram:42", "palavra") |> string.split("\n\n")
   line |> string.ends_with("…") |> should.be_true()
   { string.length(line) < 700 } |> should.be_true()
 }
@@ -206,18 +256,6 @@ fn raw_bytes(bytes: List(Int)) -> String
 pub fn fold_leaves_invalid_utf8_alone_test() {
   let bad = raw_bytes([255, 65])
   buscar_conversa.fold(bad) |> should.equal(bad)
-}
-
-pub fn chat_label_test() {
-  let label = fn(session) {
-    buscar_conversa.chat_label(agent_identity.encode_principal(session))
-  }
-  label("telegram:42:42") |> should.equal("privado")
-  label("telegram:-100:42") |> should.equal("grupo")
-  label("sim:group-1:alice") |> should.equal("grupo")
-  // Chat ids with colons: the user is the last part.
-  label("matrix:!room:server:alice") |> should.equal("grupo")
-  label("matrix:a:b:a:b") |> should.equal("grupo")
 }
 
 /// A directory that cannot be read is an error, never "not said". A plain
