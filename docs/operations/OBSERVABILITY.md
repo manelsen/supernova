@@ -118,10 +118,33 @@ The panels count with Prometheus's `increase`, which estimates from samples take
 
 The dashboard is provisioned from `monitoring/grafana/dashboards/supernova.json` and cannot be changed from Grafana's screen. To keep your own changes, save a copy of the dashboard ("Save as") in another folder.
 
+### Alerts on Telegram
+
+Grafana checks five rules every minute:
+
+| Alert | Fires when |
+|---|---|
+| Supernova fora do ar | Prometheus cannot read `/metrics` for 2 minutes |
+| Respostas que não chegaram | A reply did not reach the person in the last 15 minutes |
+| Falhas do modelo | Three or more model calls failed in the last 15 minutes |
+| Canal sem conexão | A channel failed to fetch messages three or more times in 10 minutes, for 5 minutes |
+| Custo do dia | The last 24 hours cost more than `SUPERNOVA_ALERT_DAILY_USD` (4 by default) |
+
+They always show on Grafana's **Alerting** page. To receive them on Telegram, set the chat in `.env` and run `docker compose up -d`:
+
+```sh
+SUPERNOVA_ALERT_TELEGRAM_CHAT=123456789   # your Telegram user id, from /eu
+```
+
+The message says what fired, and a second message says when it stopped (✅). The same alert is repeated every 4 hours while it lasts.
+
+By default the alerts come from Supernova's own bot, so they land in the same chat as the agent; they do not reach the agent or its history. To keep them apart, create another bot with @BotFather, send it any message once, and set `SUPERNOVA_ALERT_TELEGRAM_TOKEN` to its token.
+
+The rules live in `monitoring/grafana/alerting/rules.yml` and the Telegram delivery in `telegram.yml` next to it. At start, `grafana-start.sh` writes them into Grafana's provisioning with the values from `.env`; without a chat it leaves Telegram out, and Grafana's log says so (`docker compose logs grafana`).
+
 ## What does not work yet
 
 - **Readiness only probes Telegram.** The other channels count as ready once they start.
 - **No OTLP export.** Spans only go to stdout; there is no collector and no trace viewer.
-- **No alerts.** Grafana shows the problems but does not warn anyone yet.
 - **Modules that nothing uses.** `core/telemetry`, `core/dashboard` and `core/alerts/actor` are not used outside their own modules.
 - **Performance never measured.** The benchmarks in `test/bench/` and the load test in `tests/load/` (`run_load_tests.sh`) exist. The targets from `docs/prd/production-ready-v1.md` (100 concurrent users, p99 under 2 s, under 1% errors) have never been checked.

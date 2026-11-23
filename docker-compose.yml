@@ -94,6 +94,8 @@ services:
     container_name: supernova-grafana
     image: grafana/grafana:12.1.1
     depends_on: [prometheus]
+    # Writes the alert provisioning from .env, then runs the image's /run.sh.
+    entrypoint: ["/bin/sh", "/etc/supernova/alerting/grafana-start.sh"]
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${SUPERNOVA_GRAFANA_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -102,6 +104,13 @@ services:
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/supernova.json
+      # Alerts on Telegram, once a chat is set; until then they only show on
+      # Grafana's Alerting page. By default they come from Supernova's own
+      # bot; a separate bot keeps them out of the agent's chat
+      # (docs/operations/OBSERVABILITY.md).
+      SUPERNOVA_ALERT_TELEGRAM_CHAT: ${SUPERNOVA_ALERT_TELEGRAM_CHAT:-}
+      SUPERNOVA_ALERT_TELEGRAM_TOKEN: ${SUPERNOVA_ALERT_TELEGRAM_TOKEN:-${SUPERNOVA_TELEGRAM_TOKEN:-}}
+      SUPERNOVA_ALERT_DAILY_USD: ${SUPERNOVA_ALERT_DAILY_USD:-4}
     mem_limit: 512m
     restart: unless-stopped
     ports:
@@ -109,6 +118,7 @@ services:
     volumes:
       - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/alerting:/etc/supernova/alerting:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     networks: [default]

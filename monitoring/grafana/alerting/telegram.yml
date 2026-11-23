@@ -1,0 +1,28 @@
+# Telegram delivery for the alerts in rules.yml. grafana-start.sh writes it
+# into Grafana's provisioning only when SUPERNOVA_ALERT_TELEGRAM_CHAT is set,
+# replacing __CHAT__ and __TOKEN__ (Grafana's own variable interpolation
+# turns a numeric chat id into a number, which it then rejects).
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: telegram
+    receivers:
+      - uid: supernova-telegram
+        type: telegram
+        disableResolveMessage: false
+        settings:
+          bottoken: "__TOKEN__"
+          chatid: "__CHAT__"
+          message: |
+            {{ range .Alerts }}{{ if eq .Status "firing" }}🔴{{ else }}✅{{ end }} {{ .Annotations.summary }}
+            {{ end }}
+
+policies:
+  - orgId: 1
+    receiver: telegram
+    group_by: ["alertname"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+
