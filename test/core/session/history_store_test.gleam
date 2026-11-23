@@ -1,0 +1,147 @@
+//// A conversation kept on disk survives a restart, stays within its limit,
+//// opens with something the person said, skips damaged lines, and is gone
+//// after /esquecer.
+
+import exception
+import gleam/list
+import gleam/string
+import gleeunit/should
+import supernova/core/session/history_store.{HistoryStore}
+import supernova/core/session/server
+import supernova/core/session/supervisor
+import test_workspace
+
+const session_id = "telegram:-100:42"
+
+fn with_store(limit: Int, body: fn(history_store.HistoryStore) -> a) -> a {
+  let dir = test_workspace.create_temp_dir("history_store")
+  use <- exception.defer(fn() { test_workspace.remove_dir_recursive(dir) })
+  body(HistoryStore(data_dir: dir, limit: limit, kept: limit))
+}
+
+fn exchange(n: Int) -> List(server.ChatMessage) {
+  let n = string.inspect(n)
+  [
+    server.ChatMessage(role: "user", content: "pergunta " <> n),
+    server.ChatMessage(role: "assistant", content: "resposta " <> n),
+  ]
+}
+
+fn contents(history: List(server.ChatMessage)) -> List(String) {
+  list.map(history, fn(message) { message.content })
+}
+
+pub fn a_conversation_survives_a_restart_test() {
+  use store <- with_store(40)
+  let assert Ok(sup) = supervisor.start_with_history(store)
+  let assert Ok(session) = supervisor.start_session(sup, session_id)
+  let assert Ok(Nil) = server.append_messages(session, exchange(1))
+  let assert Ok(Nil) = server.append_messages(session, exchange(2))
+  supervisor.stop(sup)
+
+  // A new supervisor is what a container restart gives.
+  let assert Ok(sup) = supervisor.start_with_history(store)
+  let assert Ok(session) = supervisor.start_session(sup, session_id)
+  server.get_history(session)
+  |> should.equal(list.append(exchange(1), exchange(2)))
+  supervisor.stop(sup)
+}
+
+pub fn the_file_lives_under_the_persons_agent_directory_test() {
+  use store <- with_store(40)
+  history_store.path(store, session_id)
+  |> string.starts_with(store.data_dir <> "/agents/")
+  |> should.equal(True)
+  history_store.path(store, session_id)
+  |> string.contains("/conversations/")
+  |> should.equal(True)
+}
+
+pub fn the_conversation_keeps_only_the_most_recent_messages_test() {
+  use store <- with_store(4)
+  let assert Ok(session) = server.new_with_store(session_id, store)
+  [1, 2, 3, 4, 5, 6, 7]
+  |> list.each(fn(n) {
+    let assert Ok(Nil) = server.append_messages(session, exchange(n))
+    Nil
+  })
+  let expected = ["pergunta 6", "resposta 6", "pergunta 7", "resposta 7"]
+  contents(server.get_history(session)) |> should.equal(expected)
+
+  // The file is compacted too, and reloads to the same conversation.
+  let #(stored, lines) = history_store.load(store, session_id)
+  { lines < 8 } |> should.equal(True)
+  list.map(stored, fn(message) { message.content }) |> should.equal(expected)
+}
+
+pub fn an_odd_limit_still_opens_with_the_person_test() {
+  use store <- with_store(3)
+  let assert Ok(session) = server.new_with_store(session_id, store)
+  let assert Ok(Nil) = server.append_messages(session, exchange(1))
+  let assert Ok(Nil) = server.append_messages(session, exchange(2))
+  // The last 3 would open with "resposta 1".
+  contents(server.get_history(session))
+  |> should.equal(["pergunta 2", "resposta 2"])
+
+  let assert Ok(reloaded) = server.new_with_store(session_id, store)
+  contents(server.get_history(reloaded))
+  |> should.equal(["pergunta 2", "resposta 2"])
+}
+
+pub fn a_damaged_line_is_skipped_test() {
+  use store <- with_store(40)
+  let assert Ok(session) = server.new_with_store(session_id, store)
+  let assert Ok(Nil) = server.append_messages(session, exchange(1))
+  let assert Ok(Nil) =
+    append_raw(history_store.path(store, session_id), "{\"role\": \n")
+  let assert Ok(Nil) = server.append_messages(session, exchange(2))
+
+  let assert Ok(reloaded) = server.new_with_store(session_id, store)
+  contents(server.get_history(reloaded))
+  |> should.equal(["pergunta 1", "resposta 1", "pergunta 2", "resposta 2"])
+}
+
+pub fn sessions_without_a_store_keep_memory_only_test() {
+  use store <- with_store(40)
+  let assert Ok(session) = server.new(session_id)
+  let assert Ok(Nil) = server.append_messages(session, exchange(1))
+  history_store.load(store, session_id) |> should.equal(#([], 0))
+}
+
+pub fn each_person_in_a_group_has_their_own_file_test() {
+  use store <- with_store(40)
+  history_store.path(store, "telegram:-100:42")
+  |> should.not_equal(history_store.path(store, "telegram:-100:43"))
+  history_store.dir(store.data_dir, "telegram:42")
+  |> should.not_equal(history_store.dir(store.data_dir, "telegram:43"))
+}
+
+@external(erlang, "supernova_file_system_ffi", "append_file")
+fn append_raw(path: String, content: String) -> Result(Nil, String)
+
+pub fn the_disk_keeps_more_than_the_model_sees_test() {
+  let dir = test_workspace.create_temp_dir("history_store_kept")
+  use <- exception.defer(fn() { test_workspace.remove_dir_recursive(dir) })
+  let store = HistoryStore(data_dir: dir, limit: 2, kept: 6)
+  let assert Ok(session) = server.new_with_store(session_id, store)
+  [1, 2, 3, 4, 5, 6, 7]
+  |> list.each(fn(n) {
+    let assert Ok(Nil) = server.append_messages(session, exchange(n))
+    Nil
+  })
+  // The model sees the last exchange.
+  contents(server.get_history(session))
+  |> should.equal(["pergunta 7", "resposta 7"])
+  let #(window, lines) = history_store.load(store, session_id)
+  list.map(window, fn(message) { message.content })
+  |> should.equal(["pergunta 7", "resposta 7"])
+  // The disk keeps more: compacted at 12 lines down to 6, then 2 more.
+  lines |> should.equal(8)
+  let wide = HistoryStore(data_dir: dir, limit: 8, kept: 8)
+  let #(on_disk, _) = history_store.load(wide, session_id)
+  list.map(on_disk, fn(message) { message.content })
+  |> should.equal([
+    "pergunta 4", "resposta 4", "pergunta 5", "resposta 5", "pergunta 6",
+    "resposta 6", "pergunta 7", "resposta 7",
+  ])
+}

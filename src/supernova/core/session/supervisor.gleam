@@ -22,9 +22,11 @@
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/order
 import gleam/otp/actor
 import gleam/string
+import supernova/core/session/history_store.{type HistoryStore}
 import supernova/core/session/server
 
 // ============================================================================
@@ -70,14 +72,21 @@ pub type SessionSupervisor =
 
 /// Internal supervisor state.
 type SupervisorState {
-  SupervisorState(sessions: Dict(String, server.Session))
+  SupervisorState(
+    sessions: Dict(String, server.Session),
+    store: Option(HistoryStore),
+  )
 }
 
 /// Start a rich session actor with the given ID.
 fn start_session_actor(
   session_id: String,
+  store: Option(HistoryStore),
 ) -> Result(server.Session, actor.StartError) {
-  server.new(session_id)
+  case store {
+    Some(store) -> server.new_with_store(session_id, store)
+    None -> server.new(session_id)
+  }
 }
 
 // ============================================================================
@@ -100,11 +109,11 @@ fn handle_supervisor_message(
           actor.continue(state)
         }
         Error(_) -> {
-          case start_session_actor(session_id) {
+          case start_session_actor(session_id, state.store) {
             Ok(subject) -> {
               let new_sessions =
                 dict.insert(state.sessions, session_id, subject)
-              let new_state = SupervisorState(sessions: new_sessions)
+              let new_state = SupervisorState(..state, sessions: new_sessions)
               actor.send(reply_to, Ok(subject))
               actor.continue(new_state)
             }
@@ -125,7 +134,7 @@ fn handle_supervisor_message(
         Ok(subject) -> {
           let _ = server.stop(subject)
           let new_sessions = dict.delete(state.sessions, session_id)
-          let new_state = SupervisorState(sessions: new_sessions)
+          let new_state = SupervisorState(..state, sessions: new_sessions)
           actor.send(reply_to, Ok(Nil))
           actor.continue(new_state)
         }
@@ -187,7 +196,21 @@ fn string_compare(a: String, b: String) -> order.Order {
 /// Returns the supervisor subject that can be used to manage sessions.
 /// Returns an error if the supervisor could not be started.
 pub fn start() -> Result(SessionSupervisor, actor.StartError) {
-  let initial_state = SupervisorState(sessions: dict.new())
+  start_with(None)
+}
+
+/// Start a session supervisor whose sessions keep their conversation in
+/// `store`, so it survives restarts.
+pub fn start_with_history(
+  store: HistoryStore,
+) -> Result(SessionSupervisor, actor.StartError) {
+  start_with(Some(store))
+}
+
+fn start_with(
+  store: Option(HistoryStore),
+) -> Result(SessionSupervisor, actor.StartError) {
+  let initial_state = SupervisorState(sessions: dict.new(), store: store)
 
   case
     actor.new(initial_state)

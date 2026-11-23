@@ -10,6 +10,7 @@ import supernova/adapters/telegram_router
 import supernova/channel/port
 import supernova/channel/session
 import supernova/core/persona/loader as persona_loader
+import supernova/core/session/history_store
 import supernova/core/session/server
 import supernova/core/session/supervisor
 import supernova/llm/provider
@@ -874,6 +875,41 @@ pub fn telegram_router_records_history_in_supervised_session_test() {
     server.ChatMessage(role: "user", content: "second turn"),
     server.ChatMessage(role: "assistant", content: "Mock response"),
   ])
+}
+
+/// A restart (a new supervisor over the same data directory) keeps the
+/// conversation: the next turn continues it, and the model sees it.
+pub fn telegram_router_conversation_survives_a_restart_test() {
+  use dir <- test_workspace.with_isolated_workspace("channel-router-restart")
+  let store = history_store.HistoryStore(data_dir: dir, limit: 40, kept: 40)
+  let turn = fn(id, text) {
+    message(id, "telegram", "chat-r", "user-r", "alice", text, False)
+  }
+
+  let assert Ok(before) = supervisor.start_with_history(store)
+  let assert Ok(router) =
+    telegram_router.start_with_session_supervisor(
+      before,
+      mock_provider_config(),
+    )
+  complete_telegram_bootstrap(router, "chat-r", "user-r", "alice")
+  let assert Ok(_) =
+    telegram_router.route(router, turn("tg-r-1", "antes do restart"))
+  supervisor.stop(before)
+
+  let assert Ok(after) = supervisor.start_with_history(store)
+  let assert Ok(router) =
+    telegram_router.start_with_session_supervisor(after, mock_provider_config())
+  let assert Ok(_) =
+    telegram_router.route(router, turn("tg-r-2", "depois do restart"))
+
+  let session_id = session.telegram_session_id("chat-r", "user-r")
+  let assert Ok(session) = supervisor.get_session(after, session_id)
+  server.get_history(session)
+  |> list.map(fn(message) { message.content })
+  |> list.filter(fn(content) { string.contains(content, "restart") })
+  |> should.equal(["antes do restart", "depois do restart"])
+  supervisor.stop(after)
 }
 
 pub fn telegram_router_handler_streams_and_records_history_test() {

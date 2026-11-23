@@ -17,6 +17,8 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import supernova/core/session/history_store.{type HistoryStore}
+import supernova/infra/safe_io
 import supernova/llm/provider
 
 // ============================================================================
@@ -116,6 +118,11 @@ type SessionState {
     model_override: Option(String),
     llm_config_override: Option(provider.ProviderConfig),
     preferences: SessionPreferences,
+    /// Where the conversation is kept on disk; None keeps it only in memory,
+    /// with no limit.
+    store: Option(HistoryStore),
+    /// Lines the conversation file holds, to know when to compact it.
+    lines_on_disk: Int,
   )
 }
 
@@ -230,8 +237,7 @@ fn handle_session_message(
     }
 
     AppendMessages(reply_to, messages) -> {
-      let new_state =
-        SessionState(..state, history: list.append(state.history, messages))
+      let new_state = add_messages(state, messages)
       actor.send(reply_to, Ok(Nil))
       actor.continue(new_state)
     }
@@ -243,22 +249,101 @@ fn handle_session_message(
   }
 }
 
+/// Add messages to the conversation. With a store, they are written to disk
+/// and the conversation is cut to the store's limit; a write that fails is
+/// logged and the turn goes on with the conversation in memory.
+fn add_messages(
+  state: SessionState,
+  messages: List(ChatMessage),
+) -> SessionState {
+  let history = list.append(state.history, messages)
+  case state.store {
+    None -> SessionState(..state, history: history)
+    Some(store) -> {
+      let now = now_ms()
+      let stored =
+        list.map(messages, fn(message) {
+          history_store.StoredMessage(
+            role: message.role,
+            content: message.content,
+            at: now,
+          )
+        })
+      let lines_on_disk =
+        history_store.append(
+          store,
+          state.session_id,
+          stored,
+          state.lines_on_disk,
+        )
+        |> result.map_error(fn(reason) {
+          safe_io.println(
+            "warn: conversation not saved session="
+            <> state.session_id
+            <> " error="
+            <> reason,
+          )
+        })
+        |> result.unwrap(state.lines_on_disk)
+      SessionState(
+        ..state,
+        history: cut(history, store.limit),
+        lines_on_disk: lines_on_disk,
+      )
+    }
+  }
+}
+
+/// The last `limit` messages, opening with something the person said.
+fn cut(history: List(ChatMessage), limit: Int) -> List(ChatMessage) {
+  history_store.trim(history, limit)
+  |> list.drop_while(fn(message) { message.role != "user" })
+}
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn now_ms() -> Int
+
 // ============================================================================
 // Public API
 // ============================================================================
 
-/// Create a new session with the given ID.
+/// Create a new session with the given ID, kept only in memory.
 ///
 /// Returns the session actor subject on success.
 pub fn new(session_id: String) -> Result(Session, actor.StartError) {
+  start_with(session_id, None, [], 0)
+}
+
+/// Create a session whose conversation is kept in `store`: it starts with
+/// what the store holds for this session, so a restart does not cut it.
+pub fn new_with_store(
+  session_id: String,
+  store: HistoryStore,
+) -> Result(Session, actor.StartError) {
+  let #(stored, lines_on_disk) = history_store.load(store, session_id)
+  let history =
+    list.map(stored, fn(message) {
+      ChatMessage(role: message.role, content: message.content)
+    })
+  start_with(session_id, Some(store), history, lines_on_disk)
+}
+
+fn start_with(
+  session_id: String,
+  store: Option(HistoryStore),
+  history: List(ChatMessage),
+  lines_on_disk: Int,
+) -> Result(Session, actor.StartError) {
   let initial_state =
     SessionState(
       session_id: session_id,
       status: Idle,
-      history: [],
+      history: history,
       model_override: None,
       llm_config_override: None,
       preferences: default_preferences(),
+      store: store,
+      lines_on_disk: lines_on_disk,
     )
 
   actor.new(initial_state)
