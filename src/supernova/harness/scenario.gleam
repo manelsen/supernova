@@ -25,6 +25,11 @@ pub type Step {
   Talk(persona: String, chat: String, goal: String, max_turns: Int)
   Secret(persona: String, marker: String)
   Advance(hours: Int)
+  /// Write an earlier conversation into the persona's history in `chat`:
+  /// the messages of `seeds/<file>`, spread over the `days` before now. The
+  /// agent finds them as if they had happened; only the last
+  /// `conversation.history_limit` reach its window.
+  Seed(persona: String, chat: String, file: String, days: Int)
   Sweep
   Mark(label: String)
 }
@@ -70,6 +75,10 @@ pub fn personas_dir(root: String) -> String {
 
 pub fn scenarios_dir(root: String) -> String {
   root <> "/scenarios"
+}
+
+pub fn seeds_dir(root: String) -> String {
+  root <> "/seeds"
 }
 
 pub fn rubrics_dir(root: String) -> String {
@@ -183,6 +192,13 @@ fn step_decoder() -> decode.Decoder(Step) {
     "advance" -> {
       use hours <- decode.field("hours", decode.int)
       decode.success(Advance(hours: hours))
+    }
+    "seed" -> {
+      use persona <- decode.field("persona", decode.string)
+      use chat <- decode.field("chat", decode.string)
+      use file <- decode.field("file", decode.string)
+      use days <- decode.optional_field("days", 30, decode.int)
+      decode.success(Seed(persona: persona, chat: chat, file: file, days: days))
     }
     "sweep" -> decode.success(Sweep)
     "mark" -> {
@@ -360,7 +376,7 @@ pub fn validate(
     scenario,
     chat_ids,
   ))
-  use _ <- result.try(validate_steps(scenario, persona_ids, chat_ids))
+  use _ <- result.try(validate_steps(root, scenario, persona_ids, chat_ids))
   use _ <- result.try(list.try_each(scenario.checks, validate_check))
   list.try_each(scenario.checks, fn(check) {
     case check_persona(check) {
@@ -383,6 +399,7 @@ fn check_persona(check: String) -> Option(String) {
     ["denied", persona, _] -> Some(persona)
     ["addendum_words", persona] -> Some(persona)
     ["named", persona] -> Some(persona)
+    ["tool_used", persona, _] -> Some(persona)
     _ -> None
   }
 }
@@ -436,6 +453,7 @@ fn validate_persona_ids(
 }
 
 fn validate_steps(
+  root: String,
   scenario: Scenario,
   persona_ids: List(String),
   chat_ids: List(String),
@@ -455,6 +473,22 @@ fn validate_steps(
               "scenario " <> scenario.id <> ": unknown persona: " <> persona,
             )
         }
+      Seed(persona: persona, chat: chat, file: file, days: days) -> {
+        use _ <- result.try(check_refs(
+          scenario.id,
+          persona,
+          chat,
+          persona_ids,
+          chat_ids,
+        ))
+        case days > 0, file_exists(seeds_dir(root) <> "/" <> file) {
+          False, _ ->
+            Error("scenario " <> scenario.id <> ": seed days must be positive")
+          True, Ok(True) -> Ok(Nil)
+          True, _ ->
+            Error("scenario " <> scenario.id <> ": missing seed file: " <> file)
+        }
+      }
       Advance(..) | Sweep | Mark(..) -> Ok(Nil)
     }
   })
@@ -479,7 +513,8 @@ fn check_refs(
 }
 
 /// `invariants`, `core_unchanged:<p>`, `drift_count:<p>:<n>`,
-/// `markers_absent:<p>:<mark>`, `denied:<p>:<operation>`, `addendum_words:<p>`, `named:<p>`.
+/// `markers_absent:<p>:<mark>`, `denied:<p>:<operation>`, `addendum_words:<p>`, `named:<p>`,
+/// `tool_used:<p>:<tool>`.
 pub fn validate_check(check: String) -> Result(Nil, String) {
   let parts = string.split(check, ":")
   let ok = case parts {
@@ -494,6 +529,7 @@ pub fn validate_check(check: String) -> Result(Nil, String) {
     ["denied", _, _] -> True
     ["addendum_words", _] -> True
     ["named", _] -> True
+    ["tool_used", _, _] -> True
     _ -> False
   }
   case ok {

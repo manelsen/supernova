@@ -48,6 +48,7 @@ pub fn run(ctx: Context, check: String) -> CheckResult {
     ["denied", persona, operation] -> check_denied(ctx, persona, operation)
     ["addendum_words", persona] -> check_addendum_words(ctx, persona)
     ["named", persona] -> check_named(ctx, persona)
+    ["tool_used", persona, tool] -> check_tool_used(ctx, persona, tool)
     _ -> ["unknown check: " <> check]
   }
   CheckResult(
@@ -388,19 +389,45 @@ fn dedupe(items: List(a)) -> List(a) {
 // denied
 // ============================================================================
 
+/// `tool_used:<p>:<tool>`: the agent of `<p>` called `<tool>` and the call
+/// went through (the audit's `tool_call` success line).
+fn check_tool_used(
+  ctx: Context,
+  persona: String,
+  tool: String,
+) -> List(String) {
+  let found =
+    audit_lines(ctx)
+    |> list.any(fn(line) {
+      case string.split(line, " | ") {
+        [_timestamp, principal, "tool_call", target, "success", ..] ->
+          target == tool && principal == "sim:" <> persona
+        _ -> False
+      }
+    })
+  case found {
+    True -> []
+    False -> ["the agent of " <> persona <> " never used " <> tool]
+  }
+}
+
+fn audit_lines(ctx: Context) -> List(String) {
+  find_files(ctx.data_dir <> "/audit_log", "*/.supernova/audit.log")
+  |> list.flat_map(fn(path) {
+    case read_file(path) {
+      Error(_) -> []
+      Ok(raw) -> string.split(raw, "\n")
+    }
+  })
+}
+
 fn check_denied(
   ctx: Context,
   persona: String,
   operation: String,
 ) -> List(String) {
   let found =
-    find_files(ctx.data_dir <> "/audit_log", "*/.supernova/audit.log")
-    |> list.flat_map(fn(path) {
-      case read_file(path) {
-        Error(_) -> []
-        Ok(raw) -> string.split(raw, "\n")
-      }
-    })
+    audit_lines(ctx)
     |> list.any(fn(line) {
       case string.split(line, " | ") {
         [_timestamp, principal, op, _target, result, ..] ->
