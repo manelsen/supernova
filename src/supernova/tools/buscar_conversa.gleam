@@ -16,6 +16,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
+import gleam/set.{type Set}
 import gleam/string
 import supernova/agenda/runtime
 import supernova/agenda/schedule
@@ -105,10 +106,11 @@ pub type Found {
 }
 
 /// Every message of the person's conversations holding all `terms`, with
-/// its neighbours. Each file is read whole and cut to its excerpts before
-/// the next, so only excerpts accumulate; a call still reads the person's
-/// whole history, which is never pruned. No conversations yet is no match;
-/// a directory or file that cannot be read is an error, never "not said".
+/// its neighbours. A call reads the person's whole history, which is never
+/// pruned: each file is read and decoded once, only message contents are
+/// folded (folding whole lines, JSON and all, was slower), and excerpts are
+/// cut by position, never by scanning. No conversations yet is no match; a
+/// directory or file that cannot be read is an error, never "not said".
 pub fn search(
   data_dir: String,
   principal: String,
@@ -133,29 +135,106 @@ pub fn search(
     |> list.try_map(fn(file) {
       history_store.read_file_strict(dir <> "/" <> file)
       |> result.map_error(unreadable)
-      |> result.map(fn(messages) {
-        excerpts(messages, fn(message) {
-          let content = fold(message.content)
-          list.all(folded, fn(term) { string.contains(content, term) })
-        })
-      })
+      |> result.map(file_windows(_, folded))
     }),
   )
-  let all =
+  let windows =
     list.flatten(per_file)
-    |> list.sort(fn(a, b) { int.compare(first_at(a), first_at(b)) })
-  let count = list.length(all)
-  let recent = list.drop(all, int.max(count - max_excerpts, 0))
+    |> list.sort(fn(a, b) { int.compare(a.at, b.at) })
+  let count = list.length(windows)
+  let recent =
+    list.drop(windows, int.max(count - max_excerpts, 0))
+    |> list.map(window_excerpt)
   let shown = cap_lines(recent)
   Found(
     shown: shown,
-    matches: all
-      |> list.map(fn(excerpt) { list.count(excerpt.lines, fn(l) { l.hit }) })
-      |> int.sum,
+    matches: windows |> list.map(fn(w) { set.size(w.hits) }) |> int.sum,
     excerpts: count,
     trimmed: count > max_excerpts || line_count(shown) < line_count(recent),
   )
 }
+
+/// Consecutive positions of one conversation around matches.
+type Window {
+  Window(said: Said, start: Int, stop: Int, hits: Set(Int), at: Int)
+}
+
+/// The messages of one conversation (what was said, not the tool calls
+/// kept in between), by position.
+type Said
+
+fn file_windows(
+  messages: List(history_store.StoredMessage),
+  folded_terms: List(String),
+) -> List(Window) {
+  let said =
+    list.filter(messages, fn(message) {
+      message.role == "user" || message.role == "assistant"
+    })
+  let size = list.length(said)
+  let by_position = to_said(said)
+  said
+  |> list.index_map(fn(message, position) { #(position, message) })
+  |> list.filter_map(fn(item) {
+    let content = fold({ item.1 }.content)
+    case list.all(folded_terms, string.contains(content, _)) {
+      True -> Ok(item.0)
+      False -> Error(Nil)
+    }
+  })
+  |> list.fold([], fn(acc, position) {
+    let start = int.max(position - before, 0)
+    let stop = int.min(position + after, size - 1)
+    case acc {
+      [#(s, e, inside), ..rest] if start <= e + 1 -> [
+        #(s, int.max(e, stop), [position, ..inside]),
+        ..rest
+      ]
+      _ -> [#(start, stop, [position]), ..acc]
+    }
+  })
+  |> list.reverse
+  |> list.map(fn(window) {
+    let #(start, stop, inside) = window
+    Window(
+      said: by_position,
+      start: start,
+      stop: stop,
+      hits: set.from_list(inside),
+      at: { message_at(by_position, start) }.at,
+    )
+  })
+}
+
+fn window_excerpt(window: Window) -> Excerpt {
+  Excerpt(
+    lines: positions(window.start, window.stop)
+    |> list.map(fn(position) {
+      Line(
+        message: message_at(window.said, position),
+        hit: set.contains(window.hits, position),
+      )
+    }),
+  )
+}
+
+fn positions(from: Int, to: Int) -> List(Int) {
+  case to < from {
+    True -> []
+    False -> [from, ..positions(from + 1, to)]
+  }
+}
+
+@external(erlang, "erlang", "list_to_tuple")
+fn to_said(messages: List(history_store.StoredMessage)) -> Said
+
+/// 0-based.
+fn message_at(said: Said, position: Int) -> history_store.StoredMessage {
+  element(position + 1, said)
+}
+
+@external(erlang, "erlang", "element")
+fn element(index: Int, said: Said) -> history_store.StoredMessage
 
 fn line_count(excerpts: List(Excerpt)) -> Int {
   excerpts |> list.map(fn(excerpt) { list.length(excerpt.lines) }) |> int.sum
@@ -178,46 +257,6 @@ fn cap_lines(excerpts: List(Excerpt)) -> List(Excerpt) {
     }
   })
   |> fn(acc) { acc.0 }
-}
-
-fn first_at(excerpt: Excerpt) -> Int {
-  case excerpt.lines {
-    [first, ..] -> first.message.at
-    [] -> 0
-  }
-}
-
-/// The excerpts of one conversation: each match widened by `before` and
-/// `after` messages, overlapping windows merged.
-pub fn excerpts(
-  messages: List(history_store.StoredMessage),
-  matches: fn(history_store.StoredMessage) -> Bool,
-) -> List(Excerpt) {
-  let indexed = list.index_map(messages, fn(message, i) { #(i, message) })
-  let hits =
-    indexed
-    |> list.filter(fn(pair) { matches(pair.1) })
-    |> list.map(fn(pair) { pair.0 })
-  let windows =
-    list.fold(hits, [], fn(acc, i) {
-      let start = int.max(i - before, 0)
-      let stop = i + after
-      case acc {
-        [#(s, e), ..rest] if start <= e + 1 -> [#(s, int.max(e, stop)), ..rest]
-        _ -> [#(start, stop), ..acc]
-      }
-    })
-    |> list.reverse
-  list.map(windows, fn(window) {
-    let #(start, stop) = window
-    Excerpt(
-      lines: indexed
-      |> list.filter(fn(pair) { pair.0 >= start && pair.0 <= stop })
-      |> list.map(fn(pair) {
-        Line(message: pair.1, hit: list.contains(hits, pair.0))
-      }),
-    )
-  })
 }
 
 fn render(found: Found, raw: String, offset: Int) -> String {

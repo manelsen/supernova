@@ -305,3 +305,24 @@ pub fn unreadable_file_is_an_error_test() {
     Ok(_) -> should.fail()
   }
 }
+
+/// The file is pre-filtered on its folded text, which holds the JSON keys
+/// too: a term that only appears there ("role", "content", "user") matches
+/// nothing.
+pub fn json_keys_are_not_matched_test() {
+  use dir <- with_dir
+  say(dir, "telegram:42:42", [
+    #("user", "oi", 0),
+    #("assistant", "olá, tudo bem?", 1),
+    #("user", "o papel dele no conteúdo", 2),
+  ])
+  run(dir, "telegram:42", "role")
+  |> should.equal("Nada encontrado para \"role\" nas conversas guardadas.")
+  run(dir, "telegram:42", "content user")
+  |> should.equal(
+    "Nada encontrado para \"content user\" nas conversas guardadas.",
+  )
+  run(dir, "telegram:42", "conteudo")
+  |> string.contains("1 mensagem encontrada")
+  |> should.be_true()
+}
