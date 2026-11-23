@@ -1,0 +1,10 @@
+# Prometheus reads Supernova's /metrics every 15 s and keeps the history.
+# See docs/operations/OBSERVABILITY.md.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: supernova
+    static_configs:
+      - targets: ["supernova:8080"]

@@ -66,6 +66,53 @@ services:
       - ./computador/resolv.conf:/etc/resolv.conf:ro
     networks: [computador_net]
 
+  # Observability: Prometheus keeps the history of Supernova's /metrics and
+  # Grafana shows it as a dashboard. Off unless the "observabilidade" profile
+  # is on (COMPOSE_PROFILES=observabilidade in .env). Both listen only on the
+  # host's loopback; reach them through an SSH tunnel. See
+  # docs/operations/OBSERVABILITY.md.
+  prometheus:
+    profiles: ["observabilidade"]
+    container_name: supernova-prometheus
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=90d
+      - --storage.tsdb.retention.size=2GB
+    mem_limit: 512m
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks: [default]
+
+  grafana:
+    profiles: ["observabilidade"]
+    container_name: supernova-grafana
+    image: grafana/grafana:12.1.1
+    depends_on: [prometheus]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${SUPERNOVA_GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/supernova.json
+    mem_limit: 512m
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks: [default]
+
 networks:
   # The computer's own network. Its bridge has a fixed name so a host
   # firewall rule can keep the computer away from the host and the local
@@ -77,3 +124,5 @@ networks:
 volumes:
   supernova_data:
   computador_home:
+  prometheus_data:
+  grafana_data:
