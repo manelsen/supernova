@@ -25,6 +25,7 @@ import supernova/channel/chat_lanes
 import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/config
+import supernova/core/closed_group/commands as closed_group_commands
 
 /// A registry of all channel adapters, keyed by channel name.
 pub type ChannelRegistry {
@@ -178,12 +179,19 @@ fn starters(
       |> result.map(fn(pair) { #(pair.0, None) })
     }),
     Starter("telegram", True, fn() {
-      streaming(telegram_channel.start_telegram_channel(
-        cfg.telegram,
-        handler,
-        hooks,
-        health,
-      ))
+      let started =
+        telegram_channel.start_telegram_channel(
+          cfg.telegram,
+          handler,
+          hooks,
+          health,
+        )
+      // Tests drive Telegram without polling; they do not publish a menu.
+      case started, hooks.disable_telegram_polling {
+        Ok(_), False -> publish_telegram_menu(cfg)
+        _, _ -> Nil
+      }
+      streaming(started)
     }),
     Starter("slack", False, fn() {
       streaming(slack_channel.start_slack_channel(cfg.slack, handler, hooks))
@@ -250,8 +258,13 @@ pub fn list_channels(registry: ChannelRegistry) -> List(String) {
 }
 
 /// Stop all channels in the registry.
+/// Turns in progress get up to this long to finish when Supernova stops.
+/// What does not finish stays in the durable inbox and is answered after
+/// the restart. Keep it under compose's `stop_grace_period` (60 s).
+pub const drain_timeout_ms = 40_000
+
 pub fn stop_channels(registry: ChannelRegistry) -> Nil {
-  stop_channels_with_timeout(registry, 25_000)
+  stop_channels_with_timeout(registry, drain_timeout_ms)
 }
 
 /// Stop adapters after draining this registry's lane prefix.
@@ -358,6 +371,39 @@ fn start_wechat_work_channel(
   }
 }
 
+/// Answer again a message the durable inbox kept from before a restart.
+pub fn replay(
+  registry: ChannelRegistry,
+  handler: port.ChannelHandler,
+  message: port.ChannelMessage,
+) -> Result(Nil, port.ChannelError) {
+  let channel = message.channel
+  case dict.has_key(registry.channels, channel) {
+    False -> Error(port.SendFailed("Channel not registered: " <> channel))
+    True -> {
+      channel_kit.dispatch_recovered(
+        handler,
+        fn(reply) { send(registry, channel, reply) },
+        stream_send_for(registry, channel),
+        message,
+        registry.id,
+        channel_kit.turn_hard_timeout_ms,
+      )
+      Ok(Nil)
+    }
+  }
+}
+
+fn stream_send_for(
+  registry: ChannelRegistry,
+  channel: String,
+) -> channel_kit.StreamSendFn {
+  case dict.get(registry.streams, channel) {
+    Ok(send_fn) -> send_fn
+    Error(_) -> fn(base_reply, _events) { send(registry, channel, base_reply) }
+  }
+}
+
 /// Run an inbound the core produced itself (an agenda entry coming due) as if
 /// the channel had delivered it: same handler, same per-chat lane, so it never
 /// overlaps a turn the person is having in that chat.
@@ -390,4 +436,29 @@ pub fn inject(
       Ok(Nil)
     }
   }
+}
+
+/// The closed group's commands as the Telegram menu, in the background: the
+/// boot does not wait on Telegram.
+fn publish_telegram_menu(cfg: config.Config) -> Nil {
+  let pairs = fn(is_admin) {
+    closed_group_commands.for_role(is_admin)
+    |> list.map(fn(command) { #(command.name, command.description) })
+  }
+  let admin_ids =
+    list.filter_map(cfg.access.admins, fn(principal) {
+      case principal {
+        "telegram:" <> id -> Ok(id)
+        _ -> Error(Nil)
+      }
+    })
+  process.spawn_unlinked(fn() {
+    telegram_channel.publish_menu(
+      cfg.telegram,
+      pairs(False),
+      pairs(True),
+      admin_ids,
+    )
+  })
+  Nil
 }

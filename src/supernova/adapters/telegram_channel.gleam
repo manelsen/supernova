@@ -18,6 +18,7 @@ import supernova/core/access/actor as access_actor
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/closed_group/global as closed_group_global
+import supernova/infra/safe_io
 
 type TelegramWorker {
   TelegramWorker(done: process.Subject(Nil), ingress_done: process.Subject(Nil))
@@ -97,6 +98,59 @@ pub fn start_telegram_channel(
       ))
     }
     None -> Error("enabled but no token configured")
+  }
+}
+
+/// The menu without a language, and in the languages most likely to hold
+/// an old menu.
+const menu_languages = [None, Some("pt"), Some("en")]
+
+/// Publish the command menu people see when they tap "Menu": members' commands
+/// for every chat, and the admins' longer list in each admin's private chat.
+/// Telegram keeps whatever menu was set last, even by another program that
+/// used the same token, so Supernova sets its own at every boot. Telegram
+/// keeps one menu per scope and language, and a menu for the user's
+/// language wins over the one without: the same menu also goes in the
+/// languages another program is likely to have used. Failures are logged;
+/// the menu is a convenience.
+pub fn publish_menu(
+  telegram_cfg: config.TelegramConfig,
+  member_commands: List(#(String, String)),
+  admin_commands: List(#(String, String)),
+  admin_user_ids: List(String),
+) -> Nil {
+  case telegram_cfg.token {
+    None -> Nil
+    Some(token) -> {
+      let api = case telegram_cfg.base_url {
+        Some(base_url) ->
+          telegram.with_base_url(telegram.new_config(token), base_url)
+        None -> telegram.new_config(token)
+      }
+      let scopes =
+        list.append(
+          [
+            #(telegram.DefaultScope, member_commands),
+            #(telegram.AllPrivateChats, member_commands),
+            #(telegram.AllGroupChats, member_commands),
+          ],
+          list.map(admin_user_ids, fn(id) {
+            #(telegram.ChatScope(id), admin_commands)
+          }),
+        )
+      list.each(scopes, fn(pair) {
+        list.each(menu_languages, fn(language) {
+          case telegram.set_my_commands(api, pair.1, pair.0, language) {
+            Ok(Nil) -> Nil
+            Error(error) ->
+              safe_io.println(
+                "warn: telegram menu not set: "
+                <> telegram.describe_poll_error(error),
+              )
+          }
+        })
+      })
+    }
   }
 }
 
@@ -180,15 +234,23 @@ fn start_telegram_worker(
   TelegramWorker(done: done, ingress_done: ingress_done)
 }
 
+/// How long a stop waits for the polling loop. A long poll in flight can take
+/// `polling_timeout` seconds; waiting for it would eat the shutdown budget.
+/// Nothing is lost by not waiting: what that poll returns is only confirmed
+/// to Telegram by a later `getUpdates`, so it comes back after the restart,
+/// and the durable inbox answers it once.
+pub fn stop_wait_ms(polling_timeout: Int) -> Int {
+  int.min({ polling_timeout + 5 } * 1000, 2000)
+}
+
 fn stop_telegram_ingress(worker: TelegramWorker, polling_timeout: Int) -> Nil {
-  let wait_ms = { polling_timeout + 5 } * 1000
-  let _ = process.receive(worker.ingress_done, within: wait_ms)
+  let _ =
+    process.receive(worker.ingress_done, within: stop_wait_ms(polling_timeout))
   Nil
 }
 
 fn stop_telegram_worker(worker: TelegramWorker, polling_timeout: Int) -> Nil {
-  let wait_ms = { polling_timeout + 5 } * 1000
-  let _ = process.receive(worker.done, within: wait_ms)
+  let _ = process.receive(worker.done, within: stop_wait_ms(polling_timeout))
   Nil
 }
 

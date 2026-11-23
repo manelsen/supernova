@@ -54,6 +54,23 @@ docker compose down
 docker compose down -v
 ```
 
+### What a restart does to conversations
+
+A restart, a `docker compose up -d --build` or a `docker compose down` stops Supernova in order:
+
+1. The channels stop fetching new messages. Messages people send meanwhile wait at Telegram and arrive after the restart.
+2. Turns in progress get up to 40 s to finish (`stop_grace_period` is 60 s).
+3. Every message is written to `/data/inbox.jsonl` before its turn starts and marked done when it ends. A message whose turn did not finish is answered after the restart, once. If it fails again, or if it is more than a day old, it is dropped and the log says so.
+4. Telegram sends the last batch again after a restart, and the inbox recognises it, so nobody gets the same answer twice.
+
+A turn cut short can be answered again from the start, so an action it took midway (a reminder scheduled, a file written) may happen twice.
+
+This depends on the inbox working. If it could not be opened at boot, or stops answering, messages still reach their turn, but without a record on disk, so a restart can lose those that were waiting. The log says so: `Warning: durable inbox not opened` at boot, `warn: inbox did not answer; message not kept` per message.
+
+`/esquecer confirmo` also erases the person's waiting messages from the inbox and rewrites the file at once, without the text of any finished turn.
+
+The conversation itself survives the restart: see `/data/agents/<person>/conversations/` in [OBSERVABILITY.md](OBSERVABILITY.md).
+
 ## Building a custom image
 
 ```sh

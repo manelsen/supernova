@@ -1,5 +1,6 @@
 -module(supernova_chat_lanes_ffi).
--export([submit/2, submit_with_limits/4, lane_count/0, drain/2, undrain/1]).
+-export([submit/2, submit_outcome/2, submit_with_limits/4, lane_count/0, drain/2,
+         undrain/1]).
 
 %% Per-chat ordered execution lanes.
 %%
@@ -17,14 +18,25 @@
 submit(Key, Job) ->
     submit_with_limits(Key, Job, 50, 2000).
 
+%% Like submit/2, telling why a job was refused: `accepted`, `draining`
+%% (its prefix is shutting down) or `rejected` (lane full, too many lanes,
+%% or no answer in time).
+submit_outcome(Key, Job) ->
+    outcome(Key, Job, 50, 2000).
+
 %% Same as submit/2 with explicit limits (tests and diagnostics).
 submit_with_limits(Key, Job, MaxPending, MaxLanes) ->
+    outcome(Key, Job, MaxPending, MaxLanes) =:= accepted.
+
+outcome(Key, Job, MaxPending, MaxLanes) ->
     Ref = make_ref(),
     Deadline = erlang:monotonic_time(millisecond) + 900,
     manager() ! {submit, Key, Job, self(), Ref, MaxPending, MaxLanes, Deadline},
     receive
-        {Ref, Accepted} -> Accepted
-    after 1000 -> false
+        {Ref, true} -> accepted;
+        {Ref, draining} -> draining;
+        {Ref, _} -> rejected
+    after 1000 -> rejected
     end.
 
 %% Number of live lanes (for tests and diagnostics).
@@ -86,7 +98,7 @@ loop(Lanes, Draining, Waits) ->
                 false ->
                     case is_draining(Key, Draining) of
                         true ->
-                            From ! {Ref, false},
+                            From ! {Ref, draining},
                             loop(Lanes, Draining, Waits);
                         false ->
                             case accept(Key, Job, Lanes, MaxPending, MaxLanes) of

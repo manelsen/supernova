@@ -10,6 +10,23 @@ import supernova/channel/port
 @external(erlang, "supernova_chat_lanes_ffi", "submit")
 pub fn submit(key: String, job: fn() -> Nil) -> Bool
 
+/// Why a job was or was not taken by its lane.
+pub type Outcome {
+  Accepted
+  /// The lane's prefix is shutting down (`drain`).
+  Draining
+  /// The lane is full, there are too many lanes, or no answer in time.
+  Rejected
+}
+
+/// Like `submit`, telling a shutdown apart from a full lane.
+@external(erlang, "supernova_chat_lanes_ffi", "submit_outcome")
+fn submit_outcome_ffi(key: String, job: fn() -> Nil) -> Outcome
+
+pub fn submit_outcome(key: String, job: fn() -> Nil) -> Outcome {
+  submit_outcome_ffi(key, job)
+}
+
 /// Submit with explicit limits, used by tests and diagnostics.
 @external(erlang, "supernova_chat_lanes_ffi", "submit_with_limits")
 pub fn submit_with_limits(

@@ -19,6 +19,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/result
 import gleam/string
 import gleam/uri
 
@@ -1439,6 +1440,57 @@ fn api_post(
     }
     Error(_) -> Error(HttpError("Failed to parse the Bot API URL"))
   }
+}
+
+// ============================================================================
+// API Methods - setMyCommands
+// ============================================================================
+
+/// Who sees a command menu. A narrower scope wins over a wider one: a chat
+/// over all private chats, which wins over the default.
+pub type CommandScope {
+  DefaultScope
+  AllPrivateChats
+  AllGroupChats
+  ChatScope(chat_id: ChatId)
+}
+
+/// Replace the bot's command menu for a scope and, when given, a language
+/// (ISO 639-1 code; a menu for a language wins over the one without).
+/// `commands` are pairs of name (without the slash) and description.
+pub fn set_my_commands(
+  config: Config,
+  commands: List(#(String, String)),
+  scope: CommandScope,
+  language_code: Option(String),
+) -> Result(Nil, TelegramError) {
+  let scope_json = case scope {
+    DefaultScope -> json.object([#("type", json.string("default"))])
+    AllPrivateChats ->
+      json.object([#("type", json.string("all_private_chats"))])
+    AllGroupChats -> json.object([#("type", json.string("all_group_chats"))])
+    ChatScope(chat_id) ->
+      json.object([
+        #("type", json.string("chat")),
+        #("chat_id", json.string(chat_id)),
+      ])
+  }
+  let body =
+    json.object([
+      #(
+        "commands",
+        json.array(commands, fn(pair) {
+          json.object([
+            #("command", json.string(pair.0)),
+            #("description", json.string(pair.1)),
+          ])
+        }),
+      ),
+      #("scope", scope_json),
+      #("language_code", json.string(option.unwrap(language_code, ""))),
+    ])
+    |> json.to_string
+  api_post(config, "setMyCommands", body) |> result.replace(Nil)
 }
 
 // ============================================================================

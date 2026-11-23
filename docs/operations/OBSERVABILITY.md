@@ -42,6 +42,7 @@ These are the most complete record of what happened. All of them live in the `su
 | Where | What |
 |---|---|
 | `/data/ledger/<date>.jsonl` | One line per LLM charge: who (`principal_id`), provider, model, prompt and completion tokens, cost in USD. The daily and instance ceilings are computed from it. |
+| `/data/inbox.jsonl` | The durable inbox: messages waiting for their turn, and the keys of the last day's messages (to recognise a second delivery). The text of a message leaves the file once its turn is done and the file is compacted. See [DOCKER.md](DOCKER.md#what-a-restart-does-to-conversations). |
 | `/data/agents/<principal>/conversations/` | One file per chat, `<session>.jsonl`: the most recent messages of the conversation (`conversation.history_kept`, 1000 by default), reloaded after a restart; the model sees the last `conversation.history_limit` (100 by default). `/esquecer` deletes them. |
 | `/data/agents/<principal>/self/` | Per agent: `journal.jsonl` (turns not yet reflected), `experience.jsonl`, `pressure.jsonl`, `biography.jsonl`, `agenda.json`, and the core (`core.md`, `core.json`). |
 | `/uso`, `/uso todos` | Spending per person, from the ledger (admins see everyone). |
@@ -75,6 +76,8 @@ docker compose logs supernova | grep '\[TRACE\]'
 | `llm_tokens_total` | counter | `kind` (`prompt`, `completion`), `provider`, `model` |
 | `llm_cost_usd_micros_total` | counter | `provider`, `model`. Cost in millionths of a dollar. |
 | `agenda_runs_total` | counter | `outcome` (`ran`, `dropped`, `missed`, `sweep_crashed`) |
+| `inbox_duplicates_total` | counter | `channel`. Messages the channel delivered again (Telegram's last batch after a restart), not answered twice. |
+| `inbox_recovered_total` | counter | `outcome` (`replayed`, `channel_missing`). Messages left waiting by the last stop, answered at boot. |
 
 A reply that does not reach the person is counted in `channel_send_errors_total` and logged as `warn: reply not delivered channel=... error=...`.
 

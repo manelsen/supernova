@@ -15,7 +15,7 @@ In closed-group mode, each authorized person has their own agent.
 3. **Memory.** Each turn goes to the agent's journal. A periodic reflection turns the journal into experiences and pressures. The pressures can, slowly, add to the core ("drift").
 4. **What the agent sees.** In a group, the agent sees only its own person's messages and does not talk to the other agents.
 
-Today the conversation history itself is kept in memory only, so a restart clears it. The core, memories, files and agenda survive. Keeping the history across restarts is a decided next step.
+The conversation survives a restart: each person's conversation in each chat is kept on disk, and the model sees its last 100 messages (`conversation.history_limit`). A message that was waiting when Supernova stopped is answered after the restart, once ([DOCKER.md](DOCKER.md#what-a-restart-does-to-conversations)). The core, memories, files and agenda survive too.
 
 ## Commands
 
@@ -28,6 +28,8 @@ Today the conversation history itself is kept in memory only, so a restart clear
 | `/model` | Members and admins | Chooses the provider and model with buttons (inline keyboard on Telegram, components on Discord). |
 | `/help`, `/status` | Members and admins | Help and session status. |
 | `/uso todos`, `/acesso …`, `/teto liberar <usd>`, `/auditoria [n]` | Admins | Instance spending, access, the daily ceiling and the audit log. See [DEPLOY.md](../../DEPLOY.md). |
+
+`/help` answers with this list, by role: admins also see their commands. On Telegram, Supernova sets the same list as the bot's command menu at every boot (members' commands in every chat, the longer list in each admin's private chat, for the admins in `supernova.yaml`), replacing whatever menu was set before with the same token. The list lives in `core/closed_group/commands.gleam`.
 
 ## Tools
 

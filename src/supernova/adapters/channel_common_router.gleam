@@ -23,6 +23,7 @@ import supernova/config
 import supernova/core/agent_identity
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
+import supernova/core/closed_group/commands as closed_group_commands
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure as closed_group_pure
 import supernova/core/closed_group/runtime as closed_group_runtime
@@ -472,14 +473,29 @@ fn handle_inbound_message_allowed_for_handler(
                               ),
                             )
                             _, _ -> {
-                              let #(next_state, result) =
-                                handle_bootstrap_command(
-                                  kind,
-                                  msg,
-                                  llm_config,
+                              let #(next_state, result) = case kind, context {
+                                // In the closed group, /help lists the
+                                // commands that exist there, by role.
+                                HelpCommand, Some(ctx)
+                                | CommandsCommand, Some(ctx)
+                                -> #(
                                   state_with_profile,
-                                  session_id,
+                                  Ok(port.reply(
+                                    to: msg,
+                                    content: closed_group_commands.help_text(
+                                      ctx.role == "admin",
+                                    ),
+                                  )),
                                 )
+                                _, _ ->
+                                  handle_bootstrap_command(
+                                    kind,
+                                    msg,
+                                    llm_config,
+                                    state_with_profile,
+                                    session_id,
+                                  )
+                              }
 
                               #(next_state, map_reply_result_to_handler(result))
                             }
