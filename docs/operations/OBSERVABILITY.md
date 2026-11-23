@@ -129,7 +129,7 @@ Grafana checks five rules every minute:
 |---|---|
 | Supernova fora do ar | Prometheus cannot read `/metrics` for 2 minutes |
 | Respostas que não chegaram | A reply did not reach the person in the last 15 minutes |
-| Falhas do modelo | Three or more model calls failed in the last 15 minutes |
+| Falhas do modelo | Three or more model calls failed in the last 15 minutes (the error series are published at zero at boot, so the first failure counts) |
 | Canal sem conexão | A channel failed to fetch messages three or more times in 10 minutes, for 5 minutes |
 | Custo do dia | The last 24 hours cost more than `SUPERNOVA_ALERT_DAILY_USD` (4 by default) |
 
@@ -141,7 +141,11 @@ SUPERNOVA_ALERT_TELEGRAM_CHAT=123456789   # your Telegram user id, from /eu
 
 The message says what fired, and a second message says when it stopped (✅). The same alert is repeated every 4 hours while it lasts.
 
+Telegram only lets a bot write to someone who has opened a private chat with it. With the default bot, the chat id must be yours and you must have talked to the agent in private at least once; an id seen only in a group is not enough.
+
 By default the alerts come from Supernova's own bot, so they land in the same chat as the agent; they do not reach the agent or its history. To keep them apart, create another bot with @BotFather, send it any message once, and set `SUPERNOVA_ALERT_TELEGRAM_TOKEN` to its token.
+
+Removing `SUPERNOVA_ALERT_TELEGRAM_CHAT` and running `docker compose up -d` turns delivery off again: the start script provisions the removal of the Telegram contact point, which Grafana would otherwise keep.
 
 The rules live in `monitoring/grafana/alerting/rules.yml` and the Telegram delivery in `telegram.yml` next to it. At start, `grafana-start.sh` writes them into Grafana's provisioning with the values from `.env`; without a chat it leaves Telegram out, and Grafana's log says so (`docker compose logs grafana`).
 

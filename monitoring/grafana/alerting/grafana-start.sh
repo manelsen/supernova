@@ -8,20 +8,29 @@ dst=/etc/grafana/provisioning/alerting
 mkdir -p "$dst"
 
 daily="${SUPERNOVA_ALERT_DAILY_USD:-4}"
-case "$daily" in
-  ''|*[!0-9.]*) echo "supernova: SUPERNOVA_ALERT_DAILY_USD='$daily' is not a number; using 4" >&2; daily=4 ;;
-esac
+if ! printf '%s' "$daily" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
+  echo "supernova: SUPERNOVA_ALERT_DAILY_USD='$daily' is not a number like 4 or 4.5; using 4" >&2
+  daily=4
+fi
 sed "s|__DAILY_USD__|$daily|g" "$src/rules.yml" > "$dst/supernova-rules.yml"
 
 chat="${SUPERNOVA_ALERT_TELEGRAM_CHAT:-}"
 token="${SUPERNOVA_ALERT_TELEGRAM_TOKEN:-}"
-rm -f "$dst/supernova-telegram.yml"
+rm -f "$dst/supernova-telegram.yml" "$dst/supernova-telegram-off.yml"
+
+# Grafana keeps a provisioned contact point and policy in its database
+# after the file is gone, so turning Telegram off provisions their removal.
+telegram_off() {
+  echo "supernova: $1; alerts stay in Grafana" >&2
+  cp "$src/telegram-off.yml" "$dst/supernova-telegram-off.yml"
+}
+
 if [ -z "$chat" ]; then
-  echo "supernova: alerts show only in Grafana; set SUPERNOVA_ALERT_TELEGRAM_CHAT to get them on Telegram" >&2
+  telegram_off "SUPERNOVA_ALERT_TELEGRAM_CHAT is not set"
 elif ! printf '%s' "$chat" | grep -Eq '^-?[0-9]+$'; then
-  echo "supernova: SUPERNOVA_ALERT_TELEGRAM_CHAT must be a numeric chat id; alerts stay in Grafana" >&2
+  telegram_off "SUPERNOVA_ALERT_TELEGRAM_CHAT must be a numeric chat id"
 elif ! printf '%s' "$token" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
-  echo "supernova: no valid bot token for alerts; alerts stay in Grafana" >&2
+  telegram_off "no valid bot token for alerts"
 else
   sed -e "s|__CHAT__|$chat|g" -e "s|__TOKEN__|$token|g" \
     "$src/telegram.yml" > "$dst/supernova-telegram.yml"
