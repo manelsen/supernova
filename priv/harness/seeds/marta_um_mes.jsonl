@@ -1,0 +1,160 @@
+{"role": "user", "content": "oi! hoje levei minha mãe no cardiologista, foi tranquilo"}
+{"role": "assistant", "content": "Que bom que foi tranquilo. Como ela saiu de lá?"}
+{"role": "user", "content": "saiu bem. guarda o nome dele pra mim? é o dr. Otávio Lacerda, atende no Hospital Madre Teresa"}
+{"role": "assistant", "content": "Guardado: dr. Otávio Lacerda, no Hospital Madre Teresa."}
+{"role": "user", "content": "ele mexeu na dose do remédio de pressão, mas nada demais"}
+{"role": "assistant", "content": "Ajuste de dose é comum. Se ela sentir tontura nos primeiros dias, vale avisar o consultório."}
+{"role": "user", "content": "outra coisa importante: a mamãe é alérgica a dipirona. já deu reação feia uma vez"}
+{"role": "assistant", "content": "Entendido, alergia a dipirona. É bom isso estar escrito em algum papel que ela leve na bolsa também."}
+{"role": "user", "content": "boa ideia, vou fazer um cartãozinho"}
+{"role": "assistant", "content": "Com o nome do médico e a alergia, fica completo."}
+{"role": "user", "content": "ah, e o aniversário dela é 14 de março, ela faz 85 ano que vem"}
+{"role": "assistant", "content": "14 de março, 85 anos. Dá tempo de planejar algo com calma."}
+{"role": "user", "content": "hoje choveu o dia inteiro aqui em BH"}
+{"role": "assistant", "content": "Dia de chuva cansa de um jeito diferente. Conseguiu descansar um pouco?"}
+{"role": "user", "content": "fiz um bolo de fubá pra ela, comeu dois pedaços"}
+{"role": "assistant", "content": "Dois pedaços é aprovação total."}
+{"role": "user", "content": "ela acordou de madrugada de novo"}
+{"role": "assistant", "content": "Noite cortada pesa no dia seguinte. Você conseguiu voltar a dormir?"}
+{"role": "user", "content": "a fisioterapeuta veio hoje"}
+{"role": "assistant", "content": "Como foi a sessão?"}
+{"role": "user", "content": "fui no mercado e esqueci a lista em casa"}
+{"role": "assistant", "content": "Acontece. Lembrou do essencial?"}
+{"role": "user", "content": "assisti um filme antigo com ela, ela cantou as músicas todas"}
+{"role": "assistant", "content": "Que lembrança boa. A memória das músicas costuma ficar."}
+{"role": "user", "content": "tô cansada hoje"}
+{"role": "assistant", "content": "Cansaço acumulado. Tem alguém que possa ficar com ela umas horas essa semana?"}
+{"role": "user", "content": "a vizinha trouxe pão de queijo"}
+{"role": "assistant", "content": "Vizinha boa vale ouro."}
+{"role": "user", "content": "ela reclamou de dor no joelho"}
+{"role": "assistant", "content": "Dor nova ou a de sempre? Se piorar, vale mostrar na próxima consulta."}
+{"role": "user", "content": "consegui ler um capítulo do livro hoje"}
+{"role": "assistant", "content": "Um capítulo inteiro é uma vitória nessa rotina."}
+{"role": "user", "content": "o neto ligou pra ela, ficou toda feliz"}
+{"role": "assistant", "content": "Ligação de neto faz o dia render."}
+{"role": "user", "content": "o tempo esfriou"}
+{"role": "assistant", "content": "Frio pede agasalho extra para ela, principalmente à noite."}
+{"role": "user", "content": "ela quis mexer nas plantas da varanda"}
+{"role": "assistant", "content": "Mexer na terra faz bem. Só cuidado com o sol forte."}
+{"role": "user", "content": "dormi mal"}
+{"role": "assistant", "content": "Quer pensar em algo que ajude hoje à noite?"}
+{"role": "user", "content": "fiz sopa de legumes"}
+{"role": "assistant", "content": "Sopa é conforto. Ela gostou?"}
+{"role": "user", "content": "ela perguntou de novo que dia era hoje"}
+{"role": "assistant", "content": "Repetir a data com calma ajuda. Um calendário grande na parede também."}
+{"role": "user", "content": "comprei um calendário grande"}
+{"role": "assistant", "content": "Ótimo. Riscar os dias pode virar um ritual com ela."}
+{"role": "user", "content": "fui caminhar meia hora"}
+{"role": "assistant", "content": "Meia hora só sua. Isso conta muito."}
+{"role": "user", "content": "ela chorou vendo fotos antigas"}
+{"role": "assistant", "content": "Fotos mexem fundo. Às vezes o choro é saudade boa."}
+{"role": "user", "content": "a conta de luz veio alta"}
+{"role": "assistant", "content": "O chuveiro no frio costuma pesar. Dá para revezar horários?"}
+{"role": "user", "content": "hoje choveu o dia inteiro aqui em BH de novo"}
+{"role": "assistant", "content": "Dia de chuva cansa de um jeito diferente. Conseguiu descansar um pouco?"}
+{"role": "user", "content": "fiz um bolo de fubá pra ela, comeu dois pedaços de novo"}
+{"role": "assistant", "content": "Dois pedaços é aprovação total."}
+{"role": "user", "content": "ela acordou de madrugada de novo de novo"}
+{"role": "assistant", "content": "Noite cortada pesa no dia seguinte. Você conseguiu voltar a dormir?"}
+{"role": "user", "content": "a fisioterapeuta veio hoje de novo"}
+{"role": "assistant", "content": "Como foi a sessão?"}
+{"role": "user", "content": "fui no mercado e esqueci a lista em casa de novo"}
+{"role": "assistant", "content": "Acontece. Lembrou do essencial?"}
+{"role": "user", "content": "assisti um filme antigo com ela, ela cantou as músicas todas de novo"}
+{"role": "assistant", "content": "Que lembrança boa. A memória das músicas costuma ficar."}
+{"role": "user", "content": "tô cansada hoje de novo"}
+{"role": "assistant", "content": "Cansaço acumulado. Tem alguém que possa ficar com ela umas horas essa semana?"}
+{"role": "user", "content": "a vizinha trouxe pão de queijo de novo"}
+{"role": "assistant", "content": "Vizinha boa vale ouro."}
+{"role": "user", "content": "ela reclamou de dor no joelho de novo"}
+{"role": "assistant", "content": "Dor nova ou a de sempre? Se piorar, vale mostrar na próxima consulta."}
+{"role": "user", "content": "consegui ler um capítulo do livro hoje de novo"}
+{"role": "assistant", "content": "Um capítulo inteiro é uma vitória nessa rotina."}
+{"role": "user", "content": "o neto ligou pra ela, ficou toda feliz de novo"}
+{"role": "assistant", "content": "Ligação de neto faz o dia render."}
+{"role": "user", "content": "o tempo esfriou de novo"}
+{"role": "assistant", "content": "Frio pede agasalho extra para ela, principalmente à noite."}
+{"role": "user", "content": "ela quis mexer nas plantas da varanda de novo"}
+{"role": "assistant", "content": "Mexer na terra faz bem. Só cuidado com o sol forte."}
+{"role": "user", "content": "dormi mal de novo"}
+{"role": "assistant", "content": "Quer pensar em algo que ajude hoje à noite?"}
+{"role": "user", "content": "fiz sopa de legumes de novo"}
+{"role": "assistant", "content": "Sopa é conforto. Ela gostou?"}
+{"role": "user", "content": "ela perguntou de novo que dia era hoje de novo"}
+{"role": "assistant", "content": "Repetir a data com calma ajuda. Um calendário grande na parede também."}
+{"role": "user", "content": "comprei um calendário grande de novo"}
+{"role": "assistant", "content": "Ótimo. Riscar os dias pode virar um ritual com ela."}
+{"role": "user", "content": "fui caminhar meia hora de novo"}
+{"role": "assistant", "content": "Meia hora só sua. Isso conta muito."}
+{"role": "user", "content": "ela chorou vendo fotos antigas de novo"}
+{"role": "assistant", "content": "Fotos mexem fundo. Às vezes o choro é saudade boa."}
+{"role": "user", "content": "a conta de luz veio alta de novo"}
+{"role": "assistant", "content": "O chuveiro no frio costuma pesar. Dá para revezar horários?"}
+{"role": "user", "content": "hoje choveu o dia inteiro aqui em BH hoje também"}
+{"role": "assistant", "content": "Dia de chuva cansa de um jeito diferente. Conseguiu descansar um pouco?"}
+{"role": "user", "content": "fiz um bolo de fubá pra ela, comeu dois pedaços hoje também"}
+{"role": "assistant", "content": "Dois pedaços é aprovação total."}
+{"role": "user", "content": "ela acordou de madrugada de novo hoje também"}
+{"role": "assistant", "content": "Noite cortada pesa no dia seguinte. Você conseguiu voltar a dormir?"}
+{"role": "user", "content": "a fisioterapeuta veio hoje hoje também"}
+{"role": "assistant", "content": "Como foi a sessão?"}
+{"role": "user", "content": "fui no mercado e esqueci a lista em casa hoje também"}
+{"role": "assistant", "content": "Acontece. Lembrou do essencial?"}
+{"role": "user", "content": "assisti um filme antigo com ela, ela cantou as músicas todas hoje também"}
+{"role": "assistant", "content": "Que lembrança boa. A memória das músicas costuma ficar."}
+{"role": "user", "content": "tô cansada hoje hoje também"}
+{"role": "assistant", "content": "Cansaço acumulado. Tem alguém que possa ficar com ela umas horas essa semana?"}
+{"role": "user", "content": "a vizinha trouxe pão de queijo hoje também"}
+{"role": "assistant", "content": "Vizinha boa vale ouro."}
+{"role": "user", "content": "ela reclamou de dor no joelho hoje também"}
+{"role": "assistant", "content": "Dor nova ou a de sempre? Se piorar, vale mostrar na próxima consulta."}
+{"role": "user", "content": "consegui ler um capítulo do livro hoje hoje também"}
+{"role": "assistant", "content": "Um capítulo inteiro é uma vitória nessa rotina."}
+{"role": "user", "content": "o neto ligou pra ela, ficou toda feliz hoje também"}
+{"role": "assistant", "content": "Ligação de neto faz o dia render."}
+{"role": "user", "content": "o tempo esfriou hoje também"}
+{"role": "assistant", "content": "Frio pede agasalho extra para ela, principalmente à noite."}
+{"role": "user", "content": "ela quis mexer nas plantas da varanda hoje também"}
+{"role": "assistant", "content": "Mexer na terra faz bem. Só cuidado com o sol forte."}
+{"role": "user", "content": "dormi mal hoje também"}
+{"role": "assistant", "content": "Quer pensar em algo que ajude hoje à noite?"}
+{"role": "user", "content": "fiz sopa de legumes hoje também"}
+{"role": "assistant", "content": "Sopa é conforto. Ela gostou?"}
+{"role": "user", "content": "ela perguntou de novo que dia era hoje hoje também"}
+{"role": "assistant", "content": "Repetir a data com calma ajuda. Um calendário grande na parede também."}
+{"role": "user", "content": "comprei um calendário grande hoje também"}
+{"role": "assistant", "content": "Ótimo. Riscar os dias pode virar um ritual com ela."}
+{"role": "user", "content": "fui caminhar meia hora hoje também"}
+{"role": "assistant", "content": "Meia hora só sua. Isso conta muito."}
+{"role": "user", "content": "ela chorou vendo fotos antigas hoje também"}
+{"role": "assistant", "content": "Fotos mexem fundo. Às vezes o choro é saudade boa."}
+{"role": "user", "content": "a conta de luz veio alta hoje também"}
+{"role": "assistant", "content": "O chuveiro no frio costuma pesar. Dá para revezar horários?"}
+{"role": "user", "content": "hoje choveu o dia inteiro aqui em BH hoje também"}
+{"role": "assistant", "content": "Dia de chuva cansa de um jeito diferente. Conseguiu descansar um pouco?"}
+{"role": "user", "content": "fiz um bolo de fubá pra ela, comeu dois pedaços hoje também"}
+{"role": "assistant", "content": "Dois pedaços é aprovação total."}
+{"role": "user", "content": "ela acordou de madrugada de novo hoje também"}
+{"role": "assistant", "content": "Noite cortada pesa no dia seguinte. Você conseguiu voltar a dormir?"}
+{"role": "user", "content": "a fisioterapeuta veio hoje hoje também"}
+{"role": "assistant", "content": "Como foi a sessão?"}
+{"role": "user", "content": "fui no mercado e esqueci a lista em casa hoje também"}
+{"role": "assistant", "content": "Acontece. Lembrou do essencial?"}
+{"role": "user", "content": "assisti um filme antigo com ela, ela cantou as músicas todas hoje também"}
+{"role": "assistant", "content": "Que lembrança boa. A memória das músicas costuma ficar."}
+{"role": "user", "content": "tô cansada hoje hoje também"}
+{"role": "assistant", "content": "Cansaço acumulado. Tem alguém que possa ficar com ela umas horas essa semana?"}
+{"role": "user", "content": "a vizinha trouxe pão de queijo hoje também"}
+{"role": "assistant", "content": "Vizinha boa vale ouro."}
+{"role": "user", "content": "ela reclamou de dor no joelho hoje também"}
+{"role": "assistant", "content": "Dor nova ou a de sempre? Se piorar, vale mostrar na próxima consulta."}
+{"role": "user", "content": "consegui ler um capítulo do livro hoje hoje também"}
+{"role": "assistant", "content": "Um capítulo inteiro é uma vitória nessa rotina."}
+{"role": "user", "content": "o neto ligou pra ela, ficou toda feliz hoje também"}
+{"role": "assistant", "content": "Ligação de neto faz o dia render."}
+{"role": "user", "content": "o tempo esfriou hoje também"}
+{"role": "assistant", "content": "Frio pede agasalho extra para ela, principalmente à noite."}
+{"role": "user", "content": "ela quis mexer nas plantas da varanda hoje também"}
+{"role": "assistant", "content": "Mexer na terra faz bem. Só cuidado com o sol forte."}
+{"role": "user", "content": "dormi mal hoje também"}
+{"role": "assistant", "content": "Quer pensar em algo que ajude hoje à noite?"}

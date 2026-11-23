@@ -1,0 +1,8 @@
+{"type": "input", "persona": "marta", "content": "me lembra o nome do cardiologista da mamãe?"}
+{"type": "output", "principal_id": "sim:marta", "content": "Achei na nossa conversa: dr. Otávio Lacerda, que atende no Hospital Madre Teresa."}
+{"type": "input", "persona": "marta", "content": "e ela é alérgica a qual remédio mesmo?"}
+{"type": "output", "principal_id": "sim:marta", "content": "Dipirona. Você me contou que ela já teve uma reação feia."}
+{"type": "input", "persona": "marta", "content": "e o que eu te contei da minha irmã Carla?"}
+{"type": "output", "principal_id": "sim:marta", "content": "Procurei e não encontrei nada sobre a Carla nas nossas conversas. Acho que você ainda não me falou dela."}
+{"type": "input", "persona": "marta", "content": "quando foi que eu te contei do cardiologista?"}
+{"type": "output", "principal_id": "sim:marta", "content": "Em 24/10, no dia em que você levou sua mãe à consulta, há cerca de um mês."}

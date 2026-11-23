@@ -3,6 +3,7 @@ import gleam/list
 import gleam/option.{None}
 import gleam/string
 import gleeunit/should
+import supernova/core/session/history_store
 import supernova/harness/engine
 import supernova/harness/scenario
 import supernova/harness/transcript
@@ -156,6 +157,55 @@ pub fn advance_and_sweep_step_runs_test() {
     let assert Ok(experience) =
       read_file(root <> "/data/agents/sim_bia/self/experience.jsonl")
     string.contains(experience, "\"text\":") |> should.be_true()
+  })
+}
+
+/// A seeded conversation lands in the persona's history, dated before now,
+/// and reaches the agent on the next message (the open session reloads).
+pub fn seed_step_writes_the_history_and_reaches_the_agent_test() {
+  test_workspace.with_isolated_workspace("harness-engine-seed", fn(root) {
+    let output = run(root, "provisorio_seed")
+    count(output.events, fn(event) {
+      case event {
+        transcript.Mark(label: "seed:bia:dm-bia:4", ..) -> True
+        _ -> False
+      }
+    })
+    |> should.equal(1)
+    list.any(output.prompts, fn(prompt) {
+      string.contains(prompt.content, "SEMENTE-7781")
+    })
+    |> should.be_true()
+    let store =
+      history_store.HistoryStore(data_dir: root <> "/data", limit: 100)
+    let history = history_store.load(store, "sim:dm-bia:bia")
+    let assert Ok(seeded) =
+      list.find(history, fn(m) { string.contains(m.content, "SEMENTE-7781") })
+    { seeded.at < start } |> should.be_true()
+  })
+}
+
+/// A seed names an existing file and a positive number of days.
+pub fn seed_step_is_validated_test() {
+  test_workspace.with_isolated_workspace("harness-seed-validation", fn(root) {
+    let assert Ok(base) = scenario.load("priv/harness", "provisorio_seed")
+    let check = fn(step) {
+      scenario.validate(
+        "priv/harness",
+        scenario.Scenario(..base.scenario, steps: [step]),
+        base.personas,
+      )
+    }
+    check(scenario.Seed("bia", "dm-bia", "provisorio_seed.jsonl", 3))
+    |> should.equal(Ok(Nil))
+    check(scenario.Seed("bia", "dm-bia", "nao_existe.jsonl", 3))
+    |> should.be_error()
+    check(scenario.Seed("bia", "dm-bia", "provisorio_seed.jsonl", 0))
+    |> should.be_error()
+    check(scenario.Seed("bia", "outro-chat", "provisorio_seed.jsonl", 3))
+    |> should.be_error()
+    let _ = root
+    Nil
   })
 }
 

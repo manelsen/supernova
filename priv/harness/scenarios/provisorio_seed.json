@@ -1,0 +1,16 @@
+{
+  "id": "provisorio_seed",
+  "critical": false,
+  "long": false,
+  "personas": [{"id": "bia", "user_id": "bia"}],
+  "chats": [{"id": "dm-bia", "is_group": false, "members": ["bia"]}],
+  "steps": [
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "oi"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "bia"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "sim"},
+    {"do": "seed", "persona": "bia", "chat": "dm-bia", "file": "provisorio_seed.jsonl", "days": 3},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "e o código?"}
+  ],
+  "checks": ["invariants"],
+  "rubric": "provisorio"
+}

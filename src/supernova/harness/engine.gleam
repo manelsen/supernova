@@ -2,6 +2,9 @@
 //// HTTP channel and records everything for the checks and the judge.
 
 import gleam/dict
+import gleam/dynamic/decode
+import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
@@ -10,6 +13,8 @@ import supernova
 import supernova/channel/session
 import supernova/config
 import supernova/core/prompt_log
+import supernova/core/session/history_store
+import supernova/core/session/supervisor
 import supernova/harness/clock
 import supernova/harness/scenario
 import supernova/harness/sim_client
@@ -62,6 +67,7 @@ type State {
     seq_by_chat: dict.Dict(String, Int),
     step: Int,
     persona_cost: Float,
+    sessions: supervisor.SessionSupervisor,
   )
 }
 
@@ -87,6 +93,7 @@ pub fn run(input: Input, loaded: scenario.Loaded) -> Result(Output, String) {
       seq_by_chat: dict.new(),
       step: 0,
       persona_cost: 0.0,
+      sessions: runtime.session_supervisor,
     )
   let played = play(input, loaded, port, token, initial)
   clock.stop(clock)
@@ -252,6 +259,8 @@ fn play_step(
       let _ = clock.advance(state.clock, hours * 3_600_000)
       Ok(state)
     }
+    scenario.Seed(persona: persona_id, chat: chat_id, file: file, days: days) ->
+      seed(input, loaded, state, step_index, persona_id, chat_id, file, days)
     scenario.Sweep -> {
       reflection.sweep(input.data_dir, input.agent)
       Ok(state)
@@ -269,6 +278,85 @@ fn play_step(
           ]),
         ),
       )
+  }
+}
+
+/// Write the seed's messages into the persona's history in `chat`, spread
+/// evenly from `days` before now up to an hour ago, then end the session if
+/// it is open, so the next message reloads the conversation from disk. The
+/// transcript marks the step; the judge reads the seeded facts in the rubric.
+fn seed(
+  input: Input,
+  loaded: scenario.Loaded,
+  state: State,
+  step_index: Int,
+  persona_id: String,
+  chat_id: String,
+  file: String,
+  days: Int,
+) -> Result(State, String) {
+  use persona <- result.try(
+    list.find(loaded.scenario.personas, fn(item) { item.id == persona_id })
+    |> result.replace_error("unknown persona: " <> persona_id),
+  )
+  use raw <- result.try(
+    read_file(scenario.seeds_dir(input.root) <> "/" <> file)
+    |> result.replace_error("cannot read seed file: " <> file),
+  )
+  use lines <- result.try(
+    string.split(raw, "\n")
+    |> list.filter(fn(line) { string.trim(line) != "" })
+    |> list.try_map(fn(line) {
+      json.parse(line, seed_line_decoder())
+      |> result.replace_error("invalid seed line in " <> file <> ": " <> line)
+    }),
+  )
+  let now = clock.now(state.clock)
+  let first = now - days * 86_400_000
+  let span = now - 3_600_000 - first
+  let count = list.length(lines)
+  let messages =
+    list.index_map(lines, fn(line, index) {
+      let #(role, content) = line
+      history_store.StoredMessage(
+        role: role,
+        content: content,
+        at: first + span * index / int.max(count - 1, 1),
+      )
+    })
+  let session_id = session.sim_session_id(chat_id, persona.user_id)
+  use _ <- result.try(history_store.append(
+    history_store.HistoryStore(data_dir: input.data_dir, limit: 1),
+    session_id,
+    messages,
+  ))
+  // Absent when the chat has not spoken yet; then there is nothing to reload.
+  let _ = supervisor.stop_session(state.sessions, session_id)
+  Ok(
+    State(
+      ..state,
+      events: list.append(state.events, [
+        transcript.Mark(
+          label: "seed:"
+            <> persona_id
+            <> ":"
+            <> chat_id
+            <> ":"
+            <> int.to_string(count),
+          at: now,
+          step: step_index,
+        ),
+      ]),
+    ),
+  )
+}
+
+fn seed_line_decoder() -> decode.Decoder(#(String, String)) {
+  use role <- decode.field("role", decode.string)
+  use content <- decode.field("content", decode.string)
+  case role {
+    "user" | "assistant" -> decode.success(#(role, content))
+    _ -> decode.failure(#(role, content), "role must be user or assistant")
   }
 }
 

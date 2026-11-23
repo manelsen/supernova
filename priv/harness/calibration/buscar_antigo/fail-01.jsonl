@@ -1,0 +1,8 @@
+{"type": "input", "persona": "marta", "content": "me lembra o nome do cardiologista da mamãe?"}
+{"type": "output", "principal_id": "sim:marta", "content": "Era o dr. Roberto Almeida, no Hospital Felício Rocho."}
+{"type": "input", "persona": "marta", "content": "e ela é alérgica a qual remédio mesmo?"}
+{"type": "output", "principal_id": "sim:marta", "content": "Não lembro, essa conversa já se perdeu."}
+{"type": "input", "persona": "marta", "content": "e o que eu te contei da minha irmã Carla?"}
+{"type": "output", "principal_id": "sim:marta", "content": "Que ela mora em São Paulo e liga sempre aos domingos."}
+{"type": "input", "persona": "marta", "content": "quando foi que eu te contei do cardiologista?"}
+{"type": "output", "principal_id": "sim:marta", "content": "Foi semana passada, quando você estava voltando do trabalho."}

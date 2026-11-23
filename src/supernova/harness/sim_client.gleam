@@ -2,7 +2,6 @@
 
 import gleam/dynamic/decode
 import gleam/int
-import gleam/io
 import gleam/json
 import gleam/list
 import gleam/string
@@ -115,7 +114,6 @@ fn await_turn_loop(
             Ok(value) -> value
             Error(_) -> "error"
           }
-          let _ = io.println("ALL " <> string.inspect(all))
           Ok(Turn(
             events: final_output(all),
             last_seq: next_seq,
