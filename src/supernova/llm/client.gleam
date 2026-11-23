@@ -10,6 +10,7 @@
 //// let result = client.chat(messages, config, [])
 //// ```
 
+import gleam/erlang/process
 import gleam/int
 import gleam/json
 import gleam/list
@@ -102,6 +103,17 @@ fn mock_network_fail_once(key: String) -> Bool
 @external(erlang, "supernova_mock_ffi", "record_prompt")
 fn record_prompt(prompt: String) -> Nil
 
+fn mock_delay(content: String) -> Option(Int) {
+  case string.split_once(content, "[mock-delay-ms=") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(digits, _)) -> option.from_result(int.parse(digits))
+        Error(Nil) -> None
+      }
+    Error(Nil) -> None
+  }
+}
+
 /// Mock chat completion — returns a canned response.
 fn mock_chat(
   messages: List(provider.ChatMessage),
@@ -118,6 +130,12 @@ fn mock_chat(
       case string.contains(content, "[mock-crash]") {
         True -> panic as "simulated executor crash"
         False -> Nil
+      }
+      // `[mock-delay-ms=N]`: the call takes N ms, as a slow model would. The
+      // streaming mock had it; the gated path (closed group) calls this one.
+      case mock_delay(content) {
+        Some(ms) -> process.sleep(ms)
+        None -> Nil
       }
       case mock_forced_error(content) {
         Some(error) -> Error(error)
@@ -597,9 +615,15 @@ fn special_mock_response_plain(
           case string.contains(content, "[stream-timeout]") {
             True -> Some("Mock fallback after stream timeout")
             False ->
-              case string.contains(content, "[echo-model]") {
-                True -> Some("Mock response via " <> config.default_model)
-                False ->
+              case
+                string.contains(content, "[mock-eco]"),
+                string.contains(content, "[echo-model]")
+              {
+                // The reply names the message it answers, so a test can
+                // check that every reply follows its own question.
+                True, _ -> Some("eco: " <> content)
+                _, True -> Some("Mock response via " <> config.default_model)
+                False, False ->
                   case string.contains(content, "[long-response]") {
                     True -> Some(string.repeat("A", 9000))
                     False -> None
