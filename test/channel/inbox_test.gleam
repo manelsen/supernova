@@ -120,6 +120,56 @@ pub fn the_log_is_compacted_and_forgets_finished_text_test() {
 
 /// An inbox that does not answer must not take the channel down: the
 /// message still reaches its lane.
+/// Messages that reach the inbox together go to disk in one append, and
+/// every one of them is there after a restart (PRD-P, P-06).
+pub fn messages_arriving_together_are_written_together_test() {
+  use dir <- with_dir
+  let assert Ok(box) = inbox.start(dir)
+  let assert Ok(pid) = process.subject_owner(box)
+  // Hold the inbox while a hundred messages arrive, then let it go.
+  sys_suspend(pid)
+  let answers = process.new_subject()
+  list.each(int.range(1, 101, [], list.prepend), fn(i) {
+    process.spawn(fn() {
+      process.send(
+        answers,
+        inbox.receive(box, msg(int.to_string(i), "oi"), 1000 + i),
+      )
+    })
+  })
+  queued_within(pid, 100, 5000) |> should.be_true()
+  sys_resume(pid)
+  list.each(int.range(1, 101, [], list.prepend), fn(_) {
+    process.receive(answers, within: 5000) |> should.equal(Ok(True))
+  })
+  { inbox.writes(box) < 10 } |> should.be_true()
+  inbox.stop(box)
+
+  let assert Ok(again) = inbox.start(dir)
+  inbox.recover(again, 2000) |> list.length |> should.equal(100)
+  inbox.stop(again)
+}
+
+fn queued_within(pid: process.Pid, n: Int, ms: Int) -> Bool {
+  case message_queue_len(pid) >= n, ms <= 0 {
+    True, _ -> True
+    False, True -> False
+    False, False -> {
+      process.sleep(10)
+      queued_within(pid, n, ms - 10)
+    }
+  }
+}
+
+@external(erlang, "sys", "suspend")
+fn sys_suspend(pid: process.Pid) -> Nil
+
+@external(erlang, "sys", "resume")
+fn sys_resume(pid: process.Pid) -> Nil
+
+@external(erlang, "inbox_test_ffi", "message_queue_len")
+fn message_queue_len(pid: process.Pid) -> Int
+
 pub fn a_stuck_inbox_does_not_stop_the_channel_test() {
   let previous = inbox.global()
   use <- exception.defer(fn() {

@@ -14,7 +14,10 @@
 //// the keys seen in the last day; the text of a message leaves the disk once
 //// its turn is done and the log is compacted.
 ////
-//// One actor owns the file. Interactions (button presses) are not kept:
+//// One actor owns the file. Writes are grouped: the messages and done marks
+//// already waiting in its mailbox when one arrives go to disk in one
+//// append, and each sender is answered only after that append (PRD-P,
+//// P-06). Interactions (button presses) are not kept:
 //// replaying one after a restart could repeat an action.
 
 import gleam/dict.{type Dict}
@@ -59,8 +62,12 @@ pub opaque type Message {
   Recover(reply_to: Subject(List(Pending)), now: Int)
   Forget(reply_to: Subject(Int), principal: String, now: Int)
   Count(reply_to: Subject(#(Int, Int)))
+  Writes(reply_to: Subject(Int))
   Stop(reply_to: Subject(Nil))
 }
+
+/// Most messages taken from the mailbox into one append.
+const batch_limit = 512
 
 type State {
   State(
@@ -70,6 +77,9 @@ type State {
     seen: Dict(String, Int),
     lines: Int,
     next_seq: Int,
+    /// Appends made, for tests of the grouping.
+    writes: Int,
+    me: Option(Subject(Message)),
   )
 }
 
@@ -84,7 +94,11 @@ pub fn start(data_dir: String) -> Result(Inbox, actor.StartError) {
   let file = data_dir <> "/inbox.jsonl"
   let _ = ensure_dir(data_dir)
   let state = load(file)
-  actor.new(state)
+  actor.new_with_initialiser(5000, fn(me) {
+    actor.initialised(State(..state, me: Some(me)))
+    |> actor.returning(me)
+    |> Ok
+  })
   |> actor.on_message(handle)
   |> actor.start
   |> result.map(fn(started) { started.data })
@@ -128,39 +142,26 @@ pub fn count(inbox: Inbox) -> #(Int, Int) {
   actor.call(inbox, waiting: 5000, sending: Count)
 }
 
+/// How many appends the inbox has made since it started.
+pub fn writes(inbox: Inbox) -> Int {
+  actor.call(inbox, waiting: 5000, sending: Writes)
+}
+
 fn handle(state: State, message: Message) -> actor.Next(State, Message) {
   case message {
-    Receive(reply_to, channel_message, now) -> {
-      let key = key(channel_message)
-      case dict.has_key(state.seen, key) {
-        True -> {
-          actor.send(reply_to, False)
-          actor.continue(state)
-        }
-        False -> {
-          let entry = Pending(key, channel_message, now, 0, state.next_seq)
-          let state =
-            State(
-              ..state,
-              pending: dict.insert(state.pending, key, entry),
-              seen: dict.insert(state.seen, key, now),
-              next_seq: state.next_seq + 1,
-            )
-            |> write([encode_in(entry)], now)
-          actor.send(reply_to, True)
-          actor.continue(state)
-        }
+    Receive(..) | Done(..) -> {
+      let #(batch, next) = take_batch(state.me, [message], 1)
+      let state = write_batch(state, batch)
+      case next {
+        Some(other) -> handle(state, other)
+        None -> actor.continue(state)
       }
     }
 
-    Done(key, now) ->
-      case dict.has_key(state.pending, key) {
-        False -> actor.continue(state)
-        True ->
-          State(..state, pending: dict.delete(state.pending, key))
-          |> write([encode_done(key, now)], now)
-          |> actor.continue
-      }
+    Writes(reply_to) -> {
+      actor.send(reply_to, state.writes)
+      actor.continue(state)
+    }
 
     Recover(reply_to, now) -> {
       let #(retry, drop) =
@@ -222,20 +223,89 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
   }
 }
 
+/// The receives and done marks already in the mailbox, in order, up to
+/// `batch_limit`; and the first other message, if one ended the batch.
+fn take_batch(
+  me: Option(Subject(Message)),
+  batch: List(Message),
+  size: Int,
+) -> #(List(Message), Option(Message)) {
+  case me, size >= batch_limit {
+    Some(subject), False ->
+      case process.receive(subject, within: 0) {
+        Ok(Receive(..) as next) | Ok(Done(..) as next) ->
+          take_batch(me, [next, ..batch], size + 1)
+        Ok(other) -> #(list.reverse(batch), Some(other))
+        Error(Nil) -> #(list.reverse(batch), None)
+      }
+    _, _ -> #(list.reverse(batch), None)
+  }
+}
+
+/// Apply a batch of receives and done marks, write their lines in one
+/// append, then answer the receives: a sender hears "kept" only once its
+/// message is on disk.
+fn write_batch(state: State, batch: List(Message)) -> State {
+  let #(state, lines, replies, now) =
+    list.fold(batch, #(state, [], [], 0), fn(acc, message) {
+      let #(state, lines, replies, last) = acc
+      case message {
+        Receive(reply_to, channel_message, now) -> {
+          let key = key(channel_message)
+          case dict.has_key(state.seen, key) {
+            True -> #(state, lines, [#(reply_to, False), ..replies], now)
+            False -> {
+              let entry = Pending(key, channel_message, now, 0, state.next_seq)
+              #(
+                State(
+                  ..state,
+                  pending: dict.insert(state.pending, key, entry),
+                  seen: dict.insert(state.seen, key, now),
+                  next_seq: state.next_seq + 1,
+                ),
+                [encode_in(entry), ..lines],
+                [#(reply_to, True), ..replies],
+                now,
+              )
+            }
+          }
+        }
+        Done(key, now) ->
+          case dict.has_key(state.pending, key) {
+            False -> #(state, lines, replies, last)
+            True -> #(
+              State(..state, pending: dict.delete(state.pending, key)),
+              [encode_done(key, now), ..lines],
+              replies,
+              now,
+            )
+          }
+        _ -> acc
+      }
+    })
+  let state = case lines {
+    [] -> state
+    _ -> write(state, list.reverse(lines), now)
+  }
+  list.each(list.reverse(replies), fn(reply) { actor.send(reply.0, reply.1) })
+  state
+}
+
 fn principal_of(message: port.ChannelMessage) -> String {
   message.channel <> ":" <> message.user_id
 }
 
 /// Append lines; compact the log when it has grown.
 fn write(state: State, lines: List(String), now: Int) -> State {
-  let appended = case append_file(state.file, string.concat(lines)) {
+  let appended = case append_raw(state.file, string.concat(lines)) {
     Ok(Nil) -> list.length(lines)
     Error(reason) -> {
       safe_io.println("warn: inbox not saved error=" <> reason)
       0
     }
   }
-  let state = State(..state, lines: state.lines + appended)
+  let state =
+    State(..state, lines: state.lines + appended, writes: state.writes + 1)
   // Compact when the log is twice what it must keep, so a busy day (more
   // keys to remember than `compact_after`) does not rewrite it every time.
   case state.lines >= compact_after + dict.size(state.seen) {
@@ -278,6 +348,8 @@ fn load(file: String) -> State {
       seen: dict.new(),
       lines: 0,
       next_seq: 0,
+      writes: 0,
+      me: None,
     )
   case read_file(file) {
     Error(_) -> empty
@@ -286,7 +358,7 @@ fn load(file: String) -> State {
       // must start on a line of its own, or it would be lost with it.
       case text != "" && !string.ends_with(text, "\n") {
         True -> {
-          let _ = append_file(file, "\n")
+          let _ = append_raw(file, "\n")
           Nil
         }
         False -> Nil
@@ -449,8 +521,9 @@ fn read_file(path: String) -> Result(String, String)
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)
 
+/// Raw append (no file server, no process spawned per write).
 @external(erlang, "supernova_file_system_ffi", "append_file")
-fn append_file(path: String, content: String) -> Result(Nil, String)
+fn append_raw(path: String, content: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
 fn ensure_dir(path: String) -> Result(Nil, String)

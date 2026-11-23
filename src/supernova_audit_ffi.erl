@@ -11,7 +11,7 @@ write_audit_entry(AgentId, LogLine, WorkspaceRoot) ->
     LogFile = filename:join(LogDir, "audit.log"),
     ok = maybe_rotate(LogFile),
     Line = io_lib:format("~s~n", [LogLine]),
-    case file:write_file(LogFile, Line, [append]) of
+    case file:write_file(LogFile, Line, [append, raw]) of
       ok -> {ok, nil};
       {error, Reason} -> {error, text("write_failed: ~p", [Reason])}
     end

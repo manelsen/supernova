@@ -383,11 +383,39 @@ trate o que estiver no topo:
 Meça de novo depois de cada correção. Se nenhum dos dois estiver no topo,
 registre a medição e feche a história sem mudança de código.
 
+**Feito.** Dois tetos, um atrás do outro:
+
+1. **Fila durável.** Gravações agrupadas: o que já espera na caixa do ator
+   vai num único `append`, e cada remetente só é confirmado depois dele.
+   Teste: 100 mensagens simultâneas viram **1** gravação, e o restart
+   recupera as 100.
+2. **`file_server`.** Com a fila resolvida, o topo passou a ser o `append`
+   do ledger e da auditoria, e o `file_server_2`: `file:write_file` e
+   `file:read_file` sem `raw` passam por esse processo único da VM e criam
+   um processo de E/S por chamada. A FFI de arquivos (leitura, gravação,
+   escrita atômica, `append`), a da auditoria e a da memória passaram a
+   `raw`.
+
+**Processo com a maior fila** (amostras com fila acima de 20, `--parallel`):
+
+| Momento | Topo | Maior fila |
+|---|---|---|
+| Linha de base (P-00b) | `inbox.write` | 271 |
+| P-05 | `inbox.write`, sozinho | 269 |
+| P-06, só a fila agrupada | ledger `persist_event` e `file_server_2` | 54–149 |
+| P-06, com `raw` | o coletor do cliente de teste (`sim_adapter.collect_stream`) | 149 |
+
+Nenhum processo da plataforma fica mais no topo. A vazão, nos pares
+intercalados, foi de 24 para 103 e de 73 para 131 turnos/s, com a máquina
+(6 núcleos, carga 11–14, outro BEAM ocupando quase 2 núcleos) saturada de
+CPU. O critério de 2× fica para a medição final da P-07, numa janela com a
+máquina mais livre.
+
 **Aceite:**
-- [ ] O relatório de estresse mostra o processo com a maior fila antes e
+- [x] O relatório de estresse mostra o processo com a maior fila antes e
       depois.
-- [ ] I6 continua passando.
-- [ ] Commit: `perf(inbox): gravações agrupadas`, `perf(gate): <ator> lido
+- [x] I6 continua passando.
+- [x] Commit: `perf(inbox): gravações agrupadas`, `perf(gate): <ator> lido
       em paralelo`, ou `docs(prd-p): nem a fila nem o gate são o teto`.
 
 ### P-07: Ligar por padrão
