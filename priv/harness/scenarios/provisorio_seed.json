@@ -11,6 +11,6 @@
     {"do": "seed", "persona": "bia", "chat": "dm-bia", "file": "provisorio_seed.jsonl", "days": 3},
     {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "e o código?"}
   ],
-  "checks": ["invariants"],
+  "checks": ["invariants", "tool_used:bia:canvas"],
   "rubric": "provisorio"
 }
