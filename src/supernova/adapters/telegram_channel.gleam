@@ -18,6 +18,7 @@ import supernova/core/access/actor as access_actor
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/closed_group/global as closed_group_global
+import supernova/infra/safe_io
 
 type TelegramWorker {
   TelegramWorker(done: process.Subject(Nil), ingress_done: process.Subject(Nil))
@@ -97,6 +98,59 @@ pub fn start_telegram_channel(
       ))
     }
     None -> Error("enabled but no token configured")
+  }
+}
+
+/// The menu without a language, and in the languages most likely to hold
+/// an old menu.
+const menu_languages = [None, Some("pt"), Some("en")]
+
+/// Publish the command menu people see when they tap "Menu": members' commands
+/// for every chat, and the admins' longer list in each admin's private chat.
+/// Telegram keeps whatever menu was set last, even by another program that
+/// used the same token, so Supernova sets its own at every boot. Telegram
+/// keeps one menu per scope and language, and a menu for the user's
+/// language wins over the one without: the same menu also goes in the
+/// languages another program is likely to have used. Failures are logged;
+/// the menu is a convenience.
+pub fn publish_menu(
+  telegram_cfg: config.TelegramConfig,
+  member_commands: List(#(String, String)),
+  admin_commands: List(#(String, String)),
+  admin_user_ids: List(String),
+) -> Nil {
+  case telegram_cfg.token {
+    None -> Nil
+    Some(token) -> {
+      let api = case telegram_cfg.base_url {
+        Some(base_url) ->
+          telegram.with_base_url(telegram.new_config(token), base_url)
+        None -> telegram.new_config(token)
+      }
+      let scopes =
+        list.append(
+          [
+            #(telegram.DefaultScope, member_commands),
+            #(telegram.AllPrivateChats, member_commands),
+            #(telegram.AllGroupChats, member_commands),
+          ],
+          list.map(admin_user_ids, fn(id) {
+            #(telegram.ChatScope(id), admin_commands)
+          }),
+        )
+      list.each(scopes, fn(pair) {
+        list.each(menu_languages, fn(language) {
+          case telegram.set_my_commands(api, pair.1, pair.0, language) {
+            Ok(Nil) -> Nil
+            Error(error) ->
+              safe_io.println(
+                "warn: telegram menu not set: "
+                <> telegram.describe_poll_error(error),
+              )
+          }
+        })
+      })
+    }
   }
 }
 

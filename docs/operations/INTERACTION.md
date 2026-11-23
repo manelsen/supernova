@@ -29,6 +29,8 @@ The conversation survives a restart: each person's conversation in each chat is 
 | `/help`, `/status` | Members and admins | Help and session status. |
 | `/uso todos`, `/acesso …`, `/teto liberar <usd>`, `/auditoria [n]` | Admins | Instance spending, access, the daily ceiling and the audit log. See [DEPLOY.md](../../DEPLOY.md). |
 
+`/help` answers with this list, by role: admins also see their commands. On Telegram, Supernova sets the same list as the bot's command menu at every boot (members' commands in every chat, the longer list in each admin's private chat, for the admins in `supernova.yaml`), replacing whatever menu was set before with the same token. The list lives in `core/closed_group/commands.gleam`.
+
 ## Tools
 
 The agent decides when to use its tools. Admins can use every tool. For members, the defaults deny the riskier tools, and `supernova.yaml` (`capabilities`) can change that.
