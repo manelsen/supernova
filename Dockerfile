@@ -38,4 +38,8 @@ RUN sed -i "s/{with_body, true}/{with_body, true}, {recv_timeout, 120000}/" /app
  && erlc -o /app/build/dev/erlang/gleam_hackney/ebin /app/build/packages/gleam_hackney/src/gleam_hackney_ffi.erl \
  && erlc -o /app/build/packages/gleam_hackney/src /app/build/packages/gleam_hackney/src/gleam_hackney_ffi.erl
 
-CMD ["gleam", "run"]
+# Run the BEAM itself as PID 1, not under `gleam run`: as PID 1, `gleam run`
+# ignores the SIGTERM of `docker stop`, and the container was killed after the
+# grace period without draining its chat lanes. The BEAM handles SIGTERM, and
+# Supernova turns it into its own shutdown (supernova_signal_ffi).
+CMD ["sh", "-c", "exec erl -pa build/dev/erlang/*/ebin -noshell -eval 'supernova@@main:run(supernova)'"]

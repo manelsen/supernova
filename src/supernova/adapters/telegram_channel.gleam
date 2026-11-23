@@ -180,15 +180,23 @@ fn start_telegram_worker(
   TelegramWorker(done: done, ingress_done: ingress_done)
 }
 
+/// How long a stop waits for the polling loop. A long poll in flight can take
+/// `polling_timeout` seconds; waiting for it would eat the shutdown budget.
+/// Nothing is lost by not waiting: what that poll returns is only confirmed
+/// to Telegram by a later `getUpdates`, so it comes back after the restart,
+/// and the durable inbox answers it once.
+pub fn stop_wait_ms(polling_timeout: Int) -> Int {
+  int.min({ polling_timeout + 5 } * 1000, 2000)
+}
+
 fn stop_telegram_ingress(worker: TelegramWorker, polling_timeout: Int) -> Nil {
-  let wait_ms = { polling_timeout + 5 } * 1000
-  let _ = process.receive(worker.ingress_done, within: wait_ms)
+  let _ =
+    process.receive(worker.ingress_done, within: stop_wait_ms(polling_timeout))
   Nil
 }
 
 fn stop_telegram_worker(worker: TelegramWorker, polling_timeout: Int) -> Nil {
-  let wait_ms = { polling_timeout + 5 } * 1000
-  let _ = process.receive(worker.done, within: wait_ms)
+  let _ = process.receive(worker.done, within: stop_wait_ms(polling_timeout))
   Nil
 }
 

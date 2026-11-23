@@ -99,7 +99,11 @@ pub fn build_channel_handler_dispatches_slack_matrix_and_ignores_unknown_test() 
 @external(erlang, "test_signal_ffi", "send_shutdown_exit")
 fn send_shutdown_exit(pid: process.Pid) -> Nil
 
+@external(erlang, "supernova_signal_ffi", "restore_default")
+fn restore_default_signal_handler() -> Nil
+
 pub fn wait_for_shutdown_blocks_until_exit_signal_test() {
+  use <- exception.defer(restore_default_signal_handler)
   let ready = process.new_subject()
   let done = process.new_subject()
 
