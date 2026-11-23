@@ -561,6 +561,28 @@ pub fn model_choice_is_per_agent_test() {
   string.contains(reply.content, "Modelo: gpt-x\n") |> should.equal(True)
 }
 
+/// The state file is read once per agent: later messages use the answer
+/// kept in memory, so a file changed behind the router's back waits for the
+/// next restart.
+pub fn kept_choice_is_read_from_disk_once_test() {
+  use root <- test_workspace.with_isolated_workspace("channel-router")
+  use <- with_mock_catalog
+  let first =
+    self_state.set_model_choice(self_state.default(), "openai", "gpt-y")
+  let assert Ok(_) = self_state.save(root <> "/telegram:once", first)
+  let assert Ok(router) = telegram_router.start(mock_provider_config())
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("c1", "once", "/status"))
+  string.contains(reply.content, "Modelo: gpt-y\n") |> should.equal(True)
+
+  let changed =
+    self_state.set_model_choice(self_state.default(), "openai", "gpt-x")
+  let assert Ok(_) = self_state.save(root <> "/telegram:once", changed)
+  let assert Ok(reply) =
+    telegram_router.route(router, tg("c2", "once", "/status"))
+  string.contains(reply.content, "Modelo: gpt-y\n") |> should.equal(True)
+}
+
 /// A state file from before the provider was kept names only the model: it
 /// belongs to the default provider. A model no longer configured gives way
 /// to the default.

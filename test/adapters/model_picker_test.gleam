@@ -95,3 +95,35 @@ pub fn text_choices_lists_every_provider_test() {
   )
   |> should.be_true()
 }
+
+/// A provider whose label has a space is typed by that label or its key.
+pub fn typed_provider_label_with_space_test() {
+  let zen = config("opencode_zen", "glm-4.7")
+  let cat =
+    catalog.Catalog(default: config("mistral", "deepseek-flash"), entries: [
+      catalog.Entry(config: config("mistral", "deepseek-flash"), models: [
+        "deepseek-flash",
+      ]),
+      catalog.Entry(config: zen, models: ["glm-4.7", "kimi-k2"]),
+    ])
+  let active = config("mistral", "deepseek-flash")
+  let assert Some(chosen) =
+    model_picker.resolve_typed(cat, active, "OpenCode Zen kimi-k2")
+  chosen.name |> should.equal("opencode_zen")
+  chosen.default_model |> should.equal("kimi-k2")
+  let assert Some(chosen) =
+    model_picker.resolve_typed(cat, active, "opencode zen  glm-4.7")
+  chosen.default_model |> should.equal("glm-4.7")
+  let assert Some(chosen) =
+    model_picker.resolve_typed(cat, active, "opencode_zen kimi-k2")
+  chosen.name |> should.equal("opencode_zen")
+  model_picker.resolve_typed(cat, active, "OpenCode Zen") |> should.equal(None)
+  model_picker.resolve_typed(cat, active, "OpenCode Zen deepseek-flash")
+  |> should.equal(None)
+}
+
+/// Bare shortcut words never take an argument: that is conversation.
+pub fn shortcut_word_with_text_is_conversation_test() {
+  model_picker.parse("modelo de negócio") |> should.equal(None)
+  model_picker.parse("models are fun") |> should.equal(None)
+}

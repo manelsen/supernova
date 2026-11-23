@@ -428,7 +428,7 @@ fn handle_inbound_message_allowed_for_handler(
                   msg.user_id,
                   rich_session,
                 )
-              let llm_config =
+              let #(state_with_profile, llm_config) =
                 agent_llm_config(
                   state_with_profile,
                   profile.agent_id,
@@ -621,7 +621,7 @@ fn handle_inbound_message_allowed(
                   msg.user_id,
                   rich_session,
                 )
-              let llm_config =
+              let #(state_with_profile, llm_config) =
                 agent_llm_config(
                   state_with_profile,
                   profile.agent_id,
@@ -1537,7 +1537,8 @@ fn handle_allowed_interaction(
   let profile =
     session_profile_for_session(state, session_id, interaction.user_id)
   let cat = catalog.current(default_llm_config)
-  let active = agent_llm_config(state, profile.agent_id, default_llm_config)
+  let #(state, active) =
+    agent_llm_config(state, profile.agent_id, default_llm_config)
   let answer = fn(next_state, content, shown) {
     #(
       next_state,
@@ -1620,31 +1621,46 @@ fn handle_allowed_interaction(
 }
 
 /// The provider and model this agent uses: the one picked with /model, when
-/// it is still configured, else the default.
+/// it is still configured, else the default. The state file is read once per
+/// agent; the answer is kept in `agent_choices` for the next messages. The
+/// catalog is built once at boot, so a kept answer cannot go stale.
 fn agent_llm_config(
   state: InteractiveRouterState,
   agent_id: String,
   default_llm_config: provider.ProviderConfig,
-) -> provider.ProviderConfig {
-  let cat = catalog.current(default_llm_config)
+) -> #(InteractiveRouterState, provider.ProviderConfig) {
   case dict.get(state.agent_choices, agent_id) {
-    Ok(config) -> config
+    Ok(config) -> #(state, config)
     Error(_) -> {
-      let preferences = load_self_state_for_agent(agent_id).preferences
-      case preferences.model_override {
-        Some(model) -> {
-          // Files written before the provider was kept: the model belonged
-          // to the default provider.
-          let provider_name =
-            option.unwrap(preferences.provider_override, cat.default.name)
-          case catalog.resolve(cat, catalog.Choice(provider_name, model)) {
-            Some(config) -> config
-            None -> cat.default
-          }
-        }
+      let config = kept_choice(agent_id, catalog.current(default_llm_config))
+      #(
+        InteractiveRouterState(
+          ..state,
+          agent_choices: dict.insert(state.agent_choices, agent_id, config),
+        ),
+        config,
+      )
+    }
+  }
+}
+
+fn kept_choice(
+  agent_id: String,
+  cat: catalog.Catalog,
+) -> provider.ProviderConfig {
+  let preferences = load_self_state_for_agent(agent_id).preferences
+  case preferences.model_override {
+    Some(model) -> {
+      // Files written before the provider was kept: the model belonged to
+      // the default provider.
+      let provider_name =
+        option.unwrap(preferences.provider_override, cat.default.name)
+      case catalog.resolve(cat, catalog.Choice(provider_name, model)) {
+        Some(config) -> config
         None -> cat.default
       }
     }
+    None -> cat.default
   }
 }
 

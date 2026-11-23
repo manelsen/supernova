@@ -26,7 +26,9 @@ pub type Request {
   Pick(String)
 }
 
-/// `/model`, `/models` or the shortcut words, with or without an argument.
+/// `/model`, `/models` or `/modelo`, with or without an argument; the bare
+/// shortcut words ("modelo", "models") alone only show the choices. They
+/// never take an argument: "modelo de negócio" is conversation, not a pick.
 pub fn parse(content: String) -> Option(Request) {
   case ux.resolve_shortcut(content) {
     Ok(ux.Models) -> Some(Show)
@@ -86,27 +88,43 @@ pub fn resolve_typed(
   case bare(argument) {
     Some(config) -> Some(config)
     None ->
-      case string.split_once(argument, " ") {
-        Ok(#(provider_word, model)) ->
-          catalog.resolve(
-            cat,
-            catalog.Choice(provider_key(provider_word), string.trim(model)),
-          )
-        Error(Nil) -> None
-      }
+      // `<provedor> <modelo>`: the provider by its key or its label, which
+      // may have spaces ("OpenCode Zen").
+      catalog.providers(cat)
+      |> list.find_map(fn(provider_name) {
+        provider_names(provider_name)
+        |> list.find_map(fn(name) {
+          case strip_word_prefix(argument, name) {
+            Ok(model) ->
+              catalog.resolve(cat, catalog.Choice(provider_name, model))
+              |> option.to_result(Nil)
+            Error(Nil) -> Error(Nil)
+          }
+        })
+      })
+      |> option.from_result
   }
 }
 
-/// A provider typed by its name or its label (`Mistral`, `OpenAI`).
-fn provider_key(word: String) -> String {
-  let lowered = string.lowercase(word)
-  case
-    list.find(providers_info.known_providers(), fn(info) {
-      string.lowercase(info.label) == lowered
-    })
-  {
-    Ok(info) -> info.key
-    Error(Nil) -> lowered
+/// How a provider may be typed: its key (`opencode_zen`) and its label
+/// (`OpenCode Zen`).
+fn provider_names(provider_name: String) -> List(String) {
+  case providers_info.get_provider(provider_name) {
+    Some(info) -> [provider_name, info.label]
+    None -> [provider_name]
+  }
+}
+
+/// The rest of `text` after `word` and a space, ignoring case.
+fn strip_word_prefix(text: String, word: String) -> Result(String, Nil) {
+  let prefix = string.lowercase(word) <> " "
+  case string.starts_with(string.lowercase(text), prefix) {
+    True ->
+      case string.trim(string.drop_start(text, string.length(prefix))) {
+        "" -> Error(Nil)
+        rest -> Ok(rest)
+      }
+    False -> Error(Nil)
   }
 }
 
