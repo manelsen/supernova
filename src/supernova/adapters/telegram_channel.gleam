@@ -101,11 +101,18 @@ pub fn start_telegram_channel(
   }
 }
 
+/// The menu without a language, and in the languages most likely to hold
+/// an old menu.
+const menu_languages = [None, Some("pt"), Some("en")]
+
 /// Publish the command menu people see when they tap "Menu": members' commands
 /// for every chat, and the admins' longer list in each admin's private chat.
 /// Telegram keeps whatever menu was set last, even by another program that
-/// used the same token, so Supernova sets its own at every boot. Failures
-/// are logged; the menu is a convenience.
+/// used the same token, so Supernova sets its own at every boot. Telegram
+/// keeps one menu per scope and language, and a menu for the user's
+/// language wins over the one without: the same menu also goes in the
+/// languages another program is likely to have used. Failures are logged;
+/// the menu is a convenience.
 pub fn publish_menu(
   telegram_cfg: config.TelegramConfig,
   member_commands: List(#(String, String)),
@@ -132,14 +139,16 @@ pub fn publish_menu(
           }),
         )
       list.each(scopes, fn(pair) {
-        case telegram.set_my_commands(api, pair.1, pair.0) {
-          Ok(Nil) -> Nil
-          Error(error) ->
-            safe_io.println(
-              "warn: telegram menu not set: "
-              <> telegram.describe_poll_error(error),
-            )
-        }
+        list.each(menu_languages, fn(language) {
+          case telegram.set_my_commands(api, pair.1, pair.0, language) {
+            Ok(Nil) -> Nil
+            Error(error) ->
+              safe_io.println(
+                "warn: telegram menu not set: "
+                <> telegram.describe_poll_error(error),
+              )
+          }
+        })
       })
     }
   }

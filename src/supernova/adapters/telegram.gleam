@@ -1455,12 +1455,14 @@ pub type CommandScope {
   ChatScope(chat_id: ChatId)
 }
 
-/// Replace the bot's command menu for a scope. `commands` are pairs of
-/// name (without the slash) and description.
+/// Replace the bot's command menu for a scope and, when given, a language
+/// (ISO 639-1 code; a menu for a language wins over the one without).
+/// `commands` are pairs of name (without the slash) and description.
 pub fn set_my_commands(
   config: Config,
   commands: List(#(String, String)),
   scope: CommandScope,
+  language_code: Option(String),
 ) -> Result(Nil, TelegramError) {
   let scope_json = case scope {
     DefaultScope -> json.object([#("type", json.string("default"))])
@@ -1485,6 +1487,7 @@ pub fn set_my_commands(
         }),
       ),
       #("scope", scope_json),
+      #("language_code", json.string(option.unwrap(language_code, ""))),
     ])
     |> json.to_string
   api_post(config, "setMyCommands", body) |> result.replace(Nil)

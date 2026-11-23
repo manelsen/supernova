@@ -4,6 +4,7 @@
 import e2e/e2e_support as support
 import gleam/erlang/process
 import gleam/list
+import gleam/option.{Some}
 import gleam/string
 import gleeunit/should
 import supernova/adapters/telegram
@@ -57,12 +58,15 @@ pub fn set_my_commands_sends_names_descriptions_and_scope_test() {
       api,
       [#("agenda", "O que você pediu para depois")],
       telegram.ChatScope("42"),
+      Some("pt"),
     )
   let assert Ok(recorded) = process.receive(requests, 2000)
   recorded.method |> should.equal("setMyCommands")
   string.contains(recorded.body, "\"command\":\"agenda\"") |> should.equal(True)
   string.contains(recorded.body, "\"type\":\"chat\"") |> should.equal(True)
   string.contains(recorded.body, "\"chat_id\":\"42\"") |> should.equal(True)
+  string.contains(recorded.body, "\"language_code\":\"pt\"")
+  |> should.equal(True)
 }
 
 /// In the closed group, /help answers with the closed group's commands.
