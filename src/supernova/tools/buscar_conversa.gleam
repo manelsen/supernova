@@ -96,25 +96,36 @@ pub fn search(
 ) -> Result(Found, String) {
   let folded = list.map(terms, fold)
   let dir = history_store.dir(data_dir, principal)
-  let files = case list_dir(dir) {
-    Ok(files) -> Ok(files)
-    Error("no such file or directory") -> Ok([])
-    Error(reason) ->
-      Error("buscar_conversa could not read the conversations: " <> reason)
+  let unreadable = fn(reason) {
+    "buscar_conversa could not read the conversations: " <> reason
   }
-  use files <- result.map(files)
-  let all =
+  use files <- result.try(case list_dir(dir) {
+    Ok(files) -> Ok(files)
+    Error(reason) ->
+      case history_store.is_missing(reason) {
+        True -> Ok([])
+        False -> Error(unreadable(reason))
+      }
+  })
+  use per_file <- result.map(
     files
     |> list.filter(fn(file) { string.ends_with(file, ".jsonl") })
-    |> list.flat_map(fn(file) {
+    |> list.try_map(fn(file) {
       let chat = chat_label(string.drop_end(file, 6))
-      history_store.read_file_messages(dir <> "/" <> file)
-      |> list.filter(fn(message) {
-        let content = fold(message.content)
-        list.all(folded, fn(term) { string.contains(content, term) })
+      history_store.read_file_strict(dir <> "/" <> file)
+      |> result.map_error(unreadable)
+      |> result.map(fn(messages) {
+        messages
+        |> list.filter(fn(message) {
+          let content = fold(message.content)
+          list.all(folded, fn(term) { string.contains(content, term) })
+        })
+        |> list.map(fn(message) { Match(chat: chat, message: message) })
       })
-      |> list.map(fn(message) { Match(chat: chat, message: message) })
-    })
+    }),
+  )
+  let all =
+    list.flatten(per_file)
     |> list.sort(fn(a, b) { int.compare(a.message.at, b.message.at) })
   let total = list.length(all)
   Found(matches: list.drop(all, int.max(total - max_results, 0)), total: total)

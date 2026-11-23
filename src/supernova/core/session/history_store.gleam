@@ -50,15 +50,37 @@ pub fn load(store: HistoryStore, session_id: String) -> List(StoredMessage) {
   |> from_first_user
 }
 
-/// Every message in one conversation file, oldest first.
+/// Every message in one conversation file, oldest first; a missing or
+/// unreadable file is an empty conversation.
 pub fn read_file_messages(file: String) -> List(StoredMessage) {
-  case read_file(file) {
+  case read_file_strict(file) {
+    Ok(messages) -> messages
     Error(_) -> []
-    Ok(text) ->
-      string.split(text, "\n")
-      |> list.filter(fn(line) { string.trim(line) != "" })
-      |> list.filter_map(decode_line)
   }
+}
+
+/// Every message in one conversation file, oldest first. A missing file is
+/// an empty conversation; any other failure to read it is an error, so a
+/// search never mistakes it for "not said". Damaged lines are skipped.
+pub fn read_file_strict(file: String) -> Result(List(StoredMessage), String) {
+  case read_file(file) {
+    Ok(text) ->
+      Ok(
+        string.split(text, "\n")
+        |> list.filter(fn(line) { string.trim(line) != "" })
+        |> list.filter_map(decode_line),
+      )
+    Error(reason) ->
+      case is_missing(reason) {
+        True -> Ok([])
+        False -> Error(reason)
+      }
+  }
+}
+
+/// A read or list error that only means "not there".
+pub fn is_missing(reason: String) -> Bool {
+  string.contains(reason, "no such file") || string.contains(reason, "enoent")
 }
 
 /// Append messages to the end of a session's file.

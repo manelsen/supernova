@@ -246,3 +246,24 @@ fn ensure_dir(path: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write_file(path: String, content: String) -> Result(Nil, String)
+
+/// A conversation file that cannot be read is an error too, never "not said".
+pub fn unreadable_file_is_an_error_test() {
+  use dir <- with_dir
+  say(dir, "telegram:42:42", [#("user", "oi", 0)])
+  let conversations = history_store.dir(dir, "telegram:42")
+  // A directory where a conversation file should be cannot be read as one.
+  let assert Ok(Nil) =
+    ensure_dir(conversations <> "/telegram%3A-100%3A42.jsonl")
+  case
+    buscar_conversa.execute_for(dir, "telegram:42", 0, "{\"terms\":\"oi\"}")
+  {
+    Error(reason) ->
+      string.starts_with(
+        reason,
+        "buscar_conversa could not read the conversations",
+      )
+      |> should.be_true()
+    Ok(_) -> should.fail()
+  }
+}
