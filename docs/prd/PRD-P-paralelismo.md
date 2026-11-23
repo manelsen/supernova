@@ -107,8 +107,6 @@ pelos outros.
 - O índice em memória da `buscar_conversa`. Ele é independente desta PRD e
   ganha PR própria. A busca continua relendo o histórico; o estresse mede com
   e sem buscas.
-- O *group commit* da fila durável (`inbox`). Ela não aparece como gargalo.
-  Se aparecer em P-06, vira item novo no PENDENCIAS.
 - Streaming real por tokens.
 - Grupos em que todas as agentes leem o grupo, que dependem de decisão
   própria (PENDENCIAS 3.1).
@@ -348,18 +346,31 @@ O handler roda no processo da fila (seção 6.4), atrás de `routing.parallel`
 - [ ] Rodada com caos: zero turnos faltando.
 - [ ] Commit: `perf(router): a fase anterior ao LLM roda na fila do chat`.
 
-### P-06: O gate, se for o próximo teto
+### P-06: O próximo teto: a fila durável ou o gate
 
-Meça com `routing.parallel: true`. Se o processo com a maior fila for um ator
-do gate, aplique a seção 6.5 só a ele, e meça de novo. Se não for, registre a
-medição e feche a história sem mudança de código.
+A linha de base pelo caminho de produção (P-00b) já mostra a **fila durável**
+como o processo com a maior fila: uma gravação em disco por mensagem, num
+processo único, antes da fila do chat. Meça com `routing.parallel: true` e
+trate o que estiver no topo:
+
+- **Fila durável.** Faça *group commit*: as mensagens que chegam enquanto
+  uma gravação está em andamento vão juntas na próxima, numa única
+  `append_file`. Cada remetente só recebe a confirmação depois que a gravação
+  da sua mensagem terminou, então a garantia de "está no disco antes de
+  entrar na fila" continua igual. Teste: 100 mensagens simultâneas viram bem
+  menos de 100 gravações, e um restart logo depois de todas as confirmações
+  recupera todas.
+- **Ator do gate.** Aplique a seção 6.5 só a ele.
+
+Meça de novo depois de cada correção. Se nenhum dos dois estiver no topo,
+registre a medição e feche a história sem mudança de código.
 
 **Aceite:**
 - [ ] O relatório de estresse mostra o processo com a maior fila antes e
       depois.
 - [ ] I6 continua passando.
-- [ ] Commit: `perf(gate): <ator> lido em paralelo` ou
-      `docs(prd-p): o gate não é o teto`.
+- [ ] Commit: `perf(inbox): gravações agrupadas`, `perf(gate): <ator> lido
+      em paralelo`, ou `docs(prd-p): nem a fila nem o gate são o teto`.
 
 ### P-07: Ligar por padrão
 
