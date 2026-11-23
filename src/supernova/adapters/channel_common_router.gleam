@@ -8,7 +8,6 @@
 //// - standardized reply/error mapping
 
 import envoy
-import gleam/dict.{type Dict}
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
@@ -77,15 +76,98 @@ pub type ResolveSession =
 pub type ResolveSessionFromParticipant =
   fn(String, String) -> String
 
-/// Interactive router state scoped by session.
-pub type InteractiveRouterState {
-  InteractiveRouterState(
-    /// Provider and model picked with /model, by agent. The state file keeps
-    /// them across restarts; this spares reading it again.
-    agent_choices: Dict(String, provider.ProviderConfig),
-    session_profiles: Dict(String, SessionProfile),
-    forget_pending: Dict(String, Int),
-  )
+/// The router's state: a scope in a public ETS table, not data in the
+/// router's process (PRD-P, P-04). Every router (one per channel) has its
+/// own scope; any process holding it reads and writes the same state, so the
+/// pre-LLM phase can run outside the router's actor (P-05).
+///
+/// In the scope:
+/// - the session profiles, by session;
+/// - the provider and model picked with /model, by agent (the state file
+///   keeps them across restarts; this spares reading it again);
+/// - the /esquecer waiting for confirmation, by agent.
+pub opaque type InteractiveRouterState {
+  InteractiveRouterState(scope: Int)
+}
+
+type RouterTable {
+  SupernovaRouterState
+}
+
+type RouterKey {
+  ProfileKey(scope: Int, session_id: String)
+  ChoiceKey(scope: Int, agent_id: String)
+  ForgetKey(scope: Int, agent_id: String)
+}
+
+@external(erlang, "supernova_table_ffi", "get")
+fn router_get(table: RouterTable, key: RouterKey) -> Result(v, Nil)
+
+@external(erlang, "supernova_table_ffi", "put")
+fn router_put(table: RouterTable, key: RouterKey, value: v) -> Nil
+
+@external(erlang, "supernova_table_ffi", "delete")
+fn router_delete(table: RouterTable, key: RouterKey) -> Nil
+
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
+
+fn get_profile(
+  state: InteractiveRouterState,
+  session_id: String,
+) -> Result(SessionProfile, Nil) {
+  router_get(SupernovaRouterState, ProfileKey(state.scope, session_id))
+}
+
+fn get_choice(
+  state: InteractiveRouterState,
+  agent_id: String,
+) -> Result(provider.ProviderConfig, Nil) {
+  router_get(SupernovaRouterState, ChoiceKey(state.scope, agent_id))
+}
+
+fn put_choice(
+  state: InteractiveRouterState,
+  agent_id: String,
+  config: provider.ProviderConfig,
+) -> InteractiveRouterState {
+  router_put(SupernovaRouterState, ChoiceKey(state.scope, agent_id), config)
+  state
+}
+
+fn get_forget_pending(
+  state: InteractiveRouterState,
+  agent_id: String,
+) -> Result(Int, Nil) {
+  router_get(SupernovaRouterState, ForgetKey(state.scope, agent_id))
+}
+
+fn put_forget_pending(
+  state: InteractiveRouterState,
+  agent_id: String,
+  at: Int,
+) -> InteractiveRouterState {
+  router_put(SupernovaRouterState, ForgetKey(state.scope, agent_id), at)
+  state
+}
+
+fn drop_forget_pending(
+  state: InteractiveRouterState,
+  agent_id: String,
+) -> InteractiveRouterState {
+  router_delete(SupernovaRouterState, ForgetKey(state.scope, agent_id))
+  state
+}
+
+/// Whether the router's scope holds nothing yet for this session and agent.
+pub fn is_empty_for(
+  state: InteractiveRouterState,
+  session_id: String,
+  agent_id: String,
+) -> Bool {
+  get_profile(state, session_id) == Error(Nil)
+  && get_choice(state, agent_id) == Error(Nil)
+  && get_forget_pending(state, agent_id) == Error(Nil)
 }
 
 /// Per-session bootstrap profile used by channel flows.
@@ -105,11 +187,7 @@ pub type SessionProfile {
 
 /// Create a new empty interactive router state.
 pub fn new_interactive_state() -> InteractiveRouterState {
-  InteractiveRouterState(
-    agent_choices: dict.new(),
-    session_profiles: dict.new(),
-    forget_pending: dict.new(),
-  )
+  InteractiveRouterState(scope: unique_integer())
 }
 
 /// Handle inbound messages and interaction callbacks through the shared flow.
@@ -949,7 +1027,7 @@ fn session_profile_for_session(
   session_id: String,
   _user_id: String,
 ) -> SessionProfile {
-  let profile = case dict.get(state.session_profiles, session_id) {
+  let profile = case get_profile(state, session_id) {
     Ok(profile) -> profile
     Error(_) ->
       SessionProfile(
@@ -989,10 +1067,8 @@ fn put_session_profile(
   session_id: String,
   profile: SessionProfile,
 ) -> InteractiveRouterState {
-  InteractiveRouterState(
-    ..state,
-    session_profiles: dict.insert(state.session_profiles, session_id, profile),
-  )
+  router_put(SupernovaRouterState, ProfileKey(state.scope, session_id), profile)
+  state
 }
 
 /// Resolve the base directory used for agent workspaces.
@@ -1744,24 +1820,18 @@ fn handle_allowed_interaction(
 
 /// The provider and model this agent uses: the one picked with /model, when
 /// it is still configured, else the default. The state file is read once per
-/// agent; the answer is kept in `agent_choices` for the next messages. The
+/// agent; the answer is kept in the router's scope for the next messages. The
 /// catalog is built once at boot, so a kept answer cannot go stale.
 fn agent_llm_config(
   state: InteractiveRouterState,
   agent_id: String,
   default_llm_config: provider.ProviderConfig,
 ) -> #(InteractiveRouterState, provider.ProviderConfig) {
-  case dict.get(state.agent_choices, agent_id) {
+  case get_choice(state, agent_id) {
     Ok(config) -> #(state, config)
     Error(_) -> {
       let config = kept_choice(agent_id, catalog.current(default_llm_config))
-      #(
-        InteractiveRouterState(
-          ..state,
-          agent_choices: dict.insert(state.agent_choices, agent_id, config),
-        ),
-        config,
-      )
+      #(put_choice(state, agent_id, config), config)
     }
   }
 }
@@ -1795,10 +1865,7 @@ fn choose_model(
   modify_self_state_for_agent(agent_id, fn(current) {
     self_state.set_model_choice(current, chosen.name, chosen.default_model)
   })
-  InteractiveRouterState(
-    ..state,
-    agent_choices: dict.insert(state.agent_choices, agent_id, chosen),
-  )
+  put_choice(state, agent_id, chosen)
 }
 
 /// /model alone shows what is in use and the choices; /model <modelo> picks.
@@ -2358,32 +2425,23 @@ fn maybe_handle_forget(
             <> " fica. Para confirmar, envie"
             <> " /esquecer confirmo nos próximos 10 minutos."
           Some(#(
-            InteractiveRouterState(
-              ..state,
-              forget_pending: dict.insert(
-                state.forget_pending,
-                profile.agent_id,
-                closed_group_global.now(),
-              ),
+            put_forget_pending(
+              state,
+              profile.agent_id,
+              closed_group_global.now(),
             ),
             reply,
           ))
         }
         Some(closed_group_pure.ForgetConfirm) -> {
-          case dict.get(state.forget_pending, profile.agent_id) {
+          case get_forget_pending(state, profile.agent_id) {
             Error(_) -> Some(#(state, forgotten_without_pending_reply()))
             Ok(at) -> {
               let now = closed_group_global.now()
               case now - at <= 600_000 {
                 False ->
                   Some(#(
-                    InteractiveRouterState(
-                      ..state,
-                      forget_pending: dict.delete(
-                        state.forget_pending,
-                        profile.agent_id,
-                      ),
-                    ),
+                    drop_forget_pending(state, profile.agent_id),
                     forgotten_without_pending_reply(),
                   ))
                 True -> {
@@ -2401,14 +2459,7 @@ fn maybe_handle_forget(
                       })
                     None -> Error("runtime unavailable")
                   }
-                  let next_state =
-                    InteractiveRouterState(
-                      ..state,
-                      forget_pending: dict.delete(
-                        state.forget_pending,
-                        profile.agent_id,
-                      ),
-                    )
+                  let next_state = drop_forget_pending(state, profile.agent_id)
                   case result {
                     Ok(_) -> Some(#(next_state, "Esqueci."))
                     Error(_) ->

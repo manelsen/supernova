@@ -329,11 +329,18 @@ enquanto o roteador for um ator, ele já é serializado por canal.
 Leve `session_profiles` para ETS e remova `InteractiveRouterState`. Nesta
 história, o roteador **continua** no caminho: só o estado sai de dentro dele.
 
+**Feito.** O `InteractiveRouterState` continua existindo, mas só como um
+escopo (um inteiro) numa tabela ETS (`SupernovaRouterState`): as funções do
+roteador mantêm as assinaturas, e a P-05 pode chamá-las de qualquer
+processo. Uma asserção mudou: a que conferia o estado inicial lendo os
+dicionários internos. A/B (2 rodadas intercaladas, carga 10–11): base
+78,9 e 75,3 turnos/s; nova 66,8 e 84,1 (média −2%).
+
 **Aceite:**
-- [ ] Todos os testes do roteador passam sem mudar asserções, só a forma de
+- [x] Todos os testes do roteador passam sem mudar asserções, só a forma de
       criar o estado inicial.
-- [ ] A/B sem regressão: turnos/s dentro de ±10% da linha de base.
-- [ ] Commit: `refactor(router): o estado sai do ator do roteador`.
+- [x] A/B sem regressão: turnos/s dentro de ±10% da linha de base.
+- [x] Commit: `refactor(router): o estado sai do ator do roteador`.
 
 ### P-05: A fase anterior ao LLM na fila do chat
 
