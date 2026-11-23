@@ -27,11 +27,11 @@ text(Format, Args) ->
 %% the last level, so with no <root>/<agent> yet every write failed and was
 %% swallowed: no audit line ever reached the disk.
 ensure_dir(Dir) ->
-  filelib:ensure_path(Dir).
+  supernova_rawfs:ensure_dir(Dir).
 
 %% Rotate log file if it exceeds 10MB.
 maybe_rotate(LogFile) ->
-  case filelib:file_size(LogFile) of
+  case supernova_rawfs:file_size(LogFile) of
     Size when Size > 10 * 1024 * 1024 ->
       rotate_file(LogFile);
     _ ->
@@ -41,18 +41,18 @@ maybe_rotate(LogFile) ->
 %% Rotate: rename current to .1, .1 to .2, etc. (keep 5 backups).
 rotate_file(LogFile) ->
   %% Remove oldest backup
-  file:delete(LogFile ++ ".5"),
+  supernova_rawfs:delete(LogFile ++ ".5"),
   %% Shift backups
   lists:foreach(fun(N) ->
     Src = LogFile ++ "." ++ integer_to_list(5 - N),
     Dst = LogFile ++ "." ++ integer_to_list(6 - N),
-    case filelib:is_file(Src) of
-      true -> file:rename(Src, Dst);
+    case supernova_rawfs:is_file(Src) of
+      true -> supernova_rawfs:rename(Src, Dst);
       false -> ok
     end
   end, lists:seq(0, 4)),
   %% Rename current to .1
-  file:rename(LogFile, LogFile ++ ".1"),
+  supernova_rawfs:rename(LogFile, LogFile ++ ".1"),
   ok.
 
 %% Escape an audit field byte by byte. Gleam's string.replace works on

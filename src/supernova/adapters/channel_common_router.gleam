@@ -43,6 +43,7 @@ import supernova/core/prompt_assembly
 import supernova/core/session/server as rich_session
 import supernova/core/session/supervisor as session_supervisor
 import supernova/core/ux
+import supernova/infra/safe_io
 import supernova/llm/catalog
 import supernova/llm/provider
 import supernova/llm/providers/openai_compatible
@@ -1093,15 +1094,19 @@ fn ensure_profile_for_turn(
   let profile = session_profile_for_session(state, session_id, user_id)
   case rich_session {
     None -> #(state, profile)
-    Some(_) -> {
-      case profile.awaiting_bootstrap_answer {
-        True -> #(state, profile)
-        False -> {
+    Some(_) ->
+      // The closed group has no workspace persona (its agents are born with
+      // a core): reading one on every message only held the router up.
+      case
+        profile.awaiting_bootstrap_answer,
+        closed_self_dir_for_agent(profile.agent_id)
+      {
+        True, _ | _, Some(_) -> #(state, profile)
+        False, None -> {
           let synced = sync_session_profile_from_workspace(profile)
           #(put_session_profile(state, session_id, synced), synced)
         }
       }
-    }
   }
 }
 
@@ -1163,15 +1168,7 @@ fn should_skip_bootstrap(content: String) -> Bool {
 
 fn closed_group_identity_frozen(agent_id: String) -> Bool {
   case closed_group_global.get_config() {
-    Some(cfg) ->
-      case self_core.load(cfg.data_dir, agent_id) {
-        Some(core) ->
-          case core.name {
-            Some(_) -> True
-            None -> False
-          }
-        None -> False
-      }
+    Some(cfg) -> self_core.named(cfg.data_dir, agent_id)
     None -> False
   }
 }
@@ -2218,22 +2215,40 @@ fn forgotten_without_pending_reply() -> String {
   "Não há confirmação pendente. Envie /esquecer para começar."
 }
 
+/// The session of this chat, started if needed. Without one the turn runs
+/// with no history and is not kept, so failing to get it is logged, never
+/// silent; a session that another start created meanwhile is fetched.
 fn ensure_rich_session(
   supervisor: Option(session_supervisor.SessionSupervisor),
   session_id: String,
 ) -> Option(rich_session.Session) {
   case supervisor {
-    Some(supervisor) ->
-      case session_supervisor.get_session(supervisor, session_id) {
-        Ok(session) -> Some(session)
+    None -> None
+    Some(supervisor) -> {
+      let found = case session_supervisor.get_session(supervisor, session_id) {
+        Ok(session) -> Ok(session)
         Error(session_supervisor.SessionNotFound(_)) ->
           case session_supervisor.start_session(supervisor, session_id) {
-            Ok(session) -> Some(session)
-            Error(_) -> None
+            Ok(session) -> Ok(session)
+            Error(session_supervisor.SessionAlreadyExists(_)) ->
+              session_supervisor.get_session(supervisor, session_id)
+            Error(error) -> Error(error)
           }
-        Error(_) -> None
+        Error(error) -> Error(error)
       }
-    None -> None
+      case found {
+        Ok(session) -> Some(session)
+        Error(error) -> {
+          safe_io.println(
+            "warn: no session for "
+            <> session_id
+            <> "; this turn runs without history and is not kept: "
+            <> string.inspect(error),
+          )
+          None
+        }
+      }
+    }
   }
 }
 

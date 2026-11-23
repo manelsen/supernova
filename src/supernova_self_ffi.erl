@@ -12,8 +12,8 @@ sha256_hex(Value) when is_binary(Value) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= Hash]).
 
 list_agent_dirs(Path) when is_binary(Path) ->
-    case file:list_dir(Path) of
-        {ok, Names} -> lists:sort([list_to_binary(Name) || Name <- Names, filelib:is_dir(filename:join(Path, Name))]);
+    case supernova_rawfs:list_dir(Path) of
+        {ok, Names} -> lists:sort([unicode:characters_to_binary(Name) || Name <- Names, supernova_rawfs:is_dir(filename:join(Path, Name))]);
         {error, _} -> []
     end.
 
@@ -25,7 +25,7 @@ with_lock(Key, Fun) when is_function(Fun, 0) ->
 %% The path stays a binary: binary_to_list would split UTF-8 bytes into
 %% separate characters and point at a different directory.
 clear_dir(Dir) when is_binary(Dir) ->
-    case file:list_dir(Dir) of
+    case supernova_rawfs:list_dir(Dir) of
         {error, enoent} -> {ok, 0};
         {error, Reason} -> {error, list_to_binary(file:format_error(Reason))};
         {ok, Names} ->
@@ -48,7 +48,7 @@ release_global_lock(Key) ->
     nil.
 
 rename_file(From, To) ->
-    case file:rename(From, To) of
+    case supernova_rawfs:rename(From, To) of
         ok -> {ok, nil};
         {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
     end.

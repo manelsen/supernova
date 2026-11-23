@@ -203,6 +203,29 @@ pub fn exists(data_dir: String, principal: String) -> Bool {
   }
 }
 
+/// Whether the agent has its name. A name, once given, never changes
+/// (neither /esquecer nor drift touch it), and every message asks: a "yes"
+/// is kept in memory, a "no" is read again next time.
+pub fn named(data_dir: String, principal: String) -> Bool {
+  case known_get(#("named", data_dir, principal)) {
+    Ok(True) -> True
+    _ ->
+      case load(data_dir, principal) {
+        Some(Core(name: Some(_), ..)) -> {
+          known_put(#("named", data_dir, principal), True)
+          True
+        }
+        _ -> False
+      }
+  }
+}
+
+@external(erlang, "supernova_known_ffi", "get")
+fn known_get(key: #(String, String, String)) -> Result(Bool, Nil)
+
+@external(erlang, "supernova_known_ffi", "put")
+fn known_put(key: #(String, String, String), value: Bool) -> Nil
+
 pub fn load(data_dir: String, principal: String) -> Option(Core) {
   let _ = complete_drift(data_dir, principal)
   load_raw(data_dir, principal)
