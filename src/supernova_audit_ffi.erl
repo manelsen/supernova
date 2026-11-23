@@ -13,18 +13,21 @@ write_audit_entry(AgentId, LogLine, WorkspaceRoot) ->
     Line = io_lib:format("~s~n", [LogLine]),
     case file:write_file(LogFile, Line, [append]) of
       ok -> {ok, nil};
-      {error, Reason} -> {error, io_lib:format("write_failed: ~p", [Reason])}
+      {error, Reason} -> {error, text("write_failed: ~p", [Reason])}
     end
   catch
-    Class:Error -> {error, io_lib:format("audit_write_error: ~p:~p", [Class, Error])}
+    Class:Error -> {error, text("audit_write_error: ~p:~p", [Class, Error])}
   end.
 
-%% Ensure directory exists.
+%% Errors go back to Gleam as String, a binary; io_lib:format gives a list.
+text(Format, Args) ->
+  unicode:characters_to_binary(io_lib:format(Format, Args)).
+
+%% Ensure the directory and its parents exist. file:make_dir created only
+%% the last level, so with no <root>/<agent> yet every write failed and was
+%% swallowed: no audit line ever reached the disk.
 ensure_dir(Dir) ->
-  case filelib:is_dir(Dir) of
-    true -> ok;
-    false -> file:make_dir(Dir)
-  end.
+  filelib:ensure_path(Dir).
 
 %% Rotate log file if it exceeds 10MB.
 maybe_rotate(LogFile) ->

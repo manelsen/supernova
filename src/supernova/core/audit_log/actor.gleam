@@ -21,6 +21,7 @@ import supernova/core/audit_log/types.{
   WriteToFile,
 }
 import supernova/core/safe_call
+import supernova/infra/safe_io
 
 // ============================================================================
 // FFI — File Write (Erlang)
@@ -81,8 +82,18 @@ fn execute_commands(commands: List(AuditCommand)) -> Nil {
     case cmd {
       WriteToFile(entry, workspace_root) -> {
         let log_line = types.format_entry(entry)
-        let _ = ffi_write_audit_entry(entry.agent_id, log_line, workspace_root)
-        Nil
+        case ffi_write_audit_entry(entry.agent_id, log_line, workspace_root) {
+          Ok(_) -> Nil
+          // The entry stays in the in-memory buffer; the disk copy is lost,
+          // and that must show.
+          Error(reason) ->
+            safe_io.println(
+              "warn: audit entry not written to disk agent="
+              <> entry.agent_id
+              <> " error="
+              <> reason,
+            )
+        }
       }
     }
   })
