@@ -58,6 +58,7 @@ import supernova/memory/metrics as memory_metrics
 import supernova/self/audit as self_audit
 import supernova/self/birth
 import supernova/self/core as self_core
+import supernova/self/desk
 import supernova/self/epoch
 import supernova/self/forget
 import supernova/self/incidents
@@ -1026,11 +1027,16 @@ fn workspace_path_for_agent(agent_id: String) -> String {
 }
 
 fn closed_self_dir_for_agent(agent_id: String) -> Option(String) {
+  closed_data_dir()
+  |> option.map(agent_identity.self_dir(_, agent_id))
+}
+
+/// The data dir of the closed group, when it is in force.
+fn closed_data_dir() -> Option(String) {
   case closed_group_global.get_config() {
     Some(cfg) ->
       case cfg.access.mode {
-        config.Allowlist ->
-          Some(agent_identity.self_dir(cfg.data_dir, agent_id))
+        config.Allowlist -> Some(cfg.data_dir)
         config.Open -> None
       }
     None -> None
@@ -1044,27 +1050,40 @@ fn migrate_self_state_for_agent(agent_id: String, self_dir: String) -> Nil {
 }
 
 fn load_self_state_for_agent(agent_id: String) -> self_state.SelfState {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      self_state.from_dir(self_dir)
+  case closed_data_dir() {
+    Some(data_dir) -> {
+      migrate_self_state_for_agent(
+        agent_id,
+        agent_identity.self_dir(data_dir, agent_id),
+      )
+      desk.read_self(data_dir, agent_id)
     }
     None -> self_state.from_workspace(workspace_path_for_agent(agent_id))
   }
 }
 
-fn save_self_state_for_agent(
+/// Change the agent's state: in the closed group, through the agent's
+/// process (one change at a time per agent, so none is lost).
+fn modify_self_state_for_agent(
   agent_id: String,
-  state: self_state.SelfState,
+  change: fn(self_state.SelfState) -> self_state.SelfState,
 ) -> Nil {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      let _ = self_state.save_in(self_dir, state)
+  case closed_data_dir() {
+    Some(data_dir) -> {
+      migrate_self_state_for_agent(
+        agent_id,
+        agent_identity.self_dir(data_dir, agent_id),
+      )
+      let _ = desk.modify_self(data_dir, agent_id, change)
       Nil
     }
     None -> {
-      let _ = self_state.save(workspace_path_for_agent(agent_id), state)
+      let workspace_path = workspace_path_for_agent(agent_id)
+      let _ =
+        self_state.save(
+          workspace_path,
+          change(self_state.from_workspace(workspace_path)),
+        )
       Nil
     }
   }
@@ -1074,28 +1093,38 @@ fn load_relationship_for_agent(
   agent_id: String,
   user_id: String,
 ) -> relationship.RelationshipState {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      relationship.load_in(self_dir, user_id)
+  case closed_data_dir() {
+    Some(data_dir) -> {
+      migrate_self_state_for_agent(
+        agent_id,
+        agent_identity.self_dir(data_dir, agent_id),
+      )
+      desk.read_relationship(data_dir, agent_id, user_id)
     }
     None -> relationship.load(workspace_path_for_agent(agent_id), user_id)
   }
 }
 
-fn save_relationship_for_agent(
+/// Change the agent's relationship with `user_id`; before and after.
+fn modify_relationship_for_agent(
   agent_id: String,
-  state: relationship.RelationshipState,
-) -> Nil {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      let _ = relationship.save_in(self_dir, state)
-      Nil
+  user_id: String,
+  change: fn(relationship.RelationshipState) -> relationship.RelationshipState,
+) -> #(relationship.RelationshipState, relationship.RelationshipState) {
+  case closed_data_dir() {
+    Some(data_dir) -> {
+      migrate_self_state_for_agent(
+        agent_id,
+        agent_identity.self_dir(data_dir, agent_id),
+      )
+      desk.modify_relationship(data_dir, agent_id, user_id, change)
     }
     None -> {
-      let _ = relationship.save(workspace_path_for_agent(agent_id), state)
-      Nil
+      let workspace_path = workspace_path_for_agent(agent_id)
+      let previous = relationship.load(workspace_path, user_id)
+      let updated = change(previous)
+      let _ = relationship.save(workspace_path, updated)
+      #(previous, updated)
     }
   }
 }
@@ -1443,11 +1472,9 @@ fn maybe_handle_identity_bootstrap(
                     Ok(persona) -> {
                       let display_name =
                         persona_loader.extract_name(persona.identity)
-                      let _ =
-                        save_self_state_for_agent(
-                          profile.agent_id,
-                          self_state.default(),
-                        )
+                      modify_self_state_for_agent(profile.agent_id, fn(_) {
+                        self_state.default()
+                      })
                       let next_profile =
                         SessionProfile(
                           ..profile,
@@ -1756,11 +1783,9 @@ fn choose_model(
   agent_id: String,
   chosen: provider.ProviderConfig,
 ) -> InteractiveRouterState {
-  let current = load_self_state_for_agent(agent_id)
-  save_self_state_for_agent(
-    agent_id,
-    self_state.set_model_choice(current, chosen.name, chosen.default_model),
-  )
+  modify_self_state_for_agent(agent_id, fn(current) {
+    self_state.set_model_choice(current, chosen.name, chosen.default_model)
+  })
   InteractiveRouterState(
     ..state,
     agent_choices: dict.insert(state.agent_choices, agent_id, chosen),
@@ -2690,12 +2715,26 @@ fn kept_tool_call_decoder() -> decode.Decoder(#(String, String)) {
 }
 
 fn toggle_reasoning_preference(profile: SessionProfile, enabled: Bool) -> Bool {
-  let current = load_self_state_for_agent(profile.agent_id)
-  let toggled = !current.preferences.reasoning_visible
-  let with_reasoning = self_state.set_reasoning_visible(current, toggled)
-  let with_thinking = self_state.set_thinking_enabled(with_reasoning, enabled)
-  save_self_state_for_agent(profile.agent_id, with_thinking)
-  toggled
+  let toggled = fn(current: self_state.SelfState) {
+    !current.preferences.reasoning_visible
+  }
+  // What was written, so the reply matches the state even with another
+  // change in between.
+  let written = case closed_data_dir() {
+    Some(data_dir) ->
+      desk.modify_self(data_dir, profile.agent_id, fn(current) {
+        self_state.set_reasoning_visible(current, toggled(current))
+        |> self_state.set_thinking_enabled(enabled)
+      })
+    None -> {
+      modify_self_state_for_agent(profile.agent_id, fn(current) {
+        self_state.set_reasoning_visible(current, toggled(current))
+        |> self_state.set_thinking_enabled(enabled)
+      })
+      load_self_state_for_agent(profile.agent_id)
+    }
+  }
+  written.preferences.reasoning_visible
 }
 
 /// The person's message, the turn's tool calls (each a "tool_call" with
@@ -2805,15 +2844,14 @@ fn apply_current_success_self_state(
   content: String,
   llm_config: provider.ProviderConfig,
 ) -> Nil {
-  let current = load_self_state_for_agent(profile.agent_id)
   let suggestion = mood.parse_suggestion(content)
   let outcome = case string.length(content) > 280 {
     True -> mood.LongResponseGenerated
     False -> mood.ToolCallSuccess
   }
-  let updated =
+  modify_self_state_for_agent(profile.agent_id, fn(current) {
     self_state.apply_outcome(current, outcome, "turn_success", suggestion)
-  save_self_state_for_agent(profile.agent_id, updated)
+  })
   append_journal_turn(
     profile,
     session_id,
@@ -2891,7 +2929,6 @@ fn apply_current_error_self_state(
   profile: SessionProfile,
   error: executor.ExecutorError,
 ) -> Nil {
-  let current = load_self_state_for_agent(profile.agent_id)
   let #(outcome, cause) = case error {
     executor.ToolError(_, _) -> #(mood.ToolCallError, "tool_error")
     executor.LLMError(_) -> #(mood.LLMFailure, "llm_error")
@@ -2900,8 +2937,9 @@ fn apply_current_error_self_state(
     executor.YieldPaused(_) -> #(mood.LLMFailure, "yield_paused")
     executor.PolicyDenied(_) -> #(mood.LLMFailure, "policy_denied")
   }
-  let updated = self_state.apply_outcome(current, outcome, cause, None)
-  save_self_state_for_agent(profile.agent_id, updated)
+  modify_self_state_for_agent(profile.agent_id, fn(current) {
+    self_state.apply_outcome(current, outcome, cause, None)
+  })
   record_incident(profile, error)
   apply_relationship_event(profile, relationship.UserFrustrated)
   Nil
@@ -2975,9 +3013,10 @@ fn apply_relationship_event(
   event: relationship.RelationshipEvent,
 ) -> Nil {
   let user_id = user_id_for_profile(profile)
-  let previous = load_relationship_for_agent(profile.agent_id, user_id)
-  let updated = relationship.apply_event(previous, event)
-  save_relationship_for_agent(profile.agent_id, updated)
+  let #(previous, updated) =
+    modify_relationship_for_agent(profile.agent_id, user_id, fn(previous) {
+      relationship.apply_event(previous, event)
+    })
 
   case relationship.should_refresh_user_markdown(previous, updated) {
     True -> {

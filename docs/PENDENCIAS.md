@@ -148,7 +148,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **Custo.** As métricas de uso nascem em zero para cada modelo oferecido. No boot, um aviso no log aponta modelo oferecido sem preço em `pricing.models`.
   - **Telegram.** Um modelo por linha, e o botão carrega `m:<provedor|modelo>`, que cabe nos 64 bytes com nomes mais longos. Botões antigos continuam funcionando.
 - **Gravações concorrentes no estado da agente.** Achado em 23/11, ao desenhar a [PRD-P](prd/PRD-P-paralelismo.md). Será resolvido nela, pelo processo da agente (P-02, P-03).
-  - **`self_state` e `relationship`.** São lidos, alterados e regravados pelo fim de cada turno, por `/model` e `/reasoning`, pela reflexão e pelo `/esquecer`. Isso acontece em processos diferentes e sem dono. Dois turnos simultâneos da mesma pessoa (privado e grupo), ou um turno e um `/model`, podem apagar a gravação um do outro.
+  - ~~**`self_state` e `relationship`.**~~ Resolvido na P-02: toda mudança passa pelo processo da agente (`self/desk`), uma de cada vez, e a gravação é atômica. Num teste com 200 mudanças simultâneas, o caminho antigo guardava 1; o processo da agente guarda as 200.
   - **`/esquecer` com turno em andamento em outro chat da mesma pessoa.** O turno falha ao gravar, porque a sessão foi parada, e a pessoa fica sem resposta. Nada do que foi esquecido volta.
 - **A mudança lenta não dispara com uma pessoa só.**
   - **Situação:** com reflexão semanal de força 0,25, a pressão efetiva máxima em um ano é 0,38, para um limiar de 3,0. Pessoas diferentes somam sem desconto, então na prática só várias pessoas juntas mudam a agente.

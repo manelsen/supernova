@@ -113,7 +113,9 @@ fn save_at(
   state: SelfState,
 ) -> Result(Nil, String) {
   use _ <- result.try(ffi_ensure_dir(directory))
-  ffi_write_file(file_path, encode(state))
+  // Atomic: a reader never sees a half-written file (it would decode as the
+  // default state, and the next write would keep that).
+  ffi_write_file_atomic(file_path, encode(state))
 }
 
 pub fn apply_outcome(
@@ -434,8 +436,8 @@ fn preferences_decoder() -> decode.Decoder(SessionPreferences) {
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn ffi_read_file(path: String) -> Result(String, String)
 
-@external(erlang, "supernova_file_system_ffi", "write_file")
-fn ffi_write_file(path: String, content: String) -> Result(Nil, String)
-
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
 fn ffi_ensure_dir(path: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "write_file_atomic")
+fn ffi_write_file_atomic(path: String, content: String) -> Result(Nil, String)

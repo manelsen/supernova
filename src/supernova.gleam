@@ -70,6 +70,7 @@ import supernova/memory/boot as memory_boot
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
 import supernova/metrics/record
+import supernova/self/desk
 import supernova/self/reflection
 import supernova/tools/browser
 import supernova/tracing/actor as tracing_actor
@@ -203,6 +204,8 @@ fn config_error_to_string(error: config.ConfigError) -> String {
 pub type Runtime {
   Runtime(
     session_supervisor: supervisor.SessionSupervisor,
+    /// The agents' processes: each one the only writer of its agent's state.
+    desks: desk.DeskSupervisor,
     mcp_manager: mcp_manager.MCPManager,
     channel_registry: registry.ChannelRegistry,
     health_server: health_server.HealthServer,
@@ -243,6 +246,11 @@ fn start_services(
     |> result.map_error(fn(_) { "Failed to start session supervisor" }),
   )
   io.println("✓ Session Supervisor started")
+
+  use desks <- result.try(
+    desk.start_supervisor()
+    |> result.map_error(fn(_) { "Failed to start the agents' processes" }),
+  )
 
   // Start MCP Manager
   use mcp_mgr <- result.try(
@@ -467,6 +475,7 @@ fn start_services(
 
   Ok(Runtime(
     session_supervisor: session_sup,
+    desks: desks,
     mcp_manager: mcp_mgr,
     channel_registry: channel_reg,
     health_server: health_srv,
@@ -978,6 +987,10 @@ pub fn shutdown(services: Runtime) -> Nil {
   // 2. Stop sessions (complete ongoing conversations)
   supervisor.stop(services.session_supervisor)
   io.println("✓ Sessions stopped")
+
+  // 2b. The turns are done: stop the agents' processes (each change they
+  // took is already on disk).
+  desk.stop_supervisor(services.desks)
 
   // 3. Stop MCP servers (clean up tool connections)
   mcp_manager.stop(services.mcp_manager)

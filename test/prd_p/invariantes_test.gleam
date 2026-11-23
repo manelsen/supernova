@@ -303,11 +303,9 @@ pub fn i3_the_turn_in_flight_is_answered_p03() {
 // ============================================================================
 
 /// Turns of the same person at the same time, in her private chat and in
-/// the group, each count once in the relationship. The end of every turn
-/// reads, changes and writes it with no owner, so two at once can lose one;
-/// the window is too short for this test to catch it reliably today (it
-/// passes), and the P-02 adds a deterministic test through the agent's
-/// process. Kept here as a guard.
+/// the group, each count once in the relationship: the end of every turn
+/// changes it through the agent's process (P-02). The deterministic test of
+/// that process is in `self/desk_test`; this one checks the whole path.
 pub fn i4_every_turn_counts_once_test() {
   use ctx <- with_supernova(["ana"], [])
   let messages =

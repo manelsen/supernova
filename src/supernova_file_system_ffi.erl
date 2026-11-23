@@ -1,5 +1,5 @@
 -module(supernova_file_system_ffi).
--export([read_file/1, write_file/2, list_dir/1, ensure_dir/1, append_file/2,
+-export([read_file/1, write_file/2, write_file_atomic/2, list_dir/1, ensure_dir/1, append_file/2,
          delete_file/1, file_exists/1, find_files/2, plain_argv/0]).
 
 read_file(Path) ->
@@ -23,6 +23,23 @@ list_dir(Path) ->
 ensure_dir(Path) ->
   case supernova_rawfs:ensure_dir(Path) of
     ok -> {ok, nil};
+    {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
+  end.
+
+%% Write to a temporary file next to Path, then rename over it: a reader sees
+%% the old content or the new, never a truncated file. The temporary name is
+%% unique, so two writers never share it.
+write_file_atomic(Path, Content) ->
+  Tmp = iolist_to_binary([Path, ".tmp-",
+                          integer_to_list(erlang:unique_integer([positive]))]),
+  case file:write_file(Tmp, Content) of
+    ok ->
+      case supernova_rawfs:rename(Tmp, Path) of
+        ok -> {ok, nil};
+        {error, Reason} ->
+          _ = supernova_rawfs:delete(Tmp),
+          {error, list_to_binary(file:format_error(Reason))}
+      end;
     {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
   end.
 
