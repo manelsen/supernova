@@ -121,6 +121,10 @@ type SessionState {
     /// Where the conversation is kept on disk; None keeps it only in memory,
     /// with no limit.
     store: Option(HistoryStore),
+    /// Whether the stored conversation was read. A session reads it itself,
+    /// on its first message: reading it while starting held up the session
+    /// supervisor, and with it every channel's router, for each new session.
+    loaded: Bool,
   )
 }
 
@@ -133,6 +137,7 @@ fn handle_session_message(
   state: SessionState,
   message: SessionMessage,
 ) -> actor.Next(SessionState, SessionMessage) {
+  let state = ensure_loaded(state)
   case message {
     GetSessionId(reply_to) -> {
       actor.send(reply_to, state.session_id)
@@ -302,18 +307,32 @@ pub fn new(session_id: String) -> Result(Session, actor.StartError) {
   start_with(session_id, None, [])
 }
 
-/// Create a session whose conversation is kept in `store`: it starts with
-/// what the store holds for this session, so a restart does not cut it.
+/// Create a session whose conversation is kept in `store`: on its first
+/// message it reads what the store holds for this session, so a restart
+/// does not cut it.
 pub fn new_with_store(
   session_id: String,
   store: HistoryStore,
 ) -> Result(Session, actor.StartError) {
-  let stored = history_store.load(store, session_id)
-  let history =
-    list.map(stored, fn(message) {
-      ChatMessage(role: message.role, content: message.content)
-    })
-  start_with(session_id, Some(store), history)
+  start_with(session_id, Some(store), [])
+}
+
+fn ensure_loaded(state: SessionState) -> SessionState {
+  case state.loaded, state.store {
+    True, _ | False, None -> SessionState(..state, loaded: True)
+    False, Some(store) -> {
+      let stored =
+        history_store.load(store, state.session_id)
+        |> list.map(fn(message) {
+          ChatMessage(role: message.role, content: message.content)
+        })
+      SessionState(
+        ..state,
+        history: list.append(stored, state.history),
+        loaded: True,
+      )
+    }
+  }
 }
 
 fn start_with(
@@ -330,6 +349,7 @@ fn start_with(
       llm_config_override: None,
       preferences: default_preferences(),
       store: store,
+      loaded: False,
     )
 
   actor.new(initial_state)

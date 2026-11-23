@@ -142,3 +142,48 @@ pub fn the_disk_keeps_every_message_test() {
   let assert [first, ..] = all
   first.content |> should.equal("pergunta 1")
 }
+
+/// The window comes from the end of the file, read backwards: the last
+/// messages of a long conversation, whole even when one is longer than a
+/// read chunk, and the same with or without the last line break.
+pub fn the_window_is_read_from_the_end_of_the_file_test() {
+  let dir = test_workspace.create_temp_dir("history_store_tail")
+  use <- exception.defer(fn() { test_workspace.remove_dir_recursive(dir) })
+  let store = HistoryStore(data_dir: dir, limit: 4)
+  let long = string.repeat("x", 200_000)
+  let messages =
+    list.repeat(Nil, 10_000)
+    |> list.index_map(fn(_, i) {
+      let content = case i {
+        9998 -> long
+        _ -> "m" <> string.inspect(i)
+      }
+      history_store.StoredMessage(
+        role: case i % 2 {
+          0 -> "user"
+          _ -> "assistant"
+        },
+        content: content,
+        at: i,
+      )
+    })
+  let assert Ok(Nil) = history_store.append(store, session_id, messages)
+  let window = history_store.load(store, session_id)
+  list.map(window, fn(m) { m.content })
+  |> should.equal(["m9996", "m9997", long, "m9999"])
+
+  // Without the final line break, the last line is still whole.
+  let file = history_store.path(store, session_id)
+  let assert Ok(text) = read_text(file)
+  let assert Ok(Nil) = write_text(file, string.drop_end(text, 1))
+  let assert Ok(last) = list.last(history_store.load(store, session_id))
+  last.content |> should.equal("m9999")
+
+  history_store.load(store, "telegram:-100:nobody") |> should.equal([])
+}
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read_text(path: String) -> Result(String, String)
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_text(path: String, content: String) -> Result(Nil, String)

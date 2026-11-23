@@ -296,9 +296,14 @@ fn handle_post(
         Error(_) -> "error"
       }
       append_turn_end(store, input.chat_id, turn_session, outcome)
+      // The turn is over when the reply is sent: the outcome rides along, so
+      // a caller does not have to poll the events to know it.
       json_response(
         200,
-        json.object([#("message_id", json.string(message.id))]),
+        json.object([
+          #("message_id", json.string(message.id)),
+          #("outcome", json.string(outcome)),
+        ]),
       )
     }
   }

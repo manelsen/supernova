@@ -27,6 +27,10 @@ import supernova/llm/providers/zhipu
 
 type MockToolMode {
   MockToolDefault
+  /// `[mock-busca termos]`: call buscar_conversa with those terms.
+  MockToolBusca(terms: String)
+  /// `[mock-sem-ferramenta]`: answer without calling any tool.
+  MockToolNone
   MockToolLoopSuccess
   MockToolLoopError
   MockToolWriteSelf
@@ -173,15 +177,37 @@ fn mock_chat_default(
     })
   let tool_mode = mock_tool_mode(messages)
 
-  case tools, has_tool_result {
-    [], _ ->
+  case tools, has_tool_result, tool_mode {
+    _, False, MockToolBusca(terms) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "buscar_conversa",
+            arguments: json.to_string(
+              json.object([#("terms", json.string(terms))]),
+            ),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolNone ->
       Ok(provider.ChatResponse(
         role: "assistant",
         content: "Mock response",
         tool_calls: None,
         reasoning_content: None,
       ))
-    _, True ->
+    [], _, _ ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "Mock response",
+        tool_calls: None,
+        reasoning_content: None,
+      ))
+    _, True, _ ->
       Ok(provider.ChatResponse(
         role: "assistant",
         content: case has_tool_error {
@@ -195,7 +221,7 @@ fn mock_chat_default(
         tool_calls: None,
         reasoning_content: None,
       ))
-    [first_tool, ..], False -> {
+    [first_tool, ..], False, _ -> {
       let #(tool_name, tool_arguments) = case tool_mode {
         MockToolWriteSelf -> #(
           "file_system",
@@ -563,19 +589,32 @@ fn special_mock_response_plain(
 fn mock_tool_mode(messages: List(provider.ChatMessage)) -> MockToolMode {
   case latest_user_content(messages) {
     Some(content) ->
-      case string.contains(content, "[mock-write-self]") {
-        True -> MockToolWriteSelf
-        False ->
-          case string.contains(content, "[tool-loop-error]") {
-            True -> MockToolLoopError
-            False ->
-              case string.contains(content, "[tool-loop-success]") {
-                True -> MockToolLoopSuccess
-                False -> MockToolDefault
-              }
+      case
+        string.split_once(content, "[mock-busca "),
+        string.contains(content, "[mock-sem-ferramenta]")
+      {
+        Ok(#(_, rest)), _ ->
+          case string.split_once(rest, "]") {
+            Ok(#(terms, _)) -> MockToolBusca(terms)
+            Error(Nil) -> MockToolDefault
           }
+        _, True -> MockToolNone
+        _, False -> mock_tool_mode_marks(content)
       }
     None -> MockToolDefault
+  }
+}
+
+fn mock_tool_mode_marks(content: String) -> MockToolMode {
+  case
+    string.contains(content, "[mock-write-self]"),
+    string.contains(content, "[tool-loop-error]"),
+    string.contains(content, "[tool-loop-success]")
+  {
+    True, _, _ -> MockToolWriteSelf
+    _, True, _ -> MockToolLoopError
+    _, _, True -> MockToolLoopSuccess
+    _, _, _ -> MockToolDefault
   }
 }
 

@@ -28,6 +28,7 @@ import gleam/otp/actor
 import gleam/string
 import supernova/core/session/history_store.{type HistoryStore}
 import supernova/core/session/server
+import supernova/infra/safe_io
 
 // ============================================================================
 // Types
@@ -54,6 +55,9 @@ pub type SupervisorMessage {
   )
   /// Stop the supervisor
   StopSupervisor(reply_to: Subject(Nil))
+  /// A linked process exited: a session (crashed, killed, or stopped), or
+  /// the process that started the supervisor.
+  Exited(process.ExitMessage)
 }
 
 /// Errors that can occur in the supervisor.
@@ -167,6 +171,37 @@ fn handle_supervisor_message(
       }
     }
 
+    // Sessions are linked to the supervisor, which traps exits: one session
+    // dying must not take the supervisor (and, through its links, the whole
+    // runtime) with it. The dead session leaves the registry; the next
+    // message starts it again, and its conversation reloads from disk.
+    Exited(process.ExitMessage(pid, reason)) -> {
+      let dead =
+        state.sessions
+        |> dict.filter(fn(_, subject) {
+          process.subject_owner(subject) == Ok(pid)
+        })
+        |> dict.keys
+      case dead, reason {
+        [], process.Normal -> actor.continue(state)
+        // Not a session: the process that started the supervisor stopped.
+        [], process.Killed -> actor.stop_abnormal("parent killed")
+        [], process.Abnormal(_) -> actor.stop_abnormal("parent exited")
+        _, process.Normal -> actor.continue(forget_sessions(state, dead))
+        _, _ -> {
+          list.each(dead, fn(id) {
+            safe_io.println(
+              "warn: session exited and will restart on its next message: "
+              <> id
+              <> " reason="
+              <> string.inspect(reason),
+            )
+          })
+          actor.continue(forget_sessions(state, dead))
+        }
+      }
+    }
+
     StopSupervisor(reply_to) -> {
       // Stop all sessions
       state.sessions
@@ -180,6 +215,13 @@ fn handle_supervisor_message(
       actor.stop()
     }
   }
+}
+
+fn forget_sessions(
+  state: SupervisorState,
+  ids: List(String),
+) -> SupervisorState {
+  SupervisorState(..state, sessions: dict.drop(state.sessions, ids))
 }
 
 /// Simple string comparison for sorting.
@@ -213,7 +255,17 @@ fn start_with(
   let initial_state = SupervisorState(sessions: dict.new(), store: store)
 
   case
-    actor.new(initial_state)
+    actor.new_with_initialiser(5000, fn(subject) {
+      process.trap_exits(True)
+      let selector =
+        process.new_selector()
+        |> process.select(subject)
+        |> process.select_trapped_exits(Exited)
+      actor.initialised(initial_state)
+      |> actor.selecting(selector)
+      |> actor.returning(subject)
+      |> Ok
+    })
     |> actor.on_message(handle_supervisor_message)
     |> actor.start
   {

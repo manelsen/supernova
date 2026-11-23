@@ -10,6 +10,44 @@ pub type Event {
   Event(seq: Int, chat_id: String, kind: String, content: String)
 }
 
+/// Send a message and return the turn's outcome ("ok", "error",
+/// "denied"…), which the sim answers once the turn is over.
+pub fn send_for_outcome(
+  port: Int,
+  token: String,
+  chat_id: String,
+  user_id: String,
+  username: String,
+  content: String,
+  is_group: Bool,
+) -> Result(String, String) {
+  let body =
+    json.to_string(
+      json.object([
+        #("chat_id", json.string(chat_id)),
+        #("user_id", json.string(user_id)),
+        #("username", json.string(username)),
+        #("content", json.string(content)),
+        #("is_group", json.bool(is_group)),
+      ]),
+    )
+  case http_post(port, "/sim/messages", token, body) {
+    Ok(#(200, reply)) ->
+      case
+        json.parse(reply, {
+          use outcome <- decode.field("outcome", decode.string)
+          decode.success(outcome)
+        })
+      {
+        Ok(outcome) -> Ok(outcome)
+        Error(_) -> Error("sim reply without outcome")
+      }
+    Ok(#(status, _body)) ->
+      Error("sim send failed with status " <> int.to_string(status))
+    Error(_) -> Error("sim send failed")
+  }
+}
+
 pub fn send(
   port: Int,
   token: String,
