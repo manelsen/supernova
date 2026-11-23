@@ -13,10 +13,17 @@ Two measurements (docs/PENDENCIAS.md, 3.1):
    is weak, the message is counted as "not referring back". The percentiles
    of the distance say how large a window covers 50/90/95/99% of references.
 
-2. Pauses. The distribution of the time between consecutive messages, and,
-   after a pause of each length, how often the next message still refers to
-   something from before the pause. A pause after which references stop is a
-   natural cut: older turns can be summarised instead of sent word for word.
+2. Pauses between turns. The conversation store writes a person's message
+   and the reply with the same time, so a pause is measured from one turn to
+   the next (the time between two messages of the person). For each length
+   of pause, how often the next message still refers to something from
+   before it. A pause after which references stop is a natural cut: older
+   turns can be summarised instead of sent word for word.
+
+The window to configure is not the raw distance: the store keeps the last
+`history_limit` messages and then drops replies at the start of the window
+(a conversation the model sees opens with the person). A reply that would
+open the window is dropped, so reaching it takes one message more.
 
 Usage, against the pilot's volume, read-only:
 
@@ -72,10 +79,11 @@ def load_conversations(data_dir):
             for line in handle:
                 try:
                     entry = json.loads(line)
-                    messages.append(
-                        (entry["role"], entry["content"], int(entry.get("at", 0)))
-                    )
-                except (ValueError, KeyError, TypeError):
+                    role, content = entry["role"], entry["content"]
+                    if not isinstance(role, str) or not isinstance(content, str):
+                        continue
+                    messages.append((role, content, int(entry.get("at", 0))))
+                except (ValueError, KeyError, TypeError, AttributeError):
                     continue
         if messages:
             yield messages
@@ -122,46 +130,61 @@ def pause_bucket(gap_ms):
     return PAUSES[-1][0]
 
 
+def window_needed(conversation, i, best):
+    """Smallest history_limit that keeps message `best` in the context the
+    model sees when answering message `i`: the last `limit` messages before
+    `i`, without the replies that would open the window."""
+    distance = i - best
+    opens_with_reply = conversation[best][0] != "user"
+    return max(distance + (1 if opens_with_reply else 0), 2)
+
+
 def measure(conversations, threshold):
     idf = idf_table(conversations)
     distances = []
-    no_reference = 0
+    windows = []
     person_messages = 0
     gaps = []
-    after_pause = {label: [0, 0] for label, _ in PAUSES}  # [messages, reaching back past the pause]
+    after_pause = {label: [0, 0] for label, _ in PAUSES}  # [messages, reaching back]
     lengths = []
 
     for conversation in conversations:
         lengths.append(len(conversation))
         vectors = [vector(content, idf) for _, content, _ in conversation]
-        for i in range(1, len(conversation)):
-            gap = conversation[i][2] - conversation[i - 1][2]
-            if conversation[i][2] and conversation[i - 1][2] and gap >= 0:
-                gaps.append(gap)
+        previous_turn_at = None
         for i, (role, _, at) in enumerate(conversation):
-            if role != "user" or i == 0:
+            if role != "user":
                 continue
             person_messages += 1
-            best, best_score = None, 0.0
-            for j in range(i - 1, -1, -1):
+            # A pause is the time since the person's previous message: the
+            # store gives a message and its reply the same time.
+            gap = None
+            if at and previous_turn_at and at >= previous_turn_at:
+                gap = at - previous_turn_at
+                gaps.append(gap)
+            previous_turn_at = at or previous_turn_at
+            if i == 0:
+                continue
+            # The most recent of the most similar earlier messages; the
+            # nearest one is a candidate even with a score of zero.
+            best, best_score = i - 1, cosine(vectors[i], vectors[i - 1])
+            for j in range(i - 2, -1, -1):
                 score = cosine(vectors[i], vectors[j])
                 if score > best_score:
                     best, best_score = j, score
-            reached = best is not None and best_score >= threshold
+            reached = best_score >= threshold
             if reached:
                 distances.append(i - best)
-            else:
-                no_reference += 1
-            previous_at = conversation[i - 1][2]
-            if at and previous_at and at >= previous_at:
-                label = pause_bucket(at - previous_at)
+                windows.append(window_needed(conversation, i, best))
+            if gap is not None:
+                label = pause_bucket(gap)
                 after_pause[label][0] += 1
-                # Reaching past the pause means the match is older than the
-                # previous message.
-                if reached and best < i - 1:
+                # Every earlier message is from before the pause.
+                if reached:
                     after_pause[label][1] += 1
 
     distances.sort()
+    windows.sort()
     gaps.sort()
     lengths.sort()
     return {
@@ -178,8 +201,10 @@ def measure(conversations, threshold):
         "reference_distance_percentiles": {
             p: percentile(distances, p) for p in (50, 75, 90, 95, 99)
         },
+        # history_limit that keeps the referenced message, after the store
+        # drops replies that would open the window.
         "window_covering": {
-            f"{p}%": percentile(distances, p) for p in (90, 95, 99)
+            f"{p}%": percentile(windows, p) for p in (90, 95, 99)
         },
         "pause_minutes_percentiles": {
             p: (round(percentile(gaps, p) / 60_000, 1) if gaps else None)
@@ -208,7 +233,7 @@ def print_report(report):
     print("Distância até a mensagem retomada, em mensagens (percentis):")
     for p, value in report["reference_distance_percentiles"].items():
         print(f"  p{p}: {value}")
-    print("Pausas entre mensagens, em minutos (percentis):")
+    print("Pausas entre turnos (de uma mensagem da pessoa à seguinte), em minutos (percentis):")
     for p, value in report["pause_minutes_percentiles"].items():
         print(f"  p{p}: {value}")
     print("Depois de uma pausa, quantas mensagens retomam algo de antes dela:")
@@ -226,6 +251,8 @@ def main(argv):
     parser.add_argument("--threshold", type=float, default=0.2)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    if not math.isfinite(args.threshold):
+        parser.error("--threshold must be a finite number")
     conversations = list(load_conversations(args.data_dir))
     report = measure(conversations, args.threshold)
     if args.json:
