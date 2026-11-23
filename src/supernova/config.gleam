@@ -1638,9 +1638,8 @@ pub fn validate(config: Config) -> Result(Nil, ConfigError) {
   use _ <- result.try(validate_wechat_work(config.wechat_work))
   use _ <- result.try(validate_whatsapp(config.whatsapp))
 
-  // Validate provider configurations
-  use _ <- result.try(validate_providers(config.providers))
-
+  // A missing key for the selected provider is refused at boot by
+  // `selected_provider`; the other providers are optional.
   Ok(Nil)
 }
 
@@ -1787,93 +1786,6 @@ fn validate_whatsapp(config: WhatsAppConfig) -> Result(Nil, ConfigError) {
           ))
       }
     False -> Ok(Nil)
-  }
-}
-
-/// Validate all provider configurations
-fn validate_providers(
-  providers: Dict(String, ProviderConfig),
-) -> Result(Nil, ConfigError) {
-  providers
-  |> dict.to_list
-  |> list.each(fn(pair) {
-    let #(name, config) = pair
-    let _ = validate_provider_config(name, config)
-    Nil
-  })
-
-  Ok(Nil)
-}
-
-/// Validate a provider configuration
-fn validate_provider_config(name: String, config: ProviderConfig) {
-  case config.provider {
-    OpenAI -> {
-      case config.api_key {
-        Some(_) -> Nil
-        None -> {
-          // Log warning - in production this would be logged
-          let _ = "OpenAI provider '" <> name <> "' requires an API key"
-          Nil
-        }
-      }
-    }
-    Anthropic -> {
-      case config.api_key {
-        Some(_) -> Nil
-        None -> {
-          let _ = "Anthropic provider '" <> name <> "' requires an API key"
-          Nil
-        }
-      }
-    }
-    OpenRouter -> {
-      case config.api_key {
-        Some(_) -> Nil
-        None -> {
-          let _ = "OpenRouter provider '" <> name <> "' requires an API key"
-          Nil
-        }
-      }
-    }
-    OpenCodeZen -> {
-      case config.api_key {
-        Some(_) -> Nil
-        None -> {
-          let _ = "OpenCode Zen provider '" <> name <> "' requires an API key"
-          Nil
-        }
-      }
-    }
-    Zhipu | ZhipuCoding -> {
-      case config.api_key {
-        Some(_) -> Nil
-        None -> {
-          let _ = "Zhipu provider '" <> name <> "' requires an API key"
-          Nil
-        }
-      }
-    }
-    Minimax -> {
-      case config.api_key {
-        Some(_) -> Nil
-        None -> {
-          let _ = "MiniMax provider '" <> name <> "' requires an API key"
-          Nil
-        }
-      }
-    }
-    Ollama -> Nil
-    Mock -> Nil
-    Zai | ZaiCoding | Mistral -> {
-      case config.api_key {
-        Some(_) -> Nil
-        None -> {
-          let _ = "Zai provider '" <> name <> "' requires an API key"
-          Nil
-        }
-      }
-    }
   }
 }
 
