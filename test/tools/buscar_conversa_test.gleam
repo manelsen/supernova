@@ -80,7 +80,7 @@ pub fn finds_in_private_and_group_by_every_term_test() {
   // Every term must be in the same message.
   run(dir, "telegram:42", "aurora flores")
   |> should.equal(
-    "Nada encontrado para \"aurora flores\" nas conversas guardadas.",
+    "Nada encontrado para \"aurora flores\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
   )
 }
 
@@ -95,7 +95,9 @@ pub fn only_the_callers_conversations_test() {
   text |> string.contains("melancia") |> should.be_false()
   text |> string.contains("Bia") |> should.be_false()
   run(dir, "telegram:44", "segredo")
-  |> should.equal("Nada encontrado para \"segredo\" nas conversas guardadas.")
+  |> should.equal(
+    "Nada encontrado para \"segredo\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+  )
 }
 
 /// The answer is often right after the word: "cardiologista" finds the
@@ -235,7 +237,7 @@ pub fn the_gateway_searches_for_the_caller_test() {
   found |> string.contains("ABACAXI-7781") |> should.be_true()
   search("telegram:222")
   |> should.equal(Ok(
-    "Nada encontrado para \"abacaxi\" nas conversas guardadas.",
+    "Nada encontrado para \"abacaxi\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
   ))
 }
 
@@ -317,10 +319,12 @@ pub fn json_keys_are_not_matched_test() {
     #("user", "o papel dele no conteúdo", 2),
   ])
   run(dir, "telegram:42", "role")
-  |> should.equal("Nada encontrado para \"role\" nas conversas guardadas.")
+  |> should.equal(
+    "Nada encontrado para \"role\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+  )
   run(dir, "telegram:42", "content user")
   |> should.equal(
-    "Nada encontrado para \"content user\" nas conversas guardadas.",
+    "Nada encontrado para \"content user\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
   )
   run(dir, "telegram:42", "conteudo")
   |> string.contains("1 mensagem encontrada")
@@ -338,7 +342,9 @@ pub fn kept_tool_calls_are_not_searched_test() {
     #("assistant", "Achei.", 3),
   ])
   run(dir, "telegram:42", "lacerda")
-  |> should.equal("Nada encontrado para \"lacerda\" nas conversas guardadas.")
+  |> should.equal(
+    "Nada encontrado para \"lacerda\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+  )
   run(dir, "telegram:42", "medico")
   |> should.equal(
     "1 mensagem encontrada, em 1 trecho:\n\n"

@@ -41,7 +41,7 @@ pub const max_chars = 600
 pub fn tool() -> provider.ToolDefinition {
   provider.new_tool(
     name: "buscar_conversa",
-    description: "Search everything your person and you have said to each other, in every chat, beyond the recent messages you see. Returns excerpts: each matching message (marked ») with the message before it and the two after it, with date, time and who said it, since the answer is often in the next message. Use it when asked about something said earlier, or to check what was actually said, instead of guessing. If the first words find nothing useful, try others. Finding nothing means it was not said, or was forgotten with /esquecer.",
+    description: "Search everything your person and you have said to each other, in every chat, beyond the recent messages you see. Returns excerpts: each matching message (marked ») with the message before it and the two after it, with date, time and who said it, since the answer is often in the next message. Use it when asked about something said earlier, or to check what was actually said, instead of guessing. If the first words find nothing useful, try others: synonyms, a shorter word, the singular. Finding nothing only means these words are not there; it may have been said in other words. So if it is still not found, say you don't remember it, not that it was never said. What was forgotten with /esquecer is gone.",
     parameters: [
       provider.string_param(
         "terms",
@@ -264,7 +264,7 @@ fn render(found: Found, raw: String, offset: Int) -> String {
     0 ->
       "Nada encontrado para \""
       <> string.trim(raw)
-      <> "\" nas conversas guardadas."
+      <> "\" nas conversas guardadas. Pode ter sido dito com outras palavras."
     matches -> {
       let header =
         int.to_string(matches)
