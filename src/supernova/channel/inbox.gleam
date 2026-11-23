@@ -24,6 +24,7 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/order
 import gleam/otp/actor
 import gleam/result
 import gleam/string
@@ -42,14 +43,23 @@ pub type Inbox =
 
 /// A message that arrived and whose turn did not end.
 pub type Pending {
-  Pending(key: String, message: port.ChannelMessage, at: Int, attempts: Int)
+  Pending(
+    key: String,
+    message: port.ChannelMessage,
+    at: Int,
+    attempts: Int,
+    /// Arrival order, for messages that share a millisecond.
+    seq: Int,
+  )
 }
 
 pub opaque type Message {
   Receive(reply_to: Subject(Bool), message: port.ChannelMessage, now: Int)
   Done(key: String, now: Int)
   Recover(reply_to: Subject(List(Pending)), now: Int)
+  Forget(reply_to: Subject(Int), principal: String, now: Int)
   Count(reply_to: Subject(#(Int, Int)))
+  Stop(reply_to: Subject(Nil))
 }
 
 type State {
@@ -59,6 +69,7 @@ type State {
     /// Every key seen in the last day, with when it was seen.
     seen: Dict(String, Int),
     lines: Int,
+    next_seq: Int,
   )
 }
 
@@ -68,6 +79,7 @@ pub fn key(message: port.ChannelMessage) -> String {
 }
 
 /// Start the inbox over `<data_dir>/inbox.jsonl`, loading what it holds.
+/// Only one inbox may own the file: stop the previous one first (`stop`).
 pub fn start(data_dir: String) -> Result(Inbox, actor.StartError) {
   let file = data_dir <> "/inbox.jsonl"
   let _ = ensure_dir(data_dir)
@@ -89,11 +101,26 @@ pub fn done(inbox: Inbox, key: String, now: Int) -> Nil {
   actor.send(inbox, Done(key, now))
 }
 
-/// Messages still pending from before the restart, oldest first, to answer
-/// again. Each comes back once: one that was already tried, or that is older
-/// than a day, is dropped and logged instead.
+/// Messages still pending from before the restart, in arrival order, to
+/// answer again. Call it once, before any channel starts: what arrives
+/// afterwards is never in this list. Each message comes back once: one that
+/// was already tried, or that is older than a day, is dropped and logged.
 pub fn recover(inbox: Inbox, now: Int) -> List(Pending) {
   actor.call(inbox, waiting: 5000, sending: Recover(_, now))
+}
+
+/// Erase what a person sent (`/esquecer`): their pending messages leave the
+/// inbox, so a restart does not answer them, and the log is rewritten at
+/// once, without the text of any message whose turn is done. Returns how
+/// many pending messages were dropped.
+pub fn forget(inbox: Inbox, principal: String, now: Int) -> Int {
+  actor.call(inbox, waiting: 5000, sending: Forget(_, principal, now))
+}
+
+/// Write everything sent before this call, then stop. Shutdown calls it
+/// after the lanes drain, so the last `done` marks reach the disk.
+pub fn stop(inbox: Inbox) -> Nil {
+  actor.call(inbox, waiting: 5000, sending: Stop)
 }
 
 /// How many messages are pending and how many keys are remembered.
@@ -111,12 +138,13 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
           actor.continue(state)
         }
         False -> {
-          let entry = Pending(key, channel_message, now, 0)
+          let entry = Pending(key, channel_message, now, 0, state.next_seq)
           let state =
             State(
               ..state,
               pending: dict.insert(state.pending, key, entry),
               seen: dict.insert(state.seen, key, now),
+              next_seq: state.next_seq + 1,
             )
             |> write([encode_in(entry)], now)
           actor.send(reply_to, True)
@@ -137,7 +165,12 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
     Recover(reply_to, now) -> {
       let #(retry, drop) =
         dict.values(state.pending)
-        |> list.sort(fn(a, b) { int.compare(a.at, b.at) })
+        |> list.sort(fn(a, b) {
+          case int.compare(a.at, b.at) {
+            order.Eq -> int.compare(a.seq, b.seq)
+            other -> other
+          }
+        })
         |> list.partition(fn(entry) {
           entry.attempts == 0 && now - entry.at <= memory_ms
         })
@@ -149,7 +182,11 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
       })
       let retry = list.map(retry, fn(entry) { Pending(..entry, attempts: 1) })
       let pending =
-        list.fold(retry, dict.new(), fn(acc, entry) {
+        list.fold(drop, state.pending, fn(acc, entry) {
+          dict.delete(acc, entry.key)
+        })
+      let pending =
+        list.fold(retry, pending, fn(acc, entry) {
           dict.insert(acc, entry.key, entry)
         })
       let lines =
@@ -162,11 +199,31 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
       actor.continue(state)
     }
 
+    Forget(reply_to, principal, now) -> {
+      let #(gone, kept) =
+        dict.to_list(state.pending)
+        |> list.partition(fn(pair) { principal_of(pair.1.message) == principal })
+      let state =
+        State(..state, pending: dict.from_list(kept))
+        |> compact(now)
+      actor.send(reply_to, list.length(gone))
+      actor.continue(state)
+    }
+
     Count(reply_to) -> {
       actor.send(reply_to, #(dict.size(state.pending), dict.size(state.seen)))
       actor.continue(state)
     }
+
+    Stop(reply_to) -> {
+      actor.send(reply_to, Nil)
+      actor.stop()
+    }
   }
+}
+
+fn principal_of(message: port.ChannelMessage) -> String {
+  message.channel <> ":" <> message.user_id
 }
 
 /// Append lines; compact the log when it has grown.
@@ -214,10 +271,26 @@ fn compact(state: State, now: Int) -> State {
 }
 
 fn load(file: String) -> State {
-  let empty = State(file: file, pending: dict.new(), seen: dict.new(), lines: 0)
+  let empty =
+    State(
+      file: file,
+      pending: dict.new(),
+      seen: dict.new(),
+      lines: 0,
+      next_seq: 0,
+    )
   case read_file(file) {
     Error(_) -> empty
     Ok(text) -> {
+      // A write cut short leaves a line without its end; the next record
+      // must start on a line of its own, or it would be lost with it.
+      case text != "" && !string.ends_with(text, "\n") {
+        True -> {
+          let _ = append_file(file, "\n")
+          Nil
+        }
+        False -> Nil
+      }
       let lines =
         string.split(text, "\n")
         |> list.filter(fn(line) { string.trim(line) != "" })
@@ -258,8 +331,9 @@ fn event_decoder() -> decode.Decoder(Event) {
       use key <- decode.field("key", decode.string)
       use at <- decode.field("at", decode.int)
       use attempts <- decode.field("attempts", decode.int)
+      use seq <- decode.optional_field("seq", 0, decode.int)
       use message <- decode.field("message", message_decoder())
-      decode.success(In(Pending(key, message, at, attempts)))
+      decode.success(In(Pending(key, message, at, attempts, seq)))
     }
     _ -> {
       use key <- decode.field("key", decode.string)
@@ -297,6 +371,7 @@ fn encode_in(entry: Pending) -> String {
     #("key", json.string(entry.key)),
     #("at", json.int(entry.at)),
     #("attempts", json.int(entry.attempts)),
+    #("seq", json.int(entry.seq)),
     #(
       "message",
       json.object([

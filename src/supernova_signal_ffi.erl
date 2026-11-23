@@ -1,6 +1,6 @@
 -module(supernova_signal_ffi).
 -behaviour(gen_event).
--export([wait_for_shutdown/0, wait_for_shutdown/1, notify_sigterm/0,
+-export([wait_for_shutdown/0, wait_for_shutdown/2, notify_sigterm/0,
          restore_default/0]).
 -export([init/1, handle_event/2, handle_call/2, handle_info/2, terminate/2,
          code_change/3]).
@@ -14,14 +14,16 @@
 %% SIGTERM to the waiting process instead, so `shutdown/1` runs first; the
 %% VM stops when `main` returns.
 wait_for_shutdown() ->
-    _ = wait_for_shutdown(infinity),
+    _ = wait_for_shutdown(infinity, fun() -> nil end),
     nil.
 
-%% With a timeout in milliseconds, for tests: returns `timeout` when nothing
-%% arrived, `sigterm` or `exit` otherwise.
-wait_for_shutdown(Timeout) ->
+%% For tests: a timeout in milliseconds, and a function called once the
+%% handler is installed. Returns `timeout` when nothing arrived, `sigterm`
+%% or `exit` otherwise.
+wait_for_shutdown(Timeout, Installed) ->
     process_flag(trap_exit, true),
     install(self()),
+    Installed(),
     receive
         supernova_sigterm -> sigterm;
         {'EXIT', _, _} -> exit
@@ -60,7 +62,11 @@ init(Pid) -> {ok, Pid}.
 handle_event(sigterm, Pid) ->
     Pid ! supernova_sigterm,
     {ok, Pid};
-handle_event(_Signal, Pid) ->
+%% Every other signal keeps what the BEAM's default handler does with it
+%% (SIGUSR1 writes a crash dump, SIGQUIT halts). Its state is an empty
+%% record, so calling it with a placeholder is enough.
+handle_event(Signal, Pid) ->
+    _ = erl_signal_handler:handle_event(Signal, undefined),
     {ok, Pid}.
 
 handle_call({set_pid, Pid}, _Old) -> {ok, ok, Pid};

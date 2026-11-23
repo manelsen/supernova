@@ -126,6 +126,8 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **Sem duplicatas.** O último lote que o Telegram reentrega é reconhecido pela chave canal|chat|id.
   - **Tempo de dreno.** Os turnos em andamento têm 40 s para terminar, e o `stop_grace_period` passou para 60 s. O desligamento não espera mais a leitura longa do Telegram em andamento, que levava até 35 s.
   - **Limite.** Um turno cortado no meio é refeito do começo, então uma ação que ele tomou (agendar, gravar arquivo) pode acontecer duas vezes. Interações (botões) não são guardadas, para não repetir uma ação.
+  - **Depende da fila funcionando.** Se ela não abrir no boot, ou parar de responder, a mensagem segue sem registro e o log avisa. Nesse caso, um restart pode perder o que estava esperando.
+  - **`/esquecer`.** Apaga também as mensagens da pessoa que estão esperando na fila e reescreve o arquivo na hora, sem o texto dos turnos terminados.
 - **A escolha de modelo (`/model`) se perde no restart.** Achado em 23/11.
   - A escolha é gravada no estado da pessoa (`self_state.preferences.model_override`, por `persist_model_preference_for_user`) e lida do disco, mas nada a usa para escolher o modelo. Valem só a memória da sessão e o padrão do `supernova.yaml`.
   - Só o nome do modelo é gravado, não o provedor. Aplicar um modelo de outro provedor ao provedor padrão quebraria a chamada.

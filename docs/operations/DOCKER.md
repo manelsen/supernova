@@ -65,6 +65,10 @@ A restart, a `docker compose up -d --build` or a `docker compose down` stops Sup
 
 A turn cut short can be answered again from the start, so an action it took midway (a reminder scheduled, a file written) may happen twice.
 
+This depends on the inbox working. If it could not be opened at boot, or stops answering, messages still reach their turn, but without a record on disk, so a restart can lose those that were waiting. The log says so: `Warning: durable inbox not opened` at boot, `warn: inbox did not answer; message not kept` per message.
+
+`/esquecer confirmo` also erases the person's waiting messages from the inbox and rewrites the file at once, without the text of any finished turn.
+
 The conversation itself survives the restart: see `/data/agents/<person>/conversations/` in [OBSERVABILITY.md](OBSERVABILITY.md).
 
 ## Building a custom image

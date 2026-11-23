@@ -12,6 +12,7 @@ import gleam/string
 import gleeunit/should
 import supernova
 import supernova/channel/channel_kit
+import supernova/channel/chat_lanes
 import supernova/channel/health as channel_health
 import supernova/channel/inbox
 import supernova/channel/port
@@ -130,7 +131,7 @@ pub fn a_stuck_inbox_does_not_stop_the_channel_test() {
   let ready = process.new_subject()
   process.spawn(fn() {
     process.send(ready, process.new_subject())
-    process.sleep(60_000)
+    process.sleep_forever()
   })
   let assert Ok(stuck) = process.receive(ready, 1000)
   inbox.set_global(stuck)
@@ -194,19 +195,16 @@ pub fn dispatch_answers_a_duplicate_once_and_clears_the_inbox_test() {
   dispatch()
   dispatch()
   let assert Ok(_) = process.receive(calls, 2000)
-  process.receive(calls, 200) |> should.equal(Error(Nil))
-  await_pending(box, 0, 50) |> should.equal(0)
+  // The turn has ended when its lane drains; then the inbox is clean.
+  settle("registry:inbox-test")
+  process.receive(calls, 0) |> should.equal(Error(Nil))
+  inbox.count(box).0 |> should.equal(0)
 }
 
-fn await_pending(box: inbox.Inbox, expected: Int, attempts: Int) -> Int {
-  let #(pending, _) = inbox.count(box)
-  case pending == expected || attempts == 0 {
-    True -> pending
-    False -> {
-      process.sleep(20)
-      await_pending(box, expected, attempts - 1)
-    }
-  }
+/// Wait for every lane of `prefix` to finish, then reopen it.
+fn settle(prefix: String) -> Nil {
+  chat_lanes.drain(prefix, 2000) |> should.equal(0)
+  chat_lanes.undrain(prefix)
 }
 
 /// At boot, what was waiting goes back through its channel, as a normal
@@ -253,12 +251,13 @@ pub fn boot_answers_what_was_waiting_test() {
       streams: dict.new(),
       health: channel_health.start(),
     )
-  supernova.replay_inbox(registry, handler)
+  supernova.replay_inbox(registry, handler, inbox.recover(box, now()))
 
   let assert Ok(port.InboundMessage(replayed)) = process.receive(calls, 2000)
   replayed.content |> should.equal("esperando")
-  process.receive(calls, 200) |> should.equal(Error(Nil))
-  await_pending(box, 0, 50) |> should.equal(0)
+  settle("registry:inbox-boot")
+  process.receive(calls, 0) |> should.equal(Error(Nil))
+  inbox.count(box).0 |> should.equal(0)
 }
 
 fn now() -> Int {
@@ -269,25 +268,16 @@ fn now() -> Int {
 /// killing the VM, so Supernova's own shutdown runs.
 pub fn sigterm_wakes_the_waiting_process_test() {
   use <- exception.defer(restore_default)
+  let installed = process.new_subject()
   let result = process.new_subject()
-  process.spawn(fn() { process.send(result, wait_for_shutdown(5000)) })
-  await_installed(50)
+  process.spawn(fn() {
+    let outcome = wait_for_shutdown(5000, fn() { process.send(installed, Nil) })
+    process.send(result, outcome)
+  })
+  let assert Ok(Nil) = process.receive(installed, 2000)
   notify_sigterm()
   process.receive(result, 2000) |> should.equal(Ok(atom("sigterm")))
 }
-
-fn await_installed(attempts: Int) -> Nil {
-  case installed() || attempts == 0 {
-    True -> Nil
-    False -> {
-      process.sleep(10)
-      await_installed(attempts - 1)
-    }
-  }
-}
-
-@external(erlang, "inbox_test_ffi", "installed")
-fn installed() -> Bool
 
 @external(erlang, "erlang", "binary_to_atom")
 fn atom(name: String) -> Atom
@@ -295,7 +285,7 @@ fn atom(name: String) -> Atom
 type Atom
 
 @external(erlang, "supernova_signal_ffi", "wait_for_shutdown")
-fn wait_for_shutdown(timeout: Int) -> Atom
+fn wait_for_shutdown(timeout: Int, installed: fn() -> Nil) -> Atom
 
 @external(erlang, "supernova_signal_ffi", "notify_sigterm")
 fn notify_sigterm() -> Nil
@@ -308,3 +298,112 @@ fn read_file(path: String) -> Result(String, String)
 
 @external(erlang, "supernova_file_system_ffi", "append_file")
 fn append_file(path: String, content: String) -> Result(Nil, String)
+
+// ---------------------------------------------------------------------------
+// From the review of the first version
+// ---------------------------------------------------------------------------
+
+/// What arrives after the boot took its snapshot is not part of it, and
+/// taking the snapshot does not drop it.
+pub fn recovery_leaves_live_messages_alone_test() {
+  use dir <- with_dir
+  let assert Ok(before) = inbox.start(dir)
+  let _ = inbox.receive(before, msg("1", "de antes"), now())
+  inbox.stop(before)
+
+  let assert Ok(box) = inbox.start(dir)
+  let assert [old] = inbox.recover(box, now())
+  old.message.id |> should.equal("1")
+  let _ = inbox.receive(box, msg("2", "de agora"), now())
+  inbox.count(box).0 |> should.equal(2)
+}
+
+pub fn messages_of_the_same_millisecond_come_back_in_arrival_order_test() {
+  use dir <- with_dir
+  let assert Ok(box) = inbox.start(dir)
+  let ids = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]
+  list.each(ids, fn(id) {
+    let _ = inbox.receive(box, msg(id, "mesma hora"), 1000)
+    Nil
+  })
+  inbox.stop(box)
+  let assert Ok(after) = inbox.start(dir)
+  inbox.recover(after, 2000)
+  |> list.map(fn(entry) { entry.message.id })
+  |> should.equal(ids)
+}
+
+/// A write cut short must not take the next record down with it.
+pub fn a_cut_line_does_not_swallow_the_next_record_test() {
+  use dir <- with_dir
+  let assert Ok(Nil) =
+    append_file(dir <> "/inbox.jsonl", "{\"ev\":\"in\",\"key\":\"tel")
+  let assert Ok(box) = inbox.start(dir)
+  let _ = inbox.receive(box, msg("1", "depois do corte"), now())
+  inbox.stop(box)
+  let assert Ok(after) = inbox.start(dir)
+  inbox.count(after) |> should.equal(#(1, 1))
+}
+
+/// Stop writes what was sent before it: a turn marked done just before the
+/// shutdown is not answered again.
+pub fn stop_writes_the_last_marks_test() {
+  use dir <- with_dir
+  let assert Ok(box) = inbox.start(dir)
+  let message = msg("1", "oi")
+  let _ = inbox.receive(box, message, now())
+  inbox.done(box, inbox.key(message), now())
+  inbox.stop(box)
+  let assert Ok(after) = inbox.start(dir)
+  inbox.recover(after, now()) |> should.equal([])
+}
+
+/// /esquecer: the person's waiting messages leave the inbox, and the log
+/// keeps no text of theirs; another person's waiting message stays.
+pub fn forget_erases_the_persons_messages_test() {
+  use dir <- with_dir
+  let assert Ok(box) = inbox.start(dir)
+  let ana_done = msg("1", "SEGREDO respondido")
+  let _ = inbox.receive(box, ana_done, now())
+  inbox.done(box, inbox.key(ana_done), now())
+  let _ = inbox.receive(box, msg("2", "SEGREDO esperando"), now())
+  let _ =
+    inbox.receive(
+      box,
+      port.ChannelMessage(..msg("3", "de outra pessoa"), user_id: "8"),
+      now(),
+    )
+  inbox.forget(box, "telegram:7", now()) |> should.equal(1)
+  inbox.count(box).0 |> should.equal(1)
+  let assert Ok(text) = read_file(dir <> "/inbox.jsonl")
+  string.contains(text, "SEGREDO") |> should.equal(False)
+  string.contains(text, "de outra pessoa") |> should.equal(True)
+  // The keys stay, so a second delivery is still recognised.
+  inbox.receive(box, ana_done, now()) |> should.equal(False)
+}
+
+/// A message that reaches a lane while Supernova is stopping stays pending,
+/// to be answered after the restart.
+pub fn a_message_refused_by_a_draining_lane_stays_pending_test() {
+  use dir <- with_dir
+  let assert Ok(box) = inbox.start(dir)
+  let previous = inbox.global()
+  use <- exception.defer(fn() {
+    chat_lanes.undrain("registry:inbox-drain")
+    case previous {
+      Some(previous) -> inbox.set_global(previous)
+      None -> inbox.clear_global()
+    }
+  })
+  inbox.set_global(box)
+  chat_lanes.drain("registry:inbox-drain", 0) |> should.equal(0)
+  channel_kit.dispatch_inbound(
+    fn(_, _) { Error(port.Ignored("test")) },
+    fn(_) { Ok(Nil) },
+    fn(_, _) { Ok(Nil) },
+    port.InboundMessage(msg("late", "chegou no desligamento")),
+    "registry:inbox-drain",
+    1000,
+  )
+  inbox.count(box).0 |> should.equal(1)
+}

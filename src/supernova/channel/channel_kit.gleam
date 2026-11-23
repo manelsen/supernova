@@ -197,8 +197,8 @@ fn dispatch_admitted(
     #("channel", channel),
     #("kind", kind),
   ])
-  let accepted =
-    chat_lanes.submit(key, fn() {
+  let outcome =
+    chat_lanes.submit_outcome(key, fn() {
       run_inbound_turn(
         handler,
         send_fn,
@@ -209,10 +209,13 @@ fn dispatch_admitted(
       )
       finish(inbound)
     })
-  case accepted {
-    True -> Nil
+  case outcome {
+    chat_lanes.Accepted -> Nil
+    // Supernova is stopping: the message stays pending in the inbox and is
+    // answered after the restart.
+    chat_lanes.Draining -> Nil
     // Too many pending turns in this chat, or too many chats at once.
-    False -> {
+    chat_lanes.Rejected -> {
       record.count("chat_lane_rejected_total", [#("channel", channel)])
       finish(inbound)
     }

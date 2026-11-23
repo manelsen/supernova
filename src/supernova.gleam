@@ -301,8 +301,10 @@ fn start_services(
   )
   io.println("✓ Closed-group policy actors started")
 
-  // The durable inbox opens before any channel delivers a message.
-  start_inbox(cfg.data_dir)
+  // The durable inbox opens before any channel delivers a message, and
+  // what the last stop left waiting is taken now: a message that arrives
+  // once channels start is never part of it.
+  let left_waiting = start_inbox(cfg.data_dir)
 
   // Start channel adapters based on config
   io.println("")
@@ -326,7 +328,7 @@ fn start_services(
     registry.list_channels(channel_reg),
     default_channel_llm_config(cfg),
   )
-  replay_inbox(channel_reg, channel_handler)
+  replay_inbox(channel_reg, channel_handler, left_waiting)
 
   closed_group_global.set_alert_sender(fn(principal_id, text) {
     case principal.parse(principal_id) {
@@ -852,28 +854,33 @@ fn inbound_channel_name(inbound: port.ChannelInbound) -> String {
   }
 }
 
-fn start_inbox(data_dir: String) -> Nil {
+/// Open the inbox and take what the last stop left waiting.
+fn start_inbox(data_dir: String) -> List(inbox.Pending) {
   case inbox.start(data_dir) {
     Ok(box) -> {
       inbox.set_global(box)
       io.println("✓ Durable inbox opened")
+      inbox.recover(box, channel_kit.current_timestamp())
     }
-    Error(_) ->
+    Error(_) -> {
       io.println(
         "Warning: durable inbox not opened; a restart loses queued messages",
       )
+      []
+    }
   }
 }
 
-/// Answer what was still waiting when Supernova last stopped.
+/// Answer what was still waiting when Supernova last stopped (`pending`,
+/// from `inbox.recover` before the channels started).
 pub fn replay_inbox(
   channel_reg: registry.ChannelRegistry,
   handler: port.ChannelHandler,
+  pending: List(inbox.Pending),
 ) -> Nil {
   case inbox.global() {
     None -> Nil
     Some(box) -> {
-      let pending = inbox.recover(box, channel_kit.current_timestamp())
       list.each(pending, fn(entry) {
         let outcome = case
           registry.replay(channel_reg, handler, entry.message)
@@ -970,9 +977,16 @@ pub fn shutdown(services: Runtime) -> Nil {
   // 5. Stop metrics actor
   metrics_actor.reset(services.metrics)
 
-  // 6. Unpublish the closed-group runtime and the inbox so a later boot
-  // starts clean. The inbox file stays: it is what the next boot recovers.
+  // 6. Unpublish the closed-group runtime so a later boot starts clean.
   closed_group_global.clear_runtime()
+
+  // 7. The lanes have drained: write the inbox's last marks and stop it, so
+  // the next boot (or an in-process one) is the file's only owner. The file
+  // stays: it is what the next boot recovers.
+  case inbox.global() {
+    Some(box) -> inbox.stop(box)
+    None -> Nil
+  }
   inbox.clear_global()
 
   io.println("✓ Shutdown complete")
