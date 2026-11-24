@@ -10,6 +10,7 @@ import supernova
 import supernova/config
 import supernova/core/access/actor as access_actor
 import supernova/core/access/types as access_types
+import supernova/core/agent_identity
 import supernova/core/alerts/group_actor as alerts_actor
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/budget_policy/actor as budget_actor
@@ -193,6 +194,177 @@ pub fn a_linked_identity_passes_as_its_person_test() {
   let assert Ok(Nil) = aliases.unlink(dir, "discord:i01-gate-55")
   test_workspace.remove_dir_recursive(dir)
 }
+
+fn reply_text(result: cg_types.GateResult) -> String {
+  case result {
+    cg_types.Reply(text) -> text
+    _ -> panic as "expected a reply"
+  }
+}
+
+/// PRD-I, I-02: a code made on the person's channel brings a new channel
+/// to the same agent; the person is told on the first channel; either side
+/// can undo it.
+pub fn linking_a_channel_end_to_end_test() {
+  let dir = test_workspace.create_temp_dir("gate-link")
+  let alerts = process.new_subject()
+  let cfg =
+    config.Config(
+      ..config_with_access([], ["telegram:i02-9"], []),
+      data_dir: dir,
+    )
+  with_runtime_alerts(
+    cfg,
+    fn(to, text) { process.send(alerts, #(to, text)) },
+    fn(runtime) {
+      // Before: the new channel is a stranger.
+      cg_runtime.gate(runtime, "discord", "dm:i02-55", "i02-55", "oi")
+      |> reply_text
+      |> should.equal("Esta instância é privada.")
+
+      // No code in a group; a code in private.
+      cg_runtime.gate(runtime, "telegram", "-100", "i02-9", "/vincular")
+      |> reply_text
+      |> string.starts_with("Mande /vincular no nosso privado")
+      |> should.be_true()
+      let issued =
+        cg_runtime.gate(runtime, "telegram", "i02-9", "i02-9", "/vincular")
+        |> reply_text
+      let assert "Seu código: " <> rest = issued
+      let code = string.slice(rest, 0, 6)
+
+      cg_runtime.gate(
+        runtime,
+        "discord",
+        "dm:i02-55",
+        "i02-55",
+        "/vincular " <> string.lowercase(code),
+      )
+      |> reply_text
+      |> should.equal("Pronto: agora é a mesma conversa aqui e no telegram.")
+      let assert Ok(#("telegram:i02-9", warning)) = process.receive(alerts, 0)
+      string.starts_with(warning, "discord:i02-55 foi ligado a você agora")
+      |> should.be_true()
+
+      // Now the new channel is the person.
+      case cg_runtime.gate(runtime, "discord", "dm:i02-55", "i02-55", "oi") {
+        cg_types.Allowed(cg_types.PrincipalContext(principal_id:, role:)) -> {
+          principal_id |> should.equal("telegram:i02-9")
+          role |> should.equal("member")
+        }
+        _ -> should.fail()
+      }
+      cg_runtime.gate(runtime, "discord", "dm:i02-55", "i02-55", "/vincular X")
+      |> reply_text
+      |> should.equal("Este app já está ligado a você.")
+
+      // The first channel lists and can cut it.
+      cg_runtime.gate(runtime, "telegram", "i02-9", "i02-9", "/desvincular")
+      |> reply_text
+      |> string.contains("discord:i02-55")
+      |> should.be_true()
+      cg_runtime.gate(
+        runtime,
+        "telegram",
+        "i02-9",
+        "i02-9",
+        "/desvincular discord:nao-sou",
+      )
+      |> reply_text
+      |> should.equal("Esse app não está ligado a você.")
+      cg_runtime.gate(
+        runtime,
+        "telegram",
+        "i02-9",
+        "i02-9",
+        "/desvincular discord:i02-55",
+      )
+      |> reply_text
+      |> should.equal("Desliguei discord:i02-55.")
+      cg_runtime.gate(runtime, "telegram", "i02-9", "i02-9", "/desvincular")
+      |> reply_text
+      |> should.equal("Nenhum outro app está ligado a você.")
+      cg_runtime.gate(runtime, "discord", "dm:i02-55", "i02-55", "oi")
+      |> should.equal(cg_types.Ignored("access denied"))
+    },
+  )
+  test_workspace.remove_dir_recursive(dir)
+}
+
+pub fn linking_refusals_test() {
+  let dir = test_workspace.create_temp_dir("gate-link-refuse")
+  let cfg =
+    config.Config(
+      ..config_with_access([], ["telegram:i02-r9"], []),
+      data_dir: dir,
+    )
+  with_runtime(cfg, fn(runtime) {
+    // Without access, /vincular is just a denied message.
+    cg_runtime.gate(runtime, "discord", "dm:i02-r1", "i02-r1", "/vincular")
+    |> reply_text
+    |> should.equal("Esta instância é privada.")
+    // Codes only in private.
+    cg_runtime.gate(
+      runtime,
+      "discord",
+      "g@guild:1",
+      "i02-r1",
+      "/vincular ABCDEF",
+    )
+    |> reply_text
+    |> should.equal("Mande o código no nosso privado.")
+    cg_runtime.gate(
+      runtime,
+      "discord",
+      "dm:i02-r1",
+      "i02-r1",
+      "/vincular ABCDEF",
+    )
+    |> reply_text
+    |> string.starts_with("Código inválido ou vencido")
+    |> should.be_true()
+
+    // An identity that already has its own agent is not merged (D2).
+    let assert Ok(_) =
+      ensure_dir(agent_identity.agent_dir(dir, "discord:i02-r2"))
+    let issued =
+      cg_runtime.gate(runtime, "telegram", "i02-r9", "i02-r9", "/vincular")
+      |> reply_text
+    let assert "Seu código: " <> rest = issued
+    let code = string.slice(rest, 0, 6)
+    cg_runtime.gate(
+      runtime,
+      "discord",
+      "dm:i02-r2",
+      "i02-r2",
+      "/vincular " <> code,
+    )
+    |> reply_text
+    |> should.equal(
+      "Neste app você já tem uma agente sua, e juntar duas agentes ainda não é possível.",
+    )
+
+    // The person on the first channel cannot become an alias.
+    let assert Ok(Nil) =
+      aliases.link(dir, "discord:i02-r3", "telegram:i02-r9", "discord", 1)
+    cg_runtime.gate(
+      runtime,
+      "telegram",
+      "i02-r9",
+      "i02-r9",
+      "/vincular " <> code,
+    )
+    |> reply_text
+    |> string.starts_with("Outros apps já estão ligados a este")
+    |> should.be_true()
+    let assert Ok(Nil) = aliases.unlink(dir, "discord:i02-r3")
+    Nil
+  })
+  test_workspace.remove_dir_recursive(dir)
+}
+
+@external(erlang, "supernova_file_system_ffi", "ensure_dir")
+fn ensure_dir(path: String) -> Result(Nil, String)
 
 pub fn eu_works_even_when_denied_test() {
   with_runtime(config_with_access([], [], []), fn(runtime) {
