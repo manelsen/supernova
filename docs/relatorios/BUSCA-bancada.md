@@ -273,6 +273,59 @@ plana, sem faixas, em 16 de 48 (rodada anterior, 16 perguntas).
 O Nemotron fica para outra rodada: o limite diário gratuito do OpenRouter
 acabou.
 
+### Supernova real (PRD-M executada)
+
+A bancada passou a chamar o porteiro e o `lembrar` da própria Supernova
+(`--lembrar supernova`), pela ponte Erlang. DeepSeek, pré-busca, 24
+perguntas, 2 repetições: **24/24 fatos**, **0/24 negações sem dúvida**, 0
+falhas do Decision. Decision em 1,6 s de mediana; turno inteiro em 3,4 s.
+
+**Harness** (`buscar_antigo`, DeepSeek, juiz Opus, 3 execuções de cada lado):
+
+| | Aprovadas |
+|---|---|
+| sem memória | 1/3 |
+| com memória (`buscar_antigo_memoria`) | 3/3 |
+
+Nas reprovadas sem memória, a agente diz "Não sei. Nunca me contou o nome
+dele" e, adiante, se corrige: "fui procurar, e me enganei na resposta
+anterior".
+
+### Linha de base, determinismo e calibração
+
+Crítica de uma instância irmã, que trabalha com o mesmo modelo noutra
+bancada: faltava comparar o porteiro com um LLM barato, medir a calibração e
+dar intervalos.
+
+**Porteiro, Decision contra DeepSeek sim/não** (mesma pergunta):
+
+| | Decision (corte 0,1) | DeepSeek sim/não |
+|---|---|---|
+| Validação (15 + 30, fora do ajuste) | 15/15, 0/30 | 14/15, 0/30 |
+| Ajuste (16 + 10) | 16/16, 0/10 | 10/16, 0/10 |
+| Tempo, mediana (p90) | 0,21 s (0,29) | 0,24 s (0,54) |
+
+Fora da amostra, quase empate. O DeepSeek perde as perguntas implícitas
+("qual é a senha do wifi?"), em que o Decision dá entre 0,15 e 0,6, acima de
+um corte baixo. Um porteiro resolve; o modelo de decisão é uma boa escolha,
+não a única. Com 0/30, o limite superior de 95% para falso alarme é de ~10%.
+
+**Determinismo:** 71 mensagens, 3 execuções do Decision, probabilidades
+idênticas.
+
+**Calibração da pergunta geral no LongMemEval** (respondível ou abstenção):
+Brier de 0,157 lendo a conversa inteira e de 0,132 com a lista curta; AUC de
+0,889 e 0,936.
+
+| Faixa | 0,0–0,2 | 0,2–0,4 | 0,4–0,6 | 0,6–0,8 | 0,8–1,0 |
+|---|---|---|---|---|---|
+| Previsto | 0,13 | 0,28 | 0,49 | 0,69 | 0,89 |
+| Observado | 0,11 | 0,44 | 0,83 | 0,93 | 1,00 |
+
+Bem calibrado embaixo, onde fica o "acho que não"; subconfiante no meio. A
+palavra "calibrado" fica para a faixa baixa. O que o modelo faz bem é
+ordenar.
+
 ## Limites
 
 - Um histórico sintético e uma semente; 16 perguntas. Mostra

@@ -1,9 +1,11 @@
 [PRD]
 # PRD M: A agente lembra do que foi dito
 
-> **Situação em 24/11/2026:** aprovada pelo mantenedor. D1 a D5 decididas
-> (seção 5); D1 medida na bancada. Depende da PR #65 (bancada e o tom do
-> "não achei" na `buscar_conversa`).
+> **Situação em 24/11/2026:** aprovada pelo mantenedor e executada (M-00 a
+> M-08, branch `prd-m/execucao`). D1 a D5 decididas (seção 5). Ligar no
+> piloto é decisão do mantenedor: chave paga do Gemini (conferir o
+> faturamento do projeto; no plano gratuito o Google pode usar o conteúdo)
+> e `conversation.recall.enabled: true`.
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality
@@ -333,3 +335,7 @@ gatilho). Ligar no piloto é decisão do mantenedor, fora desta PRD.
   piloto pode ser diferente; a taxa de correção (6.6) é o alarme.
 - **Português.** A bancada mediu em português informal; nada mede outras
   línguas.
+- **Plano gratuito sem saber.** Uma chave pode estar no plano gratuito sem
+  que ninguém saiba; a API só revela no erro de limite ("on Free Tier").
+  Nesse plano, os termos permitem ao Google usar o conteúdo. Conferir o
+  faturamento antes de mandar conversa real.
