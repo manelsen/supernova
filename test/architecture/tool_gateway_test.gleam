@@ -102,3 +102,23 @@ pub fn the_core_does_not_match_channel_names_test() {
     })
   should.equal(offending, [])
 }
+
+/// PRD-I, I-01: a principal is derived in one place (`agent_identity`,
+/// the gate), where linked identities are resolved; nobody builds
+/// `<channel>:<user>` by hand on the way to a turn.
+pub fn principals_are_derived_in_one_place_test() {
+  let offending =
+    gleam_files_under("src/supernova")
+    |> list.filter(fn(path) {
+      string.contains(path, "/core/")
+      || string.contains(path, "/self/")
+      || string.contains(path, "channel_common_router")
+    })
+    |> list.filter(fn(path) {
+      let source = read_file(path)
+      string.contains(source, "<> \":\" <> msg.user_id")
+      || string.contains(source, "<> \":\" <> interaction.user_id")
+      || string.contains(source, "<> \":\" <> message.user_id")
+    })
+  should.equal(offending, [])
+}

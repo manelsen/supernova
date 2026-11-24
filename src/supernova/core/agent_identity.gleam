@@ -1,6 +1,7 @@
 //// Agent identity and storage paths derived from a principal id.
 
 import gleam/string
+import supernova/core/identity/aliases
 
 @external(erlang, "supernova_agent_identity_ffi", "encode_principal")
 pub fn encode_principal(principal: String) -> String
@@ -8,16 +9,19 @@ pub fn encode_principal(principal: String) -> String
 @external(erlang, "supernova_agent_identity_ffi", "decode_principal")
 pub fn decode_principal(encoded: String) -> String
 
-/// Canonical principal for a channel participant.
+/// The person behind a channel participant: their canonical principal,
+/// with linked identities resolved (PRD-I).
 pub fn principal_id(channel: String, user_id: String) -> String {
-  channel <> ":" <> user_id
+  aliases.resolve(channel <> ":" <> user_id)
 }
 
-/// Principal for a session key of the form `channel:chat:user`.
+/// The person behind a session key of the form `channel:chat:user`, with
+/// linked identities resolved: the conversations of every channel of one
+/// person live in the same agent folder.
 pub fn principal_from_session_id(session_id: String) -> String {
   case string.split(session_id, ":") {
     [channel, ..rest] if rest != [] ->
-      channel <> ":" <> last_segment(string.join(rest, ":"))
+      aliases.resolve(channel <> ":" <> last_segment(string.join(rest, ":")))
     _ -> session_id
   }
 }

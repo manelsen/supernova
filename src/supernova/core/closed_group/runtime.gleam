@@ -26,6 +26,7 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure
 import supernova/core/closed_group/types
 import supernova/core/executor
+import supernova/core/identity/aliases
 import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/instance_budget/pure as instance_pure
 import supernova/core/principal
@@ -94,7 +95,9 @@ fn decide(
       types.Ignored("missing sender")
     }
     Ok(speaker) -> {
-      let principal_id = principal.principal_id(speaker)
+      // A linked identity is its person: access, budget and agent follow
+      // the canonical identity (PRD-I).
+      let principal_id = aliases.resolve(principal.principal_id(speaker))
       let is_private = pure.is_private_chat(channel, chat_id)
       let chat_key = pure.chat_key(channel, chat_id)
 
@@ -192,7 +195,9 @@ pub fn gate_interaction(
   case principal.from_sender(channel, user_id) {
     Error(_) -> types.Ignored("missing sender")
     Ok(speaker) -> {
-      let principal_id = principal.principal_id(speaker)
+      // A linked identity is its person: access, budget and agent follow
+      // the canonical identity (PRD-I).
+      let principal_id = aliases.resolve(principal.principal_id(speaker))
       let is_private = pure.is_private_chat(channel, chat_id)
       let chat_key = pure.chat_key(channel, chat_id)
       case access_actor.try_check(runtime.access, principal_id) {

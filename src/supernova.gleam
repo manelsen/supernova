@@ -43,6 +43,7 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure as closed_group_pure
 import supernova/core/closed_group/runtime as closed_group_runtime
 import supernova/core/executor
+import supernova/core/identity/aliases
 import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/principal
 import supernova/core/prompt_log
@@ -307,6 +308,17 @@ fn start_services(
   // what the last stop left waiting is taken now: a message that arrives
   // once channels start is never part of it.
   let left_waiting = start_inbox(cfg.data_dir)
+
+  // Linked identities (PRD-I) resolve before any message is gated.
+  case aliases.load(cfg.data_dir) {
+    Ok(Nil) -> Nil
+    Error(reason) ->
+      io.println(
+        "Warning: "
+        <> reason
+        <> "; linked identities count as separate people until it is fixed",
+      )
+  }
 
   // What /model may offer: every configured provider with a key, each with
   // its own models. Published before any channel hands over a message.

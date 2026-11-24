@@ -19,6 +19,7 @@ import supernova/core/closed_group/pure
 import supernova/core/closed_group/runtime as cg_runtime
 import supernova/core/closed_group/types as cg_types
 import supernova/core/executor
+import supernova/core/identity/aliases
 import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/principal
 import supernova/core/rate_limit/actor as rate_limiter
@@ -164,6 +165,33 @@ pub fn authorized_member_and_admin_pass_test() {
       }
     },
   )
+}
+
+/// PRD-I: a linked identity passes the gate as its person, with the
+/// person's role, though it is not on the access list itself.
+pub fn a_linked_identity_passes_as_its_person_test() {
+  let dir = test_workspace.create_temp_dir("gate-alias")
+  let assert Ok(Nil) =
+    aliases.link(
+      dir,
+      "discord:i01-gate-55",
+      "telegram:i01-gate-9",
+      "discord",
+      1,
+    )
+  with_runtime(config_with_access([], ["telegram:i01-gate-9"], []), fn(runtime) {
+    case
+      cg_runtime.gate(runtime, "discord", "dm:i01-gate-55", "i01-gate-55", "oi")
+    {
+      cg_types.Allowed(cg_types.PrincipalContext(principal_id:, role:)) -> {
+        principal_id |> should.equal("telegram:i01-gate-9")
+        role |> should.equal("member")
+      }
+      _ -> should.fail()
+    }
+  })
+  let assert Ok(Nil) = aliases.unlink(dir, "discord:i01-gate-55")
+  test_workspace.remove_dir_recursive(dir)
 }
 
 pub fn eu_works_even_when_denied_test() {

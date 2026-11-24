@@ -1231,7 +1231,8 @@ fn maybe_handle_birth(
     Some(cfg), Some(turn_context) ->
       case cfg.access.mode {
         config.Allowlist -> {
-          let principal_id = msg.channel <> ":" <> msg.user_id
+          let principal_id =
+            agent_identity.principal_id(msg.channel, msg.user_id)
           let now = closed_group_global.now()
           let generate = fn(prompt: String) {
             case
