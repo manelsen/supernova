@@ -1147,14 +1147,17 @@ pub fn channels_webhook_is_read_test() {
     "
 app_name: supernova
 channels:
+  internal_hosts: [gowa]
   webhook:
     bind: 0.0.0.0
     port: 9100
 "
   let assert Ok(cfg) = load(yaml)
   cfg.webhook |> should_equal(config.WebhookConfig(bind: "0.0.0.0", port: 9100))
+  cfg.channel_internal_hosts |> should_equal(["gowa"])
   let assert Ok(plain) = load("app_name: supernova\n")
   plain.webhook |> should_equal(config.default_webhook_config())
+  plain.channel_internal_hosts |> should_equal([])
 }
 
 // ============================================================================

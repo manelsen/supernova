@@ -451,6 +451,9 @@ pub type Config {
     sim: SimConfig,
     /// Webhook server for channels that receive by webhook
     webhook: WebhookConfig,
+    /// `channels.internal_hosts`: hosts a channel may reach over plain http
+    /// (a bridge in the same compose network), besides loopback.
+    channel_internal_hosts: List(String),
     /// Matrix configuration
     matrix: MatrixConfig,
     /// Lark configuration
@@ -534,6 +537,7 @@ pub fn default_config() -> Config {
       record_prompts: False,
     ),
     webhook: default_webhook_config(),
+    channel_internal_hosts: [],
     matrix: MatrixConfig(homeserver_url: None, token: None, enabled: False),
     lark: LarkConfig(token: None, base_url: None, enabled: False),
     google_chat: GoogleChatConfig(webhook_url: None, enabled: False),
@@ -1401,6 +1405,10 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     telegram: telegram,
     sim: sim,
     webhook: decode_webhook(root),
+    channel_internal_hosts: case yay.select_sugar(root, "channels") {
+      Ok(channels) -> get_string_list(channels, "internal_hosts")
+      Error(_) -> []
+    },
     matrix: matrix,
     lark: lark,
     google_chat: google_chat,
@@ -1682,6 +1690,7 @@ pub fn apply_env_overrides(config: Config) -> Config {
     ),
     sim: config.sim,
     webhook: config.webhook,
+    channel_internal_hosts: config.channel_internal_hosts,
     matrix: MatrixConfig(
       homeserver_url: matrix_homeserver_url,
       token: matrix_token,
