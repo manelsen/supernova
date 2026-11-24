@@ -227,6 +227,7 @@ fn start_services(
 ) -> Result(Runtime, String) {
   browser.set_evaluate_allowed(cfg.tools.browser.allow_evaluate)
   use _ <- result.try(prompt_log.validate(cfg))
+  use _ <- result.try(config.validate_recall(cfg))
   closed_group_global.set_clock(clock)
 
   // Start Session Supervisor

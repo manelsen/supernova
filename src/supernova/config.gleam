@@ -295,12 +295,60 @@ pub type ConversationConfig {
     /// sees. The disk keeps every message, so a conversation survives
     /// restarts and the agent can search what is older.
     history_limit: Int,
+    /// Remembering what is older (PRD-M): a gate that tells when a message
+    /// asks about the past, and the `lembrar` tool.
+    recall: RecallConfig,
+  )
+}
+
+/// The gate and `lembrar` (docs/prd/PRD-M-memoria.md). Both call the Gemini
+/// Decision API; the key comes only from SUPERNOVA_GEMINI_API_KEY.
+pub type RecallConfig {
+  RecallConfig(
+    enabled: Bool,
+    /// The gate fires when the probability that the message asks about the
+    /// past is at least this.
+    gate_threshold: Float,
+    /// The gate never holds a turn longer than this; past it, the turn goes
+    /// on without it.
+    gate_timeout_ms: Int,
+    /// The longest a `lembrar` call may take.
+    recall_timeout_ms: Int,
+    api_key: Option(String),
+  )
+}
+
+pub fn default_recall_config() -> RecallConfig {
+  RecallConfig(
+    enabled: False,
+    gate_threshold: 0.1,
+    gate_timeout_ms: 2000,
+    recall_timeout_ms: 15_000,
+    api_key: None,
   )
 }
 
 pub fn default_conversation_config() -> ConversationConfig {
-  ConversationConfig(history_limit: 100)
+  ConversationConfig(history_limit: 100, recall: default_recall_config())
 }
+
+/// recall on needs its key: without it the boot stops, instead of every
+/// turn failing over to the plain path.
+pub fn validate_recall(config: Config) -> Result(Nil, String) {
+  let recall = config.conversation.recall
+  case recall.enabled, recall.api_key {
+    False, _ -> Ok(Nil)
+    True, Some(key) ->
+      case string.trim(key) {
+        "" -> Error(recall_key_missing)
+        _ -> Ok(Nil)
+      }
+    True, None -> Error(recall_key_missing)
+  }
+}
+
+const recall_key_missing =
+  "conversation.recall.enabled needs SUPERNOVA_GEMINI_API_KEY (a paid Gemini API key: conversations are sent to it)"
 
 pub type ReflectionConfig {
   ReflectionConfig(
@@ -1157,8 +1205,33 @@ fn decode_conversation(root: yay.Node) -> ConversationConfig {
     Ok(node) -> {
       let limit =
         int.max(get_int_or(node, "history_limit", default.history_limit), 2)
-      ConversationConfig(history_limit: limit)
+      ConversationConfig(history_limit: limit, recall: decode_recall(node))
     }
+    Error(_) -> default
+  }
+}
+
+fn decode_recall(conversation: yay.Node) -> RecallConfig {
+  let default = default_recall_config()
+  case yay.select_sugar(conversation, "recall") {
+    Ok(node) ->
+      RecallConfig(
+        enabled: get_bool_or(node, "enabled", default.enabled),
+        gate_threshold: get_float_or(
+          node,
+          "gate_threshold",
+          default.gate_threshold,
+        ),
+        gate_timeout_ms: int.max(
+          get_int_or(node, "gate_timeout_ms", default.gate_timeout_ms),
+          1,
+        ),
+        recall_timeout_ms: int.max(
+          get_int_or(node, "recall_timeout_ms", default.recall_timeout_ms),
+          1,
+        ),
+        api_key: None,
+      )
     Error(_) -> default
   }
 }
@@ -1565,7 +1638,16 @@ pub fn apply_env_overrides(config: Config) -> Config {
     rate_limit: config.rate_limit,
     pricing: config.pricing,
     instance_budget: config.instance_budget,
-    conversation: config.conversation,
+    conversation: ConversationConfig(
+      ..config.conversation,
+      recall: RecallConfig(
+        ..config.conversation.recall,
+        api_key: option.or(
+          get_env("SUPERNOVA_GEMINI_API_KEY"),
+          config.conversation.recall.api_key,
+        ),
+      ),
+    ),
     reflection: config.reflection,
     drift: config.drift,
     data_dir: data_dir,
