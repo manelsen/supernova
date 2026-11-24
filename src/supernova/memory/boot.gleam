@@ -14,28 +14,47 @@ import supernova/memory/runtime
 pub fn settings(
   cfg: config.Config,
   transport: decision.Transport,
-  now: fn() -> Int,
+  _now: fn() -> Int,
 ) -> Option(runtime.Settings) {
   let recall = cfg.conversation.recall
   case recall.enabled, recall.api_key {
-    True, Some(key) ->
-      Some(
-        runtime.Settings(
-          transport: transport,
-          api_key: key,
-          gate_threshold: recall.gate_threshold,
-          gate_timeout_ms: recall.gate_timeout_ms,
-          recall_timeout_ms: recall.recall_timeout_ms,
-          charge: charge,
-          within_budget: fn() {
-            case closed_group_global.get_ledger() {
-              None -> True
-              Some(book) ->
-                ledger.within_budget(book, cfg.instance_budget.daily_usd, now())
-            }
-          },
+    True, Some(key) -> {
+      let provider = case recall.provider {
+        "gemini" -> decision.Gemini
+        _ -> decision.Perplexity
+      }
+      let endpoint = decision.endpoint(provider, key)
+      let defaults = runtime.default_thresholds(provider)
+      Some(runtime.Settings(
+        transport: transport,
+        endpoint: endpoint,
+        thresholds: runtime.Thresholds(
+          gate: option.unwrap(recall.gate_threshold, defaults.gate),
+          unlikely_below: option.unwrap(
+            recall.unlikely_below,
+            defaults.unlikely_below,
+          ),
+          likely_from: option.unwrap(recall.likely_from, defaults.likely_from),
+          shown_from: defaults.shown_from,
         ),
-      )
+        gate_timeout_ms: recall.gate_timeout_ms,
+        recall_timeout_ms: recall.recall_timeout_ms,
+        // Fail closed: without a ledger to admit the call, no paid call.
+        admit: fn(principal, estimate) {
+          case closed_group_global.get_ledger() {
+            None -> Error(Nil)
+            Some(book) ->
+              ledger.admit(
+                book,
+                endpoint,
+                principal,
+                cfg.instance_budget.daily_usd,
+                estimate,
+              )
+          }
+        },
+      ))
+    }
     _, _ -> None
   }
 }
@@ -51,13 +70,6 @@ pub fn publish(cfg: config.Config) -> Bool {
       runtime.clear()
       False
     }
-  }
-}
-
-fn charge(principal: String, decision_tokens: Int, embed_tokens: Int) -> Nil {
-  case closed_group_global.get_ledger() {
-    None -> Nil
-    Some(book) -> ledger.charge(book, principal, decision_tokens, embed_tokens)
   }
 }
 

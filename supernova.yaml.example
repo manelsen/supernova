@@ -205,15 +205,22 @@ conversation:
   # The most recent messages the model sees; it searches the older ones with
   # the buscar_conversa tool.
   history_limit: 100
-  # Remembering what is older (docs/prd/PRD-M-memoria.md). A gate asks the
-  # Gemini Decision API whether each message asks about the past; when it
-  # does, the turn starts with the lembrar tool already called. lembrar
-  # sends a short list of excerpts of the person's conversation to Gemini:
-  # use a paid key (SUPERNOVA_GEMINI_API_KEY), whose content is not used to
-  # train. Off by default.
+  # Remembering what is older (docs/prd/PRD-M-memoria.md). A gate asks a
+  # decision model whether each message asks about the past; when it does,
+  # the turn starts with the lembrar tool already called. lembrar sends a
+  # short list of excerpts of the person's conversation to the provider.
+  # Off by default.
+  #
+  # provider: perplexity (default; Decider v1.3 and pplx-embed, key in
+  # SUPERNOVA_PERPLEXITY_API_KEY; its embeddings keep no data, its Decisions
+  # API does not train on it) or gemini (Gemini Decision 1, key in
+  # SUPERNOVA_GEMINI_API_KEY; use the paid tier).
+  # The cutoffs (gate_threshold, unlikely_below, likely_from) default to the
+  # ones measured for the provider; probabilities are on different scales
+  # from one model to another, so change them only with a new measurement.
   recall:
     enabled: false
-    gate_threshold: 0.1
+    provider: perplexity
     gate_timeout_ms: 2000
     recall_timeout_ms: 15000
 

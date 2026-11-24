@@ -45,7 +45,7 @@ pub type Scenario {
     checks: List(String),
     rubric: String,
     /// Turn the memory on (PRD-M): gate and lembrar, with the key from
-    /// SUPERNOVA_GEMINI_API_KEY.
+    /// the default provider's variable (SUPERNOVA_PERPLEXITY_API_KEY).
     recall: Bool,
   )
 }

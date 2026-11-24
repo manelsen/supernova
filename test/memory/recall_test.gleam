@@ -65,7 +65,7 @@ fn seed(dir: String) {
 /// Vectors by topic; the Decision says excerpt 3 (the doctor) is it.
 fn fake(general: Float, calls: process.Subject(String)) -> decision.Transport {
   fn(url, _headers, body) {
-    case url == decision.embed_url {
+    case url == decision.embed_url(decision.Gemini) {
       True -> {
         let kind = case string.contains(body, "RETRIEVAL_QUERY") {
           True -> "query"
@@ -102,12 +102,11 @@ fn float_round(f: Float) -> Int
 fn settings(transport: decision.Transport) -> runtime.Settings {
   runtime.Settings(
     transport: transport,
-    api_key: "k",
-    gate_threshold: 0.1,
+    endpoint: decision.endpoint(decision.Gemini, "k"),
+    thresholds: runtime.default_thresholds(decision.Gemini),
     gate_timeout_ms: 2000,
     recall_timeout_ms: 5000,
-    charge: runtime.no_charge,
-    within_budget: runtime.always_within,
+    admit: runtime.no_ledger,
   )
 }
 
@@ -160,16 +159,23 @@ pub fn shortlist_takes_the_nearest_and_the_shared_words_test() {
 }
 
 pub fn tone_follows_the_general_probability_test() {
-  recall.tone(0.08)
+  let gemini = runtime.default_thresholds(decision.Gemini)
+  recall.tone(gemini, 0.08)
   |> string.contains("Diga que acha que não, sem afirmar com certeza")
   |> should.be_true()
-  recall.tone(0.5)
+  recall.tone(gemini, 0.5)
   |> string.contains("diga que não se lembra bem e pergunte")
   |> should.be_true()
-  recall.tone(0.93)
+  recall.tone(gemini, 0.93)
   |> should.equal(
     "Provável que vocês já tenham falado disso (probabilidade 0.93).",
   )
+  // The Decider's scale is lower: 0.1 is already "talvez", 0.65 confident.
+  let pplx = runtime.default_thresholds(decision.Perplexity)
+  recall.band(pplx, 0.03) |> should.equal("unlikely")
+  recall.band(pplx, 0.1) |> should.equal("maybe")
+  recall.band(pplx, 0.65) |> should.equal("likely")
+  recall.band(gemini, 0.65) |> should.equal("maybe")
 }
 
 pub fn recall_shows_the_excerpt_word_for_word_test() {
@@ -273,7 +279,7 @@ pub fn recall_failures_point_to_buscar_conversa_test() {
   use dir <- with_dir
   seed(dir)
   let blocked = fn(url, _headers, _body) {
-    case url == decision.embed_url {
+    case url == decision.embed_url(decision.Gemini) {
       True -> Ok(#(200, "{\"embedding\":{\"values\":[1,0]}}"))
       False ->
         Ok(#(
@@ -320,9 +326,69 @@ pub fn recall_stands_aside_past_the_cap_test() {
   seed(dir)
   let calls = process.new_subject()
   let capped =
-    runtime.Settings(..settings(fake(0.9, calls)), within_budget: fn() { False })
+    runtime.Settings(..settings(fake(0.9, calls)), admit: runtime.refuse)
   let outcome = recall.recall(capped, dir, "telegram:42", -180, "o médico")
   outcome.text |> string.contains("limite de gasto do dia") |> should.be_true()
   outcome.text |> string.contains("buscar_conversa") |> should.be_true()
   drain(calls, []) |> should.equal([])
+}
+
+/// With Perplexity the excerpts are embedded in batches; the index keys a
+/// vector by the model, so another provider embeds again instead of mixing
+/// vectors.
+pub fn the_index_is_per_embedding_model_test() {
+  use dir <- with_dir
+  seed(dir)
+  let calls = process.new_subject()
+  let one = "{\"index\":0,\"embedding\":\"AQ==\"}"
+  let pplx_transport = fn(url, _headers, body) {
+    case url == decision.embed_url(decision.Perplexity) {
+      True -> {
+        process.send(calls, "batch")
+        let n = list.length(string.split(body, "\"P: ")) - 1
+        let n = case n {
+          0 -> 1
+          _ -> n
+        }
+        let data =
+          int.range(0, n, [], list.prepend)
+          |> list.reverse
+          |> list.map(fn(i) {
+            string.replace(one, "\"index\":0", "\"index\":" <> int.to_string(i))
+          })
+          |> string.join(",")
+        Ok(#(200, "{\"data\":[" <> data <> "],\"usage\":{\"total_tokens\":9}}"))
+      }
+      False ->
+        Ok(#(
+          200,
+          "{\"answers\":{\"falado\":{\"noul\":0.7},\"t3\":{\"noul\":0.9}},\"usage\":{\"input_tokens\":500}}",
+        ))
+    }
+  }
+  let pplx =
+    runtime.Settings(
+      ..settings(pplx_transport),
+      endpoint: decision.endpoint(decision.Perplexity, "k"),
+      thresholds: runtime.default_thresholds(decision.Perplexity),
+    )
+  let outcome = recall.recall(pplx, dir, "telegram:42", -180, "o cardiologista")
+  outcome.band |> should.equal("likely")
+  outcome.decision_tokens |> should.equal(500)
+  { outcome.embed_tokens > 0 } |> should.be_true()
+  // Three excerpts in one batch, then the query.
+  drain(calls, []) |> list.length |> should.equal(2)
+  // Gemini next: its vectors are not Perplexity's, so it embeds again.
+  let gemini_calls = process.new_subject()
+  let _ =
+    recall.recall(
+      settings(fake(0.9, gemini_calls)),
+      dir,
+      "telegram:42",
+      -180,
+      "x",
+    )
+  drain(gemini_calls, [])
+  |> list.count(fn(k) { k == "document" })
+  |> should.equal(3)
 }

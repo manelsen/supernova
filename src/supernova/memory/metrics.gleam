@@ -4,8 +4,6 @@
 //// chat (I7). The series are computed by pure functions, so tests check
 //// them without a metrics actor.
 
-import gleam/float
-import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import supernova/memory/correction
@@ -70,6 +68,9 @@ pub fn turn_series(report: gate.Report) -> List(Series) {
         #("reason", "none"),
       ]),
     ]
+    Some(correction.NotChecked) -> [
+      Count(correction_total, 1, [#("result", "skipped"), #("reason", "budget")]),
+    ]
     Some(correction.Unknown(error)) -> [
       Count(correction_total, 1, [
         #("result", "failed"),
@@ -86,42 +87,21 @@ pub fn recall_series(
   origin: String,
   elapsed_ms: Int,
 ) -> List(Series) {
-  let band = case outcome.probability {
-    None -> "none"
-    Some(p) ->
-      case p <. recall.unlikely_below, p <. recall.likely_from {
-        True, _ -> "unlikely"
-        False, True -> "maybe"
-        False, False -> "likely"
-      }
-  }
   let failed = case outcome.failure {
     None -> "none"
     Some(error) -> failure(error)
   }
-  let embed_tokens = outcome.embedded_chars / 2
   [
     Count(recall_total, 1, [
       #("origin", origin),
-      #("band", band),
+      #("band", outcome.band),
       #("failure", failed),
     ]),
     Duration(recall_seconds, elapsed_ms, [#("origin", origin)]),
     Count(decision_tokens_total, outcome.decision_tokens, []),
-    Count(embed_tokens_total, embed_tokens, []),
-    Count(
-      cost_microusd_total,
-      microusd(outcome.decision_tokens, decision.decision_usd_per_million)
-        + microusd(embed_tokens, decision.embed_usd_per_million),
-      [],
-    ),
+    Count(embed_tokens_total, outcome.embed_tokens, []),
+    Count(cost_microusd_total, outcome.cost_microusd, []),
   ]
-}
-
-/// US$ per million tokens × tokens, in micro-US$ (millionths): the price
-/// itself.
-fn microusd(tokens: Int, usd_per_million: Float) -> Int {
-  float.round(int.to_float(tokens) *. usd_per_million)
 }
 
 fn failure(error: decision.DecisionError) -> String {

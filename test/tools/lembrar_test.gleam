@@ -29,7 +29,7 @@ fn with_dir(body: fn(String) -> a) -> a {
 /// Every excerpt has the same vector; the Decision says excerpt 1.
 fn fake() -> decision.Transport {
   fn(url, _headers, _body) {
-    case url == decision.embed_url {
+    case url == decision.embed_url(decision.Gemini) {
       True -> Ok(#(200, "{\"embedding\":{\"values\":[1,0]}}"))
       False ->
         Ok(#(
@@ -43,12 +43,11 @@ fn fake() -> decision.Transport {
 fn with_memory(dir: String, body: fn() -> a) -> a {
   runtime.configure(runtime.Settings(
     transport: fake(),
-    api_key: "k",
-    gate_threshold: 0.1,
+    endpoint: decision.endpoint(decision.Gemini, "k"),
+    thresholds: runtime.default_thresholds(decision.Gemini),
     gate_timeout_ms: 2000,
     recall_timeout_ms: 5000,
-    charge: runtime.no_charge,
-    within_budget: runtime.always_within,
+    admit: runtime.no_ledger,
   ))
   agenda_runtime.configure(
     agenda_runtime.Context(data_dir: dir, offset_minutes: -180, clock: fn() {

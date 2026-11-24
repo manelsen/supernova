@@ -1,7 +1,7 @@
 //// The gate and the pre-search (docs/prd/PRD-M-memoria.md, 6.3 and 6.5).
 ////
-//// Before the first LLM call of a turn, the Gemini Decision API reads only
-//// the message that arrived and says whether it asks about the past of the
+//// Before the first LLM call of a turn, the decision model reads only the
+//// message that arrived and says whether it asks about the past of the
 //// conversation. When it does, the turn starts with `lembrar` already
 //// called with that message as the subject: the model does not have to
 //// remember that it can search, which it mostly did not (the bench: 6%).
@@ -21,11 +21,38 @@ import supernova/memory/decision
 import supernova/memory/recall
 import supernova/memory/runtime
 
-/// The question, measured on the bench: 15/15 questions about the past and
-/// 0/30 ordinary messages it was not tuned on. A wider one ("does the agent
-/// need to remember something?") fired on 8 of 10 ordinary messages.
+/// Gemini's question, measured on the bench: 15/15 questions about the past
+/// and 0/30 ordinary messages it was not tuned on, and 20/20 and 0/40 on a
+/// second unseen set. A wider one ("does the agent need to remember
+/// something?") fired on 8 of 10 ordinary messages.
 pub const question =
   "Esta mensagem é uma pergunta sobre o passado da conversa (algo que a pessoa disse, contou ou combinou antes)?"
+
+/// The Decider's question: what the message is, among four kinds. Asked
+/// yes/no, the Decider missed implicit questions ("qual é o telefone da
+/// clínica?"); as a choice, the two kinds about the past scored 0.67 or more
+/// and ordinary messages 0.09 or less on 131 messages, and 20/20 and 0/40
+/// on 60 unseen ones (cutoff 0.25).
+pub const kinds = [
+  #(
+    "dado_pessoal",
+    "Pergunta por um dado da vida da pessoa que ela teria contado antes (nome, telefone, horário, remédio, endereço, valor, combinado)",
+  ),
+  #("lembranca", "Pergunta se a agente lembra de algo que as duas conversaram"),
+  #(
+    "geral",
+    "Pergunta de conhecimento geral, conselho, opinião ou pedido de ajuda",
+  ),
+  #(
+    "conversa",
+    "Cumprimento, comentário, desabafo ou notícia, sem pergunta sobre o passado",
+  ),
+]
+
+pub const kinds_question = "O que é esta mensagem?"
+
+/// Input tokens the gate's call is admitted for: one short message.
+const gate_estimate = 300
 
 const framing =
   "Mensagem que a pessoa acabou de mandar para a agente de companhia dela:\n"
@@ -70,29 +97,58 @@ pub fn ask_for(
   message: String,
 ) -> Verdict {
   let text = string.trim(message)
-  case text == "" || string.starts_with(text, "/"), settings.within_budget() {
-    True, _ -> Skipped
-    False, False -> OverBudget
-    False, True ->
+  let admitted = case text == "" || string.starts_with(text, "/") {
+    True -> Error(Skipped)
+    False ->
+      settings.admit(principal, gate_estimate)
+      |> result.replace_error(OverBudget)
+  }
+  case admitted {
+    Error(verdict) -> verdict
+    Ok(settle) ->
       case
         decision.decide(
           settings.transport,
-          settings.api_key,
+          settings.endpoint,
           framing <> text,
-          [#("passado", question)],
+          [gate_question(settings.endpoint.provider)],
           settings.gate_timeout_ms,
         )
       {
-        Error(error) -> Failed(error)
+        Error(error) -> {
+          settle(0, 0)
+          Failed(error)
+        }
         Ok(answers) -> {
-          settings.charge(principal, answers.input_tokens, 0)
-          let p =
-            dict.get(answers.probabilities, "passado") |> result.unwrap(0.0)
-          case p >=. settings.gate_threshold {
+          settle(answers.input_tokens, 0)
+          let p = past_probability(answers)
+          case p >=. settings.thresholds.gate {
             True -> Fired(p)
             False -> Quiet(p)
           }
         }
+      }
+  }
+}
+
+fn gate_question(provider: decision.Provider) -> decision.Question {
+  case provider {
+    decision.Gemini -> decision.YesNo("passado", question)
+    decision.Perplexity -> decision.Choice("passado", kinds_question, kinds)
+  }
+}
+
+/// The probability that the message asks about the past: the yes of the
+/// yes/no question, or the two kinds about the past of the choice.
+fn past_probability(answers: decision.Answers) -> Float {
+  case dict.get(answers.yes, "passado") {
+    Ok(p) -> p
+    Error(Nil) ->
+      case dict.get(answers.choices, "passado") {
+        Ok(kinds) ->
+          { dict.get(kinds, "dado_pessoal") |> result.unwrap(0.0) }
+          +. { dict.get(kinds, "lembranca") |> result.unwrap(0.0) }
+        Error(Nil) -> 0.0
       }
   }
 }

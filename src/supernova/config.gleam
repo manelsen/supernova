@@ -301,14 +301,21 @@ pub type ConversationConfig {
   )
 }
 
-/// The gate and `lembrar` (docs/prd/PRD-M-memoria.md). Both call the Gemini
-/// Decision API; the key comes only from SUPERNOVA_GEMINI_API_KEY.
+/// The gate and `lembrar` (docs/prd/PRD-M-memoria.md). Both call a decision
+/// model: Perplexity's Decider (the default) or Gemini Decision. The key
+/// comes only from the environment: SUPERNOVA_PERPLEXITY_API_KEY or
+/// SUPERNOVA_GEMINI_API_KEY.
 pub type RecallConfig {
   RecallConfig(
     enabled: Bool,
-    /// The gate fires when the probability that the message asks about the
-    /// past is at least this.
-    gate_threshold: Float,
+    /// "perplexity" (default) or "gemini".
+    provider: String,
+    /// Cutoffs; when absent, the ones measured for the provider
+    /// (memory/runtime.default_thresholds). Probabilities are not on the
+    /// same scale from one model to another.
+    gate_threshold: Option(Float),
+    unlikely_below: Option(Float),
+    likely_from: Option(Float),
     /// The gate never holds a turn longer than this; past it, the turn goes
     /// on without it.
     gate_timeout_ms: Int,
@@ -321,7 +328,10 @@ pub type RecallConfig {
 pub fn default_recall_config() -> RecallConfig {
   RecallConfig(
     enabled: False,
-    gate_threshold: 0.1,
+    provider: "perplexity",
+    gate_threshold: None,
+    unlikely_below: None,
+    likely_from: None,
     gate_timeout_ms: 2000,
     recall_timeout_ms: 15_000,
     api_key: None,
@@ -332,23 +342,39 @@ pub fn default_conversation_config() -> ConversationConfig {
   ConversationConfig(history_limit: 100, recall: default_recall_config())
 }
 
-/// recall on needs its key: without it the boot stops, instead of every
-/// turn failing over to the plain path.
+/// recall on needs a known provider and its key: without them the boot
+/// stops, instead of every turn failing over to the plain path.
 pub fn validate_recall(config: Config) -> Result(Nil, String) {
   let recall = config.conversation.recall
-  case recall.enabled, recall.api_key {
-    False, _ -> Ok(Nil)
-    True, Some(key) ->
+  case recall.enabled, recall.provider, recall.api_key {
+    False, _, _ -> Ok(Nil)
+    True, provider, _ if provider != "perplexity" && provider != "gemini" ->
+      Error(
+        "conversation.recall.provider must be perplexity or gemini, found "
+        <> provider,
+      )
+    True, provider, Some(key) ->
       case string.trim(key) {
-        "" -> Error(recall_key_missing)
+        "" -> Error(recall_key_missing(provider))
         _ -> Ok(Nil)
       }
-    True, None -> Error(recall_key_missing)
+    True, provider, None -> Error(recall_key_missing(provider))
   }
 }
 
-const recall_key_missing =
-  "conversation.recall.enabled needs SUPERNOVA_GEMINI_API_KEY (a paid Gemini API key: conversations are sent to it)"
+/// The environment variable that holds the key for `provider`.
+pub fn recall_key_env(provider: String) -> String {
+  case provider {
+    "gemini" -> "SUPERNOVA_GEMINI_API_KEY"
+    _ -> "SUPERNOVA_PERPLEXITY_API_KEY"
+  }
+}
+
+fn recall_key_missing(provider: String) -> String {
+  "conversation.recall.enabled needs "
+  <> recall_key_env(provider)
+  <> " (a paid API key: excerpts of conversations are sent to it)"
+}
 
 pub type ReflectionConfig {
   ReflectionConfig(
@@ -708,6 +734,14 @@ fn get_bool_or(node: yay.Node, key: String, default: Bool) -> Bool {
 }
 
 /// Get an optional string from a node
+fn get_optional_float(node: yay.Node, key: String) -> Option(Float) {
+  case yay.select_sugar(node, key) {
+    Ok(yay.NodeFloat(value)) -> Some(value)
+    Ok(yay.NodeInt(value)) -> Some(int.to_float(value))
+    _ -> None
+  }
+}
+
 fn get_optional_string(node: yay.Node, key: String) -> Option(String) {
   case yay.extract_optional_string(node, key) {
     Ok(Some(value)) -> Some(value)
@@ -1217,11 +1251,13 @@ fn decode_recall(conversation: yay.Node) -> RecallConfig {
     Ok(node) ->
       RecallConfig(
         enabled: get_bool_or(node, "enabled", default.enabled),
-        gate_threshold: get_float_or(
-          node,
-          "gate_threshold",
-          default.gate_threshold,
+        provider: option.unwrap(
+          get_optional_string(node, "provider"),
+          default.provider,
         ),
+        gate_threshold: get_optional_float(node, "gate_threshold"),
+        unlikely_below: get_optional_float(node, "unlikely_below"),
+        likely_from: get_optional_float(node, "likely_from"),
         gate_timeout_ms: int.max(
           get_int_or(node, "gate_timeout_ms", default.gate_timeout_ms),
           1,
@@ -1643,7 +1679,7 @@ pub fn apply_env_overrides(config: Config) -> Config {
       recall: RecallConfig(
         ..config.conversation.recall,
         api_key: option.or(
-          get_env("SUPERNOVA_GEMINI_API_KEY"),
+          get_env(recall_key_env(config.conversation.recall.provider)),
           config.conversation.recall.api_key,
         ),
       ),

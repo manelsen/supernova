@@ -19,12 +19,11 @@ fn settings(p: String, seen: process.Subject(String)) -> runtime.Settings {
       process.send(seen, body)
       Ok(#(200, "{\"answers\":{\"corrige\":{\"noul\":" <> p <> "}}}"))
     },
-    api_key: "k",
-    gate_threshold: 0.1,
+    endpoint: decision.endpoint(decision.Gemini, "k"),
+    thresholds: runtime.default_thresholds(decision.Gemini),
     gate_timeout_ms: 1000,
     recall_timeout_ms: 1000,
-    charge: runtime.no_charge,
-    within_budget: runtime.always_within,
+    admit: runtime.no_ledger,
   )
 }
 
