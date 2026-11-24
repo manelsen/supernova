@@ -1,8 +1,9 @@
 [PRD]
 # PRD M: A agente lembra do que foi dito
 
-> **Situação em 23/11/2026:** rascunho para revisão. D2 a D5 aprovadas pelo
-> mantenedor; D1 medida na bancada (seção 5), recomendação (b).
+> **Situação em 24/11/2026:** aprovada pelo mantenedor. D1 a D5 decididas
+> (seção 5); D1 medida na bancada. Depende da PR #65 (bancada e o tom do
+> "não achei" na `buscar_conversa`).
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality
@@ -31,9 +32,15 @@ mediu o que acontece, com histórico sintético e o modelo da Selene:
    perguntas sobre fatos nos três modelos, e 24 de 24 com um histórico de 12
    mil mensagens.
 4. **O erro que sobra é negar.** Sobre o que nunca foi dito, a agente diz
-   "você nunca me falou disso" em vez de "acho que não". O tom no resultado
-   da busca (PR #65) reduz isso; a probabilidade do Decision dá o grau de
-   dúvida.
+   "você nunca me falou disso" em vez de "acho que não". Com a
+   probabilidade do Decision virando o tom no resultado do `lembrar`, a
+   negação sem dúvida caiu de 6 em 24 para 1 em 24 ("acho que você nunca me
+   disse o nome dele" é o tom aprovado).
+5. **Dá para fazer barato.** Lendo só 40 trechos escolhidos por vetor e por
+   palavras, em formato enxuto, o Decision usa 15× menos tokens (~US$ 0,0006
+   por consulta), responde em 0,65 s e mantém 36 de 36 fatos. No
+   LongMemEval [relatório], a lista curta conteve a resposta em 59 de 59
+   perguntas.
 
 ## 2. Objetivo
 
@@ -44,9 +51,9 @@ hoje, sem custo nem atraso perceptível.
 
 ## 3. Fora de escopo
 
-- **Árvore de resumos ou bisseção** para baratear histórico grande (D3).
-  Entra como pendência com gatilho: quando a consulta mediana do piloto
-  passar de US$ 0,02.
+- **Árvore de resumos ou bisseção** (D3). Com a lista curta, o custo por
+  consulta não cresce com a conversa; a árvore volta se a lista curta
+  deixar de conter a resposta (métrica de correção, 6.6).
 - **Índice** para a `buscar_conversa`.
 - **Trocar a `buscar_conversa`.** Ela fica: acha o exato (números, códigos)
   e é a reserva quando o Decision não responde.
@@ -152,21 +159,48 @@ Ferramenta nova, ao lado da `buscar_conversa`, com o mesmo escopo: só as
 conversas da própria pessoa (privado e o lado dela nos grupos), só o que foi
 dito (usuário e agente, sem chamadas de ferramenta).
 
-- A conversa vira trechos de 10 mensagens, cada um com data, hora e quem
-  disse. Uma chamada leva uma pergunta geral ("já falaram disso?") e uma
-  pergunta por trecho. Conversa grande vai em várias chamadas paralelas,
-  cada uma abaixo de 262.144 tokens (estimar com folga: 2 caracteres por
-  token).
-- Devolve a probabilidade geral e até 3 trechos com probabilidade ≥ 0,2,
-  literais, em ordem de tempo.
-- O tom vem da probabilidade geral, no próprio resultado:
-  - < 0,15: "Pouco provável que vocês tenham falado disso. Diga que não se
-    lembra; não diga que nunca foi dito."
-  - 0,15 a 0,5: "Talvez. Se os trechos não respondem, diga que não se lembra
-    bem e pergunte."
-  - ≥ 0,5: os trechos e a dica da `buscar_conversa` ("se nenhum trecho
-    responde...").
-- Descrição (a da bancada): descrever o assunto, não as palavras exatas.
+**Trechos.** A conversa vira trechos de 10 mensagens em formato enxuto: a
+data uma vez por trecho (e de novo quando o dia muda), `P:` e `A:` no lugar
+do papel. Metade do texto no formato com data e hora em cada mensagem era
+cabeçalho; o enxuto corta ~45% dos tokens sem mudar as probabilidades
+(relatório, "Custo").
+
+**Índice.** Cada trecho fechado é vetorizado uma vez
+(`gemini-embedding-2`, 256 dimensões, US$ 0,20 por milhão de tokens) e
+guardado junto das conversas da pessoa. O trecho aberto é vetorizado de
+novo quando muda. O `/esquecer` apaga o índice com as conversas (I4).
+
+**Lista curta.** Para cada consulta: os 30 trechos mais próximos pelo vetor
+mais os 10 com mais palavras em comum (sem acento, prefixo de 5 letras), sem
+repetir. No LongMemEval, a lista conteve o trecho com a resposta em 59 de 59
+perguntas (o pior, 24º no vetor); só por palavras, 47 de 59; preferências,
+2 de 10 por palavras e 10 de 10 pelo vetor.
+
+**Decision.** Uma chamada sobre a lista curta: a pergunta geral
+
+> Nesta conversa, a pessoa já contou à agente, ou as duas já conversaram,
+> sobre o que esta mensagem pergunta? Mensagem: «{assunto}»
+
+e uma pergunta por trecho. ~6 mil tokens no tamanho da bancada, ~11 mil no
+LongMemEval, contra ~93 mil e ~115 mil lendo a conversa inteira.
+
+**Resultado.** O tom pela probabilidade geral, depois até 3 trechos com
+probabilidade ≥ 0,2, literais, em ordem de tempo:
+
+- < 0,2: "Pouco provável que vocês tenham falado disso. Diga que acha que
+  não, sem afirmar com certeza que nunca foi dito." No LongMemEval, só 2 de
+  59 perguntas respondíveis caíram aqui.
+- 0,2 a 0,75: "Talvez. Se os trechos abaixo não respondem, diga que não se
+  lembra bem e pergunte."
+- ≥ 0,75: "Provável que vocês já tenham falado disso", os trechos e a dica
+  da `buscar_conversa` ("se nenhum trecho responde...").
+
+**Descrição** (a da bancada): descrever o assunto, não as palavras exatas.
+
+**Recusa por segurança.** O Decision recusa entradas com "palavras
+sensíveis" (1 de 90 no LongMemEval, conversa inteira recusada). Tratada
+como falha (I6): o resultado diz para usar a `buscar_conversa`, e a recusa
+é contada (6.6).
 
 ### 6.5 Pré-busca (D1 = b)
 
@@ -186,8 +220,10 @@ telemetria (`core/telemetry`), nunca com texto nem por pessoa identificável:
 - **Porteiro:** mensagens avaliadas, disparos, tempo (histograma),
   tempos-limite.
 - **`lembrar`:** chamadas (pré-busca e pela agente), probabilidade geral
-  em faixas (< 0,2; 0,2–0,9; ≥ 0,9), trechos devolvidos, tokens, custo,
-  tempo, erros e tempos-limite.
+  em faixas (< 0,2; 0,2–0,75; ≥ 0,75), trechos devolvidos, tamanho da lista
+  curta, tokens, custo, tempo, erros, tempos-limite e **recusas por
+  segurança**.
+- **Índice:** trechos vetorizados, tokens e custo de embeddings.
 - **Correção:** depois de um turno com `lembrar`, a próxima mensagem da
   pessoa passa por uma pergunta ao Decision, com a resposta da agente e a
   mensagem como entrada: "A pessoa está corrigindo ou contestando o que a
@@ -199,9 +235,11 @@ probabilidade, taxa de correção, custo por dia.
 
 ### 6.7 Custo
 
-Cada chamada ao Decision é registrada no `resource_ledger` (tokens de
-entrada × US$ 0,10 por milhão), contra o orçamento diário da pessoa e da
-instância. Orçamento esgotado: porteiro e `lembrar` desligam para a pessoa
+Cada chamada ao Decision (tokens de entrada × US$ 0,10 por milhão) e aos
+embeddings (× US$ 0,20 por milhão) é registrada no `resource_ledger`, contra
+o orçamento diário da pessoa e da instância. No tamanho da bancada, uma
+consulta custa ~US$ 0,0006, e o índice da conversa inteira ~US$ 0,01, uma
+vez. Orçamento esgotado: porteiro e `lembrar` desligam para a pessoa
 até o dia seguinte, e a `buscar_conversa` continua.
 
 ## 7. Invariantes
@@ -209,8 +247,9 @@ até o dia seguinte, e a `buscar_conversa` continua.
 - **I1.** O porteiro nunca segura um turno mais que `gate_timeout_ms`.
 - **I2.** Nenhum texto da conversa em log, auditoria ou métrica.
 - **I3.** O `lembrar` só lê as conversas da pessoa que chamou.
-- **I4.** `/esquecer` não deixa nada para trás: o Decision não guarda
-  estado, e a Supernova não guarda cópia nem cache do que mandou.
+- **I4.** `/esquecer` não deixa nada para trás: o Decision e a API de
+  embeddings não guardam estado, e o índice vetorial da pessoa é apagado
+  com as conversas.
 - **I5.** Com `recall.enabled: false`, o comportamento é o de hoje, byte a
   byte nas mensagens ao LLM.
 - **I6.** Falha do Decision nunca vira resposta de erro para a pessoa.
@@ -229,9 +268,11 @@ Bancada: (a) contra (b), com o `lembrar` sozinho e junto da
 
 ### M-02: `lembrar`
 6.4, como ferramenta registrada no `tool_dispatch` e no syscall (escopo
-pelo principal, como a `buscar_conversa`). Testes: trechos, divisão em
-chamadas, faixas de tom, escopo (I3), falha vira mensagem para a agente
-sugerindo a `buscar_conversa`.
+pelo principal, como a `buscar_conversa`), com o índice vetorial por pessoa.
+Testes: formato enxuto, índice incremental (só o trecho aberto é refeito),
+lista curta (vetor e palavras), faixas de tom, escopo (I3), `/esquecer`
+apaga o índice (I4), falha e recusa por segurança viram mensagem para a
+agente sugerindo a `buscar_conversa`.
 
 ### M-03: Porteiro
 6.3, com tempo-limite (I1) e auditoria sem texto (I2). Testes com Decision
@@ -267,7 +308,8 @@ gatilho). Ligar no piloto é decisão do mantenedor, fora desta PRD.
 | Negar com certeza (bancada, DeepSeek) | ≤ 5% |
 | Porteiro em mensagens comuns | 0 disparos em 30 mensagens novas |
 | Atraso em mensagens comuns | p95 do porteiro ≤ 1 s |
-| Custo por `lembrar` no tamanho do piloto | mediana ≤ US$ 0,02 |
+| Custo por `lembrar` no tamanho do piloto | mediana ≤ US$ 0,002 |
+| Lista curta (LongMemEval, amostra de 59 respondíveis) | contém a resposta em ≥ 58 |
 | Falha do Decision | nenhuma resposta de erro à pessoa (I6) |
 | Harness | `buscar_antigo` passa, com e sem `recall` |
 | Piloto, primeira semana | taxa de correção medida e registrada (sem meta: é a linha de base) |
@@ -279,7 +321,15 @@ gatilho). Ligar no piloto é decisão do mantenedor, fora desta PRD.
 - **Injeção.** O texto da pessoa vai ao Decision; a documentação avisa que
   ele pode "argumentar" pela própria classificação. O pior caso aqui é
   buscar à toa ou não buscar, sem efeito além disso.
-- **Custo com histórico grande.** Cresce com a conversa; a árvore (D3) é a
-  resposta quando o gatilho disparar.
+- **Custo com histórico grande.** A lista curta deixa o Decision num tamanho
+  fixo; o que cresce é só o índice, vetorizado uma vez. A árvore (D3) fica
+  para quando a lista curta deixar de conter a resposta.
+- **Recusa por segurança.** Uma agente de companhia ouve sobre doença, luto,
+  sexo, violência; a taxa de recusa no piloto pode ser bem maior que 1 em
+  90. Pode ser o maior limite do Decision aqui. A métrica (6.6) responde;
+  a lista curta ajuda, porque manda menos texto.
+- **Lista curta perde a resposta.** Aí o Decision diz "pouco provável" com
+  confiança, o erro que mais queremos evitar. 59/59 no LongMemEval, mas o
+  piloto pode ser diferente; a taxa de correção (6.6) é o alarme.
 - **Português.** A bancada mediu em português informal; nada mede outras
   línguas.

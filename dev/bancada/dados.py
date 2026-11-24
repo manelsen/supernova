@@ -126,6 +126,24 @@ PERGUNTAS = [
      [], [], "nunca"),
     ("q_carla_filhos", None, "a Carla tem filhos?",
      [], [], "nunca"),
+    # Mais oito sobre o que nunca foi dito (o LongMemEval mostrou que quatro
+    # é pouco para medir a faixa de "acho que não").
+    ("q_nunca1", None, "qual o nome da minha cachorra?",
+     [], [], "nunca"),
+    ("q_nunca2", None, "o que eu te contei da viagem pra Bahia?",
+     [], [], "nunca"),
+    ("q_nunca3", None, "quanto custou o conserto do carro?",
+     [], [], "nunca"),
+    ("q_nunca4", None, "qual é o nome do meu cunhado?",
+     [], [], "nunca"),
+    ("q_nunca5", None, "em que ano eu me formei?",
+     [], [], "nunca"),
+    ("q_nunca6", None, "o que o médico disse do exame de sangue do Beto?",
+     [], [], "nunca"),
+    ("q_nunca7", None, "qual era o nome da professora do Joca?",
+     [], [], "nunca"),
+    ("q_nunca8", None, "quando é o aniversário da Carla?",
+     [], [], "nunca"),
 ]
 
 # ------------------------------------------------------------------ enchimento
