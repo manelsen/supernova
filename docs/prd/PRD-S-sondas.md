@@ -1,10 +1,9 @@
 [PRD]
 # PRD S: sondas, os subagentes do par
 
-> **Situação em 24/11/2026:** rascunho de **desenho**, não de execução. As
-> decisões da seção 3 vêm do mantenedor (24/11); as perguntas da seção 7
-> fecham o desenho. As histórias detalhadas virão numa segunda versão,
-> depois das PRDs E e C.
+> **Situação em 24/11/2026:** desenho com as decisões do mantenedor (S1 a
+> S11). As histórias detalhadas virão numa segunda versão, depois das PRDs E
+> e C, com os servidores MCP conferidos (nome, licença, versão).
 
 ## 1. Visão
 
@@ -52,6 +51,21 @@ kernel garantindo que ninguém gaste, veja ou toque o que não deve.
 - **S6. Especializadas por função.** Primeiras sondas: **disco** (arquivos
   no computador), **web** (pesquisa e coleta), **código** (escrever, rodar,
   testar no computador).
+- **S7. Até 7 sondas simultâneas por par.** Duração máxima por tipo, porque
+  um minuto é muito para um `ls` e pouco para um crawling. Padrões
+  propostos, configuráveis: disco 2 min, código 15 min, web 30 min.
+- **S8. Modelo do condutor selecionável**, com o da agente como padrão.
+- **S9. Membros e admins** disparam sondas, cada um no próprio orçamento.
+- **S10. Os arquivos ficam** no computador da agente ao fim da sonda, para a
+  pessoa ver depois.
+- **S11. Servidores MCP das sondas rodam dentro do computador.** O
+  gerenciador atual abre servidores por stdio dentro do contêiner da
+  Supernova: um MCP de arquivos ali mexeria no disco da Supernova, não no do
+  computador. Dentro do computador (isolado, sem segredos), a Supernova fala
+  com eles pela rede. Primeiros, a conferir: um navegador (Playwright MCP)
+  para a sonda web; a busca da Perplexity (servidor MCP da API Sonar, a
+  chave já existe); arquivos e git (servidores de referência do MCP) para
+  disco e código. O navegador vem primeiro.
 
 ## 4. Desenho proposto
 
@@ -112,15 +126,9 @@ agente diretamente (a agente pede; a sonda usa).
   mesmo computador ao mesmo tempo podem pisar uma na outra: diretório de
   trabalho por sonda.
 
-## 7. Perguntas para fechar o desenho
+## 7. O que falta decidir
 
-1. **Limites iniciais:** quantas sondas simultâneas por par, duração máxima
-   e custo máximo por sonda?
-2. **Modelo do condutor:** o mesmo da agente (DeepSeek) ou um próprio,
-   configurável por função?
-3. **Quem pode disparar:** só admins no começo, ou membros com o orçamento
-   de membro?
-4. **Primeiro servidor MCP:** qual ligar primeiro (sistema de arquivos,
-   navegador, busca)?
-5. **Resultado no computador:** a sonda de código deixa os arquivos no
-   computador da agente para a pessoa ver depois, ou limpa ao terminar?
+- **Custo máximo por sonda** (proposta: US$ 0,20 por padrão, configurável
+  por tipo).
+- **Transporte MCP até o computador:** HTTP streamable ou SSE, conforme o
+  que os servidores escolhidos suportarem.

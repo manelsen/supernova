@@ -1,10 +1,10 @@
 [PRD]
 # PRD C: fundação de canais e WhatsApp via GOWA
 
-> **Situação em 24/11/2026:** rascunho para o mantenedor. Direção aprovada
-> (fundação primeiro, WhatsApp antes do Discord: há gente esperando no
-> WhatsApp). D1 a D5 esperam decisão (seção 5). Depende da PRD-E (E-02, a
-> proteção de URL).
+> **Situação em 24/11/2026:** em revisão. Direção aprovada (fundação
+> primeiro, WhatsApp antes do Discord: há gente esperando no WhatsApp). D1
+> e D3 decididas; D2, D4 e D5 com a proposta revista (seção 5). Depende da
+> PRD-E (E-02, a proteção de URL).
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality
@@ -60,21 +60,41 @@ verdade em teste.
 
 - **D1. Onde o webhook escuta.** (a) Porta própria (`channels.webhook.port`,
   ligada só na rede interna do compose); (b) a porta da saúde (8080).
-  **Recomendação: (a)**: a de saúde é raspada pelo Prometheus e não deveria
-  aceitar POST de fora.
+  **Decidido: (a)**, porta própria. A de saúde é raspada pelo Prometheus e
+  não deveria aceitar POST de fora.
 - **D2. Quem é a pessoa: telefone ou LID.** O GOWA manda `from` com o
-  telefone quando consegue resolver o LID, e o LID quando não. (a) Principal
-  `whatsapp:<telefone>`; sem telefone, a mensagem é recusada com log e
-  métrica, até resolver; (b) aceitar o LID como principal. **Recomendação:
-  (a)**: dois principals para a mesma pessoa partem a memória e o `/esquecer`.
-- **D3. Mídia na entrada.** Imagens nesta PRD (o caminho até o modelo já
-  existe, `llm/tool_images`); áudio e documento depois. **Recomendação:
-  assim.**
+  telefone quando consegue resolver o LID (identificador de privacidade do
+  WhatsApp, comum em grupos), e o LID quando não. A mesma pessoa pode
+  chegar das duas formas. Aceitar o LID como principal daria duas agentes à
+  mesma pessoa: memórias separadas, um `/esquecer` que apaga só uma, acesso
+  e orçamento em dobro.
+  - (a) Principal `whatsapp:<telefone>`; só LID é recusado.
+  - (b) O LID como principal.
+  - (c) Principal `whatsapp:<telefone>`, com o vínculo LID↔telefone
+    aprendido: quando o webhook traz `from` e `from_lid` juntos, o par é
+    guardado (junto do estado de acesso); uma mensagem só com LID conhecido
+    vira do telefone; só o LID nunca visto ao lado de um telefone é recusado
+    com log e métrica.
+  - **Recomendação: (c).** O `/esquecer` apaga também os vínculos da pessoa.
+- **D3. Mídia na entrada.** **Decidido:** primeiro a capacidade de mídia em
+  geral (baixar do GOWA com autenticação, limite de tamanho, política de
+  tipo, arquivo temporário apagado depois do turno), depois imagens até o
+  modelo (`llm/tool_images`); áudio, documentos e o resto ao longo do tempo,
+  cada um sobre a mesma capacidade.
 - **D4. Interface web do GOWA (pareamento por QR).** Só por túnel SSH, nunca
-  exposta; `APP_UI_AUTO_UPDATE=false` (ela se atualiza do GitHub sozinha).
-  **Recomendação: assim.**
+  exposta (**decidido**). O auto-update (`APP_UI_AUTO_UPDATE`) baixa a
+  interface do GitHub a cada 3 h e a serve; essa interface lê as conversas e
+  envia mensagens. Ligado, um repositório ou release comprometido injeta
+  JavaScript na sessão do WhatsApp sem deploy nenhum, e ele roda no
+  navegador do mantenedor já autenticado. O ganho é quase nulo: a interface
+  só é aberta para parear.
+  - (a) Desligado; vale a interface que vem na imagem.
+  - (b) Ligado com `APP_UI_ASSET_SHA256` fixando o hash aceito.
+  - (c) Ligado.
+  - **Recomendação: (a).**
 - **D5. Versão do GOWA.** Imagem fixada por digest (v9.10.0), atualizada à
-  mão lendo o changelog. **Recomendação: assim.**
+  mão lendo o changelog. Com D4 (a), uma versão só cobre o servidor e a
+  interface. **Recomendação: assim.**
 
 ## 6. Desenho
 
@@ -109,7 +129,7 @@ nome da PRD-E): HTTPS, exceto loopback e os hosts internos listados em
   Eventos: `message` (texto, resposta, legendas; imagem por D3),
   `device.logged_out`, `device.temporary_ban`. Os outros são ignorados (e o
   GOWA configurado para não mandá-los). `is_from_me` é descartado.
-- **Identidade (D2):** principal `whatsapp:<telefone>`; chat privado
+- **Identidade (D2):** principal `whatsapp:<telefone>`, LID pelo vínculo aprendido; chat privado
   `…@s.whatsapp.net`, grupo `…@g.us` (chave `whatsapp:<jid do grupo>` em
   `access.allowed_chats`). Num grupo, segue a mesma regra de quando
   responder que o Telegram usa hoje (o executor confere em
@@ -133,7 +153,7 @@ APP_BASIC_AUTH=<usuário:senha forte>
 APP_ALLOW_UNAUTHENTICATED=false
 APP_UI_AUTO_UPDATE=false
 MCP_ENABLED=false
-WHATSAPP_AUTO_REPLY=                  # vazio: o exemplo do GOWA responde sozinho
+WHATSAPP_AUTO_REPLY=                  # vazio (decidido): o exemplo do GOWA responde sozinho
 WHATSAPP_AUTO_MARK_READ=false
 WHATSAPP_WEBHOOK=http://supernova:<porta>/webhook/whatsapp
 WHATSAPP_WEBHOOK_SECRET=<segredo>
@@ -153,8 +173,10 @@ interface, QR ou código, conferir o webhook, `/acesso` da pessoa).
 - **C-03:** proteção de URL dos adaptadores (6.3).
 - **C-04:** WhatsApp, entrada e saída de texto, identidade, grupos, conta
   (6.4), contra um GOWA falso com payloads da v9.10.
-- **C-05:** imagens na entrada (D3): baixar do GOWA com basic auth, limite de
-  tamanho, ao modelo como imagem.
+- **C-05:** capacidade de mídia na entrada (D3): baixar do GOWA com basic
+  auth, limite de tamanho, política de tipo, temporário apagado depois do
+  turno.
+- **C-05b:** imagens até o modelo, sobre a C-05.
 - **C-06:** compose, roteiro de pareamento, `supernova.yaml.example`,
   `ARCHITECTURE.md`, README (WhatsApp entra na tabela de canais).
 

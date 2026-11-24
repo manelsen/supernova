@@ -1,8 +1,8 @@
 [PRD]
 # PRD E: endurecimento pós-auditoria
 
-> **Situação em 24/11/2026:** rascunho para o mantenedor. D1 a D3 esperam
-> decisão (seção 5).
+> **Situação em 24/11/2026:** aprovada pelo mantenedor; D1 a D3 seguem as
+> recomendações (seção 5).
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality
