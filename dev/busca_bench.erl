@@ -382,6 +382,7 @@ median(Fun) ->
 %% For the LLM bench: one JSON object per line on stdin,
 %% {"dir": DataDir, "terms": Terms}, answers {"out": Text} per line.
 serve() ->
+    {ok, _} = application:ensure_all_started(hackney),
     ok = io:setopts(standard_io, [{encoding, unicode}, binary]),
     serve_loop().
 
@@ -391,13 +392,55 @@ serve_loop() ->
         {error, _} -> ok;
         Line ->
             Req = json:decode(string:trim(unicode:characters_to_binary(Line))),
-            Out = case 'supernova@tools@buscar_conversa':execute_for(
-                         maps:get(<<"dir">>, Req), <<"sim:marta">>,
-                         maps:get(<<"offset">>, Req, -180),
-                         iolist_to_binary(json:encode(#{<<"terms">> => maps:get(<<"terms">>, Req)}))) of
-                {ok, O} -> O;
-                {error, E} -> E
+            Reply = case maps:get(<<"op">>, Req, <<"buscar">>) of
+                <<"buscar">> -> #{<<"out">> => buscar(Req)};
+                <<"gate">> -> gate(Req);
+                <<"lembrar">> -> lembrar(Req)
             end,
-            io:put_chars(standard_io, [json:encode(#{<<"out">> => Out}), $\n]),
+            io:put_chars(standard_io, [json:encode(Reply), $\n]),
             serve_loop()
     end.
+
+buscar(Req) ->
+    case 'supernova@tools@buscar_conversa':execute_for(
+           maps:get(<<"dir">>, Req), <<"sim:marta">>,
+           maps:get(<<"offset">>, Req, -180),
+           iolist_to_binary(json:encode(#{<<"terms">> => maps:get(<<"terms">>, Req)}))) of
+        {ok, O} -> O;
+        {error, E} -> E
+    end.
+
+%% The memory's real settings (supernova/memory/runtime.Settings), with the
+%% real transport and no ledger.
+settings(Req) ->
+    {settings,
+     'supernova@memory@decision':hackney_transport(),
+     maps:get(<<"key">>, Req),
+     0.1, 2000, 15000,
+     fun(_, _, _) -> nil end,
+     fun() -> true end}.
+
+gate(Req) ->
+    case 'supernova@memory@gate':ask(settings(Req), maps:get(<<"message">>, Req)) of
+        {fired, P} -> #{<<"verdict">> => <<"fired">>, <<"p">> => P};
+        {quiet, P} -> #{<<"verdict">> => <<"quiet">>, <<"p">> => P};
+        skipped -> #{<<"verdict">> => <<"skipped">>};
+        over_budget -> #{<<"verdict">> => <<"over_budget">>};
+        {failed, E} -> #{<<"verdict">> => <<"failed">>,
+                         <<"error">> => 'supernova@memory@decision':error_summary(E)}
+    end.
+
+lembrar(Req) ->
+    {outcome, Text, Probability, Shortlist, Tokens, Embedded, Failure} =
+        'supernova@memory@recall':recall(settings(Req), maps:get(<<"dir">>, Req),
+                                         <<"sim:marta">>, -180,
+                                         maps:get(<<"subject">>, Req)),
+    #{<<"out">> => Text,
+      <<"p">> => case Probability of {some, P} -> P; none -> null end,
+      <<"lista">> => Shortlist,
+      <<"decision_tokens">> => Tokens,
+      <<"embedded_chars">> => Embedded,
+      <<"failure">> => case Failure of
+                           {some, E} -> 'supernova@memory@decision':error_summary(E);
+                           none -> null
+                       end}.

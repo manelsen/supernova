@@ -1,0 +1,56 @@
+{
+  "id": "buscar_antigo_memoria",
+  "critical": true,
+  "long": false,
+  "personas": [
+    {
+      "id": "marta",
+      "user_id": "marta"
+    }
+  ],
+  "chats": [
+    {
+      "id": "dm-marta",
+      "is_group": false,
+      "members": [
+        "marta"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "do": "say",
+      "persona": "marta",
+      "chat": "dm-marta",
+      "content": "oi, tudo bem?"
+    },
+    {
+      "do": "talk",
+      "persona": "marta",
+      "chat": "dm-marta",
+      "goal": "A agente acabou de nascer e se apresentou. Ela vai pedir um nome. Dê um nome a ela do seu jeito, numa frase natural, não só a palavra. Se ela pedir confirmação, confirme. Quando o nome estiver aceito, encerre.",
+      "max_turns": 3
+    },
+    {
+      "do": "seed",
+      "persona": "marta",
+      "chat": "dm-marta",
+      "file": "marta_um_mes.jsonl",
+      "days": 30
+    },
+    {
+      "do": "talk",
+      "persona": "marta",
+      "chat": "dm-marta",
+      "goal": "Vocês conversam há um mês. Pergunte, sem dar pistas, o nome do cardiologista da sua mãe, que você contou logo no começo. Depois pergunte a que remédio ela é alérgica. Depois pergunte o que você contou sobre a sua irmã Carla (você nunca falou dela). Por fim, pergunte quando foi que você contou do cardiologista. Uma pergunta por mensagem; encerre depois da última resposta.",
+      "max_turns": 8
+    }
+  ],
+  "checks": [
+    "invariants",
+    "named:marta",
+    "core_unchanged:marta"
+  ],
+  "rubric": "buscar_antigo",
+  "recall": true
+}

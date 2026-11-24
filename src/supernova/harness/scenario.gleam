@@ -44,6 +44,9 @@ pub type Scenario {
     steps: List(Step),
     checks: List(String),
     rubric: String,
+    /// Turn the memory on (PRD-M): gate and lembrar, with the key from
+    /// SUPERNOVA_GEMINI_API_KEY.
+    recall: Bool,
   )
 }
 
@@ -138,6 +141,7 @@ fn scenario_decoder() -> decode.Decoder(Scenario) {
   use steps <- decode.field("steps", decode.list(step_decoder()))
   use checks <- decode.field("checks", decode.list(decode.string))
   use rubric <- decode.field("rubric", decode.string)
+  use recall <- decode.optional_field("recall", False, decode.bool)
   decode.success(Scenario(
     id: id,
     critical: critical,
@@ -147,6 +151,7 @@ fn scenario_decoder() -> decode.Decoder(Scenario) {
     steps: steps,
     checks: checks,
     rubric: rubric,
+    recall: recall,
   ))
 }
 

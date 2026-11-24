@@ -78,6 +78,10 @@ Cenário:
 }
 ```
 
+`"recall": true` liga a memória (porteiro e `lembrar`, [PRD-M](prd/PRD-M-memoria.md))
+no cenário, com a chave de `SUPERNOVA_GEMINI_API_KEY`; sem a chave, o boot
+recusa. `buscar_antigo_memoria` é o `buscar_antigo` com a memória ligada.
+
 Os arquivos em `priv/harness/` que acompanham este commit são **provisórios**
 e existem só para os testes (marcados como tal no topo). O mantenedor escreve
 as personas, cenários e rubricas reais.
