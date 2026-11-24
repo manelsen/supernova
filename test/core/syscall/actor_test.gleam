@@ -21,6 +21,7 @@ import supernova/core/syscall/types.{
   SpawnAgent, SyscallDenied, SyscallFailed, SyscallOk, WriteFile, WriteWorld,
 }
 import supernova/core/workspace_policy/actor as policy_actor
+import test_budget
 import test_workspace
 
 pub fn main() -> Nil {
@@ -78,6 +79,68 @@ pub fn capabilities_without_workspace_policy_deny_file_operations_test() {
   |> should.equal(Error("Blocked: workspace policy unavailable"))
 
   actor.stop(gw)
+}
+
+/// PRD-E, E-04: with capability manifests (production) and no budget
+/// policy, the gateway denies instead of letting calls through uncounted.
+pub fn capabilities_without_budget_policy_deny_tool_calls_test() {
+  let manifests =
+    dict.from_list([
+      #(
+        "admin",
+        cap_types.CapabilityManifest(allowed_tools: ["*"], denied_tools: []),
+      ),
+    ])
+  let assert Ok(gw) =
+    actor.start_with_capabilities(
+      option.None,
+      option.None,
+      option.None,
+      manifests,
+      fn(_, _) { Ok("should not run") },
+    )
+  actor.register_agent(gw, "agent_1")
+  actor.invoke_tool(gw, "agent_1", "admin", "web_fetch", "{\"url\":\"x\"}")
+  |> should.equal(Error("budget policy unavailable"))
+  actor.stop(gw)
+}
+
+/// The same rule for syscalls that are not tools.
+pub fn capabilities_without_budget_policy_deny_syscalls_test() {
+  let manifests =
+    dict.from_list([
+      #(
+        "admin",
+        cap_types.CapabilityManifest(allowed_tools: ["*"], denied_tools: []),
+      ),
+    ])
+  let assert Ok(without) =
+    actor.start_with_capabilities(
+      option.None,
+      option.None,
+      option.None,
+      manifests,
+      fn(_, _) { Ok("unused") },
+    )
+  actor.register_agent(without, "agent_1")
+  actor.invoke(without, "agent_1", GetBudget)
+  |> should.equal(SyscallDenied("budget policy unavailable"))
+  actor.stop(without)
+
+  let assert Ok(with) =
+    actor.start_with_capabilities(
+      option.None,
+      option.Some(test_budget.unlimited()),
+      option.None,
+      manifests,
+      fn(_, _) { Ok("unused") },
+    )
+  actor.register_agent(with, "agent_1")
+  case actor.invoke(with, "agent_1", GetBudget) {
+    SyscallDenied(reason) -> panic as reason
+    _ -> Nil
+  }
+  actor.stop(with)
 }
 
 fn claim_gateway(

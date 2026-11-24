@@ -6,6 +6,7 @@ import supernova/core/capability_manifest/types as cap_types
 import supernova/core/syscall/actor
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types as policy_types
+import test_budget
 import test_workspace
 
 // Regression from the battery: the gateway authorized a path inside the
@@ -28,7 +29,7 @@ pub fn file_system_runs_on_the_authorized_path_test() {
     let assert Ok(gateway) =
       actor.start_with_capabilities(
         option.Some(policy),
-        option.None,
+        option.Some(test_budget.unlimited()),
         option.None,
         manifests,
         fn(_, _) { Error("the raw executor must not run file_system") },
@@ -86,7 +87,7 @@ pub fn listing_a_fresh_workspace_is_empty_test() {
     let assert Ok(gateway) =
       actor.start_with_capabilities(
         option.Some(policy),
-        option.None,
+        option.Some(test_budget.unlimited()),
         option.None,
         manifests,
         fn(_, _) { Error("the raw executor must not run file_system") },
@@ -122,7 +123,7 @@ fn external_reader_gateway(
   let assert Ok(gateway) =
     actor.start_with_capabilities(
       option.Some(policy),
-      option.None,
+      option.Some(test_budget.unlimited()),
       option.None,
       manifests,
       fn(_, _) { Error("the raw executor must not run file_system") },
@@ -235,7 +236,7 @@ pub fn computador_paths_skip_the_host_workspace_policy_test() {
     let assert Ok(gateway) =
       actor.start_with_capabilities(
         option.Some(policy),
-        option.None,
+        option.Some(test_budget.unlimited()),
         option.None,
         manifests,
         fn(_, _) { Error("unused") },

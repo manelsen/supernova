@@ -17,6 +17,7 @@ import supernova/core/closed_group/pure as cg_pure
 import supernova/core/resource_ledger/actor as ledger_actor
 import supernova/core/resource_ledger/types as ledger_types
 import supernova/core/syscall/actor as syscall_actor
+import test_budget
 
 @external(erlang, "erlang", "monotonic_time")
 fn monotonic_native() -> Int
@@ -255,7 +256,7 @@ fn admin_gateway(
   let assert Ok(gateway) =
     syscall_actor.start_with_capabilities(
       None,
-      None,
+      Some(test_budget.unlimited()),
       None,
       manifests,
       fn(name, _args) {

@@ -345,7 +345,7 @@ fn run_executor_for_context(
         )
       #(result, drain_rounds(rounds, []))
     }
-    _, _ -> #(executor.run(messages, llm_config, tools), [])
+    _, _ -> #(ungoverned_run(messages, llm_config, tools), [])
   }
 }
 
@@ -379,7 +379,31 @@ fn run_executor_for_context_with_purpose(
         ),
       )
     }
-    _, _ -> executor.run(messages, llm_config, tools)
+    _, _ -> ungoverned_run(messages, llm_config, tools)
+  }
+}
+
+/// `executor.run`, unless production refuses it (`ungoverned_turn`).
+fn ungoverned_run(
+  messages: List(provider.ChatMessage),
+  llm_config: provider.ProviderConfig,
+  tools: List(provider.ToolDefinition),
+) -> Result(provider.ChatResponse, executor.ExecutorError) {
+  ungoverned_turn(closed_group_global.is_enforced(), fn() {
+    executor.run(messages, llm_config, tools)
+  })
+}
+
+/// A turn with no closed-group context or runtime runs without the gateway
+/// only outside production; in production it is refused (PRD-E, E-04).
+pub fn ungoverned_turn(
+  enforced: Bool,
+  run: fn() -> Result(provider.ChatResponse, executor.ExecutorError),
+) -> Result(provider.ChatResponse, executor.ExecutorError) {
+  case enforced {
+    True ->
+      Error(executor.PolicyDenied("kernel policy unavailable for this turn"))
+    False -> run()
   }
 }
 
@@ -401,7 +425,7 @@ fn run_executor_for_name(
           call_id_override: Some(call_id),
         ),
       )
-    None -> executor.run(messages, llm_config, [])
+    None -> ungoverned_run(messages, llm_config, [])
   }
 }
 

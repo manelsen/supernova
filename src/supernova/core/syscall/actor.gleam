@@ -257,7 +257,17 @@ fn check_budget_policy(
         Error(exceeded) -> Error(exceeded.message)
       }
     }
-    None -> Ok(Nil)
+    None -> budget_unavailable(actor_state)
+  }
+}
+
+/// No budget policy: allowed only without capability manifests (development
+/// and tests); in production the call is denied, like a missing workspace
+/// policy (PRD-E, E-04).
+fn budget_unavailable(actor_state: ActorState) -> Result(Nil, String) {
+  case dict.is_empty(actor_state.capability_manifests) {
+    True -> Ok(Nil)
+    False -> Error("budget policy unavailable")
   }
 }
 
@@ -521,7 +531,7 @@ fn check_tool_budget(
   amount: Int,
 ) -> Result(Nil, String) {
   case actor_state.budget_policy {
-    None -> Ok(Nil)
+    None -> budget_unavailable(actor_state)
     Some(policy) -> {
       case
         budget_actor.check(

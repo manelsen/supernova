@@ -15,6 +15,7 @@ import supernova/core/capability_manifest/types as cap_types
 import supernova/core/session/history_store.{HistoryStore, StoredMessage}
 import supernova/core/syscall/actor
 import supernova/tools/buscar_conversa
+import test_budget
 import test_workspace
 
 // 2026-11-26 12:00 UTC, in milliseconds.
@@ -211,7 +212,7 @@ fn member_gateway() -> actor.SyscallGateway {
   let assert Ok(gateway) =
     actor.start_with_capabilities(
       option.None,
-      option.None,
+      option.Some(test_budget.unlimited()),
       option.None,
       manifests,
       fn(_, _) { Error("the raw executor must not run buscar_conversa") },

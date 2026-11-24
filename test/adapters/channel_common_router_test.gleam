@@ -7,6 +7,7 @@ import gleeunit
 import gleeunit/should
 import supernova/adapters/channel_common_router as router
 import supernova/channel/port
+import supernova/core/executor
 import supernova/core/session/supervisor as session_supervisor
 import supernova/llm/provider
 import test_workspace
@@ -665,4 +666,17 @@ pub fn workspace_root_defaults_to_workspaces_and_respects_env_test() {
     Ok(old) -> test_workspace.set_workspace_root(old)
     Error(_) -> test_workspace.reset_workspace_root()
   }
+}
+
+/// PRD-E, E-04: without the closed-group context, production refuses the
+/// turn instead of running raw tools; development still runs it.
+pub fn an_ungoverned_turn_is_refused_in_production_test() {
+  router.ungoverned_turn(True, fn() { panic as "must not run" })
+  |> should.equal(
+    Error(executor.PolicyDenied("kernel policy unavailable for this turn")),
+  )
+  router.ungoverned_turn(False, fn() {
+    Error(executor.MaxDepthExceeded(depth: 0))
+  })
+  |> should.equal(Error(executor.MaxDepthExceeded(depth: 0)))
 }

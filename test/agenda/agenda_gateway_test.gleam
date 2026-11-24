@@ -7,6 +7,7 @@ import supernova/agenda/store
 import supernova/config
 import supernova/core/capability_manifest/types as cap_types
 import supernova/core/syscall/actor
+import test_budget
 import test_workspace
 
 const now = 1_795_273_200_000
@@ -25,7 +26,7 @@ fn member_gateway() -> actor.SyscallGateway {
   let assert Ok(gateway) =
     actor.start_with_capabilities(
       option.None,
-      option.None,
+      option.Some(test_budget.unlimited()),
       option.None,
       manifests,
       fn(_, _) { Error("the raw executor must not run agenda") },
