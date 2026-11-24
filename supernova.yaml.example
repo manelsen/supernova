@@ -141,6 +141,12 @@ budgets:
 #     # could run arbitrary JS in visited pages. Keep false unless required.
 #     # Env override: SUPERNOVA_BROWSER_ALLOW_EVALUATE=true
 #     allow_evaluate: false
+#   # Seconds a tool may run before it is stopped and the model is told so.
+#   # Built in: 60 for every tool, 300 for computador. Tool results longer
+#   # than 20,000 characters are cut, with a notice, whatever the tool.
+#   timeouts:
+#     default: 60
+#     computador: 300
 
 # Closed group (PRD B1)
 # New instances deny everyone until configured. Copy a real id from `/eu`.

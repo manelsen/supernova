@@ -16,6 +16,7 @@ import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/budget_policy/types as budget_types
@@ -25,6 +26,7 @@ import supernova/core/complexity_router
 import supernova/core/exception_guard
 import supernova/core/prompt_log
 import supernova/core/tool_dispatch
+import supernova/core/tool_limits
 import supernova/core/turn_outcome
 import supernova/llm/circuit_breaker/actor as cb_actor
 import supernova/llm/circuit_breaker/global as cb_global
@@ -871,7 +873,7 @@ fn execute_tool_calls(
     |> list.map(fn(pair) {
       let #(call, output) = pair
       let #(text, images) = tool_images.split(output)
-      #(provider.tool_result_message(call.id, text), images)
+      #(provider.tool_result_message(call.id, tool_limits.cap(text)), images)
     })
   list.append(
     list.map(results, fn(result) { result.0 }),
@@ -971,10 +973,19 @@ fn execute_single_tool_call(
     True -> {
       let start = current_timestamp()
       with_tool_span(call.name, fn() {
-        let result = case context.invoke_tool {
-          Some(invoke) -> invoke(call.name, call.arguments)
-          None -> dispatch_builtin_tool(call.name, call.arguments)
-        }
+        let limit_ms = tool_limits.timeout_ms(tool_limits.current(), call.name)
+        let result =
+          within(limit_ms, fn() {
+            case context.invoke_tool {
+              Some(invoke) -> invoke(call.name, call.arguments)
+              None -> dispatch_builtin_tool(call.name, call.arguments)
+            }
+          })
+          |> result.unwrap(Error(
+            "a ferramenta passou do tempo-limite de "
+            <> int.to_string(limit_ms / 1000)
+            <> " s e foi interrompida",
+          ))
         case result {
           Ok(output) -> {
             let elapsed = current_timestamp() - start
@@ -989,6 +1000,29 @@ fn execute_single_tool_call(
           }
         }
       })
+    }
+  }
+}
+
+/// `work` in a process of its own, killed when `timeout_ms` passes first. A
+/// crash inside it is reported like a crash here.
+fn within(
+  timeout_ms: Int,
+  work: fn() -> Result(String, String),
+) -> Result(Result(String, String), Nil) {
+  let reply = process.new_subject()
+  let worker =
+    process.spawn_unlinked(fn() {
+      case exception_guard.run(fn() { process.send(reply, work()) }) {
+        Ok(Nil) -> Nil
+        Error(reason) -> process.send(reply, Error("tool crashed: " <> reason))
+      }
+    })
+  case process.receive(reply, timeout_ms) {
+    Ok(value) -> Ok(value)
+    Error(Nil) -> {
+      process.kill(worker)
+      Error(Nil)
     }
   }
 }
