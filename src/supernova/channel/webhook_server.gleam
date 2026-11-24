@@ -14,7 +14,6 @@ import gleam/http
 import gleam/http/request
 import gleam/http/response
 import gleam/list
-import gleam/otp/actor
 import mist
 import supernova/channel/port
 
@@ -125,17 +124,40 @@ pub opaque type Server {
 
 /// Listen on `bind:port`; routes are looked up per request, so channels may
 /// register before or after.
+///
+/// The listener lives under a keeper process that nobody is linked to: a
+/// port already in use is an `Error` here, never a crash of the caller.
 pub fn start(bind: String, port: Int) -> Result(Server, String) {
-  let started =
-    fn(req) { serve(req) }
-    |> mist.new
-    |> mist.bind(bind)
-    |> mist.port(port)
-    |> mist.start
-  case started {
-    Ok(actor.Started(pid: pid, ..)) -> Ok(Server(pid))
-    Error(_) -> Error("webhook server failed to listen on port " <> int(port))
+  let reply = process.new_subject()
+  let keeper =
+    process.spawn_unlinked(fn() {
+      process.trap_exits(True)
+      let started =
+        fn(req) { serve(req) }
+        |> mist.new
+        |> mist.bind(bind)
+        |> mist.port(port)
+        |> mist.start
+      case started {
+        Ok(_) -> {
+          process.send(reply, Ok(Nil))
+          // Keep the listener until stopped.
+          process.sleep_forever()
+        }
+        Error(_) -> process.send(reply, Error(Nil))
+      }
+    })
+  case process.receive(reply, 5000) {
+    Ok(Ok(Nil)) -> Ok(Server(keeper))
+    _ -> {
+      process.kill(keeper)
+      Error("webhook server failed to listen on port " <> int(port))
+    }
   }
+}
+
+pub fn stop(server: Server) -> Nil {
+  process.kill(server.pid)
 }
 
 const server_key = "supernova_webhook_server"
@@ -166,11 +188,6 @@ pub fn stop_global() -> Nil {
     }
     _ -> Nil
   }
-}
-
-pub fn stop(server: Server) -> Nil {
-  process.unlink(server.pid)
-  process.kill(server.pid)
 }
 
 fn serve(

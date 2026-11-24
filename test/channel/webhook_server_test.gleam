@@ -139,7 +139,12 @@ pub fn the_instance_listener_starts_and_stops_test() {
   post(18_802, "/webhook/ninguem", [], <<"x">>).0 |> should.equal(404)
   webhook_server.stop_global()
   webhook_server.stop_global()
-  webhook_server.start("127.0.0.1", 18_802)
-  |> should.be_ok
-  |> webhook_server.stop
+}
+
+/// A port already in use is an error for the caller, not a crash: the boot
+/// goes on with a warning.
+pub fn a_busy_port_is_an_error_not_a_crash_test() {
+  let assert Ok(first) = webhook_server.start("127.0.0.1", 18_803)
+  webhook_server.start("127.0.0.1", 18_803) |> should.be_error
+  webhook_server.stop(first)
 }
