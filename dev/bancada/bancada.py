@@ -155,6 +155,14 @@ VARIANTES = {
 }
 
 
+FORNECEDOR = "perplexity"  # da memória da Supernova (--fornecedor)
+
+
+def chave_memoria():
+    env = "PERPLEXITY_API_KEY" if FORNECEDOR == "perplexity" else "GEMINI_API_KEY"
+    return {"provider": FORNECEDOR, "key": os.environ[env]}
+
+
 class Busca:
     """Servidor Erlang da buscar_conversa real (um processo, serializado)."""
 
@@ -180,15 +188,14 @@ class Busca:
 
     def porteiro(self, mensagem):
         """O porteiro da Supernova (supernova/memory/gate)."""
-        return self.pedir({"op": "gate", "message": mensagem, "key": os.environ["GEMINI_API_KEY"]})
+        return self.pedir({"op": "gate", "message": mensagem, **chave_memoria()})
 
     def lembrar(self, dirdados, assunto, registro):
         """O lembrar da Supernova (supernova/memory/recall)."""
         t0 = time.time()
-        r = self.pedir({"op": "lembrar", "dir": dirdados, "subject": assunto,
-                        "key": os.environ["GEMINI_API_KEY"]})
+        r = self.pedir({"op": "lembrar", "dir": dirdados, "subject": assunto, **chave_memoria()})
         registro.append({"decision_s": round(time.time() - t0, 2), "decision_chamadas": 1,
-                         "decision_tokens": r["decision_tokens"], "lista": r["lista"],
+                         "decision_tokens": r["decision_tokens"], "lista": r["lista"], "faixa": r.get("band"),
                          "falha": r["failure"]})
         return r["out"]
 
@@ -657,8 +664,9 @@ def julgar(q, resposta, historico):
 
 
 def rodar(args):
-    global LEMBRAR_MODO
+    global LEMBRAR_MODO, FORNECEDOR
     LEMBRAR_MODO = args.lembrar
+    FORNECEDOR = args.fornecedor
     historico = dados.gerar(args.mensagens)
     dirdados = os.path.join(args.dados, f"m{args.mensagens}")
     dados.escrever(dirdados, historico)
@@ -742,6 +750,7 @@ def main():
     r.add_argument("--mensagens", type=int, default=3000)
     r.add_argument("--paralelo", type=int, default=6)
     r.add_argument("--lembrar", default="barato", choices=["barato", "plano", "supernova"])
+    r.add_argument("--fornecedor", default="perplexity", choices=["perplexity", "gemini"])
     r.add_argument("--dados", default="/tmp/bancada-dados")
     r.add_argument("--saida", required=True)
     sub.add_parser("porteiro")

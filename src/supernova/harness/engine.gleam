@@ -197,7 +197,9 @@ fn build_config(
         ..base.conversation,
         recall: scenario_recall(
           loaded.scenario.recall,
-          envoy.get("SUPERNOVA_GEMINI_API_KEY"),
+          envoy.get(config.recall_key_env(
+            config.default_recall_config().provider,
+          )),
         ),
       ),
     ),

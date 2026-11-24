@@ -229,7 +229,8 @@ pub fn conversation_history_limit_test() {
 pub fn conversation_recall_test() {
   let default = parsed("data_dir: d\n").conversation.recall
   default.enabled |> should.be_false()
-  default.gate_threshold |> should.equal(0.1)
+  default.provider |> should.equal("perplexity")
+  default.gate_threshold |> should.equal(option.None)
   default.gate_timeout_ms |> should.equal(2000)
   default.recall_timeout_ms |> should.equal(15_000)
   let on =
@@ -237,7 +238,7 @@ pub fn conversation_recall_test() {
       "conversation:\n  recall:\n    enabled: true\n    gate_threshold: 0.3\n    gate_timeout_ms: 500\n    recall_timeout_ms: 9000\n",
     ).conversation.recall
   on.enabled |> should.be_true()
-  on.gate_threshold |> should.equal(0.3)
+  on.gate_threshold |> should.equal(option.Some(0.3))
   on.gate_timeout_ms |> should.equal(500)
   on.recall_timeout_ms |> should.equal(9000)
   let assert Ok(example) =

@@ -8,26 +8,72 @@ import supernova/memory/decision
 pub type Settings {
   Settings(
     transport: decision.Transport,
-    api_key: String,
-    gate_threshold: Float,
+    /// Provider, key and models.
+    endpoint: decision.Endpoint,
+    /// Cutoffs measured for that provider: probabilities are not on the same
+    /// scale from one model to another.
+    thresholds: Thresholds,
     gate_timeout_ms: Int,
     recall_timeout_ms: Int,
-    /// Record a call's cost for `principal`: Decision tokens and embedding
-    /// tokens (the ledger, wired at boot).
-    charge: fn(String, Int, Int) -> Nil,
-    /// Whether the day's spend still allows the memory; past the cap the
-    /// gate and `lembrar` stand aside and `buscar_conversa` remains.
-    within_budget: fn() -> Bool,
+    /// Admit a paid call for `principal`, estimated at this many input
+    /// tokens, before making it (the ledger, wired at boot). Refused past the
+    /// day's cap or without a ledger (fail closed): the gate and `lembrar`
+    /// stand aside and `buscar_conversa` remains. Admitted, it gives the
+    /// function that settles the call with its decision and embedding
+    /// tokens; settling with nothing spent releases the reservation.
+    admit: fn(String, Int) -> Result(Settle, Nil),
   )
 }
 
-/// No ledger: nothing recorded, always within budget (tests, the bench).
-pub fn no_charge(_principal: String, _decision: Int, _embed: Int) -> Nil {
-  Nil
+/// Cutoffs of the gate and of `lembrar`'s tone.
+pub type Thresholds {
+  Thresholds(
+    /// The gate fires at this probability or more.
+    gate: Float,
+    /// Below this general probability: "acho que não".
+    unlikely_below: Float,
+    /// From this general probability: confident.
+    likely_from: Float,
+    /// Excerpts shown from this probability.
+    shown_from: Float,
+  )
 }
 
-pub fn always_within() -> Bool {
-  True
+/// The cutoffs measured on the bench and on LongMemEval for each provider
+/// (docs/relatorios/BUSCA-bancada.md).
+pub fn default_thresholds(provider: decision.Provider) -> Thresholds {
+  case provider {
+    // Gate: four-way choice, 20/20 and 0/40 on unseen messages. Tone: 2/60
+    // answerable questions below 0.05, none of 30 abstentions from 0.6.
+    decision.Perplexity ->
+      Thresholds(
+        gate: 0.25,
+        unlikely_below: 0.05,
+        likely_from: 0.6,
+        shown_from: 0.1,
+      )
+    decision.Gemini ->
+      Thresholds(
+        gate: 0.1,
+        unlikely_below: 0.2,
+        likely_from: 0.75,
+        shown_from: 0.2,
+      )
+  }
+}
+
+/// Settles an admitted call: decision tokens, embedding tokens.
+pub type Settle =
+  fn(Int, Int) -> Nil
+
+/// Admits every call and records nothing (tests, the bench).
+pub fn no_ledger(_principal: String, _estimate: Int) -> Result(Settle, Nil) {
+  Ok(fn(_decision, _embed) { Nil })
+}
+
+/// Refuses every call (past the cap).
+pub fn refuse(_principal: String, _estimate: Int) -> Result(Settle, Nil) {
+  Error(Nil)
 }
 
 const key = "supernova_memory_settings"

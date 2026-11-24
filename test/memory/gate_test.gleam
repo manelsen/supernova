@@ -21,12 +21,11 @@ const base = 1_795_694_400_000
 fn settings(transport: decision.Transport) -> runtime.Settings {
   runtime.Settings(
     transport: transport,
-    api_key: "k",
-    gate_threshold: 0.1,
+    endpoint: decision.endpoint(decision.Gemini, "k"),
+    thresholds: runtime.default_thresholds(decision.Gemini),
     gate_timeout_ms: 200,
     recall_timeout_ms: 5000,
-    charge: runtime.no_charge,
-    within_budget: runtime.always_within,
+    admit: runtime.no_ledger,
   )
 }
 
@@ -34,7 +33,10 @@ fn settings(transport: decision.Transport) -> runtime.Settings {
 fn fake(past: String, seen: process.Subject(String)) -> decision.Transport {
   fn(url, _headers, body) {
     process.send(seen, body)
-    case url == decision.embed_url, string.contains(body, "\"passado\"") {
+    case
+      url == decision.embed_url(decision.Gemini),
+      string.contains(body, "\"passado\"")
+    {
       True, _ -> Ok(#(200, "{\"embedding\":{\"values\":[1,0]}}"))
       False, True ->
         Ok(#(200, "{\"answers\":{\"passado\":{\"noul\":" <> past <> "}}}"))
@@ -209,9 +211,9 @@ pub fn metrics_carry_no_text_test() {
   })
 }
 
-/// Every call is charged to the person; past the day's cap the gate and
-/// lembrar stand aside (6.7).
-pub fn calls_are_charged_and_the_cap_stops_the_memory_test() {
+/// Every call is admitted for the person before it is made and settled
+/// after; past the day's cap the gate and lembrar stand aside (6.7).
+pub fn calls_are_admitted_and_the_cap_stops_the_memory_test() {
   use dir <- with_dir
   let store = HistoryStore(data_dir: dir, limit: 100)
   let assert Ok(Nil) =
@@ -223,8 +225,11 @@ pub fn calls_are_charged_and_the_cap_stops_the_memory_test() {
   let charging =
     runtime.Settings(
       ..settings(fake("0.93", seen)),
-      charge: fn(principal, decision_tokens, embed_tokens) {
-        process.send(charges, #(principal, decision_tokens, embed_tokens))
+      admit: fn(principal, estimate) {
+        process.send(charges, #("admit " <> principal, estimate, 0))
+        Ok(fn(decision_tokens, embed_tokens) {
+          process.send(charges, #("settle", decision_tokens, embed_tokens))
+        })
       },
     )
   let _ =
@@ -236,15 +241,16 @@ pub fn calls_are_charged_and_the_cap_stops_the_memory_test() {
       "telegram:42",
       -180,
     )
-  // The gate, then lembrar (its Decision tokens and its embeddings).
-  let assert Ok(#("telegram:42", _, 0)) = process.receive(charges, 1000)
-  let assert Ok(#("telegram:42", _, embedded)) = process.receive(charges, 1000)
+  // The gate: admitted, then settled with no embeddings.
+  let assert Ok(#("admit telegram:42", _, 0)) = process.receive(charges, 1000)
+  let assert Ok(#("settle", _, 0)) = process.receive(charges, 1000)
+  // Then lembrar: admitted, then settled with its embeddings.
+  let assert Ok(#("admit telegram:42", _, 0)) = process.receive(charges, 1000)
+  let assert Ok(#("settle", _, embedded)) = process.receive(charges, 1000)
   { embedded > 0 } |> should.be_true()
 
   let capped =
-    runtime.Settings(..settings(fake("0.93", seen)), within_budget: fn() {
-      False
-    })
+    runtime.Settings(..settings(fake("0.93", seen)), admit: runtime.refuse)
   gate.ask(capped, "lembra do médico?") |> should.equal(gate.OverBudget)
   let #(messages, _) =
     gate.prepare_with(
@@ -281,4 +287,39 @@ pub fn prepare_reads_the_published_settings_test() {
   runtime.clear()
   messages |> should.equal(turn())
   let assert Some(gate.Report(verdict: gate.Quiet(_), ..)) = report
+}
+
+/// With the Decider, the gate asks what the message is, among four kinds;
+/// the two kinds about the past add up.
+pub fn the_decider_gate_is_a_choice_test() {
+  let seen = process.new_subject()
+  let transport = fn(_url, _headers, body) {
+    process.send(seen, body)
+    Ok(#(
+      200,
+      "{\"answers\":{\"passado\":{\"type\":\"choice\",\"probabilities\":{\"dado_pessoal\":0.2,\"lembranca\":0.1,\"geral\":0.4,\"conversa\":0.3}}}}",
+    ))
+  }
+  let decider =
+    runtime.Settings(
+      ..settings(transport),
+      endpoint: decision.endpoint(decision.Perplexity, "k"),
+      thresholds: runtime.default_thresholds(decision.Perplexity),
+    )
+  // 0.2 + 0.1 = 0.3, over the Decider's 0.25.
+  let assert gate.Fired(p) = gate.ask(decider, "qual é o telefone da clínica?")
+  { p >. 0.29 && p <. 0.31 } |> should.be_true()
+  let assert Ok(body) = process.receive(seen, 1000)
+  body |> string.contains("\"type\":\"choice\"") |> should.be_true()
+  body |> string.contains("\"dado_pessoal\"") |> should.be_true()
+  body |> string.contains("\"state\":") |> should.be_true()
+  // Below the cutoff: quiet.
+  let quiet = fn(_url, _headers, _body) {
+    Ok(#(
+      200,
+      "{\"answers\":{\"passado\":{\"probabilities\":{\"dado_pessoal\":0.01,\"lembranca\":0.02,\"geral\":0.07,\"conversa\":0.9}}}}",
+    ))
+  }
+  let assert gate.Quiet(_) =
+    gate.ask(runtime.Settings(..decider, transport: quiet), "bom dia!")
 }

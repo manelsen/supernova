@@ -17,10 +17,15 @@ import supernova/memory/runtime
 pub const question =
   "Na mensagem da pessoa, ela está corrigindo ou contestando algo que a agente disse lembrar (dizendo que não foi assim, que foi outra coisa, ou que ela contou sim)?"
 
+/// Input tokens the check is admitted for: a reply and a message.
+const estimate = 1500
+
 pub type Correction {
   Corrected
   NotCorrected
   Unknown(decision.DecisionError)
+  /// Not asked: the day's spend reached the cap.
+  NotChecked
 }
 
 /// `lembrar` ran in this person's turn: check the next message.
@@ -66,23 +71,30 @@ pub fn ask(
     <> string.trim(reply)
     <> "\n\nMensagem seguinte da pessoa:\n"
     <> string.trim(message)
-  case
-    decision.decide(
-      settings.transport,
-      settings.api_key,
-      input,
-      [#("corrige", question)],
-      settings.gate_timeout_ms,
-    )
-  {
-    Error(error) -> Unknown(error)
-    Ok(answers) -> {
-      settings.charge(principal, answers.input_tokens, 0)
-      case dict.get(answers.probabilities, "corrige") |> result.unwrap(0.0) {
-        p if p >=. 0.5 -> Corrected
-        _ -> NotCorrected
+  case settings.admit(principal, estimate) {
+    Error(Nil) -> NotChecked
+    Ok(settle) ->
+      case
+        decision.decide(
+          settings.transport,
+          settings.endpoint,
+          input,
+          [decision.YesNo("corrige", question)],
+          settings.gate_timeout_ms,
+        )
+      {
+        Error(error) -> {
+          settle(0, 0)
+          Unknown(error)
+        }
+        Ok(answers) -> {
+          settle(answers.input_tokens, 0)
+          case dict.get(answers.yes, "corrige") |> result.unwrap(0.0) {
+            p if p >=. 0.5 -> Corrected
+            _ -> NotCorrected
+          }
+        }
       }
-    }
   }
 }
 

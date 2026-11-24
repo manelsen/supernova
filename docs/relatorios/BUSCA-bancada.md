@@ -326,6 +326,53 @@ Bem calibrado embaixo, onde fica o "acho que não"; subconfiante no meio. A
 palavra "calibrado" fica para a faixa baixa. O que o modelo faz bem é
 ordenar.
 
+### Gemini Decision 1 × Perplexity Decider v1.3
+
+O Decider v1.3 [6] é da mesma família de modelos de decisão, com pesos
+abertos (Apache 2.0), 27B e Flash (4B), a US$ 0,02 e 0,01 por milhão de
+tokens (Gemini: 0,10). Pela API direta e pelo OpenRouter (só a variante
+`:free` serve o v1.3; o alias `~perplexity/pplx-decider-latest` ainda
+apontava para o v1.2), as probabilidades são idênticas e determinísticas.
+
+**Pergunta geral do `lembrar`, LongMemEval, validação cruzada** (corte
+escolhido numa metade, testado na outra, 20 sorteios; ~5% de "nunca"
+falso):
+
+| | Abstenções pegas |
+|---|---|
+| Gemini, sim/não | 62% |
+| Gemini, três saídas (falaram / parecido / nunca) | 32% |
+| Decider 27B, sim/não ou três saídas | 72% |
+| Decider Flash, sim/não | 76% |
+
+As três saídas pareciam ganhar no Decider (26/30) com o corte escolhido nos
+mesmos dados; fora da amostra empatam com o sim/não.
+
+**`locate`** (trecho literal, só no v1.3 e só pela API da Perplexity): quando
+devolve um trecho, ele está certo (27B 32/35; Flash 15/15), mas na dúvida
+devolve vazio (27B acha 25/60 no LongMemEval, 1/10 em várias sessões, 0/10 em
+preferências). Não substitui as perguntas por trecho.
+
+**Porteiro.** Com a pergunta sim/não, o Decider perdia perguntas implícitas
+("qual é o telefone da clínica?"): em 60 mensagens novas, Gemini 20/20 e 0/40,
+Decider 27B 17/20, Flash 16/20 e 3/40. Cinco formulações foram ajustadas em
+131 mensagens já vistas; a de **múltipla escolha** ("o que é esta mensagem?":
+dado pessoal, lembrança, conhecimento geral, conversa; soma das duas
+primeiras) separou com folga no 27B (perguntas do passado ≥ 0,67, comuns
+≤ 0,09; margem de 3,6 log-odds, contra < 1 nas outras). Corte fixado em
+0,25 e validado uma vez em 60 mensagens escritas antes do ajuste: **20/20
+(implícitas 12/12) e 0/40**, igual ao Gemini. O Flash não separou em
+nenhuma formulação.
+
+**Embeddings.** `pplx-embed-v2-context-0.6b` (US$ 0,02 por milhão, ZDR por
+padrão) contra `gemini-embedding-2` (US$ 0,20): lista curta com a resposta em
+59/60 contra 59/59 no LongMemEval (a de diferença, temporal, ficou em 55º
+no vetor); 1º lugar em 39 contra 37; bancada, os 12 fatos em 1º ou 3º.
+
+**Escolha (D6):** Perplexity como padrão, Decider 27B no porteiro (múltipla
+escolha) e no `lembrar`, embeddings da Perplexity. O Gemini fica por
+configuração, com os cortes dele.
+
 ## Limites
 
 - Um histórico sintético e uma semente; 16 perguntas. Mostra
@@ -366,3 +413,6 @@ recusas por segurança, sem texto).
    Benchmarking Chat Assistants on Long-Term Interactive Memory*. ICLR 2025.
    arXiv:2410.10813. <https://arxiv.org/abs/2410.10813>. Dados (MIT):
    <https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned>.
+6. Perplexity. *Decisions API* e os modelos `pplx-decider-v1.3` e
+   `pplx-decider-flash-v1.3`, 11/2026. <https://docs.perplexity.ai/docs/decisions/quickstart>;
+   pesos (Apache 2.0): <https://huggingface.co/perplexity-ai/pplx-decider-v1.3>.

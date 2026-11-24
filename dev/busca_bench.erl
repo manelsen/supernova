@@ -410,15 +410,20 @@ buscar(Req) ->
         {error, E} -> E
     end.
 
-%% The memory's real settings (supernova/memory/runtime.Settings), with the
-%% real transport and no ledger.
+%% The memory's real settings (supernova/memory/runtime.Settings): the real
+%% transport, the provider asked for ("perplexity" by default), its
+%% cutoffs, and no ledger.
 settings(Req) ->
+    Provider = case maps:get(<<"provider">>, Req, <<"perplexity">>) of
+                   <<"gemini">> -> gemini;
+                   _ -> perplexity
+               end,
     {settings,
      'supernova@memory@decision':hackney_transport(),
-     maps:get(<<"key">>, Req),
-     0.1, 2000, 15000,
-     fun(_, _, _) -> nil end,
-     fun() -> true end}.
+     'supernova@memory@decision':endpoint(Provider, maps:get(<<"key">>, Req)),
+     'supernova@memory@runtime':default_thresholds(Provider),
+     2000, 15000,
+     fun(_, _) -> {ok, fun(_, _) -> nil end} end}.
 
 gate(Req) ->
     case 'supernova@memory@gate':ask(settings(Req), maps:get(<<"message">>, Req)) of
@@ -431,15 +436,17 @@ gate(Req) ->
     end.
 
 lembrar(Req) ->
-    {outcome, Text, Probability, Shortlist, Tokens, Embedded, Failure} =
+    {outcome, Text, Probability, Band, Shortlist, Tokens, Embedded, Cost, Failure} =
         'supernova@memory@recall':recall(settings(Req), maps:get(<<"dir">>, Req),
                                          <<"sim:marta">>, -180,
                                          maps:get(<<"subject">>, Req)),
     #{<<"out">> => Text,
       <<"p">> => case Probability of {some, P} -> P; none -> null end,
       <<"lista">> => Shortlist,
+      <<"band">> => Band,
       <<"decision_tokens">> => Tokens,
-      <<"embedded_chars">> => Embedded,
+      <<"embed_tokens">> => Embedded,
+      <<"cost_microusd">> => Cost,
       <<"failure">> => case Failure of
                            {some, E} -> 'supernova@memory@decision':error_summary(E);
                            none -> null

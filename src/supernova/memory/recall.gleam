@@ -43,18 +43,16 @@ pub const by_vector = 30
 
 pub const by_words = 10
 
-/// Excerpts shown, at most, and the least probability to show one.
+/// Excerpts shown, at most; the least probability to show one, and the tone
+/// bands, are the provider's (runtime.Thresholds).
 pub const shown = 3
 
-pub const shown_from = 0.2
+/// Input tokens a `lembrar` is admitted for: the short list in compact form
+/// (~6 thousand on the bench, ~11 thousand on LongMemEval), with room.
+const recall_estimate = 20_000
 
-/// Tone bands of the general probability.
-pub const unlikely_below = 0.2
-
-pub const likely_from = 0.75
-
-/// Embeddings at the same time while indexing.
-const index_workers = 8
+/// Embedding requests at the same time while indexing.
+const index_workers = 4
 
 /// The general question; `{m}` is the subject.
 pub const general_question =
@@ -66,9 +64,13 @@ pub type Outcome {
   Outcome(
     text: String,
     probability: Option(Float),
+    /// "unlikely", "maybe", "likely", or "none" without a probability.
+    band: String,
     shortlist: Int,
     decision_tokens: Int,
-    embedded_chars: Int,
+    embed_tokens: Int,
+    /// What the call cost, in millionths of a dollar.
+    cost_microusd: Int,
     failure: Option(decision.DecisionError),
   )
 }
@@ -92,13 +94,18 @@ pub fn recall(
   offset: Int,
   subject: String,
 ) -> Outcome {
-  case string.trim(subject), settings.within_budget() {
-    "", _ -> plain("lembrar precisa de um assunto.")
-    _, False ->
+  let subject = string.trim(subject)
+  case subject, settings.admit(principal, recall_estimate) {
+    "", Ok(settle) -> {
+      settle(0, 0)
+      plain("lembrar precisa de um assunto.")
+    }
+    "", Error(Nil) -> plain("lembrar precisa de um assunto.")
+    _, Error(Nil) ->
       plain(
         "lembrar indisponível hoje: o limite de gasto do dia foi atingido. Procure com buscar_conversa, usando palavras do assunto.",
       )
-    subject, True -> {
+    subject, Ok(settle) -> {
       let outcome = case
         decision.within(settings.recall_timeout_ms, fn() {
           run(settings, data_dir, principal, offset, subject)
@@ -107,12 +114,17 @@ pub fn recall(
         Ok(outcome) -> outcome
         Error(Nil) -> failed(decision.TimedOut, 0, 0)
       }
-      settings.charge(
-        principal,
-        outcome.decision_tokens,
-        outcome.embedded_chars / 2,
-      )
-      outcome
+      settle(outcome.decision_tokens, outcome.embed_tokens)
+      let cost =
+        microusd(
+          outcome.decision_tokens,
+          decision.decision_usd_per_million(settings.endpoint.provider),
+        )
+        + microusd(
+          outcome.embed_tokens,
+          decision.embed_usd_per_million(settings.endpoint.provider),
+        )
+      Outcome(..outcome, cost_microusd: cost)
     }
   }
 }
@@ -138,7 +150,7 @@ fn run(
       case
         decision.embed(
           settings.transport,
-          settings.api_key,
+          settings.endpoint,
           subject,
           decision.Query,
           settings.recall_timeout_ms,
@@ -160,7 +172,7 @@ fn run(
             list,
             subject,
             offset,
-            embedded + string.length(subject),
+            embedded + decision.estimate_tokens(subject),
           )
         }
       }
@@ -183,9 +195,9 @@ fn decide(
     |> list.filter_map(fn(position) { dict.get(compact_at, position) })
     |> string.join("\n\n")
   let questions = [
-    #("falado", string.replace(general_question, "{m}", subject)),
+    decision.YesNo("falado", string.replace(general_question, "{m}", subject)),
     ..list.map(list, fn(position) {
-      #(
+      decision.YesNo(
         "t" <> int.to_string(position + 1),
         "O Trecho "
           <> int.to_string(position + 1)
@@ -198,7 +210,7 @@ fn decide(
   case
     decision.decide(
       settings.transport,
-      settings.api_key,
+      settings.endpoint,
       input,
       questions,
       settings.recall_timeout_ms,
@@ -206,17 +218,14 @@ fn decide(
   {
     Error(error) -> failed(error, 0, embedded)
     Ok(answers) -> {
-      let general =
-        dict.get(answers.probabilities, "falado") |> result.unwrap(0.0)
+      let general = dict.get(answers.yes, "falado") |> result.unwrap(0.0)
       let excerpt_at =
         dict.from_list(list.map(excerpts, fn(e) { #(e.index, e) }))
       let best =
         list
         |> list.filter_map(fn(position) {
-          case
-            dict.get(answers.probabilities, "t" <> int.to_string(position + 1))
-          {
-            Ok(p) if p >=. shown_from -> Ok(#(p, position))
+          case dict.get(answers.yes, "t" <> int.to_string(position + 1)) {
+            Ok(p) if p >=. settings.thresholds.shown_from -> Ok(#(p, position))
             _ -> Error(Nil)
           }
         })
@@ -224,10 +233,13 @@ fn decide(
         |> list.take(shown)
         |> list.sort(fn(a, b) { int.compare(a.1, b.1) })
       let parts = case best {
-        [] -> [tone(general), "Nenhum trecho parece falar disso."]
+        [] -> [
+          tone(settings.thresholds, general),
+          "Nenhum trecho parece falar disso.",
+        ]
         _ ->
           list.flatten([
-            [tone(general), "Trechos mais prováveis:"],
+            [tone(settings.thresholds, general), "Trechos mais prováveis:"],
             list.filter_map(best, fn(item) {
               dict.get(excerpt_at, item.1)
               |> result.map(fn(excerpt) {
@@ -243,18 +255,35 @@ fn decide(
       Outcome(
         text: string.join(parts, "\n\n"),
         probability: Some(general),
+        band: band(settings.thresholds, general),
         shortlist: list.length(list),
         decision_tokens: answers.input_tokens,
-        embedded_chars: embedded,
+        embed_tokens: embedded,
+        cost_microusd: 0,
         failure: None,
       )
     }
   }
 }
 
+/// The band of the general probability, for the metrics.
+pub fn band(thresholds: runtime.Thresholds, probability: Float) -> String {
+  case
+    probability <. thresholds.unlikely_below,
+    probability <. thresholds.likely_from
+  {
+    True, _ -> "unlikely"
+    False, True -> "maybe"
+    False, False -> "likely"
+  }
+}
+
 /// The tone of the answer, from the general probability.
-pub fn tone(probability: Float) -> String {
-  case probability <. unlikely_below, probability <. likely_from {
+pub fn tone(thresholds: runtime.Thresholds, probability: Float) -> String {
+  case
+    probability <. thresholds.unlikely_below,
+    probability <. thresholds.likely_from
+  {
     True, _ ->
       "Pouco provável que vocês tenham falado disso (probabilidade "
       <> two(probability)
@@ -274,11 +303,18 @@ fn plain(text: String) -> Outcome {
   Outcome(
     text: text,
     probability: None,
+    band: "none",
     shortlist: 0,
     decision_tokens: 0,
-    embedded_chars: 0,
+    embed_tokens: 0,
+    cost_microusd: 0,
     failure: None,
   )
+}
+
+/// Tokens × US$ per million, in millionths of a dollar.
+fn microusd(tokens: Int, usd_per_million: Float) -> Int {
+  float.round(int.to_float(tokens) *. usd_per_million)
 }
 
 fn failed(
@@ -297,9 +333,11 @@ fn failed(
       <> why
       <> ". Procure com buscar_conversa, usando palavras do assunto.",
     probability: None,
+    band: "none",
     shortlist: 0,
     decision_tokens: tokens,
-    embedded_chars: embedded,
+    embed_tokens: embedded,
+    cost_microusd: 0,
     failure: Some(error),
   )
 }
@@ -523,41 +561,60 @@ pub fn cosine(a: List(Float), b: List(Float)) -> Float {
 // ---------------------------------------------------------------- index
 
 /// The vector of every excerpt, by position: read from the index, the
-/// missing ones embedded (several at a time) and appended to it. An
-/// excerpt whose embedding fails simply has no vector this time. Returns
-/// the characters embedded, for the ledger.
+/// missing ones embedded (in batches, several at a time) and appended to it.
+/// A vector is keyed by the embedding model and the text, so a change of
+/// provider builds a new index instead of mixing vectors. An excerpt whose
+/// embedding fails simply has no vector this time. Returns the tokens
+/// embedded, for the ledger.
 fn vectors(
   settings: runtime.Settings,
   path: String,
   compact: List(String),
 ) -> #(Dict(Int, List(Float)), Int) {
   let known = read_index(path)
-  let keyed = list.index_map(compact, fn(text, i) { #(i, hash(text), text) })
-  let missing = list.filter(keyed, fn(item) { !dict.has_key(known, item.1) })
-  let fresh =
-    parallel(missing, index_workers, fn(item) {
-      decision.embed(
-        settings.transport,
-        settings.api_key,
-        item.2,
-        decision.Document,
-        settings.recall_timeout_ms,
-      )
-      |> result.map(fn(vector) {
-        let _ = append_file(path, index_line(item.1, vector))
-        #(item.1, vector)
-      })
+  let model = settings.endpoint.embed_model
+  let keyed =
+    list.index_map(compact, fn(text, i) {
+      #(i, hash(model <> "\n" <> text), text)
     })
+  let missing = list.filter(keyed, fn(item) { !dict.has_key(known, item.1) })
+  let batches =
+    parallel(
+      list.sized_chunk(missing, decision.embed_batch),
+      index_workers,
+      fn(batch) {
+        decision.embed_many(
+          settings.transport,
+          settings.endpoint,
+          list.map(batch, fn(item) { item.2 }),
+          decision.Document,
+          settings.recall_timeout_ms,
+        )
+        |> result.map(fn(answer) {
+          let #(vectors, tokens) = answer
+          let pairs =
+            list.zip(batch, vectors)
+            |> list.map(fn(pair) { #(pair.0.1, pair.1) })
+          let _ =
+            append_file(
+              path,
+              pairs
+                |> list.map(fn(p) { index_line(p.0, p.1) })
+                |> string.concat,
+            )
+          #(pairs, tokens)
+        })
+      },
+    )
     |> list.filter_map(fn(r) { r })
+  let fresh = list.flat_map(batches, fn(b) { b.0 })
   let all = dict.merge(known, dict.from_list(fresh))
   let by_position =
     list.filter_map(keyed, fn(item) {
       dict.get(all, item.1) |> result.map(fn(v) { #(item.0, v) })
     })
     |> dict.from_list
-  let embedded =
-    missing |> list.map(fn(item) { string.length(item.2) }) |> int.sum
-  #(by_position, embedded)
+  #(by_position, list.fold(batches, 0, fn(sum, b) { sum + b.1 }))
 }
 
 fn read_index(path: String) -> Dict(String, List(Float)) {
