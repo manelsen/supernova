@@ -80,3 +80,25 @@ pub fn production_gateways_start_with_every_policy_test() {
 
   should.equal(offending, [])
 }
+
+/// PRD-C, C-01: the core never matches on channel names. It asks the
+/// channel's traits (`channel/catalog`).
+pub fn the_core_does_not_match_channel_names_test() {
+  let names = [
+    "telegram", "discord", "slack", "matrix", "whatsapp", "sim", "lark",
+    "google_chat", "mattermost", "wechat_work",
+  ]
+  let offending =
+    [
+      "src/supernova.gleam",
+      "src/supernova/adapters/channel_common_router.gleam",
+    ]
+    |> list.filter(fn(path) {
+      let source = read_file(path)
+      list.any(names, fn(name) {
+        string.contains(source, "\"" <> name <> "\" ->")
+        || string.contains(source, "== \"" <> name <> "\"")
+      })
+    })
+  should.equal(offending, [])
+}

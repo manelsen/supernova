@@ -32,5 +32,10 @@ pub fn channel() -> ChannelTraits {
       <> "/reasoning - Toggle reasoning mode\n",
     edit_max_length: chunking.telegram_max_length,
     supports_typing: True,
+    routes_inbound: True,
+    supports_interactions: True,
+    edits_interaction_source: True,
+    turn_timeout_ms: 30_000,
+    private_chat_for: fn(user_id) { user_id },
   )
 }

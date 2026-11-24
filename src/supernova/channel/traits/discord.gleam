@@ -20,6 +20,12 @@ pub fn channel() -> ChannelTraits {
     command_list: traits.default_command_list,
     edit_max_length: chunking.discord_max_length,
     supports_typing: True,
+    routes_inbound: True,
+    supports_interactions: True,
+    edits_interaction_source: False,
+    turn_timeout_ms: 30_000,
+    // The adapter opens (or reuses) the direct-message channel.
+    private_chat_for: fn(user_id) { "open-dm:" <> user_id },
   )
 }
 

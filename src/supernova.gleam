@@ -19,16 +19,13 @@ import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/result
 import gleam/string
-import supernova/adapters/discord_router
-import supernova/adapters/matrix_router
+import supernova/adapters/channel_router
 import supernova/adapters/mcp/config_loader
 import supernova/adapters/mcp_manager
-import supernova/adapters/sim_router
-import supernova/adapters/slack_router
-import supernova/adapters/telegram_router
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/sweeper as agenda_sweeper
+import supernova/channel/catalog as channel_catalog
 import supernova/channel/channel_kit
 import supernova/channel/health as channel_health
 import supernova/channel/inbox
@@ -342,10 +339,8 @@ fn start_services(
   closed_group_global.set_alert_sender(fn(principal_id, text) {
     case principal.parse(principal_id) {
       Ok(speaker) -> {
-        let target = case speaker.channel {
-          "discord" -> "open-dm:" <> speaker.user_id
-          _ -> speaker.user_id
-        }
+        let target =
+          channel_catalog.get(speaker.channel).private_chat_for(speaker.user_id)
         let reply =
           port.ChannelReply(
             channel_id: target,
@@ -767,90 +762,39 @@ pub fn build_channel_handler(
   session_supervisor: supervisor.SessionSupervisor,
 ) -> Result(port.ChannelHandler, String) {
   use llm_config <- result.try(default_channel_llm_config(cfg))
-
-  use discord_channel_router <- result.try(
-    discord_router.start_with_session_supervisor(session_supervisor, llm_config)
-    |> result.map_error(fn(_) { "Failed to start Discord channel router" }),
+  use routers <- result.try(
+    channel_catalog.all()
+    |> list.filter(fn(channel) { channel.routes_inbound })
+    |> list.try_map(fn(channel) {
+      channel_router.start_with_session_supervisor(
+        channel.name,
+        session_supervisor,
+        llm_config,
+      )
+      |> result.map(fn(router) { #(channel.name, router) })
+      |> result.map_error(fn(_) {
+        "Failed to start " <> channel.name <> " channel router"
+      })
+    }),
   )
-
-  use telegram_channel_router <- result.try(
-    telegram_router.start_with_session_supervisor(
-      session_supervisor,
-      llm_config,
-    )
-    |> result.map_error(fn(_) { "Failed to start Telegram channel router" }),
-  )
-
-  use slack_channel_router <- result.try(
-    slack_router.start_with_session_supervisor(session_supervisor, llm_config)
-    |> result.map_error(fn(_) { "Failed to start Slack channel router" }),
-  )
-
-  use matrix_channel_router <- result.try(
-    matrix_router.start_with_session_supervisor(session_supervisor, llm_config)
-    |> result.map_error(fn(_) { "Failed to start Matrix channel router" }),
-  )
-
-  use sim_channel_router <- result.try(
-    sim_router.start_with_session_supervisor(session_supervisor, llm_config)
-    |> result.map_error(fn(_) { "Failed to start sim channel router" }),
-  )
-
+  let routers = dict.from_list(routers)
   Ok(fn(inbound, stream_events) {
-    route_channel_inbound_for_handler(
-      inbound,
-      discord_channel_router,
-      telegram_channel_router,
-      slack_channel_router,
-      matrix_channel_router,
-      sim_channel_router,
-      stream_events,
-    )
+    route_channel_inbound_for_handler(inbound, routers, stream_events)
   })
 }
 
+/// Route an inbound event to the router of its channel: the table holds
+/// every channel whose traits say it routes inbound (PRD-C, C-01).
 fn route_channel_inbound_for_handler(
   inbound: port.ChannelInbound,
-  discord_channel_router: discord_router.DiscordRouter,
-  telegram_channel_router: telegram_router.TelegramRouter,
-  slack_channel_router: slack_router.SlackRouter,
-  matrix_channel_router: matrix_router.MatrixRouter,
-  sim_channel_router: sim_router.SimRouter,
+  routers: dict.Dict(String, channel_router.ChannelRouter),
   stream_events: process.Subject(port.ChannelStreamEvent),
 ) -> Result(port.ChannelHandlerResult, port.ChannelError) {
   let channel = inbound_channel_name(inbound)
-  case channel {
-    "discord" ->
-      discord_router.route_inbound_for_handler(
-        discord_channel_router,
-        inbound,
-        stream_events,
-      )
-    "telegram" ->
-      telegram_router.route_inbound_for_handler(
-        telegram_channel_router,
-        inbound,
-        stream_events,
-      )
-    "slack" ->
-      slack_router.route_inbound_for_handler(
-        slack_channel_router,
-        inbound,
-        stream_events,
-      )
-    "matrix" ->
-      matrix_router.route_inbound_for_handler(
-        matrix_channel_router,
-        inbound,
-        stream_events,
-      )
-    "sim" ->
-      sim_router.route_inbound_for_handler(
-        sim_channel_router,
-        inbound,
-        stream_events,
-      )
-    _ -> {
+  case dict.get(routers, channel) {
+    Ok(router) ->
+      channel_router.route_inbound_for_handler(router, inbound, stream_events)
+    Error(Nil) -> {
       io.println("⚠ Received message for unconfigured channel: " <> channel)
       Error(port.Ignored("channel not configured: " <> channel))
     }
@@ -1034,16 +978,13 @@ pub fn shutdown(services: Runtime) -> Nil {
 
 fn print_enabled_channels(cfg: config.Config) -> Nil {
   io.println("  Channels:")
-  print_channel_status("discord", config.is_discord_enabled(cfg))
-  print_channel_status("telegram", config.is_telegram_enabled(cfg))
-  print_channel_status("sim", config.is_sim_enabled(cfg))
-  print_channel_status("matrix", config.is_matrix_enabled(cfg))
-  print_channel_status("lark", config.is_lark_enabled(cfg))
-  print_channel_status("google_chat", config.is_google_chat_enabled(cfg))
-  print_channel_status("slack", config.is_slack_enabled(cfg))
-  print_channel_status("mattermost", config.is_mattermost_enabled(cfg))
-  print_channel_status("wechat_work", config.is_wechat_work_enabled(cfg))
-  print_channel_status("whatsapp", config.is_whatsapp_enabled(cfg))
+  channel_catalog.all()
+  |> list.each(fn(channel) {
+    print_channel_status(
+      channel.name,
+      config.is_channel_enabled(cfg, channel.name),
+    )
+  })
   config.channel_names()
   |> list.filter(fn(channel) {
     config.channel_support(channel) == config.Experimental

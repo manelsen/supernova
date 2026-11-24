@@ -21,6 +21,7 @@ import supernova/adapters/model_picker
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
+import supernova/channel/catalog as channel_catalog
 import supernova/channel/port
 import supernova/config
 import supernova/core/agent_identity
@@ -1817,9 +1818,11 @@ fn interaction_reply(
   content: String,
   interactive: Option(port.ChannelInteractiveReply),
 ) -> port.ChannelReply {
-  let edit_message_id = case interaction.channel {
-    "telegram" -> interaction.event.source_message_id
-    _ -> None
+  let edit_message_id = case
+    channel_catalog.get(interaction.channel).edits_interaction_source
+  {
+    True -> interaction.event.source_message_id
+    False -> None
   }
 
   port.ChannelReply(
@@ -2090,7 +2093,7 @@ fn map_reply_result_to_handler(
 }
 
 fn channel_supports_interactions(channel: String) -> Bool {
-  channel == "discord" || channel == "telegram" || channel == "slack"
+  channel_catalog.get(channel).supports_interactions
 }
 
 /// Commands answered without the model: /agenda first, then /esquecer.

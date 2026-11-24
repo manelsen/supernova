@@ -3,7 +3,7 @@
 import gleam/list
 import gleam/option.{Some}
 import gleam/string
-import supernova/channel/traits.{type ChannelTraits}
+import supernova/channel/traits.{type ChannelTraits, ChannelTraits}
 import supernova/channel/traits/discord
 import supernova/channel/traits/sim
 import supernova/channel/traits/telegram
@@ -14,10 +14,14 @@ pub fn all() -> List(ChannelTraits) {
     telegram.channel(),
     discord.channel(),
     sim.channel(),
-    traits.generic("matrix"),
+    ChannelTraits(..traits.generic("matrix"), routes_inbound: True),
     traits.generic("lark"),
     traits.generic("google_chat"),
-    traits.generic("slack"),
+    ChannelTraits(
+      ..traits.generic("slack"),
+      routes_inbound: True,
+      supports_interactions: True,
+    ),
     traits.generic("mattermost"),
     traits.generic("wechat_work"),
     traits.generic("whatsapp"),
