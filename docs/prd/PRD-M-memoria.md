@@ -118,6 +118,16 @@ git status --short    # nenhum arquivo novo gerado pelos testes
   por minuto). **Aprovado:** tempo-limite do porteiro, 2 s; do `lembrar`,
   15 s.
 
+- **D6. Fornecedor.** **Aprovado em 24/11:** Perplexity como padrão
+  (Decider v1.3 27B e `pplx-embed-v2-context-0.6b`), Gemini por
+  configuração (`conversation.recall.provider`). Medição no relatório
+  ("Gemini Decision 1 × Perplexity Decider v1.3"): o Decider pega mais
+  quase-acertos no `lembrar` (72% contra 62%, validação cruzada), empata no
+  porteiro com a pergunta de múltipla escolha (20/20 e 0/40 em mensagens
+  novas), custa 5× menos, e os embeddings têm ZDR por padrão. Os cortes são
+  por fornecedor (`memory/runtime.default_thresholds`). Rodar o modelo em
+  casa foi descartado: a máquina do piloto só tem CPU.
+
 ## 6. Desenho
 
 ### 6.1 Cliente do Decision
