@@ -384,6 +384,26 @@ def sistema(condicao):
             "Última reflexão: Sem reflexão registrada.\n")
 
 
+def ferramentas_da_variante(variante):
+    """As ferramentas de busca que a agente recebe em cada variante."""
+    if variante == "ambas":
+        return [VARIANTES["buscar_nova"], VARIANTES["lembrar"]]
+    return [VARIANTES[variante]] if VARIANTES[variante] else []
+
+
+def executar(nome, a, variante, historico, dirdados, busca, registro):
+    if nome == "buscar_conversa":
+        out = busca.buscar(dirdados, a.get("terms", ""))
+        return resultado_antigo(out) if variante == "buscar_antiga" else out
+    if nome == "grep_history":
+        return grepmem(historico, a)
+    if nome == "grep_conversa":
+        return grep_conversa(historico, a)
+    if nome == "lembrar":
+        return lembrar(historico, a, registro)
+    return "Indisponível nesta conversa."
+
+
 def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, busca):
     janela = historico[-JANELA:]
     msgs = [{"role": "system", "content": sistema(condicao)}]
@@ -392,19 +412,34 @@ def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, bu
     if msgs[-1]["role"] == "user":
         msgs.append({"role": "assistant", "content": "Entendi."})
     msgs.append({"role": "user", "content": pergunta})
-    ferr = OUTRAS + ([VARIANTES[variante]] if VARIANTES[variante] else [])
-    busca_nome = VARIANTES[variante]["function"]["name"] if VARIANTES[variante] else None
+    minhas = ferramentas_da_variante(variante)
+    nomes_busca = {t["function"]["name"] for t in minhas}
+    ferr = OUTRAS + minhas
     chamadas, registro, uso_total = [], [], {"prompt": 0, "completion": 0}
     t0 = time.time()
-    forcar = False
-    if condicao == "porteiro" and busca_nome:
+    forcar, prebuscou = False, False
+    if condicao in ("porteiro", "prebusca") and minhas:
         p = porteiro(pergunta)
         registro.append({"porteiro": round(p, 3)})
-        forcar = p >= PORTEIRO_LIMIAR
+        disparou = p >= PORTEIRO_LIMIAR
+        if condicao == "porteiro":
+            forcar = disparou
+        elif disparou:
+            # A própria Supernova chama o lembrar com a mensagem da pessoa e
+            # entrega o resultado como se a agente o tivesse chamado.
+            out = lembrar(historico, {"assunto": pergunta}, registro)
+            registro.append({"prebusca_s": round(time.time() - t0, 2)})
+            msgs.append({"role": "assistant", "content": "", "tool_calls": [{
+                "id": "lembrar01", "type": "function",
+                "function": {"name": "lembrar", "arguments": json.dumps({"assunto": pergunta}, ensure_ascii=False)}}]})
+            msgs.append({"role": "tool", "tool_call_id": "lembrar01", "name": "lembrar", "content": out})
+            chamadas.append({"ferramenta": "lembrar", "args": {"assunto": pergunta}, "prebusca": True,
+                             "saida_chars": len(out), "saida": out[:1500]})
+            prebuscou = True
     for _ in range(MAX_FERRAMENTA + 1):
         sem_mais = len(chamadas) >= MAX_FERRAMENTA
         if forcar and not chamadas:
-            msg, uso = chat(modelo, msgs, [VARIANTES[variante]], forcar=True)
+            msg, uso = chat(modelo, msgs, minhas, forcar=True)
         else:
             msg, uso = chat(modelo, msgs, None if sem_mais else ferr)
         uso_total["prompt"] += uso.get("prompt_tokens", 0) or 0
@@ -412,7 +447,7 @@ def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, bu
         tcs = msg.get("tool_calls") or []
         if not tcs:
             return {"resposta": msg.get("content") or "", "chamadas": chamadas,
-                    "buscou": any(c["ferramenta"] == busca_nome for c in chamadas),
+                    "buscou": prebuscou or any(c["ferramenta"] in nomes_busca for c in chamadas),
                     "registro": registro, "uso": uso_total, "s": round(time.time() - t0, 1)}
         msgs.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tcs})
         for tc in tcs:
@@ -421,25 +456,13 @@ def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, bu
                 a = json.loads(tc["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 a = {}
-            if nome != busca_nome:
-                out = "Indisponível nesta conversa."
-            elif variante in ("buscar_antiga", "buscar_nova"):
-                out = busca.buscar(dirdados, a.get("terms", ""))
-                if variante == "buscar_antiga":
-                    out = resultado_antigo(out)
-            elif variante == "grepmem":
-                out = grepmem(historico, a)
-            elif variante == "grep_conversa":
-                out = grep_conversa(historico, a)
-            elif variante == "lembrar":
-                out = lembrar(historico, a, registro)
-            else:
-                out = "ferramenta desconhecida"
+            out = (executar(nome, a, variante, historico, dirdados, busca, registro)
+                   if nome in nomes_busca else "Indisponível nesta conversa.")
             chamadas.append({"ferramenta": nome, "args": a, "saida_chars": len(out),
                              "saida": out[:1500]})
             msgs.append({"role": "tool", "tool_call_id": tc.get("id", ""), "name": nome, "content": out})
     return {"resposta": "(limite de chamadas)", "chamadas": chamadas, "registro": registro,
-            "buscou": any(c["ferramenta"] == busca_nome for c in chamadas),
+            "buscou": prebuscou or any(c["ferramenta"] in nomes_busca for c in chamadas),
             "uso": uso_total, "s": round(time.time() - t0, 1)}
 
 
@@ -504,7 +527,7 @@ def rodar(args):
     dados.escrever(dirdados, historico)
     busca = Busca()
     perguntas = [q for q in dados.PERGUNTAS if not args.perguntas or q[0] in args.perguntas.split(",")]
-    variantes = list(VARIANTES) if args.variantes == "todas" else args.variantes.split(",")
+    variantes = list(VARIANTES) + ["ambas"] if args.variantes == "todas" else args.variantes.split(",")
     tarefas = [(mo, v, c, q, r) for r in range(args.reps) for mo in args.modelos.split(",")
                for c in args.condicoes.split(",") for v in variantes for q in perguntas]
     feitas = set()

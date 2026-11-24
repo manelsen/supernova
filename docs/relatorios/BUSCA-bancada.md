@@ -150,6 +150,29 @@ tendência, não prova. Nenhum acerto se perde além da variação entre
 repetições. O Nemotron com o porteiro passa a dizer "não lembro" mais vezes
 (16% → 38%), parte delas em fatos que antes negava.
 
+### Porteiro: obrigar a buscar ou pré-buscar
+
+Com o porteiro disparado, (a) a primeira chamada da agente é obrigatoriamente
+uma busca; (b) a Supernova chama o `lembrar` com a mensagem da pessoa e
+entrega o resultado no turno, como se a agente o tivesse chamado. "Ambas" é
+a agente com `lembrar` e `buscar_conversa`. DeepSeek com 3 repetições,
+Nemotron com 2.
+
+| | Fatos | Nunca dito | Negou | Tempo (mediana) |
+|---|---|---|---|---|
+| DeepSeek, (a) `lembrar` | 36/36 | 3/12 | 10% | 3,0 s |
+| DeepSeek, (a) ambas | 35/36 | 4/12 | 8% | 2,7 s |
+| DeepSeek, (b) `lembrar` | 36/36 | 5/12 | 8% | 2,2 s |
+| DeepSeek, **(b) ambas** | **36/36** | **6/12** | **6%** | **2,2 s** |
+| Nemotron, (a) `lembrar` | 24/24 | 4/8 | 6% | 10,9 s |
+| Nemotron, (a) ambas | 19/24 | 4/8 | 6% | 6,8 s |
+| Nemotron, (b) `lembrar` | 24/24 | 4/8 | 3% | 4,5 s |
+| Nemotron, **(b) ambas** | **24/24** | 3/8 | **3%** | **4,8 s** |
+
+(b) empata ou ganha, sem a ida a mais ao LLM. O Decision levou 1,4 s de
+mediana (p90 1,6 s). Os casos de ~78 s são esperas por limite de requisições
+na própria bancada.
+
 ## Limites
 
 - Um histórico sintético e uma semente; 16 perguntas. Mostra
