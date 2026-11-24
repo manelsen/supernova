@@ -4,9 +4,11 @@
 
 import gleam/erlang/process
 import gleam/list
+import gleam/option.{None, Some}
 import gleeunit/should
 import supernova/channel/channel_kit
 import supernova/channel/chat_lanes
+import supernova/channel/port
 
 fn script(outcomes: List(chat_lanes.Outcome)) -> fn() -> chat_lanes.Outcome {
   let queue = process.new_subject()
@@ -67,4 +69,22 @@ pub fn shutdown_stops_the_tries_test() {
   )
   |> should.equal(channel_kit.Retried(chat_lanes.Draining))
   drain(notices, []) |> should.equal([])
+}
+
+pub fn the_notice_answers_the_waiting_message_test() {
+  let message =
+    port.ChannelMessage(
+      id: "9",
+      channel: "telegram",
+      channel_id: "42",
+      user_id: "7",
+      username: "ana",
+      content: "oi",
+      is_bot: False,
+      reply_to_id: None,
+    )
+  let assert Some(reply) = channel_kit.busy_notice(port.InboundMessage(message))
+  reply.channel_id |> should.equal("42")
+  reply.content
+  |> should.equal("Estou com muitas mensagens agora; já te respondo.")
 }

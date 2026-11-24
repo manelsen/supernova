@@ -1,33 +1,47 @@
 //// Web Fetch — HTTP GET for fetching web content.
 ////
-//// Fetches content from URLs with redirect following.
+//// Fetches content from URLs. Redirects are not followed: a redirect is an
+//// error, so the URL guard sees every address the tool reaches.
 
-import gleam/hackney
-import gleam/http
-import gleam/http/request
+import gleam/bit_array
+import gleam/int
 import gleam/result
-import gleam/string
 import supernova/core/url_guard
 import supernova/llm/provider
 
+/// Largest body the tool reads (PRD-E, D2); a larger one is refused while
+/// it arrives.
+pub const max_body_bytes = 2_097_152
+
+/// Why a download failed.
+pub type GetError {
+  TooLarge
+  Network
+}
+
+@external(erlang, "supernova_web_fetch_ffi", "get")
+fn http_get(url: String, max_bytes: Int) -> Result(#(Int, BitArray), GetError)
+
 /// Fetch content from a URL (with SSRF protection).
 pub fn fetch(url: String) -> Result(String, String) {
-  use validated_url <- result.try(url_guard.validate_url(url))
-  case request.to(validated_url) {
-    Ok(req) -> {
-      let req = req |> request.set_method(http.Get)
-      case hackney.send(req) {
-        Ok(response) -> {
-          case response.status {
-            200 -> Ok(response.body)
-            status ->
-              Error("HTTP " <> string.inspect(status) <> " from " <> url)
-          }
-        }
-        Error(_) -> Error("Network error fetching " <> url)
-      }
-    }
-    Error(_) -> Error("Invalid URL: " <> url)
+  fetch_with(url, url_guard.validate_url, http_get)
+}
+
+/// `fetch` with the guard and the download injected (tests).
+pub fn fetch_with(
+  url: String,
+  guard: fn(String) -> Result(String, String),
+  get: fn(String, Int) -> Result(#(Int, BitArray), GetError),
+) -> Result(String, String) {
+  use validated_url <- result.try(guard(url))
+  case get(validated_url, max_body_bytes) {
+    Ok(#(200, body)) ->
+      bit_array.to_string(body)
+      |> result.replace_error("Response from " <> url <> " is not text")
+    Ok(#(status, _)) ->
+      Error("HTTP " <> int.to_string(status) <> " from " <> url)
+    Error(TooLarge) -> Error("Page larger than 2 MB: " <> url)
+    Error(Network) -> Error("Network error fetching " <> url)
   }
 }
 

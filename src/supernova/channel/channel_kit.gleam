@@ -291,16 +291,25 @@ fn notify_busy(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   inbound: port.ChannelInbound,
 ) -> Nil {
-  case inbound {
-    port.InboundMessage(message) -> {
-      let _ =
-        send_fn(port.reply(
-          to: message,
-          content: "Estou com muitas mensagens agora; já te respondo.",
-        ))
+  case busy_notice(inbound) {
+    Some(reply) -> {
+      let _ = send_fn(reply)
       Nil
     }
-    port.InboundInteraction(_) -> Nil
+    None -> Nil
+  }
+}
+
+/// The notice for a message still waiting for a lane; an interaction (a
+/// button press) gets none.
+pub fn busy_notice(inbound: port.ChannelInbound) -> Option(port.ChannelReply) {
+  case inbound {
+    port.InboundMessage(message) ->
+      Some(port.reply(
+        to: message,
+        content: "Estou com muitas mensagens agora; já te respondo.",
+      ))
+    port.InboundInteraction(_) -> None
   }
 }
 
