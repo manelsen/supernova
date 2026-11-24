@@ -78,7 +78,6 @@ The agent decides when to use them. Each role has its own allowlist: members are
 | `agenda` | Do something later, or on a schedule |
 | `web`, `browser` | Fetch pages; drive a headless browser |
 | `github`, `git_inspect` | Read repositories |
-| `gateway` | Authenticated HTTP calls to configured APIs |
 | `safe_shell` | Restricted commands on the host |
 | `process` | List, inspect and stop processes |
 | `canvas` | Structured blocks |

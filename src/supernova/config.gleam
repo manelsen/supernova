@@ -569,7 +569,7 @@ pub fn default_capabilities_config() -> CapabilitiesConfig {
         "web", "web_fetch", "file_system", "canvas", "github", "agenda",
         "buscar_conversa", "lembrar",
       ],
-      denied: ["safe_shell", "process", "browser", "gateway", "computador"],
+      denied: ["safe_shell", "process", "browser", "computador"],
     ),
     admin: RoleCapabilitiesConfig(allowed: ["*"], denied: []),
   )

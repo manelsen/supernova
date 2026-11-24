@@ -643,7 +643,6 @@ fn mock_arguments_for_tool(tool_name: String, mode: MockToolMode) -> String {
       case tool_name {
         "safe_shell" -> "{\"command\":\"pwd\"}"
         "canvas" -> "{\"action\":\"create\",\"title\":\"Scratchpad\"}"
-        "gateway" -> "{\"action\":\"describe\"}"
         "github" -> "{\"action\":\"get_my_repos\"}"
         "web_fetch" -> "{\"url\":\"https://example.com\"}"
         "git_inspect" -> "{\"action\":\"status\"}"

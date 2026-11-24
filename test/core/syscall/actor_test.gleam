@@ -296,21 +296,13 @@ pub fn get_count_after_syscall_test() {
 // SpawnAgent Tests
 // ============================================================================
 
-pub fn spawn_agent_registered_ok_test() {
+pub fn spawn_agent_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", SpawnAgent("{\"type\":\"worker\"}"))
-  case result {
-    SyscallOk(data) -> {
-      data |> should.equal("spawned:agent_config={\"type\":\"worker\"}")
-    }
-    SyscallDenied(_reason) -> {
-      should.fail()
-    }
-    SyscallFailed(_message) -> {
-      should.fail()
-    }
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: spawn_agent"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -332,15 +324,13 @@ pub fn spawn_agent_unregistered_denied_test() {
 // KillAgent Tests
 // ============================================================================
 
-pub fn kill_agent_registered_ok_test() {
+pub fn kill_agent_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", KillAgent("agent_2"))
-  case result {
-    SyscallOk(data) -> data |> should.equal("killed:agent_2")
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: kill_agent"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -361,15 +351,13 @@ pub fn kill_agent_unregistered_denied_test() {
 // ReadWorld Tests
 // ============================================================================
 
-pub fn read_world_registered_ok_test() {
+pub fn read_world_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", ReadWorld("sky"))
-  case result {
-    SyscallOk(data) -> data |> should.equal("world_facts:pattern=sky")
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: read_world"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -390,17 +378,13 @@ pub fn read_world_unregistered_denied_test() {
 // WriteWorld Tests
 // ============================================================================
 
-pub fn write_world_registered_ok_test() {
+pub fn write_world_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", WriteWorld("sky is blue", 0.9))
-  case result {
-    SyscallOk(data) -> {
-      data |> should.equal("fact_asserted:confidence=0.9:sky is blue")
-    }
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: write_world"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -421,15 +405,13 @@ pub fn write_world_unregistered_denied_test() {
 // ReadFile Tests
 // ============================================================================
 
-pub fn read_file_registered_ok_test() {
+pub fn read_file_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", ReadFile("src/main.gleam"))
-  case result {
-    SyscallOk(data) -> data |> should.equal("file_content:path=src/main.gleam")
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: read_file"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -450,17 +432,13 @@ pub fn read_file_unregistered_denied_test() {
 // WriteFile Tests
 // ============================================================================
 
-pub fn write_file_registered_ok_test() {
+pub fn write_file_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", WriteFile("out.txt", "hello world"))
-  case result {
-    SyscallOk(data) -> {
-      data |> should.equal("file_written:path=out.txt:bytes=11")
-    }
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: write_file"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -481,15 +459,13 @@ pub fn write_file_unregistered_denied_test() {
 // Schedule Tests
 // ============================================================================
 
-pub fn schedule_registered_ok_test() {
+pub fn schedule_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", Schedule("task_42", 5000))
-  case result {
-    SyscallOk(data) -> data |> should.equal("scheduled:task_42:delay=5000")
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: schedule"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -510,15 +486,13 @@ pub fn schedule_unregistered_denied_test() {
 // CancelSchedule Tests
 // ============================================================================
 
-pub fn cancel_schedule_registered_ok_test() {
+pub fn cancel_schedule_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", CancelSchedule("task_42"))
-  case result {
-    SyscallOk(data) -> data |> should.equal("cancelled:task_42")
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: cancel_schedule"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -539,15 +513,13 @@ pub fn cancel_schedule_unregistered_denied_test() {
 // GetBudget Tests
 // ============================================================================
 
-pub fn get_budget_registered_ok_test() {
+pub fn get_budget_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result = actor.invoke(gw, "agent_1", GetBudget)
-  case result {
-    SyscallOk(data) -> data |> should.equal("budget:agent=agent_1")
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: get_budget"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -568,18 +540,14 @@ pub fn get_budget_unregistered_denied_test() {
 // EmitEvent Tests
 // ============================================================================
 
-pub fn emit_event_registered_ok_test() {
+pub fn emit_event_registered_reaches_execution_test() {
   let assert Ok(gw) = actor.start()
   actor.register_agent(gw, "agent_1")
   let result =
     actor.invoke(gw, "agent_1", EmitEvent("task_complete", "{\"id\":1}"))
-  case result {
-    SyscallOk(data) -> {
-      data |> should.equal("event_emitted:task_complete:{\"id\":1}")
-    }
-    SyscallDenied(_) -> should.fail()
-    SyscallFailed(_) -> should.fail()
-  }
+  // Policies, counting and audit ran; the operation itself is not
+  // wired to a kernel action and says so (PRD-E, E-05).
+  result |> should.equal(SyscallFailed("not implemented: emit_event"))
   actor.stop(gw)
   process.sleep(100)
 }
@@ -744,9 +712,10 @@ pub fn principal_workspace_denies_self_and_other_agent_test() {
   actor.register_agent(gw, "telegram:123")
 
   case actor.invoke(gw, "telegram:123", WriteFile("notes.txt", "hello")) {
-    SyscallOk(_) -> Nil
+    // Allowed by the workspace policy; the operation itself is not wired.
+    SyscallFailed(_reason) -> Nil
     SyscallDenied(_reason) -> should.fail()
-    SyscallFailed(_reason) -> should.fail()
+    SyscallOk(_) -> should.fail()
   }
 
   case actor.invoke(gw, "telegram:123", ReadFile("../self/core.json")) {
