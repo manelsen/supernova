@@ -176,7 +176,28 @@ resultado, como se a agente os tivesse feito. Ela continua com as duas
 ferramentas para buscar de novo com outras palavras. Fica no histórico como
 qualquer chamada de ferramenta.
 
-### 6.6 Custo
+### 6.6 Medição no piloto
+
+A bancada é sintética (português) e o LongMemEval é curado (inglês); a
+distribuição que importa é a do piloto. Contadores agregados, no `/metrics`
+que já existe (Prometheus, `src/supernova/health/server.gleam`) e na
+telemetria (`core/telemetry`), nunca com texto nem por pessoa identificável:
+
+- **Porteiro:** mensagens avaliadas, disparos, tempo (histograma),
+  tempos-limite.
+- **`lembrar`:** chamadas (pré-busca e pela agente), probabilidade geral
+  em faixas (< 0,2; 0,2–0,9; ≥ 0,9), trechos devolvidos, tokens, custo,
+  tempo, erros e tempos-limite.
+- **Correção:** depois de um turno com `lembrar`, a próxima mensagem da
+  pessoa passa por uma pergunta ao Decision, com a resposta da agente e a
+  mensagem como entrada: "A pessoa está corrigindo ou contestando o que a
+  agente disse lembrar?". Conta-se só o resultado (sim/não, em faixas).
+  Mesma chave e mesma ZDR (D2).
+
+Painel no Grafana (`monitoring/grafana`): taxa de disparo, faixas de
+probabilidade, taxa de correção, custo por dia.
+
+### 6.7 Custo
 
 Cada chamada ao Decision é registrada no `resource_ledger` (tokens de
 entrada × US$ 0,10 por milhão), contra o orçamento diário da pessoa e da
@@ -193,6 +214,8 @@ até o dia seguinte, e a `buscar_conversa` continua.
 - **I5.** Com `recall.enabled: false`, o comportamento é o de hoje, byte a
   byte nas mensagens ao LLM.
 - **I6.** Falha do Decision nunca vira resposta de erro para a pessoa.
+- **I7.** As métricas do piloto são contadores e histogramas: nenhum
+  rótulo carrega texto, principal ou chat.
 
 ## 8. Histórias
 
@@ -220,14 +243,19 @@ ao LLM já com o resultado do `lembrar`; uma mensagem comum chega igual a
 hoje (I5).
 
 ### M-05: Custo
-6.6. Testes: registro no ledger, orçamento esgotado desliga.
+6.7. Testes: registro no ledger, orçamento esgotado desliga.
 
 ### M-06: Harness e bancada
 Cenário `buscar_antigo` com `recall.enabled: true` no harness. Bancada
 apontada para o código da Supernova (não para a reimplementação em Python)
 e rodada de novo; números no relatório.
 
-### M-07: Documentação
+### M-07: Medição no piloto
+6.6. Testes: cada contador sobe no caso certo; nenhum rótulo com texto ou
+principal (I7); a pergunta de correção só roda depois de um turno com
+`lembrar`. Painel no Grafana.
+
+### M-08: Documentação
 `supernova.yaml.example`, `ARCHITECTURE.md`, `PENDENCIAS.md` (árvore com
 gatilho). Ligar no piloto é decisão do mantenedor, fora desta PRD.
 
@@ -242,6 +270,7 @@ gatilho). Ligar no piloto é decisão do mantenedor, fora desta PRD.
 | Custo por `lembrar` no tamanho do piloto | mediana ≤ US$ 0,02 |
 | Falha do Decision | nenhuma resposta de erro à pessoa (I6) |
 | Harness | `buscar_antigo` passa, com e sem `recall` |
+| Piloto, primeira semana | taxa de correção medida e registrada (sem meta: é a linha de base) |
 
 ## 10. Riscos
 
