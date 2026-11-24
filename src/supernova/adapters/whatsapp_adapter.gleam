@@ -16,12 +16,21 @@ import gleam/http
 import gleam/http/request
 import gleam/http/response.{type Response, set_body}
 import gleam/int
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import supernova/adapters/whatsapp_inbound
+import supernova/channel/channel_kit
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
+import supernova/channel/traits/whatsapp as whatsapp_traits
+import supernova/channel/webhook_server
+import supernova/core/closed_group/global as closed_group_global
+import supernova/core/closed_group/runtime as closed_group_runtime
+import supernova/core/identity/aliases
+import supernova/metrics/record
 
 const multipart_boundary: String = "supernova-whatsapp-bridge"
 
@@ -50,24 +59,156 @@ pub type BridgeRequestPlan {
   )
 }
 
+/// What the adapter needs from configuration.
+pub type Settings {
+  Settings(
+    bridge_url: String,
+    device_id: Option(String),
+    /// `user:password` of GOWA's basic auth.
+    basic_auth: String,
+    /// Shared secret of the webhook signature.
+    webhook_secret: String,
+    data_dir: String,
+  )
+}
+
+/// Start the WhatsApp channel: outbound through GOWA's REST API, inbound
+/// through the webhook server (`POST /webhook/whatsapp`, signed with the
+/// shared secret). `on_down` reports a lost account to channel health.
 pub fn start(
-  bridge_url: String,
-  device_id: Option(String),
-  _handler: port.ChannelHandler,
+  settings: Settings,
+  handler: port.ChannelHandler,
+  hooks: channel_kit.StartHooks,
+  on_down: fn(String) -> Nil,
 ) -> Result(port.ChannelAdapter, String) {
   let send_fn = fn(reply: port.ChannelReply) -> Result(Nil, port.ChannelError) {
-    do_send(bridge_url, device_id, reply)
+    do_send(settings, reply)
   }
+  let stream_fn =
+    channel_kit.final_only_stream_send(
+      send_fn,
+      whatsapp_traits.max_message_length,
+      channel_kit.stream_timeout_ms,
+    )
+  webhook_server.register(
+    webhook_server.Route(
+      channel: "whatsapp",
+      verify: fn(headers, body) {
+        case list.key_find(headers, "x-hub-signature-256") {
+          Ok(signature) ->
+            webhook_server.hub_signature_valid(
+              settings.webhook_secret,
+              body,
+              signature,
+            )
+          Error(Nil) -> False
+        }
+      },
+      translate: fn(body) {
+        case bit_array.to_string(body) {
+          Error(Nil) -> webhook_server.Malformed
+          Ok(text) ->
+            act(
+              whatsapp_inbound.decide(text),
+              settings.data_dir,
+              send_fn,
+              on_down,
+            )
+        }
+      },
+      dispatch: fn(inbound) {
+        channel_kit.dispatch_inbound(
+          handler,
+          send_fn,
+          stream_fn,
+          inbound,
+          hooks.registry_id,
+          hooks.turn_hard_timeout_ms,
+        )
+      },
+    ),
+  )
 
   Ok(
     port.ChannelAdapter(
       name: "whatsapp",
       send: send_fn,
-      stop: fn() { Nil },
-      stop_ingress: fn() { Nil },
+      stop: fn() { webhook_server.unregister("whatsapp") },
+      stop_ingress: fn() { webhook_server.unregister("whatsapp") },
     ),
   )
 }
+
+/// Carry out a decision about one webhook.
+pub fn act(
+  decision: whatsapp_inbound.Decision,
+  data_dir: String,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  on_down: fn(String) -> Nil,
+) -> webhook_server.Outcome {
+  case decision {
+    whatsapp_inbound.Answer(message, learned) -> {
+      case learned {
+        Some(#(lid, phone)) -> learn_lid(data_dir, lid, phone)
+        None -> Nil
+      }
+      webhook_server.Deliver([port.InboundMessage(message)])
+    }
+    whatsapp_inbound.AskPrivate(chat_id, reply_to) -> {
+      record.count("whatsapp_unknown_lid_total", [#("chat", "group")])
+      let _ =
+        send_fn(port.reply(
+          to: port.ChannelMessage(
+            id: reply_to,
+            channel: "whatsapp",
+            channel_id: chat_id,
+            user_id: "",
+            username: "",
+            content: "",
+            is_bot: False,
+            reply_to_id: None,
+          ),
+          content: whatsapp_inbound.ask_private_text,
+        ))
+      webhook_server.Handled
+    }
+    whatsapp_inbound.Ignore("unknown lid") -> {
+      record.count("whatsapp_unknown_lid_total", [#("chat", "private")])
+      io.println("warn: whatsapp message from an unknown LID was not answered")
+      webhook_server.Handled
+    }
+    whatsapp_inbound.Ignore(_) -> webhook_server.Handled
+    whatsapp_inbound.AccountDown(reason) -> {
+      record.count("whatsapp_account_down_total", [])
+      io.println("error: whatsapp " <> reason)
+      on_down(reason)
+      case closed_group_global.get_runtime() {
+        Some(runtime) ->
+          closed_group_runtime.channel_down_alert(runtime, "whatsapp", reason)
+        None -> Nil
+      }
+      webhook_server.Handled
+    }
+    whatsapp_inbound.Malformed -> webhook_server.Malformed
+  }
+}
+
+/// A LID seen next to a phone becomes an alias of that phone's person
+/// (PRD-I, I-04). Known LIDs are left alone.
+fn learn_lid(data_dir: String, lid: String, phone: String) -> Nil {
+  case aliases.resolve(lid) == lid {
+    False -> Nil
+    True ->
+      case aliases.link(data_dir, lid, phone, "whatsapp", now_ms()) {
+        Ok(Nil) -> record.count("whatsapp_lid_learned_total", [])
+        Error(reason) ->
+          io.println("warn: whatsapp LID not learned: " <> reason)
+      }
+  }
+}
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn now_ms() -> Int
 
 pub fn parse_event(
   event_json: String,
@@ -670,21 +811,24 @@ fn image_fields(
 }
 
 fn do_send(
-  bridge_url: String,
-  device_id: Option(String),
+  settings: Settings,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
   case build_send_plan(reply) {
     Error(error) -> Error(error)
     Ok(plan) -> {
-      let url = join_bridge_url(bridge_url, plan.path)
+      let url = join_bridge_url(settings.bridge_url, plan.path)
       case request.to(url) {
         Error(_) -> Error(port.SendFailed("invalid bridge URL"))
         Ok(req) -> {
           let req =
             req
             |> request.set_method(http.Post)
-            |> maybe_set_device_header(device_id)
+            |> maybe_set_device_header(settings.device_id)
+            |> request.set_header(
+              "Authorization",
+              basic_authorization(settings.basic_auth),
+            )
 
           case plan.content_type {
             BridgeJson -> send_json_request(req, plan)
@@ -844,6 +988,12 @@ fn download_remote_file(
           ))
       }
   }
+}
+
+/// The `Authorization` header for GOWA's basic auth (`user:password`).
+pub fn basic_authorization(user_password: String) -> String {
+  "Basic "
+  <> bit_array.base64_encode(bit_array.from_string(user_password), True)
 }
 
 fn maybe_set_device_header(

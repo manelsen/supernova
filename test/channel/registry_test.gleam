@@ -177,6 +177,8 @@ fn enabled_whatsapp_config() -> config.Config {
       bridge_url: Some("http://localhost:3000"),
       device_id: Some("device-1"),
       enabled: True,
+      basic_auth: Some("supernova:senha"),
+      webhook_secret: Some("segredo"),
     ),
   )
 }
@@ -585,8 +587,7 @@ pub fn start_channels_skips_enabled_channels_with_missing_credentials_test() {
       ),
       wechat_work: config.WechatWorkConfig(webhook_url: None, enabled: True),
       whatsapp: config.WhatsAppConfig(
-        bridge_url: None,
-        device_id: None,
+        ..config.default_whatsapp_config(),
         enabled: True,
       ),
     )

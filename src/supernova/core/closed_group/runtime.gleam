@@ -1035,6 +1035,21 @@ pub fn fail_closed_alert(runtime: types.Runtime, component: String) -> Nil {
   )
 }
 
+/// Tell the admins a channel is down: its account was logged out or
+/// suspended. One alert per channel and reason within the dedup window.
+pub fn channel_down_alert(
+  runtime: types.Runtime,
+  channel: String,
+  reason: String,
+) -> Nil {
+  dispatch_alert(
+    runtime,
+    alerts_pure.ChannelDown,
+    channel <> ":" <> reason,
+    "O canal " <> channel <> " caiu: " <> reason,
+  )
+}
+
 fn dispatch_alert(
   runtime: types.Runtime,
   kind: alerts_pure.GroupAlertKind,

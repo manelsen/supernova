@@ -20,6 +20,7 @@ import supernova/adapters/slack_channel
 import supernova/adapters/telegram_channel
 import supernova/adapters/wechat_work_adapter
 import supernova/adapters/whatsapp_adapter
+import supernova/channel/base_url
 import supernova/channel/channel_kit
 import supernova/channel/chat_lanes
 import supernova/channel/health as channel_health
@@ -172,7 +173,7 @@ fn starters(
       plain(start_mattermost_channel(cfg.mattermost, handler))
     }),
     Starter("whatsapp", False, fn() {
-      plain(start_whatsapp_channel(cfg.whatsapp, handler))
+      plain(start_whatsapp_channel(cfg, handler, hooks, health))
     }),
     Starter("sim", False, fn() {
       sim_adapter.start(cfg.sim, handler)
@@ -319,13 +320,36 @@ fn insert_channel(
 // ============================================================================
 
 fn start_whatsapp_channel(
-  whatsapp_cfg: config.WhatsAppConfig,
+  cfg: config.Config,
   handler: port.ChannelHandler,
+  hooks: channel_kit.StartHooks,
+  health: channel_health.ChannelHealth,
 ) -> Result(port.ChannelAdapter, String) {
-  case whatsapp_cfg.bridge_url {
-    Some(bridge_url) ->
-      whatsapp_adapter.start(bridge_url, whatsapp_cfg.device_id, handler)
-    None -> Error("enabled but no bridge_url configured")
+  let whatsapp = cfg.whatsapp
+  case whatsapp.bridge_url, whatsapp.basic_auth, whatsapp.webhook_secret {
+    Some(bridge_url), Some(basic_auth), Some(webhook_secret) -> {
+      use _ <- result.try(base_url.check(
+        "whatsapp.bridge_url",
+        bridge_url,
+        cfg.channel_internal_hosts,
+      ))
+      whatsapp_adapter.start(
+        whatsapp_adapter.Settings(
+          bridge_url: bridge_url,
+          device_id: whatsapp.device_id,
+          basic_auth: basic_auth,
+          webhook_secret: webhook_secret,
+          data_dir: cfg.data_dir,
+        ),
+        handler,
+        hooks,
+        fn(reason) { channel_health.failed(health, "whatsapp", reason) },
+      )
+    }
+    None, _, _ -> Error("enabled but no bridge_url configured")
+    _, None, _ -> Error("enabled but SUPERNOVA_WHATSAPP_BASIC_AUTH is not set")
+    _, _, None ->
+      Error("enabled but SUPERNOVA_WHATSAPP_WEBHOOK_SECRET is not set")
   }
 }
 

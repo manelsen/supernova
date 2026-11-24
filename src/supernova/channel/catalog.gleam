@@ -7,6 +7,7 @@ import supernova/channel/traits.{type ChannelTraits, ChannelTraits}
 import supernova/channel/traits/discord
 import supernova/channel/traits/sim
 import supernova/channel/traits/telegram
+import supernova/channel/traits/whatsapp
 
 /// Traits of all known channels.
 pub fn all() -> List(ChannelTraits) {
@@ -24,7 +25,7 @@ pub fn all() -> List(ChannelTraits) {
     ),
     traits.generic("mattermost"),
     traits.generic("wechat_work"),
-    traits.generic("whatsapp"),
+    whatsapp.channel(),
   ]
 }
 

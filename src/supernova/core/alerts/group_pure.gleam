@@ -13,6 +13,8 @@ pub type GroupAlertKind {
   Instance100
   Abuse
   FailClosed
+  /// A channel lost its account or was suspended (PRD-C, C-04).
+  ChannelDown
 }
 
 /// Dedup state: key → last sent timestamp.
@@ -66,6 +68,7 @@ pub fn kind_name(kind: GroupAlertKind) -> String {
     Instance100 -> "instance100"
     Abuse -> "abuse"
     FailClosed -> "fail_closed"
+    ChannelDown -> "channel_down"
   }
 }
 

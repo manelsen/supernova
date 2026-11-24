@@ -187,12 +187,19 @@ pub type WechatWorkConfig {
 /// WhatsApp channel configuration
 pub type WhatsAppConfig {
   WhatsAppConfig(
-    /// Base URL for the Whatsmeow bridge REST API
+    /// Base URL of the GOWA REST API (`http://gowa:3000` in the compose
+    /// network; see `channels.internal_hosts`)
     bridge_url: Option(String),
     /// Optional bridge device ID for multi-device deployments
     device_id: Option(String),
     /// Enabled status
     enabled: Bool,
+    /// `user:password` of GOWA's basic auth (`APP_BASIC_AUTH`); env
+    /// SUPERNOVA_WHATSAPP_BASIC_AUTH
+    basic_auth: Option(String),
+    /// Shared secret of the webhook signature (`WHATSAPP_WEBHOOK_SECRET`);
+    /// env SUPERNOVA_WHATSAPP_WEBHOOK_SECRET
+    webhook_secret: Option(String),
   )
 }
 
@@ -544,7 +551,7 @@ pub fn default_config() -> Config {
     slack: SlackConfig(token: None, enabled: False),
     mattermost: MattermostConfig(token: None, base_url: None, enabled: False),
     wechat_work: WechatWorkConfig(webhook_url: None, enabled: False),
-    whatsapp: WhatsAppConfig(bridge_url: None, device_id: None, enabled: False),
+    whatsapp: default_whatsapp_config(),
     budgets: default_budgets_config(),
     access: default_access_config(),
     role_budgets: default_role_budgets_config(),
@@ -1007,16 +1014,26 @@ fn decode_wechat_work(root: yay.Node) -> WechatWorkConfig {
 }
 
 /// Decode WhatsApp configuration from YAML
+pub fn default_whatsapp_config() -> WhatsAppConfig {
+  WhatsAppConfig(
+    bridge_url: None,
+    device_id: None,
+    enabled: False,
+    basic_auth: None,
+    webhook_secret: None,
+  )
+}
+
 fn decode_whatsapp(root: yay.Node) -> WhatsAppConfig {
   case yay.select_sugar(root, "whatsapp") {
     Ok(node) ->
       WhatsAppConfig(
+        ..default_whatsapp_config(),
         bridge_url: get_optional_string(node, "bridge_url"),
         device_id: get_optional_string(node, "device_id"),
         enabled: get_bool_or(node, "enabled", False),
       )
-    Error(_) ->
-      WhatsAppConfig(bridge_url: None, device_id: None, enabled: False)
+    Error(_) -> default_whatsapp_config()
   }
 }
 
@@ -1719,6 +1736,14 @@ pub fn apply_env_overrides(config: Config) -> Config {
       bridge_url: whatsapp_bridge_url,
       device_id: whatsapp_device_id,
       enabled: whatsapp_enabled,
+      basic_auth: option.or(
+        get_env("SUPERNOVA_WHATSAPP_BASIC_AUTH"),
+        config.whatsapp.basic_auth,
+      ),
+      webhook_secret: option.or(
+        get_env("SUPERNOVA_WHATSAPP_WEBHOOK_SECRET"),
+        config.whatsapp.webhook_secret,
+      ),
     ),
     budgets: config.budgets,
     access: AccessConfig(
@@ -2220,7 +2245,10 @@ pub fn is_wechat_work_enabled(config: Config) -> Bool {
 
 /// Check if WhatsApp is configured and enabled
 pub fn is_whatsapp_enabled(config: Config) -> Bool {
-  config.whatsapp.enabled && config.whatsapp.bridge_url != None
+  config.whatsapp.enabled
+  && config.whatsapp.bridge_url != None
+  && config.whatsapp.webhook_secret != None
+  && config.whatsapp.basic_auth != None
 }
 
 /// Channels with `enabled: true` that cannot start because a required
@@ -2273,6 +2301,11 @@ pub fn incomplete_channels(config: Config) -> List(#(String, String)) {
     ]),
     missing("whatsapp", config.whatsapp.enabled, [
       #("bridge_url", config.whatsapp.bridge_url != None),
+      #(
+        "SUPERNOVA_WHATSAPP_WEBHOOK_SECRET",
+        config.whatsapp.webhook_secret != None,
+      ),
+      #("SUPERNOVA_WHATSAPP_BASIC_AUTH", config.whatsapp.basic_auth != None),
     ]),
   ])
 }

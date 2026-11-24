@@ -453,6 +453,8 @@ pub fn validate_additional_channels_enabled_without_token_test() {
         bridge_url: None,
         device_id: None,
         enabled: True,
+        basic_auth: None,
+        webhook_secret: None,
       ),
     )
 
@@ -576,6 +578,8 @@ pub fn validate_all_additional_channels_enabled_with_token_test() {
         bridge_url: Some("http://localhost:3000"),
         device_id: Some("device-1"),
         enabled: True,
+        basic_auth: Some("supernova:senha"),
+        webhook_secret: Some("segredo"),
       ),
     )
 
@@ -986,6 +990,8 @@ pub fn is_new_channels_enabled_true_test() {
         bridge_url: Some("http://localhost:3000"),
         device_id: Some("device-1"),
         enabled: True,
+        basic_auth: Some("supernova:senha"),
+        webhook_secret: Some("segredo"),
       ),
     )
 
@@ -1020,6 +1026,8 @@ pub fn is_new_channels_enabled_false_without_token_test() {
         bridge_url: None,
         device_id: None,
         enabled: True,
+        basic_auth: None,
+        webhook_secret: None,
       ),
     )
 
