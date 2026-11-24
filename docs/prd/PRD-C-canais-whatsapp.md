@@ -75,7 +75,12 @@ verdade em teste.
     guardado (junto do estado de acesso); uma mensagem só com LID conhecido
     vira do telefone; só o LID nunca visto ao lado de um telefone é recusado
     com log e métrica.
-  - **Recomendação: (c).** O `/esquecer` apaga também os vínculos da pessoa.
+  - **Recomendação: (c)**, e num grupo, a quem chega só como LID, a agente
+    pede para chamá-la no privado: a conversa privada costuma trazer o
+    telefone junto, e o vínculo se aprende ali. O `/esquecer` apaga também
+    os vínculos da pessoa. O pareamento por código entre canais (a mesma
+    agente no Telegram e no WhatsApp) é a PRD-I, à parte: muda o modelo de
+    identidade.
 - **D3. Mídia na entrada.** **Decidido:** primeiro a capacidade de mídia em
   geral (baixar do GOWA com autenticação, limite de tamanho, política de
   tipo, arquivo temporário apagado depois do turno), depois imagens até o
@@ -91,7 +96,7 @@ verdade em teste.
   - (a) Desligado; vale a interface que vem na imagem.
   - (b) Ligado com `APP_UI_ASSET_SHA256` fixando o hash aceito.
   - (c) Ligado.
-  - **Recomendação: (a).**
+  - **Decidido: (a)**, versão fixa.
 - **D5. Versão do GOWA.** Imagem fixada por digest (v9.10.0), atualizada à
   mão lendo o changelog. Com D4 (a), uma versão só cobre o servidor e a
   interface. **Recomendação: assim.**

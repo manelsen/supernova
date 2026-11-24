@@ -58,6 +58,10 @@ kernel garantindo que ninguém gaste, veja ou toque o que não deve.
 - **S9. Membros e admins** disparam sondas, cada um no próprio orçamento.
 - **S10. Os arquivos ficam** no computador da agente ao fim da sonda, para a
   pessoa ver depois.
+- **S12. Custo máximo por sonda:** US$ 0,20 por padrão, configurável por
+  tipo.
+- **S13. Primeiro servidor MCP: navegador (Playwright MCP)**, dentro do
+  computador, para a sonda web.
 - **S11. Servidores MCP das sondas rodam dentro do computador.** O
   gerenciador atual abre servidores por stdio dentro do contêiner da
   Supernova: um MCP de arquivos ali mexeria no disco da Supernova, não no do
@@ -128,7 +132,5 @@ agente diretamente (a agente pede; a sonda usa).
 
 ## 7. O que falta decidir
 
-- **Custo máximo por sonda** (proposta: US$ 0,20 por padrão, configurável
-  por tipo).
 - **Transporte MCP até o computador:** HTTP streamable ou SSE, conforme o
   que os servidores escolhidos suportarem.
