@@ -47,6 +47,8 @@ fn with_memory(dir: String, body: fn() -> a) -> a {
     gate_threshold: 0.1,
     gate_timeout_ms: 2000,
     recall_timeout_ms: 5000,
+    charge: runtime.no_charge,
+    within_budget: runtime.always_within,
   ))
   agenda_runtime.configure(
     agenda_runtime.Context(data_dir: dir, offset_minutes: -180, clock: fn() {

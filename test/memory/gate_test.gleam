@@ -25,6 +25,8 @@ fn settings(transport: decision.Transport) -> runtime.Settings {
     gate_threshold: 0.1,
     gate_timeout_ms: 200,
     recall_timeout_ms: 5000,
+    charge: runtime.no_charge,
+    within_budget: runtime.always_within,
   )
 }
 
@@ -203,4 +205,53 @@ pub fn metrics_carry_no_text_test() {
     |> should.be_true()
     string.contains(value, "palavra") |> should.be_false()
   })
+}
+
+/// Every call is charged to the person; past the day's cap the gate and
+/// lembrar stand aside (6.7).
+pub fn calls_are_charged_and_the_cap_stops_the_memory_test() {
+  use dir <- with_dir
+  let store = HistoryStore(data_dir: dir, limit: 100)
+  let assert Ok(Nil) =
+    history_store.append(store, "telegram:42:42", [
+      StoredMessage(role: "user", content: "é o dr. Otávio Lacerda", at: base),
+    ])
+  let charges = process.new_subject()
+  let seen = process.new_subject()
+  let charging =
+    runtime.Settings(
+      ..settings(fake("0.93", seen)),
+      charge: fn(principal, decision_tokens, embed_tokens) {
+        process.send(charges, #(principal, decision_tokens, embed_tokens))
+      },
+    )
+  let _ =
+    gate.prepare_with(
+      charging,
+      turn(),
+      "lembra do médico?",
+      dir,
+      "telegram:42",
+      -180,
+    )
+  // The gate, then lembrar (its Decision tokens and its embeddings).
+  let assert Ok(#("telegram:42", _, 0)) = process.receive(charges, 1000)
+  let assert Ok(#("telegram:42", _, embedded)) = process.receive(charges, 1000)
+  { embedded > 0 } |> should.be_true()
+
+  let capped =
+    runtime.Settings(..settings(fake("0.93", seen)), within_budget: fn() {
+      False
+    })
+  gate.ask(capped, "lembra do médico?") |> should.equal(gate.OverBudget)
+  let #(messages, _) =
+    gate.prepare_with(
+      capped,
+      turn(),
+      "lembra do médico?",
+      dir,
+      "telegram:42",
+      -180,
+    )
+  messages |> should.equal(turn())
 }

@@ -948,16 +948,64 @@ fn publish_memory(cfg: config.Config) -> Nil {
   let recall = cfg.conversation.recall
   case recall.enabled, recall.api_key {
     True, Some(key) -> {
-      memory_runtime.configure(memory_runtime.Settings(
-        transport: decision.hackney_transport(),
-        api_key: key,
-        gate_threshold: recall.gate_threshold,
-        gate_timeout_ms: recall.gate_timeout_ms,
-        recall_timeout_ms: recall.recall_timeout_ms,
-      ))
+      memory_runtime.configure(
+        memory_runtime.Settings(
+          transport: decision.hackney_transport(),
+          api_key: key,
+          gate_threshold: recall.gate_threshold,
+          gate_timeout_ms: recall.gate_timeout_ms,
+          recall_timeout_ms: recall.recall_timeout_ms,
+          charge: charge_memory,
+          within_budget: fn() { memory_within_budget(cfg) },
+        ),
+      )
       io.println("✓ Memory on: gate and lembrar (Gemini Decision)")
     }
     _, _ -> memory_runtime.clear()
+  }
+}
+
+/// The memory's calls go to the ledger as LLM usage of provider "gemini",
+/// so they count in the day's spend like any model call.
+fn charge_memory(principal: String, decision_tokens: Int, embed_tokens: Int) {
+  case closed_group_global.get_ledger() {
+    None -> Nil
+    Some(ledger) -> {
+      let usage = [
+        #(decision.model, decision_tokens, decision.decision_usd_per_million),
+        #("gemini-embedding-2", embed_tokens, decision.embed_usd_per_million),
+      ]
+      list.each(usage, fn(item) {
+        let #(model, tokens, usd_per_million) = item
+        case tokens > 0 {
+          False -> Nil
+          True ->
+            ledger_actor.record_llm_usage(
+              ledger,
+              principal,
+              "gemini",
+              model,
+              tokens,
+              0,
+              int.to_float(tokens) *. usd_per_million /. 1_000_000.0,
+            )
+        }
+      })
+    }
+  }
+}
+
+/// Past the instance's daily cap the memory stands aside; without a
+/// ledger, or when it does not answer, it stays on (the turn's own LLM
+/// admission still guards the cap).
+fn memory_within_budget(cfg: config.Config) -> Bool {
+  case closed_group_global.get_ledger() {
+    None -> True
+    Some(ledger) ->
+      case ledger_actor.try_spend_today(ledger, memory_now_ms()) {
+        Ok(#(_, spent)) -> spent <. cfg.instance_budget.daily_usd
+        Error(Nil) -> True
+      }
   }
 }
 
@@ -1074,3 +1122,6 @@ fn print_channel_status(name: String, enabled: Bool) -> Nil {
     False -> io.println("    - " <> name <> ": disabled")
   }
 }
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn memory_now_ms() -> Int

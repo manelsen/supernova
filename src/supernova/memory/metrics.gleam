@@ -38,10 +38,11 @@ pub fn turn_series(report: gate.Report) -> List(Series) {
     gate.Fired(_) -> #("fired", "none")
     gate.Quiet(_) -> #("quiet", "none")
     gate.Skipped -> #("skipped", "none")
+    gate.OverBudget -> #("skipped", "budget")
     gate.Failed(error) -> #("failed", failure(error))
   }
   let gate = case report.verdict {
-    gate.Skipped -> [
+    gate.Skipped | gate.OverBudget -> [
       Count(gate_total, 1, [#("result", result), #("reason", reason)]),
     ]
     _ -> [
@@ -49,15 +50,13 @@ pub fn turn_series(report: gate.Report) -> List(Series) {
       Duration(gate_seconds, report.gate_ms, []),
     ]
   }
-  let gate_tokens = case report.verdict {
-    gate.Fired(_) | gate.Quiet(_) -> gate_cost_series()
-    _ -> []
-  }
   let recalled = case report.recall {
     Some(outcome) -> recall_series(outcome, "prefetch", report.recall_ms)
     None -> []
   }
-  list.flatten([gate, gate_tokens, recalled])
+  // The gate's own tokens go to the ledger with its answer; the metrics
+  // count its calls and times.
+  list.flatten([gate, recalled])
 }
 
 /// One `lembrar`, by the pre-search or by the agent.
@@ -93,18 +92,6 @@ pub fn recall_series(
       cost_microusd_total,
       microusd(outcome.decision_tokens, decision.decision_usd_per_million)
         + microusd(embed_tokens, decision.embed_usd_per_million),
-      [],
-    ),
-  ]
-}
-
-/// The gate's input is one short message: ~100 tokens, recorded as such.
-fn gate_cost_series() -> List(Series) {
-  [
-    Count(decision_tokens_total, 100, []),
-    Count(
-      cost_microusd_total,
-      microusd(100, decision.decision_usd_per_million),
       [],
     ),
   ]

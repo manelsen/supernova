@@ -92,10 +92,14 @@ pub fn recall(
   offset: Int,
   subject: String,
 ) -> Outcome {
-  case string.trim(subject) {
-    "" -> plain("lembrar precisa de um assunto.")
-    subject ->
-      case
+  case string.trim(subject), settings.within_budget() {
+    "", _ -> plain("lembrar precisa de um assunto.")
+    _, False ->
+      plain(
+        "lembrar indisponível hoje: o limite de gasto do dia foi atingido. Procure com buscar_conversa, usando palavras do assunto.",
+      )
+    subject, True -> {
+      let outcome = case
         decision.within(settings.recall_timeout_ms, fn() {
           run(settings, data_dir, principal, offset, subject)
         })
@@ -103,6 +107,13 @@ pub fn recall(
         Ok(outcome) -> outcome
         Error(Nil) -> failed(decision.TimedOut, 0, 0)
       }
+      settings.charge(
+        principal,
+        outcome.decision_tokens,
+        outcome.embedded_chars / 2,
+      )
+      outcome
+    }
   }
 }
 

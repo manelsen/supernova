@@ -106,6 +106,8 @@ fn settings(transport: decision.Transport) -> runtime.Settings {
     gate_threshold: 0.1,
     gate_timeout_ms: 2000,
     recall_timeout_ms: 5000,
+    charge: runtime.no_charge,
+    within_budget: runtime.always_within,
   )
 }
 
@@ -311,4 +313,16 @@ pub fn the_index_lives_with_the_conversations_test() {
   recall.index_path("/d", "telegram:42")
   |> string.ends_with(".jsonl")
   |> should.be_false()
+}
+
+pub fn recall_stands_aside_past_the_cap_test() {
+  use dir <- with_dir
+  seed(dir)
+  let calls = process.new_subject()
+  let capped =
+    runtime.Settings(..settings(fake(0.9, calls)), within_budget: fn() { False })
+  let outcome = recall.recall(capped, dir, "telegram:42", -180, "o médico")
+  outcome.text |> string.contains("limite de gasto do dia") |> should.be_true()
+  outcome.text |> string.contains("buscar_conversa") |> should.be_true()
+  drain(calls, []) |> should.equal([])
 }

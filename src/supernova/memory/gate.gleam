@@ -40,6 +40,8 @@ pub type Verdict {
   Quiet(Float)
   /// Not asked: a command, or an empty message.
   Skipped
+  /// Not asked: the day's spend reached the cap.
+  OverBudget
   /// The Decision did not answer; the turn goes on without it.
   Failed(decision.DecisionError)
 }
@@ -55,10 +57,20 @@ pub type Report {
 }
 
 pub fn ask(settings: runtime.Settings, message: String) -> Verdict {
+  ask_for(settings, "", message)
+}
+
+/// `ask`, charging the call to `principal`.
+pub fn ask_for(
+  settings: runtime.Settings,
+  principal: String,
+  message: String,
+) -> Verdict {
   let text = string.trim(message)
-  case text == "" || string.starts_with(text, "/") {
-    True -> Skipped
-    False ->
+  case text == "" || string.starts_with(text, "/"), settings.within_budget() {
+    True, _ -> Skipped
+    False, False -> OverBudget
+    False, True ->
       case
         decision.decide(
           settings.transport,
@@ -70,6 +82,7 @@ pub fn ask(settings: runtime.Settings, message: String) -> Verdict {
       {
         Error(error) -> Failed(error)
         Ok(answers) -> {
+          settings.charge(principal, answers.input_tokens, 0)
           let p =
             dict.get(answers.probabilities, "passado") |> result.unwrap(0.0)
           case p >=. settings.gate_threshold {
@@ -106,7 +119,7 @@ pub fn prepare_with(
   offset: Int,
 ) -> #(List(provider.ChatMessage), Option(Report)) {
   let started = now_ms()
-  let verdict = ask(settings, message)
+  let verdict = ask_for(settings, principal, message)
   let gate_ms = now_ms() - started
   case verdict {
     Fired(_) -> {

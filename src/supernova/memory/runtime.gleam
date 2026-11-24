@@ -12,7 +12,22 @@ pub type Settings {
     gate_threshold: Float,
     gate_timeout_ms: Int,
     recall_timeout_ms: Int,
+    /// Record a call's cost for `principal`: Decision tokens and embedding
+    /// tokens (the ledger, wired at boot).
+    charge: fn(String, Int, Int) -> Nil,
+    /// Whether the day's spend still allows the memory; past the cap the
+    /// gate and `lembrar` stand aside and `buscar_conversa` remains.
+    within_budget: fn() -> Bool,
   )
+}
+
+/// No ledger: nothing recorded, always within budget (tests, the bench).
+pub fn no_charge(_principal: String, _decision: Int, _embed: Int) -> Nil {
+  Nil
+}
+
+pub fn always_within() -> Bool {
+  True
 }
 
 const key = "supernova_memory_settings"
