@@ -80,7 +80,8 @@
 ## Agenda and Tools
 
 - `agenda/*`: per-person scheduled requests and the 30-second sweeper.
-- `tools/*`: built-in tools (`file_system`, `safe_shell`, `web`, `browser`, `github`, `git_inspect`, `gateway`, `canvas`, `process`, `agenda`, `computador`).
+- `tools/*`: built-in tools (`file_system`, `safe_shell`, `web`, `browser`, `github`, `git_inspect`, `gateway`, `canvas`, `process`, `agenda`, `buscar_conversa`, `lembrar`, `computador`).
+- `memory/*`: the gate, `lembrar` and their index, client, cost and metrics ([PRD-M](../prd/PRD-M-memoria.md)); off unless `conversation.recall.enabled`.
 - `computador/`: the agent's computer, a separate container on gVisor.
 
 ## Health and Instrumentation

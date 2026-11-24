@@ -13,6 +13,7 @@ import supernova/core/introspection/self_state
 import supernova/core/session/history_store
 import supernova/core/session/server as session_server
 import supernova/core/session/supervisor as session_supervisor
+import supernova/memory/recall
 import supernova/self/core as self_core
 import supernova/self/forget
 import supernova/self/incidents
@@ -266,3 +267,23 @@ pub fn forgetting_alice_does_not_touch_bob_test() {
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")
 fn file_exists(path: String) -> Result(Bool, String)
+
+/// The memory index lives with the conversations: /esquecer takes it too
+/// (PRD-M, I4).
+pub fn forget_removes_the_memory_index_test() {
+  support.with_runtime_root(cfg(), fn(root) {
+    seed(root)
+    let index = recall.index_path(root, "sim:alice")
+    let assert Ok(_) = ensure_dir(history_store.dir(root, "sim:alice"))
+    let assert Ok(_) = write_file(index, "{\"h\":\"abc\",\"v\":[0.1,0.2]}\n")
+    file_exists(index) |> should.equal(Ok(True))
+    let assert Ok(_) = forget.forget(root, "sim:alice", None)
+    file_exists(index) |> should.equal(Ok(False))
+  })
+}
+
+@external(erlang, "supernova_file_system_ffi", "ensure_dir")
+fn ensure_dir(path: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_file(path: String, content: String) -> Result(Nil, String)

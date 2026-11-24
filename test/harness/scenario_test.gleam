@@ -1,8 +1,10 @@
 import gleam/dict
 import gleam/list
+import gleam/option
 import gleam/string
 import gleeunit/should
 import supernova/harness/calibration
+import supernova/harness/engine
 import supernova/harness/scenario
 import test_workspace
 
@@ -56,6 +58,23 @@ pub fn every_shipped_scenario_loads_test() {
       Error(reason) -> panic as { id <> ": " <> reason }
     }
   })
+}
+
+/// recall turns the memory on for a scenario; off unless it says so.
+pub fn the_memory_scenario_turns_recall_on_test() {
+  let assert Ok(with_memory) =
+    scenario.load("priv/harness", "buscar_antigo_memoria")
+  with_memory.scenario.recall |> should.be_true()
+  with_memory.scenario.rubric |> should.equal("buscar_antigo")
+  let assert Ok(plain) = scenario.load("priv/harness", "buscar_antigo")
+  plain.scenario.recall |> should.be_false()
+  let on = engine.scenario_recall(True, Ok("k"))
+  on.enabled |> should.be_true()
+  on.api_key |> should.equal(option.Some("k"))
+  let off = engine.scenario_recall(False, Ok("k"))
+  off.enabled |> should.be_false()
+  off.api_key |> should.equal(option.None)
+  engine.scenario_recall(True, Error(Nil)).api_key |> should.equal(option.None)
 }
 
 pub fn loads_provisional_scenario_test() {

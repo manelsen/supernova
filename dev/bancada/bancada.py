@@ -169,11 +169,28 @@ class Busca:
                                   text=True, encoding="utf-8")
         self.trava = threading.Lock()
 
-    def buscar(self, dirdados, termos):
+    def pedir(self, pedido):
         with self.trava:
-            self.p.stdin.write(json.dumps({"dir": dirdados, "terms": termos, "offset": FUSO}) + "\n")
+            self.p.stdin.write(json.dumps(pedido) + "\n")
             self.p.stdin.flush()
-            return json.loads(self.p.stdout.readline())["out"]
+            return json.loads(self.p.stdout.readline())
+
+    def buscar(self, dirdados, termos):
+        return self.pedir({"dir": dirdados, "terms": termos, "offset": FUSO})["out"]
+
+    def porteiro(self, mensagem):
+        """O porteiro da Supernova (supernova/memory/gate)."""
+        return self.pedir({"op": "gate", "message": mensagem, "key": os.environ["GEMINI_API_KEY"]})
+
+    def lembrar(self, dirdados, assunto, registro):
+        """O lembrar da Supernova (supernova/memory/recall)."""
+        t0 = time.time()
+        r = self.pedir({"op": "lembrar", "dir": dirdados, "subject": assunto,
+                        "key": os.environ["GEMINI_API_KEY"]})
+        registro.append({"decision_s": round(time.time() - t0, 2), "decision_chamadas": 1,
+                         "decision_tokens": r["decision_tokens"], "lista": r["lista"],
+                         "falha": r["failure"]})
+        return r["out"]
 
 
 DICA_VAZIO = ("Pode ter sido dito com outras palavras: tente outras. Se ainda assim não achar, "
@@ -511,6 +528,8 @@ def executar(nome, a, variante, historico, dirdados, busca, registro):
     if nome == "grep_conversa":
         return grep_conversa(historico, a)
     if nome == "lembrar":
+        if LEMBRAR_MODO == "supernova":
+            return busca.lembrar(dirdados, a.get("assunto", ""), registro)
         return lembrar(historico, a, registro)
     return "Indisponível nesta conversa."
 
@@ -530,7 +549,11 @@ def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, bu
     t0 = time.time()
     forcar, prebuscou = False, False
     if condicao in ("porteiro", "prebusca") and minhas:
-        p = porteiro(pergunta)
+        if LEMBRAR_MODO == "supernova":
+            v = busca.porteiro(pergunta)
+            p = v.get("p", 0.0) if v["verdict"] in ("fired", "quiet") else 0.0
+        else:
+            p = porteiro(pergunta)
         registro.append({"porteiro": round(p, 3)})
         disparou = p >= PORTEIRO_LIMIAR
         if condicao == "porteiro":
@@ -538,7 +561,8 @@ def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, bu
         elif disparou:
             # A própria Supernova chama o lembrar com a mensagem da pessoa e
             # entrega o resultado como se a agente o tivesse chamado.
-            out = lembrar(historico, {"assunto": pergunta}, registro)
+            out = (busca.lembrar(dirdados, pergunta, registro) if LEMBRAR_MODO == "supernova"
+                   else lembrar(historico, {"assunto": pergunta}, registro))
             registro.append({"prebusca_s": round(time.time() - t0, 2)})
             msgs.append({"role": "assistant", "content": "", "tool_calls": [{
                 "id": "lembrar01", "type": "function",
@@ -717,7 +741,7 @@ def main():
     r.add_argument("--reps", type=int, default=1)
     r.add_argument("--mensagens", type=int, default=3000)
     r.add_argument("--paralelo", type=int, default=6)
-    r.add_argument("--lembrar", default="barato", choices=["barato", "plano"])
+    r.add_argument("--lembrar", default="barato", choices=["barato", "plano", "supernova"])
     r.add_argument("--dados", default="/tmp/bancada-dados")
     r.add_argument("--saida", required=True)
     sub.add_parser("porteiro")

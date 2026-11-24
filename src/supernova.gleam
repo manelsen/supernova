@@ -64,6 +64,7 @@ import supernova/llm/failover_cooldown/global as cd_global
 import supernova/llm/failover_cooldown/types as cd_types
 import supernova/llm/pricing
 import supernova/llm/provider
+import supernova/memory/boot as memory_boot
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
 import supernova/metrics/record
@@ -227,6 +228,7 @@ fn start_services(
 ) -> Result(Runtime, String) {
   browser.set_evaluate_allowed(cfg.tools.browser.allow_evaluate)
   use _ <- result.try(prompt_log.validate(cfg))
+  use _ <- result.try(config.validate_recall(cfg))
   closed_group_global.set_clock(clock)
 
   // Start Session Supervisor
@@ -378,6 +380,7 @@ fn start_services(
         )
     }
   }
+  publish_memory(cfg)
   let sweep_agenda = case
     agenda_schedule.timezone_offset(cfg.instance_budget.timezone)
   {
@@ -935,6 +938,14 @@ pub fn declare_boot_metrics(
         )
       })
     Error(_) -> Nil
+  }
+}
+
+/// The gate and `lembrar` read their settings from here (PRD-M).
+fn publish_memory(cfg: config.Config) -> Nil {
+  case memory_boot.publish(cfg) {
+    True -> io.println("✓ Memory on: gate and lembrar (Gemini Decision)")
+    False -> Nil
   }
 }
 

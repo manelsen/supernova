@@ -1,5 +1,6 @@
 import envoy
 import gleam/list
+import gleam/option
 import gleam/string
 import gleeunit/should
 
@@ -221,4 +222,45 @@ pub fn conversation_history_limit_test() {
   let assert Ok(example) =
     config.parse_yaml(read_file("supernova.yaml.example"))
   example.conversation.history_limit |> should.equal(100)
+}
+
+/// recall (PRD-M): off by default; thresholds and timeouts from the yaml;
+/// the key only from the environment.
+pub fn conversation_recall_test() {
+  let default = parsed("data_dir: d\n").conversation.recall
+  default.enabled |> should.be_false()
+  default.gate_threshold |> should.equal(0.1)
+  default.gate_timeout_ms |> should.equal(2000)
+  default.recall_timeout_ms |> should.equal(15_000)
+  let on =
+    parsed(
+      "conversation:\n  recall:\n    enabled: true\n    gate_threshold: 0.3\n    gate_timeout_ms: 500\n    recall_timeout_ms: 9000\n",
+    ).conversation.recall
+  on.enabled |> should.be_true()
+  on.gate_threshold |> should.equal(0.3)
+  on.gate_timeout_ms |> should.equal(500)
+  on.recall_timeout_ms |> should.equal(9000)
+  let assert Ok(example) =
+    config.parse_yaml(read_file("supernova.yaml.example"))
+  example.conversation.recall.enabled |> should.be_false()
+}
+
+/// recall on without SUPERNOVA_GEMINI_API_KEY stops the boot; off, the key
+/// is not needed.
+pub fn conversation_recall_needs_the_key_test() {
+  let on = parsed("conversation:\n  recall:\n    enabled: true\n")
+  config.validate_recall(on) |> should.be_error()
+  let keyed =
+    config.Config(
+      ..on,
+      conversation: config.ConversationConfig(
+        ..on.conversation,
+        recall: config.RecallConfig(
+          ..on.conversation.recall,
+          api_key: option.Some("k"),
+        ),
+      ),
+    )
+  config.validate_recall(keyed) |> should.equal(Ok(Nil))
+  config.validate_recall(parsed("data_dir: d\n")) |> should.equal(Ok(Nil))
 }

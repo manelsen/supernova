@@ -1,6 +1,7 @@
 //// Scenario engine: creates a disposable world, drives personas over the sim
 //// HTTP channel and records everything for the checks and the judge.
 
+import envoy
 import gleam/dict
 import gleam/dynamic/decode
 import gleam/int
@@ -120,6 +121,22 @@ pub fn run(input: Input, loaded: scenario.Loaded) -> Result(Output, String) {
   ))
 }
 
+/// The memory for a scenario that asks for it (PRD-M), with the key from
+/// the environment; off otherwise.
+pub fn scenario_recall(
+  wanted: Bool,
+  key: Result(String, Nil),
+) -> config.RecallConfig {
+  config.RecallConfig(
+    ..config.default_recall_config(),
+    enabled: wanted,
+    api_key: case wanted, key {
+      True, Ok(k) -> Some(k)
+      _, _ -> None
+    },
+  )
+}
+
 fn build_config(
   input: Input,
   loaded: scenario.Loaded,
@@ -175,6 +192,13 @@ fn build_config(
       instance_budget: config.InstanceBudgetConfig(
         ..base.instance_budget,
         daily_usd: input.instance_daily_usd,
+      ),
+      conversation: config.ConversationConfig(
+        ..base.conversation,
+        recall: scenario_recall(
+          loaded.scenario.recall,
+          envoy.get("SUPERNOVA_GEMINI_API_KEY"),
+        ),
       ),
     ),
   )

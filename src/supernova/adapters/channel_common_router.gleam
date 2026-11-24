@@ -48,6 +48,8 @@ import supernova/llm/catalog
 import supernova/llm/provider
 import supernova/llm/providers/openai_compatible
 import supernova/llm/stream as llm_stream
+import supernova/memory/gate as memory_gate
+import supernova/memory/metrics as memory_metrics
 import supernova/self/audit as self_audit
 import supernova/self/birth
 import supernova/self/core as self_core
@@ -2252,7 +2254,32 @@ fn ensure_rich_session(
   }
 }
 
+/// The turn's messages; with the memory on, the gate may add the
+/// pre-search (PRD-M). Every turn path builds its messages here.
 fn executor_messages_for_turn(
+  rich_session: Option(rich_session.Session),
+  content: String,
+  profile: SessionProfile,
+) -> List(provider.ChatMessage) {
+  let messages = turn_messages(rich_session, content, profile)
+  case agenda_runtime.get() {
+    None -> messages
+    Some(context) -> {
+      let #(prepared, report) =
+        memory_gate.prepare(
+          messages,
+          content,
+          context.data_dir,
+          profile.agent_id,
+          context.offset_minutes,
+        )
+      memory_metrics.record_turn(report)
+      prepared
+    }
+  }
+}
+
+fn turn_messages(
   rich_session: Option(rich_session.Session),
   content: String,
   profile: SessionProfile,

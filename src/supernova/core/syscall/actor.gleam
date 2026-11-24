@@ -40,6 +40,7 @@ import supernova/tools/agenda
 import supernova/tools/buscar_conversa
 import supernova/tools/computador
 import supernova/tools/file_system
+import supernova/tools/lembrar
 
 // ============================================================================
 // FFI — Timestamp (Erlang)
@@ -468,6 +469,9 @@ fn claimed_executor(
     }
     "buscar_conversa", _ -> fn(_name, args) {
       buscar_conversa.execute(reservation.principal_id, args)
+    }
+    "lembrar", _ -> fn(_name, args) {
+      lembrar.execute(reservation.principal_id, args)
     }
     "computador", _ -> fn(_name, args) {
       computador.execute(reservation.principal_id, args)

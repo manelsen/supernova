@@ -70,6 +70,16 @@ The maintainer owns `priv/constellation/` and `priv/reflection/`. They are not c
 
 `src/supernova/agenda/` keeps per-person scheduled requests (cron or one-shot), at most 5 per person. A sweeper runs every 30 seconds and injects due entries into the person's lane as an `[Agenda]` message. The answer is delivered to the person.
 
+## Memory
+
+The person's conversations are kept whole on disk; the model sees the last `conversation.history_limit` messages. To reach the rest there are two tools and a gate (`src/supernova/memory/`, [PRD-M](../prd/PRD-M-memoria.md)):
+
+- `buscar_conversa` (`tools/buscar_conversa.gleam`): every word, without case or accents; exact things (names, numbers, codes).
+- `lembrar` (`tools/lembrar.gleam`, `memory/recall.gleam`): a short list of excerpts (nearest by vector, plus most shared words) goes to the Gemini Decision API, which answers how likely it is that the subject was talked about, and which excerpts. The answer opens with a tone set by that probability ("acho que não", "não lembro bem", confident) and shows the excerpts word for word. The vectors live in `conversations/recall.idx`, which `/esquecer` removes with the conversations.
+- The gate (`memory/gate.gleam`): before the first LLM call of a turn, the Decision API reads only the message and says whether it asks about the past; if so, the turn starts with `lembrar` already called. Its timeout (2 s) bounds what it can add to a turn; any failure leaves the turn as it would be without memory.
+
+All of it is off unless `conversation.recall.enabled` is set, with a paid key in `SUPERNOVA_GEMINI_API_KEY`. Calls go to the ledger as "gemini" usage; past the instance's daily cap the memory stands aside. `/metrics` counts gate verdicts, recall bands, corrections and safety refusals, never text (`memory/metrics.gleam`).
+
 ## The Agent's Computer
 
 The `computador` tool (`tools/computador.gleam`) talks over HTTP to a separate container (`computador/`), which runs on gVisor and holds no secrets. It has a full shell, files in a volume and a persistent Chromium. Screenshots travel back as images in the conversation (`llm/tool_images.gleam`). The threat model and setup are in [`docs/operations/COMPUTADOR.md`](../operations/COMPUTADOR.md).
