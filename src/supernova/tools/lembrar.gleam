@@ -10,6 +10,7 @@ import gleam/json
 import gleam/option.{None, Some}
 import supernova/agenda/runtime as agenda_runtime
 import supernova/llm/provider
+import supernova/memory/metrics
 import supernova/memory/recall
 import supernova/memory/runtime
 
@@ -45,16 +46,22 @@ pub fn execute(principal: String, args_json: String) -> Result(String, String) {
     Some(settings), Some(context) ->
       case json.parse(args_json, decoder) {
         Error(_) -> Error("Invalid arguments for lembrar: assunto is required")
-        Ok(assunto) ->
-          Ok(
+        Ok(assunto) -> {
+          let started = now_ms()
+          let outcome =
             recall.recall(
               settings,
               context.data_dir,
               principal,
               context.offset_minutes,
               assunto,
-            ).text,
-          )
+            )
+          metrics.record_recall(outcome, "agent", now_ms() - started)
+          Ok(outcome.text)
+        }
       }
   }
 }
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn now_ms() -> Int
