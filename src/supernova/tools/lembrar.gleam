@@ -10,6 +10,7 @@ import gleam/json
 import gleam/option.{None, Some}
 import supernova/agenda/runtime as agenda_runtime
 import supernova/llm/provider
+import supernova/memory/correction
 import supernova/memory/metrics
 import supernova/memory/recall
 import supernova/memory/runtime
@@ -57,6 +58,7 @@ pub fn execute(principal: String, args_json: String) -> Result(String, String) {
               assunto,
             )
           metrics.record_recall(outcome, "agent", now_ms() - started)
+          correction.mark(principal)
           Ok(outcome.text)
         }
       }

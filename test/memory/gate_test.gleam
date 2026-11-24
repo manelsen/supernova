@@ -167,6 +167,7 @@ pub fn metrics_carry_no_text_test() {
       gate_ms: 300,
       recall: None,
       recall_ms: 0,
+      correction: None,
     )
   let series = metrics.turn_series(report)
   list.contains(
@@ -183,6 +184,7 @@ pub fn metrics_carry_no_text_test() {
       gate_ms: 10,
       recall: None,
       recall_ms: 0,
+      correction: None,
     ))
   list.contains(
     failed,
@@ -265,6 +267,18 @@ pub fn recording_without_metrics_is_harmless_test() {
       gate_ms: 0,
       recall: None,
       recall_ms: 0,
+      correction: None,
     )),
   )
+}
+
+/// With the memory published, prepare reads the settings from the runtime.
+pub fn prepare_reads_the_published_settings_test() {
+  let seen = process.new_subject()
+  runtime.configure(settings(fake("0.02", seen)))
+  let #(messages, report) =
+    gate.prepare(turn(), "bom dia!", "/d", "telegram:42", -180)
+  runtime.clear()
+  messages |> should.equal(turn())
+  let assert Some(gate.Report(verdict: gate.Quiet(_), ..)) = report
 }

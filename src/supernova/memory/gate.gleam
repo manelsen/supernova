@@ -16,6 +16,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import supernova/llm/provider
+import supernova/memory/correction
 import supernova/memory/decision
 import supernova/memory/recall
 import supernova/memory/runtime
@@ -53,6 +54,8 @@ pub type Report {
     gate_ms: Int,
     recall: Option(recall.Outcome),
     recall_ms: Int,
+    /// Whether this message corrects the previous turn's `lembrar`.
+    correction: Option(correction.Correction),
   )
 }
 
@@ -118,6 +121,8 @@ pub fn prepare_with(
   principal: String,
   offset: Int,
 ) -> #(List(provider.ChatMessage), Option(Report)) {
+  let corrected =
+    correction.check(settings, principal, last_reply(messages), message)
   let started = now_ms()
   let verdict = ask_for(settings, principal, message)
   let gate_ms = now_ms() - started
@@ -127,6 +132,7 @@ pub fn prepare_with(
       let recall_started = now_ms()
       let outcome =
         recall.recall(settings, data_dir, principal, offset, subject)
+      correction.mark(principal)
       #(
         list.append(messages, recalled(subject, outcome.text)),
         Some(Report(
@@ -134,6 +140,7 @@ pub fn prepare_with(
           gate_ms: gate_ms,
           recall: Some(outcome),
           recall_ms: now_ms() - recall_started,
+          correction: corrected,
         )),
       )
     }
@@ -144,9 +151,19 @@ pub fn prepare_with(
         gate_ms: gate_ms,
         recall: None,
         recall_ms: 0,
+        correction: corrected,
       )),
     )
   }
+}
+
+/// The agent's last reply before the message that arrived.
+fn last_reply(messages: List(provider.ChatMessage)) -> Option(String) {
+  messages
+  |> list.reverse
+  |> list.find(fn(m) { m.role == "assistant" && string.trim(m.content) != "" })
+  |> option.from_result
+  |> option.map(fn(m) { m.content })
 }
 
 /// The call to `lembrar` and its result, as if the agent had made it.

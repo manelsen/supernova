@@ -8,6 +8,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import supernova/memory/correction
 import supernova/memory/decision
 import supernova/memory/gate
 import supernova/memory/recall
@@ -31,6 +32,8 @@ pub const decision_tokens_total = "supernova_memory_decision_tokens_total"
 pub const embed_tokens_total = "supernova_memory_embed_tokens_total"
 
 pub const cost_microusd_total = "supernova_memory_cost_microusd_total"
+
+pub const correction_total = "supernova_memory_correction_total"
 
 /// One turn's gate and pre-search.
 pub fn turn_series(report: gate.Report) -> List(Series) {
@@ -56,7 +59,25 @@ pub fn turn_series(report: gate.Report) -> List(Series) {
   }
   // The gate's own tokens go to the ledger with its answer; the metrics
   // count its calls and times.
-  list.flatten([gate, recalled])
+  let corrected = case report.correction {
+    None -> []
+    Some(correction.Corrected) -> [
+      Count(correction_total, 1, [#("result", "corrected"), #("reason", "none")]),
+    ]
+    Some(correction.NotCorrected) -> [
+      Count(correction_total, 1, [
+        #("result", "not_corrected"),
+        #("reason", "none"),
+      ]),
+    ]
+    Some(correction.Unknown(error)) -> [
+      Count(correction_total, 1, [
+        #("result", "failed"),
+        #("reason", failure(error)),
+      ]),
+    ]
+  }
+  list.flatten([gate, recalled, corrected])
 }
 
 /// One `lembrar`, by the pre-search or by the agent.
