@@ -336,11 +336,122 @@ def _decidir(grupo, assunto):
     return r
 
 
+LEMBRAR_MODO = "barato"   # "barato": formato enxuto e lista curta; "plano": a conversa inteira
+W1 = ("Nesta conversa, a pessoa já contou à agente, ou as duas já conversaram, sobre o que "
+      "esta mensagem pergunta? Mensagem: «{m}»")
+K_VETOR, K_PALAVRAS = 30, 10
+_indice = {}                  # id do histórico -> vetores dos trechos (enxutos)
+_indice_trava = threading.Lock()
+
+
+def _dia(at):
+    return dt.datetime.fromtimestamp(at / 1000, dt.timezone(dt.timedelta(minutes=FUSO)))
+
+
+def trecho_enxuto(k, tr):
+    """Data uma vez por trecho (e quando o dia muda), papel abreviado."""
+    d0 = _dia(tr[0]["at"])
+    linhas, atual = [f"### Trecho {k + 1}, {d0:%d/%m/%Y}"], d0.date()
+    for m in tr:
+        d = _dia(m["at"])
+        if d.date() != atual:
+            linhas.append(f"({d:%d/%m/%Y})")
+            atual = d.date()
+        linhas.append(("P: " if m["role"] == "user" else "A: ") + m["content"].replace("\n", " "))
+    return "\n".join(linhas)
+
+
+def _embed(texto, tarefa):
+    r = post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent",
+             {"content": {"parts": [{"text": texto}]}, "taskType": tarefa, "outputDimensionality": 256},
+             {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}, tentativas=8)
+    return r["embedding"]["values"]
+
+
+def _cos(a, b):
+    return sum(x * y for x, y in zip(a, b)) / (sum(x * x for x in a) ** 0.5 * sum(y * y for y in b) ** 0.5)
+
+
+def _vetores(historico, textos):
+    chave = (len(historico), historico[-1]["at"])
+    with _indice_trava:
+        if chave not in _indice:
+            with cf.ThreadPoolExecutor(12) as ex:
+                _indice[chave] = list(ex.map(lambda t: _embed(t, "RETRIEVAL_DOCUMENT"), textos))
+        return _indice[chave]
+
+
+def _dobrar(t):
+    return "".join(c for c in unicodedata.normalize("NFD", t.lower()) if not unicodedata.combining(c))
+
+
+_PARADAS = set(_dobrar(w) for w in (
+    "o a os as um uma que de do da dos das pra pro para por com sem no na nos nas em eu te me meu "
+    "minha mesmo qual quais quando como onde porque é foi era sobre aquela aquele vez lembra daquela "
+    "você vc já ainda isso disso nisso").split())
+
+
+def _palavras(t):
+    return [w for w in re.findall(r"[a-z0-9]+", _dobrar(t)) if len(w) >= 4 and w not in _PARADAS]
+
+
+def _lista_curta(assunto, historico, textos, registro):
+    vs = _vetores(historico, textos)
+    qv = _embed(assunto, "RETRIEVAL_QUERY")
+    ordem = sorted(range(len(textos)), key=lambda i: -_cos(qv, vs[i]))
+    ps = set(w[:5] for w in _palavras(assunto))
+    pont = sorted(((len(ps & set(w[:5] for w in _palavras(t))), i) for i, t in enumerate(textos)),
+                  key=lambda x: (-x[0], -x[1]))
+    lex = [i for s_, i in pont[:K_PALAVRAS] if s_ > 0]
+    return sorted(dict.fromkeys(ordem[:K_VETOR] + lex))
+
+
+def _tom(geral):
+    if geral < 0.2:
+        return (f"Pouco provável que vocês tenham falado disso (probabilidade {geral:.2f}). "
+                "Diga que acha que não, sem afirmar com certeza que nunca foi dito.")
+    if geral < 0.75:
+        return (f"Talvez vocês tenham falado disso (probabilidade {geral:.2f}). Se os trechos abaixo "
+                "não respondem, diga que não se lembra bem e pergunte.")
+    return f"Provável que vocês já tenham falado disso (probabilidade {geral:.2f})."
+
+
 def lembrar(historico, a, registro):
     assunto = (a.get("assunto") or "").strip()
     if not assunto:
         return "lembrar precisa de um assunto."
     trs = trechos(historico)
+    if LEMBRAR_MODO == "plano":
+        return _lembrar_plano(historico, trs, assunto, registro)
+    textos = [trecho_enxuto(k, tr) for k, tr in enumerate(trs)]
+    t0 = time.time()
+    lista = _lista_curta(assunto, historico, textos, registro)
+    perguntas = {"falado": {"type": "noul", "instructions": W1.format(m=assunto)}}
+    for k in lista:
+        perguntas[f"t{k + 1}"] = {"type": "noul", "instructions":
+                                  f"O Trecho {k + 1} fala sobre o que esta mensagem pergunta? Mensagem: «{assunto}»"}
+    r = post("https://generativelanguage.googleapis.com/v1beta/decisions",
+             {"model": "gemini-decision-1", "input": "\n\n".join(textos[k] for k in lista),
+              "questions": perguntas},
+             {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}, tentativas=8)
+    registro.append({"decision_s": round(time.time() - t0, 2), "decision_chamadas": 1,
+                     "decision_tokens": r.get("usage", {}).get("total_input_tokens", 0),
+                     "lista": len(lista)})
+    geral = r["answers"]["falado"]["noul"]
+    por = sorted(((r["answers"][f"t{k + 1}"]["noul"], k) for k in lista), reverse=True)
+    melhores = [(p, k) for p, k in por[:3] if p >= 0.2]
+    partes = [_tom(geral)]
+    if melhores:
+        partes.append("Trechos mais prováveis:")
+        for p, k in sorted(melhores, key=lambda x: x[1]):
+            partes.append(f"(probabilidade {p:.2f})\n" + render_trecho(k, trs[k]))
+        partes.append(DICA_ACHOU)
+    else:
+        partes.append("Nenhum trecho parece falar disso.")
+    return "\n\n".join(partes)
+
+
+def _lembrar_plano(historico, trs, assunto, registro):
     grupos = _grupos(trs)
     t0 = time.time()
     with cf.ThreadPoolExecutor(len(grupos)) as ex:
@@ -384,6 +495,26 @@ def sistema(condicao):
             "Última reflexão: Sem reflexão registrada.\n")
 
 
+def ferramentas_da_variante(variante):
+    """As ferramentas de busca que a agente recebe em cada variante."""
+    if variante == "ambas":
+        return [VARIANTES["buscar_nova"], VARIANTES["lembrar"]]
+    return [VARIANTES[variante]] if VARIANTES[variante] else []
+
+
+def executar(nome, a, variante, historico, dirdados, busca, registro):
+    if nome == "buscar_conversa":
+        out = busca.buscar(dirdados, a.get("terms", ""))
+        return resultado_antigo(out) if variante == "buscar_antiga" else out
+    if nome == "grep_history":
+        return grepmem(historico, a)
+    if nome == "grep_conversa":
+        return grep_conversa(historico, a)
+    if nome == "lembrar":
+        return lembrar(historico, a, registro)
+    return "Indisponível nesta conversa."
+
+
 def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, busca):
     janela = historico[-JANELA:]
     msgs = [{"role": "system", "content": sistema(condicao)}]
@@ -392,19 +523,34 @@ def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, bu
     if msgs[-1]["role"] == "user":
         msgs.append({"role": "assistant", "content": "Entendi."})
     msgs.append({"role": "user", "content": pergunta})
-    ferr = OUTRAS + ([VARIANTES[variante]] if VARIANTES[variante] else [])
-    busca_nome = VARIANTES[variante]["function"]["name"] if VARIANTES[variante] else None
+    minhas = ferramentas_da_variante(variante)
+    nomes_busca = {t["function"]["name"] for t in minhas}
+    ferr = OUTRAS + minhas
     chamadas, registro, uso_total = [], [], {"prompt": 0, "completion": 0}
     t0 = time.time()
-    forcar = False
-    if condicao == "porteiro" and busca_nome:
+    forcar, prebuscou = False, False
+    if condicao in ("porteiro", "prebusca") and minhas:
         p = porteiro(pergunta)
         registro.append({"porteiro": round(p, 3)})
-        forcar = p >= PORTEIRO_LIMIAR
+        disparou = p >= PORTEIRO_LIMIAR
+        if condicao == "porteiro":
+            forcar = disparou
+        elif disparou:
+            # A própria Supernova chama o lembrar com a mensagem da pessoa e
+            # entrega o resultado como se a agente o tivesse chamado.
+            out = lembrar(historico, {"assunto": pergunta}, registro)
+            registro.append({"prebusca_s": round(time.time() - t0, 2)})
+            msgs.append({"role": "assistant", "content": "", "tool_calls": [{
+                "id": "lembrar01", "type": "function",
+                "function": {"name": "lembrar", "arguments": json.dumps({"assunto": pergunta}, ensure_ascii=False)}}]})
+            msgs.append({"role": "tool", "tool_call_id": "lembrar01", "name": "lembrar", "content": out})
+            chamadas.append({"ferramenta": "lembrar", "args": {"assunto": pergunta}, "prebusca": True,
+                             "saida_chars": len(out), "saida": out[:1500]})
+            prebuscou = True
     for _ in range(MAX_FERRAMENTA + 1):
         sem_mais = len(chamadas) >= MAX_FERRAMENTA
         if forcar and not chamadas:
-            msg, uso = chat(modelo, msgs, [VARIANTES[variante]], forcar=True)
+            msg, uso = chat(modelo, msgs, minhas, forcar=True)
         else:
             msg, uso = chat(modelo, msgs, None if sem_mais else ferr)
         uso_total["prompt"] += uso.get("prompt_tokens", 0) or 0
@@ -412,7 +558,7 @@ def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, bu
         tcs = msg.get("tool_calls") or []
         if not tcs:
             return {"resposta": msg.get("content") or "", "chamadas": chamadas,
-                    "buscou": any(c["ferramenta"] == busca_nome for c in chamadas),
+                    "buscou": prebuscou or any(c["ferramenta"] in nomes_busca for c in chamadas),
                     "registro": registro, "uso": uso_total, "s": round(time.time() - t0, 1)}
         msgs.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tcs})
         for tc in tcs:
@@ -421,25 +567,13 @@ def rodar_pergunta(modelo, variante, condicao, pergunta, historico, dirdados, bu
                 a = json.loads(tc["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 a = {}
-            if nome != busca_nome:
-                out = "Indisponível nesta conversa."
-            elif variante in ("buscar_antiga", "buscar_nova"):
-                out = busca.buscar(dirdados, a.get("terms", ""))
-                if variante == "buscar_antiga":
-                    out = resultado_antigo(out)
-            elif variante == "grepmem":
-                out = grepmem(historico, a)
-            elif variante == "grep_conversa":
-                out = grep_conversa(historico, a)
-            elif variante == "lembrar":
-                out = lembrar(historico, a, registro)
-            else:
-                out = "ferramenta desconhecida"
+            out = (executar(nome, a, variante, historico, dirdados, busca, registro)
+                   if nome in nomes_busca else "Indisponível nesta conversa.")
             chamadas.append({"ferramenta": nome, "args": a, "saida_chars": len(out),
                              "saida": out[:1500]})
             msgs.append({"role": "tool", "tool_call_id": tc.get("id", ""), "name": nome, "content": out})
     return {"resposta": "(limite de chamadas)", "chamadas": chamadas, "registro": registro,
-            "buscou": any(c["ferramenta"] == busca_nome for c in chamadas),
+            "buscou": prebuscou or any(c["ferramenta"] in nomes_busca for c in chamadas),
             "uso": uso_total, "s": round(time.time() - t0, 1)}
 
 
@@ -499,12 +633,14 @@ def julgar(q, resposta, historico):
 
 
 def rodar(args):
+    global LEMBRAR_MODO
+    LEMBRAR_MODO = args.lembrar
     historico = dados.gerar(args.mensagens)
     dirdados = os.path.join(args.dados, f"m{args.mensagens}")
     dados.escrever(dirdados, historico)
     busca = Busca()
     perguntas = [q for q in dados.PERGUNTAS if not args.perguntas or q[0] in args.perguntas.split(",")]
-    variantes = list(VARIANTES) if args.variantes == "todas" else args.variantes.split(",")
+    variantes = list(VARIANTES) + ["ambas"] if args.variantes == "todas" else args.variantes.split(",")
     tarefas = [(mo, v, c, q, r) for r in range(args.reps) for mo in args.modelos.split(",")
                for c in args.condicoes.split(",") for v in variantes for q in perguntas]
     feitas = set()
@@ -581,6 +717,7 @@ def main():
     r.add_argument("--reps", type=int, default=1)
     r.add_argument("--mensagens", type=int, default=3000)
     r.add_argument("--paralelo", type=int, default=6)
+    r.add_argument("--lembrar", default="barato", choices=["barato", "plano"])
     r.add_argument("--dados", default="/tmp/bancada-dados")
     r.add_argument("--saida", required=True)
     sub.add_parser("porteiro")

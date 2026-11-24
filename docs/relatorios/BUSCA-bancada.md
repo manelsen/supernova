@@ -129,7 +129,7 @@ mensagens, ~93 mil tokens por consulta (US$ 0,009), 1,6 s de mediana; com
 cresce com o histórico; com 100 mil mensagens, a consulta plana passaria de
 US$ 0,30. Concorrência alta esbarra no limite de tokens por minuto.
 
-### O tom do "não achei" (esta PR)
+### O tom do "não achei" (PR #65)
 
 Antes, a descrição dizia "Finding nothing means it was not said". Agora a
 descrição pede para tentar sinônimo, palavra mais curta, singular; e o
@@ -150,6 +150,129 @@ tendência, não prova. Nenhum acerto se perde além da variação entre
 repetições. O Nemotron com o porteiro passa a dizer "não lembro" mais vezes
 (16% → 38%), parte delas em fatos que antes negava.
 
+### Porteiro: obrigar a buscar ou pré-buscar
+
+Com o porteiro disparado, (a) a primeira chamada da agente é obrigatoriamente
+uma busca; (b) a Supernova chama o `lembrar` com a mensagem da pessoa e
+entrega o resultado no turno, como se a agente o tivesse chamado. "Ambas" é
+a agente com `lembrar` e `buscar_conversa`. DeepSeek com 3 repetições,
+Nemotron com 2.
+
+| | Fatos | Nunca dito | Negou | Tempo (mediana) |
+|---|---|---|---|---|
+| DeepSeek, (a) `lembrar` | 36/36 | 3/12 | 10% | 3,0 s |
+| DeepSeek, (a) ambas | 35/36 | 4/12 | 8% | 2,7 s |
+| DeepSeek, (b) `lembrar` | 36/36 | 5/12 | 8% | 2,2 s |
+| DeepSeek, **(b) ambas** | **36/36** | **6/12** | **6%** | **2,2 s** |
+| Nemotron, (a) `lembrar` | 24/24 | 4/8 | 6% | 10,9 s |
+| Nemotron, (a) ambas | 19/24 | 4/8 | 6% | 6,8 s |
+| Nemotron, (b) `lembrar` | 24/24 | 4/8 | 3% | 4,5 s |
+| Nemotron, **(b) ambas** | **24/24** | 3/8 | **3%** | **4,8 s** |
+
+(b) empata ou ganha, sem a ida a mais ao LLM. O Decision levou 1,4 s de
+mediana (p90 1,6 s). Os casos de ~78 s são esperas por limite de requisições
+na própria bancada.
+
+### "Já falamos disso?": a pergunta geral
+
+O `lembrar` faz ao Decision uma pergunta geral, além das por trecho. Três
+formulações, sobre a conversa inteira, nas 16 perguntas e em mais 8 sobre o
+que nunca foi dito:
+
+| Formulação | Nunca dito (12) | Fatos (12) |
+|---|---|---|
+| W0: "falaram sobre isto: {mensagem}" | ≤ 0,14 | ≥ 0,17 |
+| **W1: "a pessoa já contou à agente, ou as duas já conversaram, sobre o que esta mensagem pergunta?"** | **≤ 0,16** (11 de 12) | **≥ 0,92** |
+| W2: "a resposta para esta pergunta está nesta conversa?" | ≤ 0,17 (11 de 12) | ≥ 0,73 |
+
+A exceção nas três é "o que eu te contei do **meu** cachorro?" (0,8–0,9): o
+da vizinha aparece 31 vezes. Os trechos mostram de quem é; probabilidade
+alta não obriga a agente a afirmar nada.
+
+### Custo: formato enxuto e lista curta
+
+Metade da entrada era cabeçalho: `[30/07/2026 15:17] pessoa:` em cada
+mensagem (49% dos caracteres; 38% das mensagens têm menos de 25). Duas
+mudanças:
+
+- **Formato enxuto:** a data uma vez por trecho, `P:` e `A:`. De 96 para 54
+  mil tokens por consulta, com as probabilidades praticamente iguais.
+- **Lista curta:** os 30 trechos mais próximos pelo vetor
+  (`gemini-embedding-2`, 256 dimensões) mais os 10 com mais palavras em
+  comum. O Decision lê só esses: 6,3 mil tokens, 15× menos. Na bancada, o
+  trecho certo veio em 1º pelo vetor nas 12 perguntas sobre fatos; por
+  palavras, a cirurgia ("operada") e a dermatologista ("dermato") ficavam
+  de fora.
+
+### LongMemEval
+
+O 1º lugar em 12 de 12 é otimista: o enchimento da bancada é repetitivo.
+Para conferir num corpus que não escrevemos, a mesma camada de busca rodou
+no LongMemEval S [5] (MIT): históricos de chat com ~115 mil tokens, 500
+perguntas escritas à mão; amostra de 10 por tipo mais as 30 de abstenção
+(1 delas recusada pelo filtro de segurança da Google; 89 medidas). Em
+inglês, sem agente: só a lista curta e a pergunta geral (W1).
+
+| Tipo | Trecho certo na lista de 40 | Só por palavras |
+|---|---|---|
+| fato dito pela pessoa | 10/10 | 10/10 |
+| fato dito pelo assistente | 10/10 | 9/10 |
+| atualização | 9/9 | 9/9 |
+| várias sessões (todas as partes) | 10/10 | 9/10 |
+| temporal | 10/10 | 8/10 |
+| preferência | 10/10 | 2/10 |
+| **total** | **59/59** | 47/59 |
+
+O trecho certo veio em 1º pelo vetor em 37 de 59; o pior, em 24º. A lista
+curta usa 11 mil tokens contra 115 mil.
+
+A pergunta geral separa menos aqui: as abstenções do LongMemEval são
+quase-acertos (coisas parecidas com o que foi dito), e perguntas de
+preferência ou de conta ("quantos dias entre...") não são "já falamos
+disso?". Com a lista curta:
+
+| Corte | Respondíveis abaixo (o "nunca" falso) | Abstenções abaixo |
+|---|---|---|
+| 0,2 | 2/59 (3%) | 17/30 |
+| 0,3 | 7/59 (12%) | 24/30 |
+
+Por isso a faixa "acho que não" fica abaixo de 0,2, e diz "acho que não",
+nunca "não".
+
+### Versão barata com a agente
+
+Pré-busca, `lembrar` e `buscar_conversa`, DeepSeek com 3 repetições, as 16
+perguntas mais 8 sobre o nunca dito. O resultado do `lembrar` agora traz o
+tom pela probabilidade geral (< 0,2: "acho que não, sem afirmar com
+certeza"; 0,2 a 0,75: "não lembro bem"; ≥ 0,75: confiante).
+
+| | `lembrar` plano | **`lembrar` barato** |
+|---|---|---|
+| Fatos | 36/36 | **36/36** |
+| Tokens por consulta (mediana) | ~93 mil | **6,4 mil** |
+| Tempo do Decision (mediana) | 1,4 s | **0,65 s** (p90 0,85 s) |
+| Turno inteiro (mediana) | 2,2 s | **1,4 s** |
+
+Nunca dito, as mesmas 8 perguntas novas, 3 repetições:
+
+| | Plano, sem faixas de tom | **Barato, com faixas** |
+|---|---|---|
+| Nega sem dúvida ("você nunca me contou") | 6/24 | **1/24** |
+| Nega com dúvida ("acho que você nunca me contou") | 1/24 | 5/24 |
+| Não lembra, não encontrou | 17/24 | 18/24 |
+
+**Critério do juiz.** "Acho que você nunca me disse o nome dele" é o tom
+que o mantenedor quer; o juiz marcava como negação pela palavra "nunca".
+Respostas a perguntas sobre o nunca dito que negam com "acho que" foram
+reclassificadas como "não lembra" (8 na versão barata, 1 na plana). Uma
+delas é um erro de verdade que a regra esconde: "acho que nunca falamos da
+Carla" (falaram; só os filhos dela nunca apareceram). Com o critério novo,
+a versão barata nega sem dúvida em 1 de 36 perguntas sobre o nunca dito; a
+plana, sem faixas, em 16 de 48 (rodada anterior, 16 perguntas).
+
+O Nemotron fica para outra rodada: o limite diário gratuito do OpenRouter
+acabou.
+
 ## Limites
 
 - Um histórico sintético e uma semente; 16 perguntas. Mostra
@@ -160,20 +283,17 @@ repetições. O Nemotron com o porteiro passa a dizer "não lembro" mais vezes
   em 45 mensagens novas é pequena.
 - O Decision foi medido com a chave paga; a gratuita (50 mil tokens por
   minuto) não comporta uma consulta com histórico grande.
+- O LongMemEval mede só a camada de busca, em inglês. A agente com o prompt
+  da Selene foi medida só na bancada em português.
+- O filtro de segurança da Google recusou 1 de 90 conversas do LongMemEval.
+  Numa agente de companhia, a taxa pode ser bem maior.
 
 ## O que fica
 
-1. **Porteiro na Supernova.** Na fase anterior ao LLM, que já roda na fila
-   de cada chat (PRD-P). Precisa de PRD: configuração, falha do Gemini
-   (seguir sem porteiro), ZDR e chave paga.
-2. **`lembrar` como ferramenta**, ao lado da `buscar_conversa` (o exato
-   continua com ela). O tom calibrado (a probabilidade) vira o grau de
-   dúvida da agente.
-3. **Custo com histórico grande:** bisseção e árvore de resumos (como no
-   MemWalker [3]; em linha com os Recursive Language Models [4]), medidas
-   contra o `lembrar` plano com 12 mil mensagens.
-4. **Nunca dito:** medir de novo com mais perguntas desse tipo; o efeito do
-   tom ainda é tendência.
+A PRD-M ([docs/prd/PRD-M-memoria.md](../prd/PRD-M-memoria.md)) leva para a
+Supernova: porteiro, pré-busca, `lembrar` barato com índice vetorial por
+pessoa, faixas de tom e a medição no piloto (disparos, faixas, correções e
+recusas por segurança, sem texto).
 
 ## Referências
 
@@ -189,3 +309,7 @@ repetições. O Nemotron com o porteiro passa a dizer "não lembro" mais vezes
    arXiv:2310.05029, 2023. <https://arxiv.org/abs/2310.05029>.
 4. A. L. Zhang, T. Kraska, O. Khattab. *Recursive Language Models*.
    arXiv:2512.24601, 2025. <https://arxiv.org/abs/2512.24601>.
+5. D. Wu, H. Wang, W. Yu, Y. Zhang, K.-W. Chang, D. Yu. *LongMemEval:
+   Benchmarking Chat Assistants on Long-Term Interactive Memory*. ICLR 2025.
+   arXiv:2410.10813. <https://arxiv.org/abs/2410.10813>. Dados (MIT):
+   <https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned>.

@@ -14,12 +14,16 @@ ferramenta de busca. Nada aqui entra no build de produção.
 
 Variantes: `nenhuma`, `buscar_antiga` (descrição e resultado de antes desta
 mudança), `buscar_nova`, `grepmem` (porta do GrepMem), `grep_conversa`
-(regex com mensagens vizinhas) e `lembrar` (Gemini Decision 1 sobre a
-conversa em trechos de 10 mensagens).
+(regex com mensagens vizinhas), `lembrar` (Gemini Decision 1 sobre a
+conversa em trechos de 10 mensagens) e `ambas` (`lembrar` e
+`buscar_conversa`).
 
 Condições: `natural` (prompt de hoje), `busca` (uma regra a mais pedindo
 para procurar) e `porteiro` (o Decision decide se a mensagem pergunta
-sobre o passado; se sim, a primeira chamada é obrigatoriamente a busca).
+sobre o passado; se sim, a primeira chamada é obrigatoriamente a busca) e
+`prebusca` (o mesmo porteiro; se dispara, a bancada chama o `lembrar` com a
+mensagem e entrega o resultado no turno, como se a agente o tivesse
+chamado).
 
 Chaves em `.env.bench`, na raiz (fora do git): `OPENROUTER_API_KEY`,
 `GEMINI_API_KEY`. O DeepSeek usa a chave do `.env` da Supernova.
@@ -30,6 +34,8 @@ Chaves em `.env.bench`, na raiz (fora do git): `OPENROUTER_API_KEY`,
         --saida /tmp/rodada.jsonl
     python3 -I dev/bancada/bancada.py resumo /tmp/rodada.jsonl
     python3 -I dev/bancada/bancada.py porteiro
+
+`longmemeval.py`: a mesma camada de busca no LongMemEval S (ver o cabeçalho).
 
 Resultados: `docs/relatorios/BUSCA-bancada.md`.
 
