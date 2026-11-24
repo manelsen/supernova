@@ -197,7 +197,7 @@ fn dispatch_admitted(
     #("channel", channel),
     #("kind", kind),
   ])
-  let outcome =
+  let submit = fn() {
     chat_lanes.submit_outcome(key, fn() {
       run_inbound_turn(
         handler,
@@ -209,18 +209,99 @@ fn dispatch_admitted(
       )
       finish(inbound)
     })
-  case outcome {
+  }
+  case submit() {
     chat_lanes.Accepted -> Nil
     // Supernova is stopping: the message stays pending in the inbox and is
     // answered after the restart.
     chat_lanes.Draining -> Nil
-    // Too many pending turns in this chat, or too many chats at once.
+    // Too many pending turns in this chat, or too many chats at once. The
+    // message is not marked done: it is submitted again in the background,
+    // and stays pending in the inbox until a lane takes it (PRD-E, E-01).
     chat_lanes.Rejected -> {
       record.count("chat_lane_rejected_total", [#("channel", channel)])
-      finish(inbound)
+      let _ =
+        process.spawn_unlinked(fn() {
+          retry_rejected(submit, process.sleep, fn() {
+            notify_busy(send_fn, inbound)
+          })
+        })
+      Nil
     }
   }
   Nil
+}
+
+/// How a refused turn ended.
+pub type RetryEnd {
+  /// A later try was taken (`Accepted`) or Supernova began stopping
+  /// (`Draining`).
+  Retried(chat_lanes.Outcome)
+  /// No lane took it in time; the message stays pending in the inbox and
+  /// is answered after the next start.
+  GaveUp
+}
+
+/// Waits before each new try: about two minutes, growing.
+const growing_waits = [1000, 2000, 4000, 8000, 16_000, 32_000, 64_000]
+
+/// After the notice: one try every two minutes, ten times.
+const later_wait = 120_000
+
+const later_tries = 10
+
+/// Submit a refused turn again. `wait` sleeps (injected for tests);
+/// `notify` tells the person, once, when the growing waits are over.
+pub fn retry_rejected(
+  submit: fn() -> chat_lanes.Outcome,
+  wait: fn(Int) -> Nil,
+  notify: fn() -> Nil,
+) -> RetryEnd {
+  case try_after(submit, wait, growing_waits) {
+    Ok(outcome) -> Retried(outcome)
+    Error(Nil) -> {
+      notify()
+      case try_after(submit, wait, list.repeat(later_wait, later_tries)) {
+        Ok(outcome) -> Retried(outcome)
+        Error(Nil) -> GaveUp
+      }
+    }
+  }
+}
+
+fn try_after(
+  submit: fn() -> chat_lanes.Outcome,
+  wait: fn(Int) -> Nil,
+  waits: List(Int),
+) -> Result(chat_lanes.Outcome, Nil) {
+  case waits {
+    [] -> Error(Nil)
+    [ms, ..rest] -> {
+      wait(ms)
+      case submit() {
+        chat_lanes.Rejected -> try_after(submit, wait, rest)
+        other -> Ok(other)
+      }
+    }
+  }
+}
+
+/// One short notice to the person whose message is waiting for a lane.
+fn notify_busy(
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  inbound: port.ChannelInbound,
+) -> Nil {
+  case inbound {
+    port.InboundMessage(message) -> {
+      let _ =
+        send_fn(port.reply(
+          to: message,
+          content: "Estou com muitas mensagens agora; já te respondo.",
+        ))
+      Nil
+    }
+    port.InboundInteraction(_) -> Nil
+  }
 }
 
 fn run_inbound_turn(
