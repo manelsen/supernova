@@ -1,10 +1,9 @@
 [PRD]
 # PRD I: a mesma agente em todos os canais
 
-> **Situação em 24/11/2026:** rascunho para o mantenedor. Direção aprovada
-> (24/11): ligar canais e desenvolver a identidade junto com a PRD-C, para
-> que quem chegar pelo WhatsApp já fale com a mesma agente do Telegram. D1 a
-> D5 esperam decisão (seção 5).
+> **Situação em 24/11/2026:** aprovada pelo mantenedor; D1 a D5 seguem as
+> recomendações (seção 5). Executada junto com a PRD-C, para que quem
+> chegar pelo WhatsApp já fale com a mesma agente do Telegram.
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality

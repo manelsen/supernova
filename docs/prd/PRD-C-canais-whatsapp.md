@@ -1,10 +1,9 @@
 [PRD]
 # PRD C: fundação de canais e WhatsApp via GOWA
 
-> **Situação em 24/11/2026:** em revisão. Direção aprovada (fundação
-> primeiro, WhatsApp antes do Discord: há gente esperando no WhatsApp). D1
-> e D3 decididas; D2, D4 e D5 com a proposta revista (seção 5). Depende da
-> PRD-E (E-02, a proteção de URL).
+> **Situação em 24/11/2026:** aprovada pelo mantenedor; D1 a D5 decididas
+> (seção 5). Executada junto com a PRD-I (identidade entre canais).
+> Depende da PRD-E (E-02, a proteção de URL).
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality
@@ -75,7 +74,7 @@ verdade em teste.
     guardado (junto do estado de acesso); uma mensagem só com LID conhecido
     vira do telefone; só o LID nunca visto ao lado de um telefone é recusado
     com log e métrica.
-  - **Recomendação: (c)**, e num grupo, a quem chega só como LID, a agente
+  - **Decidido: (c)**, como apelido da PRD-I (I-04); num grupo, a quem chega só como LID, a agente
     pede para chamá-la no privado: a conversa privada costuma trazer o
     telefone junto, e o vínculo se aprende ali. O `/esquecer` apaga também
     os vínculos da pessoa. O pareamento por código entre canais (a mesma
@@ -99,7 +98,7 @@ verdade em teste.
   - **Decidido: (a)**, versão fixa.
 - **D5. Versão do GOWA.** Imagem fixada por digest (v9.10.0), atualizada à
   mão lendo o changelog. Com D4 (a), uma versão só cobre o servidor e a
-  interface. **Recomendação: assim.**
+  interface. **Decidido: assim.**
 
 ## 6. Desenho
 
