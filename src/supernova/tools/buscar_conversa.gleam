@@ -38,10 +38,22 @@ pub const max_lines = 60
 /// Longest text of one message, in characters.
 pub const max_chars = 600
 
+/// Closes an empty result. The tone belongs in the result, where the agent
+/// reads it at the moment of answering: told only in the description, the
+/// agent still answered "you never told me" about things said in other
+/// words (docs/relatorios/BUSCA-bancada.md).
+pub const not_found_hint =
+  "Pode ter sido dito com outras palavras: tente outras. Se ainda assim não achar, diga que não se lembra, não que nunca foi dito."
+
+/// Closes a result with excerpts: what was found may be about something
+/// else (the neighbour's dog, when asked about hers).
+pub const found_hint =
+  "Se nenhum trecho acima responde à pergunta, diga que não se lembra; não diga que nunca foi dito."
+
 pub fn tool() -> provider.ToolDefinition {
   provider.new_tool(
     name: "buscar_conversa",
-    description: "Search everything your person and you have said to each other, in every chat, beyond the recent messages you see. Returns excerpts: each matching message (marked ») with the message before it and the two after it, with date, time and who said it, since the answer is often in the next message. Use it when asked about something said earlier, or to check what was actually said, instead of guessing. If the first words find nothing useful, try others. Finding nothing means it was not said, or was forgotten with /esquecer.",
+    description: "Search everything your person and you have said to each other, in every chat, beyond the recent messages you see. Returns excerpts: each matching message (marked ») with the message before it and the two after it, with date, time and who said it, since the answer is often in the next message. Use it when asked about something said earlier, or to check what was actually said, instead of guessing. If the first words find nothing useful, try others: synonyms, a shorter word, the singular. Finding nothing only means these words are not there; it may have been said in other words. So if it is still not found, say you don't remember it, not that it was never said. What was forgotten with /esquecer is gone.",
     parameters: [
       provider.string_param(
         "terms",
@@ -264,7 +276,8 @@ fn render(found: Found, raw: String, offset: Int) -> String {
     0 ->
       "Nada encontrado para \""
       <> string.trim(raw)
-      <> "\" nas conversas guardadas."
+      <> "\" nas conversas guardadas. "
+      <> not_found_hint
     matches -> {
       let header =
         int.to_string(matches)
@@ -278,6 +291,7 @@ fn render(found: Found, raw: String, offset: Int) -> String {
           False -> ":"
         }
       [header, ..list.map(found.shown, render_excerpt(_, offset))]
+      |> list.append([found_hint])
       |> string.join("\n\n")
     }
   }

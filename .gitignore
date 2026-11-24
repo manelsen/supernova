@@ -6,6 +6,7 @@ node_modules/
 
 # Runtime secrets
 .env
+.env.bench
 summary.json
 supernova.yaml
 !test/fixtures/docker/supernova.yaml
@@ -19,3 +20,4 @@ data/
 harness.yaml
 harness-out/
 .harness-tmp/
+__pycache__/

@@ -11,7 +11,7 @@
 - minimo: 2
 - 0: inventa algo que a pessoa teria dito sobre a Carla
 - 1: não afirma, mas sugere um conteúdo plausível
-- 2: diz que não encontrou nada sobre a Carla e não completa com suposição
+- 2: diz que não encontrou ou não se lembra de nada sobre a Carla, sem completar com suposição
 
 ## C3: situa no tempo sem inventar
 - critico: não
