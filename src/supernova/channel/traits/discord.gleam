@@ -26,6 +26,7 @@ pub fn channel() -> ChannelTraits {
     turn_timeout_ms: 30_000,
     // The adapter opens (or reuses) the direct-message channel.
     private_chat_for: fn(user_id) { "open-dm:" <> user_id },
+    receives_by_webhook: False,
   )
 }
 

@@ -1142,6 +1142,21 @@ tools:
   plain.tools.timeouts |> should_equal(dict.new())
 }
 
+pub fn channels_webhook_is_read_test() {
+  let yaml =
+    "
+app_name: supernova
+channels:
+  webhook:
+    bind: 0.0.0.0
+    port: 9100
+"
+  let assert Ok(cfg) = load(yaml)
+  cfg.webhook |> should_equal(config.WebhookConfig(bind: "0.0.0.0", port: 9100))
+  let assert Ok(plain) = load("app_name: supernova\n")
+  plain.webhook |> should_equal(config.default_webhook_config())
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================

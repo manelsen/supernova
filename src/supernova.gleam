@@ -31,6 +31,7 @@ import supernova/channel/health as channel_health
 import supernova/channel/inbox
 import supernova/channel/port
 import supernova/channel/registry
+import supernova/channel/webhook_server
 import supernova/config
 import supernova/config_check
 import supernova/core/access/actor as access_actor
@@ -328,6 +329,8 @@ fn start_services(
       )
     }
   }
+
+  start_webhook_server(cfg)
 
   declare_boot_metrics(
     registry.list_channels(channel_reg),
@@ -944,6 +947,7 @@ pub fn shutdown(services: Runtime) -> Nil {
   io.println("🛑 Shutting down...")
 
   // 1. Stop channels first (no new messages, releases the sim port)
+  webhook_server.stop_global()
   registry.stop_channels(services.channel_registry)
 
   // 2. Stop sessions (complete ongoing conversations)
@@ -974,6 +978,31 @@ pub fn shutdown(services: Runtime) -> Nil {
   catalog.clear_global()
 
   io.println("✓ Shutdown complete")
+}
+
+/// The webhook server listens only when an enabled channel receives by
+/// webhook (PRD-C, C-02).
+fn start_webhook_server(cfg: config.Config) -> Nil {
+  let needed =
+    channel_catalog.all()
+    |> list.any(fn(channel) {
+      channel.receives_by_webhook
+      && config.is_channel_enabled(cfg, channel.name)
+    })
+  case needed {
+    False -> Nil
+    True ->
+      case webhook_server.start_global(cfg.webhook.bind, cfg.webhook.port) {
+        Ok(Nil) ->
+          io.println(
+            "✓ Webhook server on "
+            <> cfg.webhook.bind
+            <> ":"
+            <> int.to_string(cfg.webhook.port),
+          )
+        Error(reason) -> io.println("Warning: " <> reason)
+      }
+  }
 }
 
 fn print_enabled_channels(cfg: config.Config) -> Nil {

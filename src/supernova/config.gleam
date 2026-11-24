@@ -107,6 +107,17 @@ pub type SimConfig {
   )
 }
 
+/// `channels.webhook`: where the webhook server listens (PRD-C, D1). It
+/// starts only when an enabled channel receives by webhook. In the compose
+/// file it binds the internal network and its port is not published.
+pub type WebhookConfig {
+  WebhookConfig(bind: String, port: Int)
+}
+
+pub fn default_webhook_config() -> WebhookConfig {
+  WebhookConfig(bind: "127.0.0.1", port: 8790)
+}
+
 /// Matrix channel configuration
 pub type MatrixConfig {
   MatrixConfig(
@@ -438,6 +449,8 @@ pub type Config {
     telegram: TelegramConfig,
     /// HTTP-driven sim channel configuration
     sim: SimConfig,
+    /// Webhook server for channels that receive by webhook
+    webhook: WebhookConfig,
     /// Matrix configuration
     matrix: MatrixConfig,
     /// Lark configuration
@@ -520,6 +533,7 @@ pub fn default_config() -> Config {
       token: None,
       record_prompts: False,
     ),
+    webhook: default_webhook_config(),
     matrix: MatrixConfig(homeserver_url: None, token: None, enabled: False),
     lark: LarkConfig(token: None, base_url: None, enabled: False),
     google_chat: GoogleChatConfig(webhook_url: None, enabled: False),
@@ -898,6 +912,18 @@ fn decode_sim(root: yay.Node) -> SimConfig {
         token: None,
         record_prompts: False,
       )
+  }
+}
+
+fn decode_webhook(root: yay.Node) -> WebhookConfig {
+  let default = default_webhook_config()
+  case yay.select_sugar(root, "channels.webhook") {
+    Ok(node) ->
+      WebhookConfig(
+        bind: get_string_or(node, "bind", default.bind),
+        port: get_int_or(node, "port", default.port),
+      )
+    Error(_) -> default
   }
 }
 
@@ -1374,6 +1400,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     discord: discord,
     telegram: telegram,
     sim: sim,
+    webhook: decode_webhook(root),
     matrix: matrix,
     lark: lark,
     google_chat: google_chat,
@@ -1654,6 +1681,7 @@ pub fn apply_env_overrides(config: Config) -> Config {
       enabled: telegram_enabled,
     ),
     sim: config.sim,
+    webhook: config.webhook,
     matrix: MatrixConfig(
       homeserver_url: matrix_homeserver_url,
       token: matrix_token,
