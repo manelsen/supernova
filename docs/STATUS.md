@@ -22,8 +22,8 @@ What is open, and in what order, is in [PENDENCIAS.md](PENDENCIAS.md). This page
 | Channel | Status |
 |---|---|
 | Telegram | Supported: closed group, commands, buttons, streaming, typing, threads, chunking |
-| Discord | Supported, with the same closed-group pipeline. Parity with Telegram is decided ([PENDENCIAS](PENDENCIAS.md) 3.2). |
-| Slack, Matrix, WhatsApp, Lark, Google Chat, Mattermost, WeChat Work | Native adapters, experimental: not behind the closed group and no end-to-end tests. Supernova warns at boot. |
+| Discord | Sends only: receiving messages is not implemented (the gateway connection is a stub). The closed-group pipeline is in place for when it receives. Parity with Telegram is decided ([PENDENCIAS](PENDENCIAS.md) 3.2). |
+| Slack, Matrix, WhatsApp, Lark, Google Chat, Mattermost, WeChat Work | Send only, experimental: they do not receive messages, are not behind the closed group and have no end-to-end tests. Supernova warns at boot. |
 
 Neither Telegram nor Discord accepts images, audio or documents from the person yet.
 

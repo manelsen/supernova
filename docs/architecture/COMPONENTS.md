@@ -25,7 +25,8 @@
 - `src/supernova/channel/channel_kit.gleam`
   - start hooks, turn dispatch and generic streaming shared by channel runtimes.
 - `src/supernova/adapters/*_channel.gleam`
-  - per-channel runtime (Telegram, Discord, Slack, Matrix).
+  - per-channel runtime (Telegram, Discord, Slack, Matrix). Only Telegram and
+    the harness channel (`sim`) receive messages today; the others send only.
 - `src/supernova/adapters/*_router.gleam`
   - per-channel entrypoint routing inbound to common logic.
 - `src/supernova/adapters/channel_common_router.gleam`
@@ -80,7 +81,7 @@
 ## Agenda and Tools
 
 - `agenda/*`: per-person scheduled requests and the 30-second sweeper.
-- `tools/*`: built-in tools (`file_system`, `safe_shell`, `web`, `browser`, `github`, `git_inspect`, `gateway`, `canvas`, `process`, `agenda`, `buscar_conversa`, `lembrar`, `computador`).
+- `tools/*`: built-in tools (`file_system`, `safe_shell`, `web`, `browser`, `github`, `git_inspect`, `canvas`, `process`, `agenda`, `buscar_conversa`, `lembrar`, `computador`).
 - `memory/*`: the gate, `lembrar` and their index, client, cost and metrics ([PRD-M](../prd/PRD-M-memoria.md)); off unless `conversation.recall.enabled`.
 - `computador/`: the agent's computer, a separate container on gVisor.
 
