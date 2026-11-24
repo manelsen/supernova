@@ -35,6 +35,8 @@ Chaves em `.env.bench`, na raiz (fora do git): `OPENROUTER_API_KEY`,
     python3 -I dev/bancada/bancada.py resumo /tmp/rodada.jsonl
     python3 -I dev/bancada/bancada.py porteiro
 
+`longmemeval.py`: a mesma camada de busca no LongMemEval S (ver o cabeçalho).
+
 Resultados: `docs/relatorios/BUSCA-bancada.md`.
 
 ## Referências
