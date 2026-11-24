@@ -37,6 +37,7 @@ pub fn known_tool_names() -> List(String) {
     "file_system",
     "agenda",
     "buscar_conversa",
+    "lembrar",
     "computador",
   ]
 }

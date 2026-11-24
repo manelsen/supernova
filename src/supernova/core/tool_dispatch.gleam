@@ -7,6 +7,7 @@
 
 import gleam/dynamic/decode
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/llm/provider
@@ -19,6 +20,7 @@ import supernova/tools/file_system
 import supernova/tools/gateway
 import supernova/tools/git_inspect
 import supernova/tools/github
+import supernova/tools/lembrar
 import supernova/tools/process as process_tool
 import supernova/tools/safe_shell
 import supernova/tools/web
@@ -28,6 +30,10 @@ import supernova/tools/web
 pub fn builtin_tools() -> List(provider.ToolDefinition) {
   let computer = case computador.configured() {
     True -> [computador.tool()]
+    False -> []
+  }
+  let memory = case lembrar.configured() {
+    True -> [lembrar.tool()]
     False -> []
   }
   [
@@ -42,7 +48,7 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     file_system.tool(),
     agenda.tool(),
     buscar_conversa.tool(),
-    ..computer
+    ..list.append(memory, computer)
   ]
 }
 
@@ -70,6 +76,7 @@ pub fn execute(name: String, args_json: String) -> Result(String, String) {
     // the caller, runs it (see claimed_executor).
     "agenda" -> Error("agenda needs the caller's identity")
     "buscar_conversa" -> Error("buscar_conversa needs the caller's identity")
+    "lembrar" -> Error("lembrar needs the caller's identity")
     "computador" -> Error("computador needs the caller's identity")
     _ -> Error("Tool '" <> name <> "' is not wired in executor")
   }

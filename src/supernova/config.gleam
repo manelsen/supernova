@@ -538,7 +538,7 @@ pub fn default_capabilities_config() -> CapabilitiesConfig {
     member: RoleCapabilitiesConfig(
       allowed: [
         "web", "web_fetch", "file_system", "canvas", "github", "agenda",
-        "buscar_conversa",
+        "buscar_conversa", "lembrar",
       ],
       denied: ["safe_shell", "process", "browser", "gateway", "computador"],
     ),

@@ -64,6 +64,8 @@ import supernova/llm/failover_cooldown/global as cd_global
 import supernova/llm/failover_cooldown/types as cd_types
 import supernova/llm/pricing
 import supernova/llm/provider
+import supernova/memory/decision
+import supernova/memory/runtime as memory_runtime
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
 import supernova/metrics/record
@@ -379,6 +381,7 @@ fn start_services(
         )
     }
   }
+  publish_memory(cfg)
   let sweep_agenda = case
     agenda_schedule.timezone_offset(cfg.instance_budget.timezone)
   {
@@ -936,6 +939,25 @@ pub fn declare_boot_metrics(
         )
       })
     Error(_) -> Nil
+  }
+}
+
+/// The gate and `lembrar` read their settings from here (PRD-M). Off, or
+/// without a key (the boot already refused that), the memory stays off.
+fn publish_memory(cfg: config.Config) -> Nil {
+  let recall = cfg.conversation.recall
+  case recall.enabled, recall.api_key {
+    True, Some(key) -> {
+      memory_runtime.configure(memory_runtime.Settings(
+        transport: decision.hackney_transport(),
+        api_key: key,
+        gate_threshold: recall.gate_threshold,
+        gate_timeout_ms: recall.gate_timeout_ms,
+        recall_timeout_ms: recall.recall_timeout_ms,
+      ))
+      io.println("✓ Memory on: gate and lembrar (Gemini Decision)")
+    }
+    _, _ -> memory_runtime.clear()
   }
 }
 
