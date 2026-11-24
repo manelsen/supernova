@@ -6,6 +6,7 @@ node_modules/
 
 # Runtime secrets
 .env
+.env.bench
 summary.json
 supernova.yaml
 !test/fixtures/docker/supernova.yaml

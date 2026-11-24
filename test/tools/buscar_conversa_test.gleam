@@ -67,7 +67,9 @@ pub fn finds_in_private_and_group_by_every_term_test() {
     "2 mensagens encontradas, em 1 trecho:\n\n"
     <> "» [26/11/2026 09:00] pessoa: A consulta da minha mãe é na Rua Aurora 210, às 15h.\n"
     <> "» [26/11/2026 09:01] você: Guardado: rua Aurora 210, 15h.\n"
-    <> "  [26/11/2026 09:02] pessoa: Comprei pão.",
+    <> "  [26/11/2026 09:02] pessoa: Comprei pão."
+    <> "\n\n"
+    <> buscar_conversa.found_hint,
   )
 
   // Case and accents are ignored, in the terms and in the text.
@@ -80,7 +82,8 @@ pub fn finds_in_private_and_group_by_every_term_test() {
   // Every term must be in the same message.
   run(dir, "telegram:42", "aurora flores")
   |> should.equal(
-    "Nada encontrado para \"aurora flores\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+    "Nada encontrado para \"aurora flores\" nas conversas guardadas. "
+    <> buscar_conversa.not_found_hint,
   )
 }
 
@@ -96,7 +99,8 @@ pub fn only_the_callers_conversations_test() {
   text |> string.contains("Bia") |> should.be_false()
   run(dir, "telegram:44", "segredo")
   |> should.equal(
-    "Nada encontrado para \"segredo\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+    "Nada encontrado para \"segredo\" nas conversas guardadas. "
+    <> buscar_conversa.not_found_hint,
   )
 }
 
@@ -117,7 +121,9 @@ pub fn a_match_comes_with_what_was_said_next_test() {
     "1 mensagem encontrada, em 1 trecho:\n\n"
     <> "» [26/11/2026 09:00] pessoa: levei minha mãe no cardiologista\n"
     <> "  [26/11/2026 09:01] você: Como foi?\n"
-    <> "  [26/11/2026 09:02] pessoa: guarda o nome dele? é o dr. Otávio Lacerda",
+    <> "  [26/11/2026 09:02] pessoa: guarda o nome dele? é o dr. Otávio Lacerda"
+    <> "\n\n"
+    <> buscar_conversa.found_hint,
   )
 }
 
@@ -143,7 +149,8 @@ pub fn shows_the_most_recent_excerpts_with_the_totals_test() {
     "12 mensagens encontradas, em 12 trechos; abaixo, só os mais recentes. Use termos mais específicos para ver os outros.",
   )
   first |> string.contains("nota número 3") |> should.be_true()
-  string.split(text, "\n\n") |> list.length |> should.equal(11)
+  // The header, ten excerpts and the closing hint.
+  string.split(text, "\n\n") |> list.length |> should.equal(12)
 }
 
 /// A run of matches merges into one excerpt, cut to its last lines.
@@ -158,7 +165,8 @@ pub fn a_long_run_of_matches_keeps_its_last_lines_test() {
       }),
   )
   let text = run(dir, "telegram:42", "linha")
-  let assert [header, body] = string.split(text, "\n\n")
+  let assert [header, body, hint] = string.split(text, "\n\n")
+  hint |> should.equal(buscar_conversa.found_hint)
   header
   |> string.starts_with("100 mensagens encontradas, em 1 trecho; abaixo")
   |> should.be_true()
@@ -173,7 +181,7 @@ pub fn long_messages_are_cut_test() {
   say(dir, "telegram:42:42", [
     #("user", "palavra " <> string.repeat("x", 1000), 0),
   ])
-  let assert [_, line] =
+  let assert [_, line, _hint] =
     run(dir, "telegram:42", "palavra") |> string.split("\n\n")
   line |> string.ends_with("…") |> should.be_true()
   { string.length(line) < 700 } |> should.be_true()
@@ -237,7 +245,8 @@ pub fn the_gateway_searches_for_the_caller_test() {
   found |> string.contains("ABACAXI-7781") |> should.be_true()
   search("telegram:222")
   |> should.equal(Ok(
-    "Nada encontrado para \"abacaxi\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+    "Nada encontrado para \"abacaxi\" nas conversas guardadas. "
+    <> buscar_conversa.not_found_hint,
   ))
 }
 
@@ -320,11 +329,13 @@ pub fn json_keys_are_not_matched_test() {
   ])
   run(dir, "telegram:42", "role")
   |> should.equal(
-    "Nada encontrado para \"role\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+    "Nada encontrado para \"role\" nas conversas guardadas. "
+    <> buscar_conversa.not_found_hint,
   )
   run(dir, "telegram:42", "content user")
   |> should.equal(
-    "Nada encontrado para \"content user\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+    "Nada encontrado para \"content user\" nas conversas guardadas. "
+    <> buscar_conversa.not_found_hint,
   )
   run(dir, "telegram:42", "conteudo")
   |> string.contains("1 mensagem encontrada")
@@ -343,12 +354,15 @@ pub fn kept_tool_calls_are_not_searched_test() {
   ])
   run(dir, "telegram:42", "lacerda")
   |> should.equal(
-    "Nada encontrado para \"lacerda\" nas conversas guardadas. Pode ter sido dito com outras palavras.",
+    "Nada encontrado para \"lacerda\" nas conversas guardadas. "
+    <> buscar_conversa.not_found_hint,
   )
   run(dir, "telegram:42", "medico")
   |> should.equal(
     "1 mensagem encontrada, em 1 trecho:\n\n"
     <> "» [26/11/2026 09:00] pessoa: procura o médico\n"
-    <> "  [26/11/2026 09:03] você: Achei.",
+    <> "  [26/11/2026 09:03] você: Achei."
+    <> "\n\n"
+    <> buscar_conversa.found_hint,
   )
 }
