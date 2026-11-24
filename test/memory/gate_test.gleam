@@ -255,3 +255,16 @@ pub fn calls_are_charged_and_the_cap_stops_the_memory_test() {
     )
   messages |> should.equal(turn())
 }
+
+/// Recording without a metrics actor is a no-op, never a crash.
+pub fn recording_without_metrics_is_harmless_test() {
+  metrics.record_turn(None)
+  metrics.record_turn(
+    Some(gate.Report(
+      verdict: gate.OverBudget,
+      gate_ms: 0,
+      recall: None,
+      recall_ms: 0,
+    )),
+  )
+}

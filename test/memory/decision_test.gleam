@@ -102,3 +102,25 @@ pub fn embed_reads_the_vector_test() {
   |> should.be_true()
   body |> string.contains("\"outputDimensionality\":256") |> should.be_true()
 }
+
+/// The real transport, without the network: a bad URL and a closed local
+/// port both come back as errors, never as a crash.
+pub fn the_real_transport_reports_unreachable_test() {
+  let transport = decision.hackney_transport()
+  let assert Error(_) = transport("não é url", [], "{}")
+  let assert Error(_) =
+    transport("http://127.0.0.1:1/v1beta/decisions", [#("x", "y")], "{}")
+}
+
+pub fn summaries_and_estimates_test() {
+  decision.error_summary(decision.TimedOut) |> should.equal("timed out")
+  decision.error_summary(decision.HttpError(429, "x"))
+  |> should.equal("HTTP 429: x")
+  decision.error_summary(decision.Blocked("y"))
+  |> should.equal("blocked by the safety filter: y")
+  decision.error_summary(decision.Unreachable("z"))
+  |> should.equal("unreachable: z")
+  decision.error_summary(decision.BadResponse("w"))
+  |> should.equal("unreadable answer: w")
+  decision.estimate_tokens("abcd") |> should.equal(3)
+}
