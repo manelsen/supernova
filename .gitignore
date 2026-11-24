@@ -20,3 +20,4 @@ data/
 harness.yaml
 harness-out/
 .harness-tmp/
+__pycache__/
