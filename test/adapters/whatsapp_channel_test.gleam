@@ -123,6 +123,21 @@ pub fn whatsapp_end_to_end_test() {
   |> should.equal("\n[uma imagem que não consegui abrir]")
   let assert Ok(_) = process.receive(sent, 5000)
 
+  // A voice note is not dropped: the agent gets a note and answers
+  // (PRD-A, A-01).
+  let voice =
+    message(
+      "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\",\"audio\":\"statics/media/voz.ogg\",\"media_info\":{\"seconds\":42,\"ptt\":true}",
+    )
+  post(webhook_port, "/webhook/whatsapp", signed(voice), bit_array_from(voice)).0
+  |> should.equal(200)
+  let assert Ok(port.InboundMessage(heard)) = process.receive(seen, 2000)
+  heard.content
+  |> should.equal(
+    "\n[uma mensagem de voz de 0:42, que ainda não consigo ouvir]",
+  )
+  let assert Ok(_) = process.receive(sent, 5000)
+
   // Unsigned: refused, nothing reaches the agent.
   post(webhook_port, "/webhook/whatsapp", [], bit_array_from(body)).0
   |> should.equal(401)

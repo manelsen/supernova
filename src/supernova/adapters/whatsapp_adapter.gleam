@@ -154,15 +154,15 @@ pub fn act(
   on_down: fn(String) -> Nil,
 ) -> webhook_server.Outcome {
   case decision {
-    whatsapp_inbound.Answer(message, learned, image) -> {
+    whatsapp_inbound.Answer(message, learned, attachments, forwarded) -> {
       case learned {
         Some(#(lid, phone)) -> learn_lid(settings.data_dir, lid, phone)
         None -> Nil
       }
-      let content = case image {
-        None -> message.content
-        Some(path) -> message.content <> fetch_image(settings, path)
-      }
+      let content =
+        list.fold(attachments, message.content, fn(content, attachment) {
+          content <> open_attachment(settings, attachment, forwarded)
+        })
       webhook_server.Deliver([
         port.InboundMessage(port.ChannelMessage(..message, content: content)),
       ])
@@ -207,6 +207,21 @@ pub fn act(
       webhook_server.Handled
     }
     whatsapp_inbound.Malformed -> webhook_server.Malformed
+  }
+}
+
+/// What an attachment becomes in the message text (PRD-A, A-01): an
+/// image (or a still sticker) goes to the model; what the agent cannot
+/// open yet becomes a note it can answer, never silence.
+fn open_attachment(
+  settings: Settings,
+  attachment: whatsapp_inbound.Attachment,
+  forwarded: Bool,
+) -> String {
+  case attachment.kind, attachment.path {
+    whatsapp_inbound.Image, Some(path) | whatsapp_inbound.Sticker, Some(path) ->
+      fetch_image(settings, path)
+    _, _ -> "\n" <> whatsapp_inbound.unopened_note(attachment, forwarded)
   }
 }
 

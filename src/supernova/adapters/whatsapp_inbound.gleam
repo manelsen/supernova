@@ -12,6 +12,7 @@
 //// - Own messages are dropped; account events become an alert.
 
 import gleam/dynamic/decode
+import gleam/float
 import gleam/int
 import gleam/json
 import gleam/list
@@ -22,11 +23,13 @@ import supernova/core/identity/aliases
 
 pub type Decision {
   /// A message to answer; `learned` is a LID to link to the phone;
-  /// `image` is the path of an image GOWA downloaded (`statics/media/…`).
+  /// `attachments` are the media GOWA downloaded (`statics/media/…`);
+  /// `forwarded` says the person passed on someone else's message.
   Answer(
     message: port.ChannelMessage,
     learned: Option(#(String, String)),
-    image: Option(String),
+    attachments: List(Attachment),
+    forwarded: Bool,
   )
   /// A sender known only by an unknown LID wrote to the agent in a group.
   AskPrivate(chat_id: String, reply_to: String)
@@ -38,6 +41,81 @@ pub type Decision {
 
 pub const ask_private_text =
   "Ainda não te reconheço por aqui. Me chama no privado?"
+
+/// The large kinds of media (PRD-A).
+pub type MediaKind {
+  Image
+  Audio
+  Video
+  Document
+  Sticker
+  AnimatedSticker
+}
+
+/// One medium of a message, as GOWA describes it.
+pub type Attachment {
+  Attachment(
+    kind: MediaKind,
+    /// GOWA's download (`statics/media/…`); None when it only has
+    /// WhatsApp's encrypted URL.
+    path: Option(String),
+    seconds: Option(Int),
+    file_name: Option(String),
+    mime: Option(String),
+    /// A voice note recorded in WhatsApp, not an audio file.
+    voice_note: Bool,
+  )
+}
+
+/// A note for a medium the agent cannot open yet, in the person's words.
+pub fn unopened_note(attachment: Attachment, forwarded: Bool) -> String {
+  let length = case attachment.seconds {
+    Some(seconds) -> " de " <> duration(seconds)
+    None -> ""
+  }
+  let passed_on = case forwarded {
+    True -> " encaminhado"
+    False -> ""
+  }
+  case attachment.kind {
+    Audio ->
+      case attachment.voice_note {
+        True ->
+          "[uma mensagem de voz"
+          <> passed_on
+          <> length
+          <> ", que ainda não consigo ouvir]"
+        False ->
+          "[um áudio" <> passed_on <> length <> ", que ainda não consigo ouvir]"
+      }
+    Video ->
+      "[um vídeo" <> passed_on <> length <> ", que ainda não consigo ver]"
+    Document ->
+      "[um documento"
+      <> passed_on
+      <> case attachment.file_name {
+        Some(name) -> " (" <> name <> ")"
+        None -> ""
+      }
+      <> ", que ainda não consigo ler]"
+    AnimatedSticker -> "[uma figurinha animada]"
+    Image | Sticker -> "[uma imagem que não consegui abrir]"
+  }
+}
+
+/// `0:42`, `1:10`, `1:02:03`.
+pub fn duration(seconds: Int) -> String {
+  let pad = fn(n) { string.pad_start(int.to_string(n), 2, "0") }
+  case seconds >= 3600 {
+    True ->
+      int.to_string(seconds / 3600)
+      <> ":"
+      <> pad(seconds % 3600 / 60)
+      <> ":"
+      <> pad(seconds % 60)
+    False -> int.to_string(seconds / 60) <> ":" <> pad(seconds % 60)
+  }
+}
 
 type Envelope {
   Envelope(event: String, device_id: String, payload: decode.Dynamic)
@@ -55,12 +133,29 @@ type Message {
     replied_to_id: Option(String),
     replied_to_sender: Option(String),
     mentions: List(String),
-    image: Option(Image),
+    media: List(#(MediaKind, Medium)),
+    info: Info,
+    forwarded: Bool,
+    notes: List(String),
   )
 }
 
-type Image {
-  Image(path: Option(String), caption: Option(String))
+type Medium {
+  Medium(
+    path: Option(String),
+    caption: Option(String),
+    file_name: Option(String),
+  )
+}
+
+type Info {
+  Info(
+    seconds: Option(Int),
+    mime: Option(String),
+    file_name: Option(String),
+    voice_note: Bool,
+    animated: Bool,
+  )
 }
 
 /// What to do with a webhook, with groups off: every group message is
@@ -125,19 +220,44 @@ fn decide_with(body: String, allow_groups: Bool) -> Decision {
 }
 
 fn decide_message(agent: String, message: Message) -> Decision {
-  let caption = option.then(message.image, fn(image) { image.caption })
-  let image_path = option.then(message.image, fn(image) { image.path })
-  let content = case message.body {
+  let caption =
+    list.find_map(message.media, fn(pair) {
+      let #(_, medium) = pair
+      option.to_result(medium.caption, Nil)
+    })
+    |> option.from_result
+  let said = case message.body {
     "" -> option.unwrap(caption, "")
     text -> text
   }
+  let content = case said, message.notes {
+    _, [] -> said
+    "", notes -> string.join(notes, "\n")
+    text, notes -> text <> "\n" <> string.join(notes, "\n")
+  }
+  let attachments =
+    list.map(message.media, fn(pair) {
+      let #(kind, medium) = pair
+      let kind = case kind, message.info.animated {
+        Sticker, True -> AnimatedSticker
+        kind, _ -> kind
+      }
+      Attachment(
+        kind: kind,
+        path: medium.path,
+        seconds: message.info.seconds,
+        file_name: option.or(medium.file_name, message.info.file_name),
+        mime: message.info.mime,
+        voice_note: message.info.voice_note,
+      )
+    })
   let in_group = string.ends_with(message.chat_id, "@g.us")
   let addressed =
     !in_group
     || list.contains(message.mentions, agent)
     || message.replied_to_sender == Some(agent)
     || string.starts_with(string.trim(content), "/")
-  let empty = string.trim(content) == "" && image_path == None
+  let empty = string.trim(content) == "" && attachments == []
   case message.is_from_me, empty, addressed {
     True, _, _ -> Ignore("own message")
     _, True, _ -> Ignore("empty message")
@@ -150,7 +270,8 @@ fn decide_message(agent: String, message: Message) -> Decision {
             learned: option.map(message.from_lid, fn(lid) {
               #("whatsapp:" <> lid, "whatsapp:" <> phone)
             }),
-            image: image_path,
+            attachments: attachments,
+            forwarded: message.forwarded,
           )
         Lid(lid) ->
           case aliases.resolve("whatsapp:" <> lid) == "whatsapp:" <> lid {
@@ -158,7 +279,8 @@ fn decide_message(agent: String, message: Message) -> Decision {
               Answer(
                 to_channel_message(message, lid, content),
                 learned: None,
-                image: image_path,
+                attachments: attachments,
+                forwarded: message.forwarded,
               )
             True ->
               case in_group {
@@ -237,7 +359,55 @@ fn message_decoder() -> decode.Decoder(Message) {
     [],
     decode.list(decode.string),
   )
-  use image <- decode.optional_field("image", None, image_decoder())
+  let medium = fn(key, kind, next) {
+    decode.optional_field(key, None, medium_decoder(kind), next)
+  }
+  use image <- medium("image", Image)
+  use audio <- medium("audio", Audio)
+  use video <- medium("video", Video)
+  use video_note <- medium("video_note", Video)
+  use document <- medium("document", Document)
+  use sticker <- medium("sticker", Sticker)
+  use info <- decode.optional_field(
+    "media_info",
+    Info(None, None, None, False, False),
+    info_decoder(),
+  )
+  use forwarded <- decode.optional_field("forwarded", False, decode.bool)
+  use location <- decode.optional_field(
+    "location",
+    None,
+    decode.map(location_decoder("localização"), Some),
+  )
+  use live_location <- decode.optional_field(
+    "live_location",
+    None,
+    decode.map(location_decoder("localização em tempo real"), Some),
+  )
+  use contact <- decode.optional_field(
+    "contact",
+    None,
+    decode.map(contact_decoder(), Some),
+  )
+  use contacts <- decode.optional_field(
+    "contacts_array",
+    [],
+    decode.list(contact_decoder()),
+  )
+  use poll <- decode.optional_field(
+    "poll",
+    None,
+    decode.map(poll_decoder(), Some),
+  )
+  let media =
+    [image, audio, video, video_note, document, sticker]
+    |> option.values
+  let notes =
+    list.flatten([
+      option.values([location, live_location, contact]),
+      contacts,
+      option.values([poll]) |> list.filter(fn(note) { note != "" }),
+    ])
   decode.success(Message(
     id:,
     chat_id:,
@@ -249,24 +419,102 @@ fn message_decoder() -> decode.Decoder(Message) {
     replied_to_id:,
     replied_to_sender:,
     mentions:,
-    image:,
+    media:,
+    info:,
+    forwarded:,
+    notes:,
   ))
 }
 
-/// An image is a path (downloaded, no caption) or an object with `path`
+/// A medium is a path (downloaded, no caption) or an object with `path`
 /// (downloaded) or `url` (not downloaded: WhatsApp's encrypted URL, of no
-/// use here), and maybe a caption.
-fn image_decoder() -> decode.Decoder(Option(Image)) {
+/// use here), maybe a caption and, for documents, `filename`.
+fn medium_decoder(
+  kind: MediaKind,
+) -> decode.Decoder(Option(#(MediaKind, Medium))) {
   decode.one_of(
-    decode.string |> decode.map(fn(path) { Some(Image(Some(path), None)) }),
+    decode.string
+      |> decode.map(fn(path) { Some(#(kind, Medium(Some(path), None, None))) }),
     [
       {
         use path <- optional_string("path")
         use caption <- optional_string("caption")
-        decode.success(Some(Image(path, caption)))
+        use file_name <- optional_string("filename")
+        decode.success(Some(#(kind, Medium(path, caption, file_name))))
       },
     ],
   )
+}
+
+fn info_decoder() -> decode.Decoder(Info) {
+  use seconds <- decode.optional_field(
+    "seconds",
+    None,
+    decode.optional(decode.int),
+  )
+  use mime <- optional_string("mime_type")
+  use file_name <- optional_string("file_name")
+  use voice_note <- decode.optional_field("ptt", False, decode.bool)
+  use animated <- decode.optional_field("is_animated", False, decode.bool)
+  decode.success(Info(seconds, mime, file_name, voice_note, animated))
+}
+
+fn number() -> decode.Decoder(Float) {
+  decode.one_of(decode.float, [decode.int |> decode.map(int.to_float)])
+}
+
+fn location_decoder(label: String) -> decode.Decoder(String) {
+  use latitude <- decode.field("degreesLatitude", number())
+  use longitude <- decode.field("degreesLongitude", number())
+  use name <- decode.optional_field("name", "", decode.string)
+  use address <- decode.optional_field("address", "", decode.string)
+  let place =
+    [name, address]
+    |> list.filter(fn(part) { part != "" })
+    |> string.join(", ")
+  let point =
+    "("
+    <> float.to_string(latitude)
+    <> ", "
+    <> float.to_string(longitude)
+    <> ")"
+  decode.success(case place {
+    "" -> "[" <> label <> ": " <> point <> "]"
+    _ -> "[" <> label <> ": " <> place <> " " <> point <> "]"
+  })
+}
+
+fn contact_decoder() -> decode.Decoder(String) {
+  use name <- decode.optional_field("displayName", "", decode.string)
+  use phone <- decode.optional_field("phone_number", "", decode.string)
+  decode.success(
+    "["
+    <> "contato: "
+    <> [name, phone]
+    |> list.filter(fn(part) { part != "" })
+    |> string.join(", ")
+    <> "]",
+  )
+}
+
+/// A poll the person created becomes its question and options; votes and
+/// edits carry no text of their own here.
+fn poll_decoder() -> decode.Decoder(String) {
+  use kind <- decode.optional_field("type", "", decode.string)
+  use question <- decode.optional_field("question", "", decode.string)
+  use options <- decode.optional_field(
+    "options",
+    [],
+    decode.list({
+      use name <- decode.optional_field("name", "", decode.string)
+      decode.success(name)
+    }),
+  )
+  decode.success(case kind {
+    "creation" ->
+      "[enquete: " <> question <> " (" <> string.join(options, "; ") <> ")]"
+    _ -> ""
+  })
 }
 
 fn account_decoder() -> decode.Decoder(#(Int, String, Option(String))) {
