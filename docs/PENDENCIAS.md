@@ -30,7 +30,7 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 
 | # | Item | Situação | Próximo passo |
 |---|---|---|---|
-| 1 | **[PRD-D](prd/PRD-D-discord.md): Discord com paridade do Telegram** ([3.2](#32-canais)) | Aprovada em 25/11. O Discord só envia: o gateway é um esboço e não abre a conexão. As interações nunca são confirmadas, os comandos `/` nunca são registrados e os anexos se perdem. | Em execução: D-01 a D-07. |
+| 1 | **[PRD-D](prd/PRD-D-discord.md): Discord com paridade do Telegram** ([3.2](#32-canais)) | Executada em 25/11 (D-01 a D-07), PR #79. Verificada contra gateway e API falsos e as capturas de fevereiro; falta o bot real. | Piloto manual: criar o bot ([`operations/DISCORD.md`](operations/DISCORD.md)) e conversar. |
 | 2 | **[PRD-F](prd/PRD-F-ferramentas-atores.md), fase A**: cada ferramenta com prazo, cancelamento e limites | Proposta. Hoje uma ferramenta travada prende o turno por 5 min e deixa processos vivos. | Decisões D1–D7 do mantenedor. |
 | 3 | **[PRD-S](prd/PRD-S-sondas.md)**: sondas | Desenho com as decisões S1 a S11, sem histórias. As PRDs E e C, de que a segunda versão dependia, estão feitas. | Escrever a segunda versão, com as histórias e os servidores MCP conferidos (nome, licença, versão). Executar depois da fase A da F, que dá prazo e cancelamento às tarefas longas das sondas. |
 | 4 | **Aprovação por botões, computador fase 2 e [PRD-F](prd/PRD-F-ferramentas-atores.md) fase B** ([3.3](#33-interação-e-computador)) | Decididos em 22/11, sem PRD. A fase B da F depende da P-03, já feita. | Escrever uma PRD que junte os três: a aprovação é o portão das tarefas em segundo plano e do computador. |
@@ -55,7 +55,8 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 - **Código sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` ([3.4](#34-observabilidade-e-desempenho)).
 - **`/voz` no Telegram:** a A-11 abriu a mídia de entrada, mas a resposta em voz pede o `sendVoice`.
 - **Exportação OTLP dos spans** ([3.4](#34-observabilidade-e-desempenho)).
-- **Defeitos de canal:** `retry_after` do Discord abaixo de 1 s, tamanho nas edições do Matrix, fallback do streaming do Slack, `StartHooks` por canal ([3.2](#32-canais)).
+- **Defeitos de canal:** tamanho nas edições do Matrix, fallback do streaming do Slack, `StartHooks` por canal, a URL no campo de host do Slack ([3.2](#32-canais)).
+- **Discord:** `/voz` (precisa de um codificador Opus, junto com o `/voz` do Telegram); apagar o `discord_webhooks` e a parte não usada do `discord_commands`, que nenhum módulo importa.
 
 ### 0.4 Sem data
 
@@ -215,8 +216,8 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 ### 3.2 Canais
 
 - ~~**O menu de comandos do Telegram e o `/help` não batem com o que a Supernova faz.**~~ Feito em 23/11 (#51): `core/closed_group/commands` é a lista única; o `/help` responde por papel, e o boot publica o menu (`setMyCommands`) nos escopos default, privados e grupos, sem idioma, em pt e em en, e o de admin no chat de cada admin do `supernova.yaml`. Um admin adicionado depois por `/acesso` vê o menu de membro até o próximo boot.
-- **O Discord não recebe mensagens.** O gateway é um esboço: `connect_to_gateway` não abre a conexão WebSocket, então nada chega, nem texto nem `attachments`. É o item 1 do roadmap. No Telegram a entrada já abre foto, voz, áudio, vídeo e documento desde a A-11 (#72), e a imagem chega ao modelo desde a C-05 e a C-05b (#71); no WhatsApp a imagem também entra desde a C-05. O caminho de imagem até o modelo existe desde a PR #34.
-- **O grupo fechado só existe em Telegram e Discord** (no Discord, só quando ele receber).
+- ~~**O Discord não recebe mensagens.**~~ Feito na [PRD-D](prd/PRD-D-discord.md) (25/11): gateway de verdade, interações, comandos `/` com autocompletar, mídia na entrada, agenda no privado. Também saíram dois defeitos que impediam qualquer envio (a URL no campo de host e o `guild_id` exigido na resposta). Falta conversar com um bot real.
+- **O grupo fechado só existe em Telegram, Discord e WhatsApp.**
   - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais". O WhatsApp passou a receber (webhook próprio, `C-02` e `C-03`, e pareamento pela API do GOWA, `C-04`, na #71) e continua nesse caminho genérico.
   - Origem: `TODO.md` P1.
 - **O Slack monta a URL no campo de host** (`slack_adapter.gleam`, `request.set_host(req, url)`), o mesmo defeito que impedia o Discord de enviar qualquer coisa (achado na [PRD-D](prd/PRD-D-discord.md)). Provavelmente o Slack também não envia; conferir com um servidor local antes de corrigir.
@@ -224,7 +225,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 - **Nunca testados com mensagem real:** Slack e Matrix. Origem: `audit/production.md`.
 - **QQ nunca foi feito.** Origem: `IMPLEMENTATION_READY.md` 4.6.
 - **Matrix:** o limite de tamanho não é verificado nas edições. Origem: relatório B1.1.
-- **Discord:** um `retry_after` inteiro é lido como milissegundos (o Discord manda segundos). Origem: relatório B1.1; corrigido na [PRD-D](prd/PRD-D-discord.md), D-06.
+- ~~**Discord:** um `retry_after` inteiro era lido como milissegundos.~~ Corrigido na [PRD-D](prd/PRD-D-discord.md), D-06.
 - **Slack, streaming nativo:** se o modelo cai no fallback sem streaming depois de já ter mandado texto, a conclusão pode não começar pelo texto já enviado. O `finish_progress` manda a resposta inteira, e a mensagem pode mostrar as duas versões. O caminho normal não é afetado. Corrigir pede uma decisão de desenho: reabrir a mensagem ou substituí-la. Origem: revisão da #40.
 - **`StartHooks` por canal.** Os hooks de teste ainda têm campos de Telegram, Discord, Slack e Matrix, e `config.channel_support` marca Telegram e Discord como suportados pelo nome. Origem: #40.
 
@@ -247,7 +248,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **Alertas, feitos (23/11):** cinco regras no Grafana (Supernova fora do ar, respostas que não chegaram, falhas do modelo, canal sem conexão, custo do dia), na tela de Alerting sempre e no Telegram quando `SUPERNOVA_ALERT_TELEGRAM_CHAT` está no `.env`.
   - **Próximo:** exportação OTLP dos spans.
   - **Sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` não são importados por ninguém fora dos próprios módulos.
-- **Readiness dos outros canais.** O `/health/ready` responde 503 quando um canal não está pronto e acompanha o Telegram a cada poll. Os demais canais só informam que subiram: um gateway do Discord que cai depois continua aparecendo como pronto. Entra junto com a paridade do Discord.
+- **Readiness dos outros canais.** O `/health/ready` responde 503 quando um canal não está pronto e acompanha o Telegram a cada poll e o Discord pelo gateway (READY, queda, 120 s sem ACK; PRD-D). Os demais canais só informam que subiram.
 - **Benchmarks** (REQ-9). O código está em `test/bench/`, mas as metas de `BENCHMARKS.md` nunca foram medidas.
 - **Teste de carga** (REQ-8). O código está em `tests/load/` e `run_load_tests.sh`. A meta (100 usuários, p99 < 2 s, erro < 1%) nunca foi verificada.
 - **Verificação final da v1.** Faltam os critérios de `production-ready-v1`: spans visíveis, circuit breaker medido e nenhum `mock` em código de produção.
@@ -257,7 +258,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 - **Cobertura, por risco.** Decidido em 22/11: cobrir primeiro o que tem mais risco, e subir o gate junto. Gate em 79%.
   - **Feito:** ciclo completo do circuit breaker; cliente real do Telegram contra uma Bot API local (`test/telegram_fake.gleam`): polling, offset, erros, backoff, streaming e "digitando", saída de grupos não autorizados com alerta e nova checagem, botões, erros de envio e o `inject` da agenda (`test/adapters/telegram_live_test.gleam`, `test/e2e/telegram_live_e2e_test.gleam`).
   - **Defeitos achados e corrigidos:** o breaker que só bloqueava uma vez; o stream abortado por "message is not modified"; o `retry_after` lido do lugar errado; um botão com mais de 64 bytes de `callback_data` derrubava a mensagem inteira (o `/model` com um modelo de nome longo ficava sem resposta).
-  - **Próximo:** o Telegram restante são ramos de erro secundários. O Discord entra com a paridade.
+  - **Próximo:** o Telegram restante são ramos de erro secundários. O Discord ganhou um gateway e uma API falsos (`test/discord_fake.gleam`) na PRD-D.
   - `COVER_FUNCTIONS="modulo1 modulo2" make coverage` lista as funções descobertas de cada módulo.
   - Origem: retomada.
 - **Testes com Chromium real no CI.** Hoje só rodam com `SUPERNOVA_BROWSER_TESTS=1`. O computador já roda os testes dele no CI. Origem: auditoria 3.4.

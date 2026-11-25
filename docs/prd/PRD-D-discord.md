@@ -1,8 +1,12 @@
 [PRD]
 # PRD D: Discord com paridade do Telegram
 
-> **Situação em 25/11/2026:** aprovada pelo mantenedor; D1 a D6 decididas
-> (seção 5). Na D6, o mantenedor pediu autocompletar no lugar do texto livre.
+> **Situação em 25/11/2026:** executada (D-01 a D-07), com os desvios
+> registrados nas seções 5 e 6. Verificada contra um gateway e uma API
+> falsos e as capturas anonimizadas de fevereiro; falta o piloto com um bot
+> real (roteiro em [`operations/DISCORD.md`](../operations/DISCORD.md)).
+> D1 a D6 decididas pelo mantenedor; na D6, ele pediu autocompletar no lugar
+> do texto livre.
 > Item 1 do roadmap ([PENDENCIAS](../PENDENCIAS.md), seção 0). Depende só do
 > que já está no master: a tabela de canais e os traits (PRD-C), a identidade
 > entre canais (PRD-I) e a mídia (PRD-A).

@@ -14,7 +14,7 @@ Supernova runs a group of people, each with an agent of their own. An agent:
 - **keeps an agenda.** It can do things later, or every day at a given hour.
 - **opens what the person sends.** On WhatsApp it hears voice notes, watches videos, reads documents and describes images and stickers, and can answer with its voice. Built for people with disabilities first, on what [Amélie](https://github.com/manelsen/amelie) learned.
 - **can have a computer of its own.** A Linux machine with a shell and a browser it sees through screenshots, isolated by gVisor, holding no secrets.
-- **talks to the person on Telegram and WhatsApp**, as the same agent on both when the person links them (`/vincular`). Other channels can only send for now (see Channels).
+- **talks to the person on Telegram, WhatsApp and Discord**, as the same agent on all of them when the person links them (`/vincular`). Other channels can only send for now (see Channels).
 
 Underneath is an operating system. Agents live in userland and ask a kernel for everything: files, tools, model calls. The kernel checks ownership, quota and permission, charges the cost and writes it down. The instance is a closed group: nobody gets in without being on the access list, and every person and the whole instance have spending ceilings.
 
@@ -64,7 +64,7 @@ More in [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
 | **Telegram** | Supported: receives and sends; closed group, commands, buttons, streaming |
 | **WhatsApp** | Supported through the GOWA bridge: receives and sends, private chats only (groups off for now); closed group; reads every medium the person sends (voice notes, video, documents, images, stickers) and can answer with voice (`/voz`); one agent across channels with `/vincular`. See [docs/operations/WHATSAPP.md](docs/operations/WHATSAPP.md) |
 | **sim** | Local HTTP channel used by the test harness |
-| **Discord** | Sends only: receiving messages (the gateway connection) is not implemented yet. Parity with Telegram is planned |
+| **Discord** | Supported: receives and sends through the gateway; private chats and authorized servers; closed group, slash commands with suggestions, buttons, streaming; reads every medium the person sends (voice messages, images, video, documents, stickers); one agent across channels with `/vincular`. Not yet tried with a real bot (see [docs/operations/DISCORD.md](docs/operations/DISCORD.md)) |
 | Slack, Matrix, Lark, Google Chat, Mattermost, WeChat Work | Send only, experimental: the adapters can deliver messages but do not receive them yet, and are not behind the closed group |
 
 ## Providers
