@@ -1,7 +1,8 @@
 [PRD]
 # PRD A: a agente abre tudo o que a pessoa manda
 
-> **Situação em 24/11/2026:** aprovada pelo mantenedor (D1 a D6, seção 5).
+> **Situação em 25/11/2026:** executada (A-01 a A-12, PR #72), com as
+> decisões D1 a D6 (seção 5). Voz padrão: Sulafat, escolhida pela Belle.
 > Depende da PRD-C (capacidade de mídia, C-05).
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
