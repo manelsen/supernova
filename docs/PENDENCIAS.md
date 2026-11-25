@@ -238,9 +238,12 @@ Feito em 22/11 (PR #37):
   - a cópia duplicada do CLI na raiz.
 - As referências de canais ficaram em `docs/research/`, como retrato de março.
 
+Feito em 25/11:
+
+- **Os relatórios das PRDs E, C, I, A, M e N estão em `docs/relatorios/`.** Os cinco arquivos (`PRD-E.md`, `PRD-C-I.md`, `PRD-A.md`, `PRD-M.md`, `PRD-N.md`) citam PR, commits e os números que existiam; onde não houve medição, dizem isso.
+
 Ainda aberto:
 
-- **O PRD N não tem relatório.**
 - **`audit/` continua como está.** A auditoria de março está reconciliada em `audit/STATUS_2026-11.md`.
 
 ### 3.7 Riscos aceitos (revisitar)
