@@ -1,4 +1,4 @@
-//// Discord: the adapter names private channels `dm:<user_id>` and guild
+//// Discord: the adapter names private channels `dm:<channel_id>` and guild
 //// channels `<channel_id>@guild:<guild_id>`. A whole guild is authorized as
 //// `discord:guild:<guild_id>`.
 
@@ -22,7 +22,8 @@ pub fn channel() -> ChannelTraits {
     supports_typing: True,
     routes_inbound: True,
     supports_interactions: True,
-    edits_interaction_source: False,
+    // The message with the buttons is the bot's own: it is edited (D5).
+    edits_interaction_source: True,
     turn_timeout_ms: 30_000,
     // The adapter opens (or reuses) the direct-message channel.
     private_chat_for: fn(user_id) { "open-dm:" <> user_id },

@@ -375,6 +375,91 @@ pub fn edit_message_with_options(
   ))
 }
 
+/// Answer an interaction (PRD-D, 6.2). Runs in the caller's process, not
+/// through the client actor: Discord gives 3 s, and the answer must not wait
+/// behind other requests.
+pub fn interaction_callback(
+  config: RestClientConfig,
+  interaction_id: Snowflake,
+  token: String,
+  body: String,
+) -> Result(Nil, DiscordRestError) {
+  use req <- result.try(base_request(
+    config,
+    http.Post,
+    "/interactions/" <> interaction_id <> "/" <> token <> "/callback",
+  ))
+  use resp <- result.try(
+    req
+    |> request.prepend_header("Content-Type", "application/json")
+    |> request.set_body(body)
+    |> execute_request,
+  )
+  case resp.status {
+    200 | 204 -> Ok(Nil)
+    400 -> Error(BadRequest(extract_error_message(resp.body)))
+    401 -> Error(Unauthorized)
+    404 -> Error(NotFound(extract_error_message(resp.body)))
+    429 -> Error(RateLimited(extract_retry_after(resp.body)))
+    status -> Error(UnknownError(status, resp.body))
+  }
+}
+
+/// Acknowledge a button or menu without changing anything yet (type 6). The
+/// answer comes later by editing the message that held it.
+pub fn deferred_update_response() -> String {
+  json.object([#("type", json.int(6))]) |> json.to_string
+}
+
+/// Answer a slash command by showing it in the channel (type 4), the way a
+/// typed command shows in Telegram. The agent's reply follows as a message.
+pub fn command_echo_response(content: String) -> String {
+  json.object([
+    #("type", json.int(4)),
+    #(
+      "data",
+      json.object([
+        #("content", json.string(content)),
+        #("allowed_mentions", no_mentions()),
+      ]),
+    ),
+  ])
+  |> json.to_string
+}
+
+/// Suggestions while a slash command option is typed (type 8). Discord takes
+/// at most 25, each up to 100 characters.
+pub fn autocomplete_response(choices: List(String)) -> String {
+  let choices =
+    choices
+    |> list.filter(fn(choice) { choice != "" })
+    |> list.map(fn(choice) { string.slice(choice, 0, 100) })
+    |> list.take(25)
+  json.object([
+    #("type", json.int(8)),
+    #(
+      "data",
+      json.object([
+        #(
+          "choices",
+          json.array(choices, fn(choice) {
+            json.object([
+              #("name", json.string(choice)),
+              #("value", json.string(choice)),
+            ])
+          }),
+        ),
+      ]),
+    ),
+  ])
+  |> json.to_string
+}
+
+/// `allowed_mentions` that pings nobody: no @everyone, @here, role or user.
+pub fn no_mentions() -> json.Json {
+  json.object([#("parse", json.preprocessed_array([]))])
+}
+
 /// Trigger Discord's typing indicator for a channel or thread.
 pub fn trigger_typing_indicator(
   client: RestClient,
@@ -880,22 +965,11 @@ fn execute_json_request(
   path: String,
   body: String,
 ) -> Result(Response(String), DiscordRestError) {
-  let url = get_base_url(state.config) <> path
-
-  let req =
-    request.new()
-    |> request.set_method(method)
-    |> request.prepend_header("Authorization", "Bot " <> state.config.bot_token)
-    |> request.prepend_header("Content-Type", "application/json")
-    |> request.prepend_header(
-      "User-Agent",
-      "SupernovaBot (https://supernova.bot, v1.0)",
-    )
-
-  let req_with_body = request.set_body(req, body)
-  let req_with_url = request.set_host(req_with_body, url)
-
-  execute_request(req_with_url)
+  use req <- result.try(base_request(state.config, method, path))
+  req
+  |> request.prepend_header("Content-Type", "application/json")
+  |> request.set_body(body)
+  |> execute_request
 }
 
 fn execute_empty_request(
@@ -903,20 +977,31 @@ fn execute_empty_request(
   method: http.Method,
   path: String,
 ) -> Result(Response(String), DiscordRestError) {
-  let url = get_base_url(state.config) <> path
+  use req <- result.try(base_request(state.config, method, path))
+  execute_request(request.set_body(req, ""))
+}
 
-  let req =
-    request.new()
-    |> request.set_method(method)
-    |> request.prepend_header("Authorization", "Bot " <> state.config.bot_token)
-    |> request.prepend_header(
-      "User-Agent",
-      "SupernovaBot (https://supernova.bot, v1.0)",
-    )
-    |> request.set_body("")
-    |> request.set_host(url)
-
-  execute_request(req)
+/// A request to `base_url <> path`, with the bot's authorization. The URL is
+/// parsed into scheme, host, port and path: putting the whole URL in the host
+/// (as before) made every request fail to connect.
+fn base_request(
+  config: RestClientConfig,
+  method: http.Method,
+  path: String,
+) -> Result(Request(String), DiscordRestError) {
+  case request.to(get_base_url(config) <> path) {
+    Error(_) -> Error(HttpError("invalid Discord API URL"))
+    Ok(req) ->
+      Ok(
+        req
+        |> request.set_method(method)
+        |> request.prepend_header("Authorization", "Bot " <> config.bot_token)
+        |> request.prepend_header(
+          "User-Agent",
+          "DiscordBot (https://supernova.bot, 0.4)",
+        ),
+      )
+  }
 }
 
 fn execute_request(
@@ -985,13 +1070,25 @@ fn parse_empty_response(
   }
 }
 
-fn parse_sent_message(body: String) -> Result(SentMessage, DiscordRestError) {
+pub fn parse_sent_message(
+  body: String,
+) -> Result(SentMessage, DiscordRestError) {
   let decoder = {
     use id <- decode.field("id", decode.string)
     use channel_id <- decode.field("channel_id", decode.string)
-    use guild_id <- decode.field("guild_id", decode.optional(decode.string))
-    use content <- decode.field("content", decode.string)
-    use timestamp <- decode.field("timestamp", decode.optional(decode.string))
+    // A REST message carries no `guild_id`, and `content` is empty for a
+    // message with only attachments.
+    use guild_id <- decode.optional_field(
+      "guild_id",
+      None,
+      decode.optional(decode.string),
+    )
+    use content <- decode.optional_field("content", "", decode.string)
+    use timestamp <- decode.optional_field(
+      "timestamp",
+      None,
+      decode.optional(decode.string),
+    )
     decode.success(SentMessage(
       id: id,
       channel_id: channel_id,

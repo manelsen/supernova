@@ -62,7 +62,8 @@ pub fn inbound_routing_and_interactions_are_traits_test() {
   interactive |> should.equal(["telegram", "discord", "slack"])
 
   catalog.get("telegram").edits_interaction_source |> should.be_true()
-  catalog.get("discord").edits_interaction_source |> should.be_false()
+  // Discord edits the message that held the buttons too (PRD-D, D5).
+  catalog.get("discord").edits_interaction_source |> should.be_true()
   catalog.get("sim").turn_timeout_ms |> should.equal(300_000)
   catalog.get("telegram").turn_timeout_ms |> should.equal(30_000)
   catalog.get("nenhum").routes_inbound |> should.be_false()

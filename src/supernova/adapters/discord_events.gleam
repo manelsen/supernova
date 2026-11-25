@@ -153,6 +153,8 @@ pub type Interaction {
     app_permissions: Option(String),
     locale: Option(String),
     guild_locale: Option(String),
+    /// The message that held the button or menu (component interactions).
+    message_id: Option(Snowflake),
   )
 }
 
@@ -1094,6 +1096,7 @@ fn interaction_decoder() -> decode.Decoder(Interaction) {
   use app_permissions <- optional("app_permissions", decode.string)
   use locale <- optional("locale", decode.string)
   use guild_locale <- optional("guild_locale", decode.string)
+  use message_id <- optional("message", decode.at(["id"], decode.string))
   decode.success(Interaction(
     id: id,
     application_id: application_id,
@@ -1108,6 +1111,7 @@ fn interaction_decoder() -> decode.Decoder(Interaction) {
     app_permissions: app_permissions,
     locale: locale,
     guild_locale: guild_locale,
+    message_id: message_id,
   ))
 }
 

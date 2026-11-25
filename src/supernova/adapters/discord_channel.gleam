@@ -15,6 +15,7 @@ import supernova/channel/chunking
 import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/config
+import supernova/infra/safe_io
 
 type DiscordBridgeControl {
   StopDiscordBridge
@@ -114,10 +115,19 @@ pub fn start_discord_channel(
       let send_fn = discord_send(rest_client, hooks)
       let stream_send_fn = discord_stream_send(rest_client, hooks)
 
+      // Recorded test runs never reach Discord.
+      let acknowledge = case hooks.outbound_records {
+        Some(_) -> fn(_interaction) { Nil }
+        None -> fn(interaction) {
+          acknowledge_interaction(rest_config, interaction)
+        }
+      }
+
       use bridge <- result.try(start_discord_bridge(
         handler,
         send_fn,
         stream_send_fn,
+        acknowledge,
         hooks.registry_id,
         hooks.turn_hard_timeout_ms,
       ))
@@ -167,6 +177,7 @@ fn start_discord_bridge(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
+  acknowledge: fn(discord_events.Interaction) -> Nil,
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Result(DiscordBridge, String) {
@@ -182,6 +193,7 @@ fn start_discord_bridge(
         handler,
         send_fn,
         stream_send_fn,
+        acknowledge,
         events,
         control,
         done,
@@ -201,6 +213,7 @@ fn discord_bridge_loop(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
+  acknowledge: fn(discord_events.Interaction) -> Nil,
   events: process.Subject(discord_gateway.DiscordEvent),
   control: process.Subject(DiscordBridgeControl),
   done: process.Subject(Nil),
@@ -216,6 +229,7 @@ fn discord_bridge_loop(
             handler,
             send_fn,
             stream_send_fn,
+            acknowledge,
             event,
             registry_id,
             turn_hard_timeout_ms,
@@ -224,6 +238,7 @@ fn discord_bridge_loop(
             handler,
             send_fn,
             stream_send_fn,
+            acknowledge,
             events,
             control,
             done,
@@ -236,6 +251,7 @@ fn discord_bridge_loop(
             handler,
             send_fn,
             stream_send_fn,
+            acknowledge,
             events,
             control,
             done,
@@ -257,6 +273,7 @@ fn dispatch_discord_event(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
+  acknowledge: fn(discord_events.Interaction) -> Nil,
   event: discord_gateway.DiscordEvent,
   registry_id: String,
   turn_hard_timeout_ms: Int,
@@ -277,7 +294,9 @@ fn dispatch_discord_event(
       }
     discord_gateway.RawEvent("INTERACTION_CREATE", data) ->
       case discord_events.parse_event("INTERACTION_CREATE", data) {
-        discord_events.EventInteractionCreate(interaction) ->
+        discord_events.EventInteractionCreate(interaction) -> {
+          // The answer to Discord goes first, before any turn: it has 3 s.
+          acknowledge(interaction)
           case discord_interaction_to_inbound(interaction) {
             Ok(inbound) ->
               channel_kit.dispatch_inbound(
@@ -290,9 +309,63 @@ fn dispatch_discord_event(
               )
             Error(_) -> Nil
           }
+        }
         _ -> Nil
       }
     _ -> Nil
+  }
+}
+
+/// Answers Discord for an interaction, in a process of its own so that a slow
+/// answer never holds the next event.
+fn acknowledge_interaction(
+  config: discord_rest.RestClientConfig,
+  interaction: discord_events.Interaction,
+) -> Nil {
+  case interaction_answer(interaction) {
+    None -> Nil
+    Some(body) -> {
+      let _ =
+        process.spawn_unlinked(fn() {
+          case
+            discord_rest.interaction_callback(
+              config,
+              interaction.id,
+              interaction.token,
+              body,
+            )
+          {
+            Ok(Nil) -> Nil
+            Error(error) ->
+              safe_io.println(
+                "discord: interaction answer failed: " <> string.inspect(error),
+              )
+          }
+        })
+      Nil
+    }
+  }
+}
+
+/// What Discord is told right away (PRD-D, 6.2): a button or menu is
+/// acknowledged and its message edited later; a slash command is shown in
+/// the channel, and the reply follows as a message.
+pub fn interaction_answer(
+  interaction: discord_events.Interaction,
+) -> Option(String) {
+  case interaction.interaction_type, interaction.data {
+    discord_events.MessageComponent, _ ->
+      Some(discord_rest.deferred_update_response())
+    discord_events.ApplicationCommand,
+      Some(discord_events.ApplicationCommandData(name:, options:, ..))
+    ->
+      Some(
+        discord_rest.command_echo_response(discord_slash_command_text(
+          name,
+          options,
+        )),
+      )
+    _, _ -> None
   }
 }
 
@@ -489,7 +562,7 @@ fn discord_component_interaction_to_inbound(
             id: interaction.id,
             action_id: custom_id,
             values: discord_component_values(values),
-            source_message_id: None,
+            source_message_id: interaction.message_id,
           ),
         )),
       )
@@ -525,10 +598,13 @@ fn discord_send(
         channel_kit.record_reply_for_test(recorder, "discord", replies)
       None ->
         channel_kit.send_chunked_replies(replies, fn(part) {
-          case discord_send_message(rest_client, part) {
-            Ok(_) -> Ok(Nil)
-            Error(error) -> Error(error)
+          // An answer to a button edits the message that held it (D5).
+          let sent = case part.edit_message_id {
+            Some(message_id) ->
+              discord_edit_message(rest_client, part, message_id)
+            None -> discord_send_message(rest_client, part)
           }
+          result.replace(sent, Nil)
         })
     }
   }

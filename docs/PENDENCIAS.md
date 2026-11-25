@@ -219,6 +219,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 - **O grupo fechado só existe em Telegram e Discord** (no Discord, só quando ele receber).
   - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais". O WhatsApp passou a receber (webhook próprio, `C-02` e `C-03`, e pareamento pela API do GOWA, `C-04`, na #71) e continua nesse caminho genérico.
   - Origem: `TODO.md` P1.
+- **O Slack monta a URL no campo de host** (`slack_adapter.gleam`, `request.set_host(req, url)`), o mesmo defeito que impedia o Discord de enviar qualquer coisa (achado na [PRD-D](prd/PRD-D-discord.md)). Provavelmente o Slack também não envia; conferir com um servidor local antes de corrigir.
 - **Slack e Matrix sem paridade com Telegram e Discord.** Faltam sessão, comandos, interações e testes de ponta a ponta. Origem: `TODO.md`, pós-PRD.
 - **Nunca testados com mensagem real:** Slack e Matrix. Origem: `audit/production.md`.
 - **QQ nunca foi feito.** Origem: `IMPLEMENTATION_READY.md` 4.6.

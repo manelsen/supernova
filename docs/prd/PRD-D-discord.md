@@ -60,6 +60,12 @@ autorizados por guild (`discord:guild:<id>`).
 - **A agenda não chega ao privado.** O trait diz `private_delivery: False`,
   embora `private_chat_for` (`open-dm:<user_id>`) e `discord_rest.open_dm`
   já existam.
+- **O REST nunca chegou ao Discord** (achado na execução, D-03). A URL
+  inteira ia no campo de host da requisição (`request.set_host`), e toda
+  chamada terminava em `ConnectTimeout`. A resposta do envio também exigia
+  `guild_id`, que a API não manda. O "só envia" do `STATUS.md` era, na
+  prática, "nem envia". O mesmo `set_host` está em `slack_adapter.gleam`,
+  fora desta PRD (anotado no PENDENCIAS 3.2).
 - **Defeitos conhecidos** (PENDENCIAS 3.2):
   - um `retry_after` inteiro é lido como milissegundos: o Discord manda
     segundos, então `5` vira 5 ms em vez de 5 s (`extract_retry_after`, em
@@ -226,10 +232,24 @@ boot ─► GET /gateway/bot (URL, limite de identify)
 
 ```
 INTERACTION_CREATE ─► confirmar em até 3 s (callback):
-    botão ou menu   ─► tipo 6 (deferred update)   ─► a resposta edita a original (D5)
-    comando /       ─► tipo 5 (deferred message)  ─► a resposta vai como follow-up
+    botão ou menu   ─► tipo 6 (deferred update)   ─► a resposta edita a mensagem dos botões (D5)
+    comando /       ─► tipo 4, ecoando o comando  ─► a resposta vai como mensagem normal
+    autocompletar   ─► tipo 8, com as sugestões (6.3)
                     ─► ChannelInbound ao channel_kit, como hoje
 ```
+
+**Desvio da primeira versão, na execução (D-03).** A primeira versão usava o
+token da interação: tipo 5 e follow-up para comandos, edição de `@original`
+para botões. Ficou mais simples e sem prazo:
+
+- a mensagem com os botões é do próprio bot, então a edição vai pela API do
+  canal (`PATCH /channels/{canal}/messages/{id}`), com o id que vem em
+  `message.id` da interação. Não há limite de 15 minutos;
+- o comando `/` é respondido com tipo 4, mostrando o comando no canal, como
+  o Telegram mostra o comando digitado. A resposta da agente segue pelo
+  caminho normal, com streaming, sem token para guardar.
+
+O resto desta seção descreve a primeira versão e fica como registro.
 
 - **A confirmação sai antes do turno**, no processo do `discord_channel`, sem
   esperar a fila do chat. Se falhar, o log registra e o turno segue: a
