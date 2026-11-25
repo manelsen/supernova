@@ -26,6 +26,7 @@ import supernova/core/prompt_log
 import supernova/core/tool_dispatch
 import supernova/core/tool_limits
 import supernova/core/tool_runner
+import supernova/core/tool_slots
 import supernova/core/turn_outcome
 import supernova/llm/circuit_breaker/actor as cb_actor
 import supernova/llm/circuit_breaker/global as cb_global
@@ -863,16 +864,13 @@ fn execute_tool_calls(
 ) -> List(provider.ChatMessage) {
   // The calls of one round are independent (the APIs ask for them together
   // when the model needs them all), so they run at the same time.
+  // Every call of the round starts at once, each under a guard owned by
+  // this turn (PRD-F, F-02) and in a slot of its tool (F-03); the outcomes
+  // are collected in order.
   let results =
     calls
-    |> list.sized_chunk(max_concurrent_tools)
-    |> list.flat_map(fn(chunk) {
-      // Every call of the chunk starts at once, each under a guard owned by
-      // this turn (PRD-F, F-02); the outcomes are collected in order.
-      chunk
-      |> list.map(begin_tool_call(_, tools, context))
-      |> list.map(finish_tool_call(_, context))
-    })
+    |> list.map(begin_tool_call(_, tools, context))
+    |> list.map(finish_tool_call(_, context))
     |> list.zip(calls, _)
     |> list.map(fn(pair) {
       let #(call, output) = pair
@@ -884,9 +882,6 @@ fn execute_tool_calls(
     tool_images.message(list.flat_map(results, fn(result) { result.1 })),
   )
 }
-
-/// Most tool calls of one round running at once; the rest wait for a slot.
-const max_concurrent_tools = 8
 
 /// Append one round of tool calls and their results to the history.
 fn append_tool_round(
@@ -939,12 +934,20 @@ fn begin_tool_call(
       let limit_ms = tool_limits.timeout_ms(tool_limits.current(), call.name)
       Running(
         call: call,
-        pending: tool_runner.start(limit_ms, fn() {
-          case context.invoke_tool {
-            Some(invoke) -> invoke(call.name, call.arguments)
-            None -> dispatch_builtin_tool(call.name, call.arguments)
-          }
-        }),
+        pending: tool_runner.start_in_slot(
+          limit_ms,
+          Some(tool_runner.SlotRequest(
+            tool: call.name,
+            agent: context.principal_id,
+            wait_ms: tool_slots.default_wait_ms,
+          )),
+          fn() {
+            case context.invoke_tool {
+              Some(invoke) -> invoke(call.name, call.arguments)
+              None -> dispatch_builtin_tool(call.name, call.arguments)
+            }
+          },
+        ),
         start: current_timestamp(),
       )
     }

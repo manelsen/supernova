@@ -83,3 +83,20 @@ com a carga anotada. A F-03 traz as duas colunas.
 coletor de stream do canal `sim` e o log (`safe_println`). Nenhum é
 supervisor de ferramenta, porque ainda não existe nenhum: o critério da
 seção 9 é que continue assim depois da F-02.
+
+## F-03: A/B com `--tool-mix`
+
+Cópias congeladas, rodadas alternadas na mesma janela (comando da PRD-P com
+`--tool-mix`). A: `b98f34c` (F-01: mock corrigido, executor antigo, limite
+global de 8). B: `1305cb0` (F-02 e F-03: guardião por chamada, vagas).
+
+| Rodada | Carga | Turnos/s | p50 todos | p95 todos | p95 com ferramenta | Faltando |
+|---|---|---|---|---|---|---|
+| A1 | 4,3 | 33,3 | 2140 ms | 12502 ms | 11278 ms | 0 |
+| B1 | 3,5 | 44,1 | 1616 ms | 11355 ms | 9599 ms | 0 |
+| A2 | 4,9 | 41,0 | 1695 ms | 10685 ms | 10111 ms | 0 |
+| B2 | 7,9 | 39,1 | 2226 ms | 11221 ms | 10793 ms | 0 |
+
+Médias: A 37,2 turnos/s, B 41,6. **Sem regressão.** O processo com a maior
+fila, nos dois lados, é o log (`safe_println`), nunca um guardião de
+ferramenta (critério da seção 9).

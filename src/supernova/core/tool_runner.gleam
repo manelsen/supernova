@@ -23,8 +23,11 @@
 
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
+import gleam/int
+import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/core/exception_guard
+import supernova/core/tool_slots
 
 /// How a call ended.
 pub type Outcome {
@@ -55,12 +58,31 @@ type GuardEvent {
 /// Start `work` under a guard owned by the calling process. The call starts
 /// at once; `await` collects its outcome.
 pub fn start(limit_ms: Int, work: fn() -> Result(String, String)) -> Pending {
+  start_in_slot(limit_ms, None, work)
+}
+
+/// Which slot a call needs (F-03): its tool, its agent, and how long it may
+/// wait for one.
+pub type SlotRequest {
+  SlotRequest(tool: String, agent: String, wait_ms: Int)
+}
+
+/// Like `start`, first taking a slot of the tool for the agent. Without one
+/// within `wait_ms`, the call answers that the tool is busy and runs
+/// nothing. The time limit starts once the slot is taken.
+pub fn start_in_slot(
+  limit_ms: Int,
+  slot: Option(SlotRequest),
+  work: fn() -> Result(String, String),
+) -> Pending {
   let owner = process.self()
   let reply = process.new_subject()
-  // The guard monitors the turn before it starts the worker: a turn that is
-  // already gone is seen at once, and the worker is stopped.
+  // The guard monitors the turn before it waits or starts the worker: a
+  // turn that is already gone is seen at once.
   let guard =
-    process.spawn_unlinked(fn() { run_guard(owner, reply, limit_ms, work) })
+    process.spawn_unlinked(fn() {
+      run_guard(owner, reply, limit_ms, slot, work)
+    })
   Pending(reply: reply, guard: process.monitor(guard), limit_ms: limit_ms)
 }
 
@@ -100,10 +122,63 @@ fn run_guard(
   owner: Pid,
   reply: Subject(Outcome),
   limit_ms: Int,
+  slot: Option(SlotRequest),
   work: fn() -> Result(String, String),
 ) -> Nil {
   process.trap_exits(True)
   let owner_monitor = process.monitor(owner)
+  let owner_down =
+    process.new_selector()
+    |> process.select_specific_monitor(owner_monitor, fn(_) { Nil })
+  case slot {
+    None -> guard_call(owner_monitor, reply, limit_ms, work)
+    Some(request) ->
+      case wait_for_slot(owner_down, request, now() + request.wait_ms) {
+        // The turn died while waiting: nothing to run, nobody to answer.
+        SlotOwnerGone -> Nil
+        SlotBusy -> process.send(reply, Done(Error(tool_slots.busy_message)))
+        SlotTaken(taken) -> {
+          guard_call(owner_monitor, reply, limit_ms, work)
+          tool_slots.give_back(taken)
+        }
+      }
+  }
+}
+
+type SlotWait {
+  SlotTaken(tool_slots.Slot)
+  SlotBusy
+  SlotOwnerGone
+}
+
+/// Try for a slot until `deadline`, looking at the turn between tries.
+fn wait_for_slot(
+  owner_down: process.Selector(Nil),
+  request: SlotRequest,
+  deadline: Int,
+) -> SlotWait {
+  case tool_slots.try_take(request.tool, request.agent) {
+    Ok(taken) -> SlotTaken(taken)
+    Error(Nil) -> {
+      let left = deadline - now()
+      case left <= 0 {
+        True -> SlotBusy
+        False ->
+          case process.selector_receive(owner_down, int.min(left, 20)) {
+            Ok(Nil) -> SlotOwnerGone
+            Error(Nil) -> wait_for_slot(owner_down, request, deadline)
+          }
+      }
+    }
+  }
+}
+
+fn guard_call(
+  owner_monitor: Monitor,
+  reply: Subject(Outcome),
+  limit_ms: Int,
+  work: fn() -> Result(String, String),
+) -> Nil {
   let result = process.new_subject()
   let limit = process.new_subject()
   // Linked: if the guard dies, the worker dies with it.
@@ -157,3 +232,6 @@ fn describe(reason: process.ExitReason) -> String {
     process.Abnormal(term) -> string.inspect(term)
   }
 }
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn now() -> Int
