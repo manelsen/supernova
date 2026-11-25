@@ -1,5 +1,6 @@
 import envoy
 import exception
+import gleam/erlang/process
 import gleam/float
 import gleam/int
 import gleam/option.{None, Some}
@@ -166,8 +167,22 @@ pub fn timeout_kills_the_process_test() {
       Ok(value) -> value
       Error(_) -> 0
     }
-    process_alive(pid) |> should.equal(False)
+    // The kill is asynchronous: wait for the process to go, up to 5 s.
+    gone_within(pid, 5000) |> should.equal(True)
   })
+}
+
+/// True once `pid` is no longer alive, checking every 50 ms until
+/// `remaining_ms` runs out.
+fn gone_within(pid: Int, remaining_ms: Int) -> Bool {
+  case process_alive(pid), remaining_ms <= 0 {
+    False, _ -> True
+    True, True -> False
+    True, False -> {
+      process.sleep(50)
+      gone_within(pid, remaining_ms - 50)
+    }
+  }
 }
 
 pub fn three_hundred_kib_prompt_arrives_whole_test() {
