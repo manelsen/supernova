@@ -107,6 +107,17 @@ pub type SimConfig {
   )
 }
 
+/// `channels.webhook`: where the webhook server listens (PRD-C, D1). It
+/// starts only when an enabled channel receives by webhook. In the compose
+/// file it binds the internal network and its port is not published.
+pub type WebhookConfig {
+  WebhookConfig(bind: String, port: Int)
+}
+
+pub fn default_webhook_config() -> WebhookConfig {
+  WebhookConfig(bind: "127.0.0.1", port: 8790)
+}
+
 /// Matrix channel configuration
 pub type MatrixConfig {
   MatrixConfig(
@@ -176,12 +187,22 @@ pub type WechatWorkConfig {
 /// WhatsApp channel configuration
 pub type WhatsAppConfig {
   WhatsAppConfig(
-    /// Base URL for the Whatsmeow bridge REST API
+    /// Base URL of the GOWA REST API (`http://gowa:3000` in the compose
+    /// network; see `channels.internal_hosts`)
     bridge_url: Option(String),
     /// Optional bridge device ID for multi-device deployments
     device_id: Option(String),
     /// Enabled status
     enabled: Bool,
+    /// `user:password` of GOWA's basic auth (`APP_BASIC_AUTH`); env
+    /// SUPERNOVA_WHATSAPP_BASIC_AUTH
+    basic_auth: Option(String),
+    /// Shared secret of the webhook signature (`WHATSAPP_WEBHOOK_SECRET`);
+    /// env SUPERNOVA_WHATSAPP_WEBHOOK_SECRET
+    webhook_secret: Option(String),
+    /// `whatsapp.allow_groups`: off by default, every conversation is in
+    /// private and group messages are dropped unread.
+    allow_groups: Bool,
   )
 }
 
@@ -438,6 +459,11 @@ pub type Config {
     telegram: TelegramConfig,
     /// HTTP-driven sim channel configuration
     sim: SimConfig,
+    /// Webhook server for channels that receive by webhook
+    webhook: WebhookConfig,
+    /// `channels.internal_hosts`: hosts a channel may reach over plain http
+    /// (a bridge in the same compose network), besides loopback.
+    channel_internal_hosts: List(String),
     /// Matrix configuration
     matrix: MatrixConfig,
     /// Lark configuration
@@ -520,13 +546,15 @@ pub fn default_config() -> Config {
       token: None,
       record_prompts: False,
     ),
+    webhook: default_webhook_config(),
+    channel_internal_hosts: [],
     matrix: MatrixConfig(homeserver_url: None, token: None, enabled: False),
     lark: LarkConfig(token: None, base_url: None, enabled: False),
     google_chat: GoogleChatConfig(webhook_url: None, enabled: False),
     slack: SlackConfig(token: None, enabled: False),
     mattermost: MattermostConfig(token: None, base_url: None, enabled: False),
     wechat_work: WechatWorkConfig(webhook_url: None, enabled: False),
-    whatsapp: WhatsAppConfig(bridge_url: None, device_id: None, enabled: False),
+    whatsapp: default_whatsapp_config(),
     budgets: default_budgets_config(),
     access: default_access_config(),
     role_budgets: default_role_budgets_config(),
@@ -901,6 +929,18 @@ fn decode_sim(root: yay.Node) -> SimConfig {
   }
 }
 
+fn decode_webhook(root: yay.Node) -> WebhookConfig {
+  let default = default_webhook_config()
+  case yay.select_sugar(root, "channels.webhook") {
+    Ok(node) ->
+      WebhookConfig(
+        bind: get_string_or(node, "bind", default.bind),
+        port: get_int_or(node, "port", default.port),
+      )
+    Error(_) -> default
+  }
+}
+
 /// Decode Matrix configuration from YAML
 fn decode_matrix(root: yay.Node) -> MatrixConfig {
   case yay.select_sugar(root, "matrix") {
@@ -977,16 +1017,28 @@ fn decode_wechat_work(root: yay.Node) -> WechatWorkConfig {
 }
 
 /// Decode WhatsApp configuration from YAML
+pub fn default_whatsapp_config() -> WhatsAppConfig {
+  WhatsAppConfig(
+    bridge_url: None,
+    device_id: None,
+    enabled: False,
+    basic_auth: None,
+    webhook_secret: None,
+    allow_groups: False,
+  )
+}
+
 fn decode_whatsapp(root: yay.Node) -> WhatsAppConfig {
   case yay.select_sugar(root, "whatsapp") {
     Ok(node) ->
       WhatsAppConfig(
+        ..default_whatsapp_config(),
         bridge_url: get_optional_string(node, "bridge_url"),
         device_id: get_optional_string(node, "device_id"),
         enabled: get_bool_or(node, "enabled", False),
+        allow_groups: get_bool_or(node, "allow_groups", False),
       )
-    Error(_) ->
-      WhatsAppConfig(bridge_url: None, device_id: None, enabled: False)
+    Error(_) -> default_whatsapp_config()
   }
 }
 
@@ -1374,6 +1426,11 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     discord: discord,
     telegram: telegram,
     sim: sim,
+    webhook: decode_webhook(root),
+    channel_internal_hosts: case yay.select_sugar(root, "channels") {
+      Ok(channels) -> get_string_list(channels, "internal_hosts")
+      Error(_) -> []
+    },
     matrix: matrix,
     lark: lark,
     google_chat: google_chat,
@@ -1654,6 +1711,8 @@ pub fn apply_env_overrides(config: Config) -> Config {
       enabled: telegram_enabled,
     ),
     sim: config.sim,
+    webhook: config.webhook,
+    channel_internal_hosts: config.channel_internal_hosts,
     matrix: MatrixConfig(
       homeserver_url: matrix_homeserver_url,
       token: matrix_token,
@@ -1682,6 +1741,15 @@ pub fn apply_env_overrides(config: Config) -> Config {
       bridge_url: whatsapp_bridge_url,
       device_id: whatsapp_device_id,
       enabled: whatsapp_enabled,
+      basic_auth: option.or(
+        get_env("SUPERNOVA_WHATSAPP_BASIC_AUTH"),
+        config.whatsapp.basic_auth,
+      ),
+      webhook_secret: option.or(
+        get_env("SUPERNOVA_WHATSAPP_WEBHOOK_SECRET"),
+        config.whatsapp.webhook_secret,
+      ),
+      allow_groups: config.whatsapp.allow_groups,
     ),
     budgets: config.budgets,
     access: AccessConfig(
@@ -2183,7 +2251,10 @@ pub fn is_wechat_work_enabled(config: Config) -> Bool {
 
 /// Check if WhatsApp is configured and enabled
 pub fn is_whatsapp_enabled(config: Config) -> Bool {
-  config.whatsapp.enabled && config.whatsapp.bridge_url != None
+  config.whatsapp.enabled
+  && config.whatsapp.bridge_url != None
+  && config.whatsapp.webhook_secret != None
+  && config.whatsapp.basic_auth != None
 }
 
 /// Channels with `enabled: true` that cannot start because a required
@@ -2236,6 +2307,11 @@ pub fn incomplete_channels(config: Config) -> List(#(String, String)) {
     ]),
     missing("whatsapp", config.whatsapp.enabled, [
       #("bridge_url", config.whatsapp.bridge_url != None),
+      #(
+        "SUPERNOVA_WHATSAPP_WEBHOOK_SECRET",
+        config.whatsapp.webhook_secret != None,
+      ),
+      #("SUPERNOVA_WHATSAPP_BASIC_AUTH", config.whatsapp.basic_auth != None),
     ]),
   ])
 }

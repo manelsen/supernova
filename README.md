@@ -13,7 +13,7 @@ Supernova runs a group of people, each with an agent of their own. An agent:
 - **forgets on request.** `/esquecer` erases everything the person told it, and keeps who it became.
 - **keeps an agenda.** It can do things later, or every day at a given hour.
 - **can have a computer of its own.** A Linux machine with a shell and a browser it sees through screenshots, isolated by gVisor, holding no secrets.
-- **talks to the person on Telegram.** Other channels can only send for now (see Channels).
+- **talks to the person on Telegram and WhatsApp**, as the same agent on both when the person links them (`/vincular`). Other channels can only send for now (see Channels).
 
 Underneath is an operating system. Agents live in userland and ask a kernel for everything: files, tools, model calls. The kernel checks ownership, quota and permission, charges the cost and writes it down. The instance is a closed group: nobody gets in without being on the access list, and every person and the whole instance have spending ceilings.
 
@@ -61,9 +61,10 @@ More in [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
 | Channel | Status |
 |---|---|
 | **Telegram** | Supported: receives and sends; closed group, commands, buttons, streaming |
+| **WhatsApp** | Supported through the GOWA bridge: receives and sends, private chats only (groups off for now); closed group, images; one agent across channels with `/vincular`. See [docs/operations/WHATSAPP.md](docs/operations/WHATSAPP.md) |
 | **sim** | Local HTTP channel used by the test harness |
 | **Discord** | Sends only: receiving messages (the gateway connection) is not implemented yet. Parity with Telegram is planned |
-| Slack, Matrix, WhatsApp (bridge), Lark, Google Chat, Mattermost, WeChat Work | Send only, experimental: the adapters can deliver messages but do not receive them yet, and are not behind the closed group |
+| Slack, Matrix, Lark, Google Chat, Mattermost, WeChat Work | Send only, experimental: the adapters can deliver messages but do not receive them yet, and are not behind the closed group |
 
 ## Providers
 

@@ -1,5 +1,6 @@
 //// Channel rules come from each channel's traits.
 
+import gleam/list
 import gleeunit/should
 import supernova/channel/catalog
 
@@ -33,11 +34,56 @@ pub fn generic_and_unknown_channels_test() {
 }
 
 pub fn principal_channels_and_group_keys_test() {
-  catalog.principal_channels() |> should.equal(["telegram", "discord"])
+  catalog.principal_channels()
+  |> should.equal(["telegram", "discord", "whatsapp"])
+  catalog.is_group_key("whatsapp:120363012345678901@g.us") |> should.be_true()
   catalog.is_group_key("telegram:-100") |> should.be_true()
   catalog.is_group_key("discord:guild:9") |> should.be_true()
   catalog.is_group_key("sim:1") |> should.be_true()
   catalog.is_group_key("telegram:") |> should.be_false()
   catalog.is_group_key("discord:dm:1") |> should.be_false()
   catalog.is_group_key("slack:C1") |> should.be_false()
+}
+
+/// PRD-C, C-01: what the core used to ask by channel name.
+pub fn inbound_routing_and_interactions_are_traits_test() {
+  let routed =
+    catalog.all()
+    |> list.filter(fn(channel) { channel.routes_inbound })
+    |> list.map(fn(channel) { channel.name })
+  routed
+  |> should.equal(["telegram", "discord", "sim", "matrix", "slack", "whatsapp"])
+
+  let interactive =
+    catalog.all()
+    |> list.filter(fn(channel) { channel.supports_interactions })
+    |> list.map(fn(channel) { channel.name })
+  interactive |> should.equal(["telegram", "discord", "slack"])
+
+  catalog.get("telegram").edits_interaction_source |> should.be_true()
+  catalog.get("discord").edits_interaction_source |> should.be_false()
+  catalog.get("sim").turn_timeout_ms |> should.equal(300_000)
+  catalog.get("telegram").turn_timeout_ms |> should.equal(30_000)
+  catalog.get("nenhum").routes_inbound |> should.be_false()
+}
+
+pub fn a_person_is_reached_privately_through_the_traits_test() {
+  catalog.get("discord").private_chat_for("42") |> should.equal("open-dm:42")
+  catalog.get("telegram").private_chat_for("42") |> should.equal("42")
+  catalog.get("matrix").private_chat_for("@a:b") |> should.equal("@a:b")
+}
+
+/// PRD-C, C-04: WhatsApp chats and people.
+pub fn whatsapp_rules_test() {
+  let whatsapp = catalog.get("whatsapp")
+  whatsapp.is_private_chat("628123456789@s.whatsapp.net") |> should.be_true()
+  whatsapp.is_private_chat("999@lid") |> should.be_true()
+  whatsapp.is_private_chat("120363012345678901@g.us") |> should.be_false()
+  whatsapp.chat_key("120363012345678901@g.us")
+  |> should.equal("whatsapp:120363012345678901@g.us")
+  whatsapp.private_chat_for("628123456789")
+  |> should.equal("628123456789@s.whatsapp.net")
+  whatsapp.private_chat_for("999@lid") |> should.equal("999@lid")
+  whatsapp.receives_by_webhook |> should.be_true()
+  whatsapp.supports_interactions |> should.be_false()
 }

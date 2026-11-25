@@ -20,6 +20,7 @@ pub fn channel() -> ChannelTraits {
       <> "/start - Start a new session\n"
       <> "/help - Show this help\n"
       <> "/status - Show session status\n"
+      <> "/vincular - Bring another app to the same agent\n"
       <> "/commands - List all commands\n"
       <> "/reasoning - Toggle reasoning mode\n"
       <> "/model - Change LLM model\n",
@@ -32,5 +33,11 @@ pub fn channel() -> ChannelTraits {
       <> "/reasoning - Toggle reasoning mode\n",
     edit_max_length: chunking.telegram_max_length,
     supports_typing: True,
+    routes_inbound: True,
+    supports_interactions: True,
+    edits_interaction_source: True,
+    turn_timeout_ms: 30_000,
+    private_chat_for: fn(user_id) { user_id },
+    receives_by_webhook: False,
   )
 }

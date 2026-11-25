@@ -32,6 +32,18 @@ pub type ChannelTraits {
     edit_max_length: Int,
     /// The channel shows a typing indicator while a reply streams.
     supports_typing: Bool,
+    /// Inbound messages of this channel are routed to a turn.
+    routes_inbound: Bool,
+    /// The channel has buttons and other interactive components.
+    supports_interactions: Bool,
+    /// The answer to a button press edits the message that held the button.
+    edits_interaction_source: Bool,
+    /// How long routing waits for one turn, in milliseconds.
+    turn_timeout_ms: Int,
+    /// The chat id that reaches a person privately, from their user id.
+    private_chat_for: fn(String) -> String,
+    /// Messages arrive at the webhook server (`channel/webhook_server`).
+    receives_by_webhook: Bool,
   )
 }
 
@@ -40,6 +52,7 @@ pub const basic_help_commands =
   <> "/help - Show this help\n"
   <> "/start - Start a new session\n"
   <> "/status - Show session status\n"
+  <> "/vincular - Bring another app to the same agent\n"
 
 pub const default_help_commands =
   basic_help_commands <> "/model - Change LLM model\n"
@@ -66,6 +79,12 @@ pub fn generic(name: String) -> ChannelTraits {
     // Channels without a documented edit limit keep the whole content.
     edit_max_length: 1_000_000,
     supports_typing: False,
+    routes_inbound: False,
+    supports_interactions: False,
+    edits_interaction_source: False,
+    turn_timeout_ms: 30_000,
+    private_chat_for: fn(user_id) { user_id },
+    receives_by_webhook: False,
   )
 }
 

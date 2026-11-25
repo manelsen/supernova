@@ -14,6 +14,7 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import supernova/llm/provider
 import supernova/llm/providers/anthropic
@@ -128,6 +129,30 @@ fn mock_chat(
 }
 
 fn mock_chat_success(
+  messages: List(provider.ChatMessage),
+  config: provider.ProviderConfig,
+  tools: List(provider.ToolDefinition),
+) -> Result(provider.ChatResponse, provider.LLMError) {
+  // Tests see what reached the model: images in the person's message.
+  let seen_images =
+    messages
+    |> list.filter(fn(message) { message.role == "user" })
+    |> list.last
+    |> result.map(fn(message) { list.length(message.images) })
+    |> result.unwrap(0)
+  case seen_images > 0 {
+    True ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "vi " <> int.to_string(seen_images) <> " imagem(ns)",
+        tool_calls: None,
+        reasoning_content: None,
+      ))
+    False -> mock_chat_answer(messages, config, tools)
+  }
+}
+
+fn mock_chat_answer(
   messages: List(provider.ChatMessage),
   config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),

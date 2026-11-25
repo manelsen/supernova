@@ -7,6 +7,7 @@ import supernova/config
 import supernova/core/agent_identity
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/closed_group/global as closed_group_global
+import supernova/core/identity/aliases
 import supernova/core/introspection/lesson
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
@@ -212,6 +213,35 @@ pub fn forget_deletes_the_owners_conversations_on_disk_test() {
     let assert Ok(alice_again) =
       session_supervisor.start_session(sup, "sim:group-1:alice")
     session_server.get_history(alice_again) |> should.equal([])
+    session_supervisor.stop(sup)
+  })
+}
+
+/// PRD-I, I-03 and D4: one person on two channels has one folder of
+/// conversations; /esquecer said on either wipes both, and the link stays.
+pub fn forget_reaches_every_channel_of_the_person_test() {
+  support.with_runtime_root(cfg(), fn(root) {
+    seed(root)
+    let assert Ok(Nil) =
+      aliases.link(root, "discord:alice-i03", "sim:alice", "discord", 1)
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
+    let assert Ok(sup) = session_supervisor.start_with_history(store)
+    let said = [session_server.ChatMessage(role: "user", content: "oi")]
+    let assert Ok(on_sim) =
+      session_supervisor.start_session(sup, "sim:group-1:alice")
+    let assert Ok(Nil) = session_server.append_messages(on_sim, said)
+    let assert Ok(on_discord) =
+      session_supervisor.start_session(sup, "discord:dm:alice-i03:alice-i03")
+    let assert Ok(Nil) = session_server.append_messages(on_discord, said)
+
+    let assert Ok(forget.Counts(sessions: 2, ..)) =
+      forget.forget(root, "sim:alice", Some(sup))
+
+    history_store.load(store, "sim:group-1:alice") |> should.equal([])
+    history_store.load(store, "discord:dm:alice-i03:alice-i03")
+    |> should.equal([])
+    aliases.resolve("discord:alice-i03") |> should.equal("sim:alice")
+    let assert Ok(Nil) = aliases.unlink(root, "discord:alice-i03")
     session_supervisor.stop(sup)
   })
 }
