@@ -118,6 +118,59 @@ pub fn default_webhook_config() -> WebhookConfig {
   WebhookConfig(bind: "127.0.0.1", port: 8790)
 }
 
+/// `media`: who reads what a person sends (PRD-A). Audio, video and
+/// documents are read into text by `reader_model` (Gemini, with
+/// SUPERNOVA_GEMINI_API_KEY); images go to the agent's own model. Without
+/// the key, media become notes the agent answers.
+pub type MediaConfig {
+  MediaConfig(
+    reader_model: String,
+    speech_model: String,
+    voice: String,
+    audio: Bool,
+    video: Bool,
+    document: Bool,
+    api_key: Option(String),
+  )
+}
+
+pub fn default_media_config() -> MediaConfig {
+  MediaConfig(
+    reader_model: "gemini-3.5-flash-lite",
+    speech_model: "gemini-3.8-flash-lite-tts",
+    voice: "Kore",
+    audio: True,
+    video: True,
+    document: True,
+    api_key: None,
+  )
+}
+
+fn decode_media(root: yay.Node) -> MediaConfig {
+  let default = default_media_config()
+  case yay.select_sugar(root, "media") {
+    Ok(node) -> {
+      let mode = fn(key, current) {
+        case get_string_or(node, key, "") {
+          "off" -> False
+          "read" -> True
+          _ -> current
+        }
+      }
+      MediaConfig(
+        ..default,
+        reader_model: get_string_or(node, "reader_model", default.reader_model),
+        speech_model: get_string_or(node, "speech_model", default.speech_model),
+        voice: get_string_or(node, "voice", default.voice),
+        audio: mode("audio", default.audio),
+        video: mode("video", default.video),
+        document: mode("document", default.document),
+      )
+    }
+    Error(_) -> default
+  }
+}
+
 /// Matrix channel configuration
 pub type MatrixConfig {
   MatrixConfig(
@@ -461,6 +514,8 @@ pub type Config {
     sim: SimConfig,
     /// Webhook server for channels that receive by webhook
     webhook: WebhookConfig,
+    /// Who reads the media a person sends (PRD-A)
+    media: MediaConfig,
     /// `channels.internal_hosts`: hosts a channel may reach over plain http
     /// (a bridge in the same compose network), besides loopback.
     channel_internal_hosts: List(String),
@@ -547,6 +602,7 @@ pub fn default_config() -> Config {
       record_prompts: False,
     ),
     webhook: default_webhook_config(),
+    media: default_media_config(),
     channel_internal_hosts: [],
     matrix: MatrixConfig(homeserver_url: None, token: None, enabled: False),
     lark: LarkConfig(token: None, base_url: None, enabled: False),
@@ -1427,6 +1483,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     telegram: telegram,
     sim: sim,
     webhook: decode_webhook(root),
+    media: decode_media(root),
     channel_internal_hosts: case yay.select_sugar(root, "channels") {
       Ok(channels) -> get_string_list(channels, "internal_hosts")
       Error(_) -> []
@@ -1712,6 +1769,13 @@ pub fn apply_env_overrides(config: Config) -> Config {
     ),
     sim: config.sim,
     webhook: config.webhook,
+    media: MediaConfig(
+      ..config.media,
+      api_key: option.or(
+        get_env("SUPERNOVA_GEMINI_API_KEY"),
+        config.media.api_key,
+      ),
+    ),
     channel_internal_hosts: config.channel_internal_hosts,
     matrix: MatrixConfig(
       homeserver_url: matrix_homeserver_url,

@@ -218,20 +218,63 @@ fn open_attachment(
   attachment: whatsapp_inbound.Attachment,
   forwarded: Bool,
 ) -> String {
-  case attachment.kind, attachment.path {
-    whatsapp_inbound.Image, Some(path) | whatsapp_inbound.Sticker, Some(path) ->
-      fetch_image(settings, path)
-    _, _ -> "\n" <> whatsapp_inbound.unopened_note(attachment, forwarded)
+  let kind = case attachment.kind {
+    whatsapp_inbound.Audio -> Ok(inbound_media.Audio)
+    whatsapp_inbound.Video -> Ok(inbound_media.Video)
+    whatsapp_inbound.Document -> Ok(inbound_media.Document)
+    _ -> Error(Nil)
   }
+  case attachment.kind, attachment.path, kind {
+    whatsapp_inbound.Image, Some(path), _
+    | whatsapp_inbound.Sticker, Some(path), _
+    -> fetch_image(settings, path)
+    // Audio, video and documents are kept for the reader at the start of
+    // the turn (PRD-A, A-04).
+    _, Some(path), Ok(kind) ->
+      case
+        safe_media_path(path),
+        inbound_media.fetch(
+          settings.data_dir,
+          join_bridge_url(settings.bridge_url, "/" <> path),
+          inbound_media.Declared(
+            kind: kind,
+            mime: attachment.mime,
+            seconds: attachment.seconds,
+            file_name: attachment.file_name,
+            voice_note: attachment.voice_note,
+            forwarded: forwarded,
+          ),
+        )
+      {
+        True, Ok(media) -> {
+          record.count("channel_media_total", [
+            #("channel", "whatsapp"),
+            #("outcome", "kept"),
+          ])
+          inbound_media.tag_for(media)
+        }
+        _, _ -> {
+          record.count("channel_media_total", [
+            #("channel", "whatsapp"),
+            #("outcome", "failed"),
+          ])
+          "\n" <> whatsapp_inbound.unopened_note(attachment, forwarded)
+        }
+      }
+    _, _, _ -> "\n" <> whatsapp_inbound.unopened_note(attachment, forwarded)
+  }
+}
+
+/// GOWA serves its downloads under `statics/media/`; nothing else.
+fn safe_media_path(path: String) -> Bool {
+  string.starts_with(path, "statics/media/") && !string.contains(path, "..")
 }
 
 /// The tag of an image GOWA downloaded (PRD-C, C-05), or a note that it
 /// could not be opened. GOWA serves its downloads under `/statics/media/`
 /// on the internal network; nothing else is fetched.
 fn fetch_image(settings: Settings, path: String) -> String {
-  let safe =
-    string.starts_with(path, "statics/media/") && !string.contains(path, "..")
-  let fetched = case safe {
+  let fetched = case safe_media_path(path) {
     False -> Error("unexpected media path")
     True ->
       case

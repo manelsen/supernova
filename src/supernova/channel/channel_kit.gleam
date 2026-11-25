@@ -15,6 +15,7 @@ import supernova/channel/catalog
 import supernova/channel/chat_lanes
 import supernova/channel/chunking
 import supernova/channel/inbox
+import supernova/channel/media_reading
 import supernova/channel/port
 import supernova/infra/safe_io
 import supernova/metrics/record
@@ -327,6 +328,8 @@ fn run_inbound_turn(
     port.InboundInteraction(interaction) -> interaction.channel
   }
   let stream_events = process.new_subject()
+  // Audio, video and documents become text before the turn (PRD-A, A-04).
+  let inbound = media_reading.prepare_inbound(inbound)
 
   let outcome = case handler(inbound, stream_events) {
     Ok(port.ImmediateReply(reply)) ->

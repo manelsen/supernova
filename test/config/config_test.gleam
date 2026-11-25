@@ -1162,6 +1162,21 @@ pub fn whatsapp_groups_are_off_unless_allowed_test() {
   cfg.whatsapp.allow_groups |> should_equal(True)
 }
 
+pub fn media_is_read_with_modes_test() {
+  let assert Ok(plain) = load("app_name: supernova\n")
+  plain.media.audio |> should_equal(True)
+  plain.media.reader_model |> should_equal("gemini-3.5-flash-lite")
+  let assert Ok(cfg) =
+    load(
+      "app_name: supernova\nmedia:\n  reader_model: gemini-3.1-flash-lite\n  audio: read\n  video: off\n  document: qualquer\n",
+    )
+  cfg.media.reader_model |> should_equal("gemini-3.1-flash-lite")
+  cfg.media.audio |> should_equal(True)
+  cfg.media.video |> should_equal(False)
+  // Anything but read or off keeps the default.
+  cfg.media.document |> should_equal(True)
+}
+
 pub fn channels_webhook_is_read_test() {
   let yaml =
     "

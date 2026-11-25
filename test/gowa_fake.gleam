@@ -14,6 +14,9 @@ import mist
 /// The bytes of the image the fake serves.
 pub const png = <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 7, 7, 7>>
 
+/// The bytes of the voice note the fake serves.
+pub const ogg = <<"OggS":utf8, 0, 2, 0, 0, 0, 0, 0, 0>>
+
 pub type Recorded {
   Recorded(path: String, authorization: String, device: String, body: String)
 }
@@ -38,6 +41,10 @@ pub fn start(requests: Subject(Recorded)) -> String {
         ),
       )
       case req.path {
+        // A downloaded voice note.
+        "/statics/media/voz.ogg" ->
+          response.new(200)
+          |> response.set_body(mist.Bytes(bytes_tree.from_bit_array(ogg)))
         // A downloaded image, as GOWA serves its media.
         "/statics/media/foto.png" ->
           response.new(200)
