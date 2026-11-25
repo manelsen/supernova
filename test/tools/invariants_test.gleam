@@ -1,12 +1,9 @@
 //// The invariants of the tool runner (PRD-F, section 7), with the test
 //// tools of F-01 (`lenta`, `trava`, `explode`).
 ////
-//// I2 fails on the code before the F-02: a tool call is started unlinked,
-//// and it outlives the turn that asked for it. Its test is
-//// `pending_i2_turn_death_kills_its_calls`, without the `_test` suffix, so
-//// the suite does not run it yet; the F-02 renames it. The failure, as
-//// recorded in the F-01 commit: the `trava` call is still alive 1 s after
-//// the turn was killed.
+//// I2 failed on the code before the F-02 (a tool call was started
+//// unlinked and outlived its turn: the `trava` call was still alive 1 s
+//// after the turn was killed). The F-02 guard fixed it.
 
 import exception
 import gleam/dict
@@ -68,7 +65,7 @@ pub fn i1_a_stuck_call_ends_at_its_limit_test() {
 }
 
 /// I2: when the turn dies, its calls die.
-pub fn pending_i2_turn_death_kills_its_calls() {
+pub fn i2_turn_death_kills_its_calls_test() {
   use <- with_fake_tools
   let started = process.new_subject()
   fake_tools.observe(started)

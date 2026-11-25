@@ -197,6 +197,22 @@ Um módulo novo, `supernova/tools/runner`, com:
 - **Telemetria:** `tool_running`, `tool_waiting`, `tool_timeouts_total` e
   `tool_cancelled_total` por ferramenta. Entram no painel do Grafana.
 
+**Desvio na execução (F-02): um guardião por chamada, não um supervisor por
+ferramenta.** Cada chamada ganha um processo guardião
+(`core/tool_runner`), iniciado pelo turno. Ele monitora o turno, liga a si o
+processo que executa a ferramenta e faz valer o prazo, que já existia desde a
+PRD-E (`tool_limits`). O efeito é o da seção acima (prazo, cancelamento,
+nada vivo sem dono), sem um processo por ferramenta pelo qual todas as
+chamadas passariam. As vagas da F-03 ficam na ETS, fora de qualquer
+processo, como esta seção já previa.
+
+**Desfecho no audit.** O guardião para o executor com o motivo `timeout` ou
+`cancelled`. O `invoke_tool` do gateway observa o processo que executa a
+chamada: se ele for parado antes de completar, o `ToolCompleted` sai mesmo
+assim, uma vez, com `timeout` ou `cancelado`. Antes, a chamada cortada nunca
+era completada: o audit não a via e a reserva ficava para sempre no estado
+do gateway.
+
 ### 6.2 Fase B: `tarefa`
 
 **A ferramenta que o modelo vê:**

@@ -20,6 +20,7 @@ import supernova/core/syscall/types.{
   CancelSchedule, EmitEvent, GetBudget, KillAgent, ReadFile, ReadWorld, Schedule,
   SpawnAgent, SyscallDenied, SyscallFailed, SyscallOk, WriteFile, WriteWorld,
 }
+import supernova/core/tool_runner
 import supernova/core/workspace_policy/actor as policy_actor
 import test_budget
 import test_workspace
@@ -777,6 +778,126 @@ pub fn tool_completion_audits_the_authorized_path_test() {
     && entry.result == audit_types.AuditSuccess
   })
   |> should.be_true()
+  actor.stop(gw)
+  audit_actor.stop(log)
+}
+
+// PRD-F, F-02 (I3): a call cut by its time limit, or whose turn died, is
+// still completed once in the audit, with what happened.
+
+fn stuck_gateway(log) {
+  let manifests =
+    dict.from_list([
+      #(
+        "admin",
+        cap_types.CapabilityManifest(allowed_tools: ["web"], denied_tools: []),
+      ),
+    ])
+  let assert Ok(gw) =
+    actor.start_with_capabilities(
+      option.None,
+      option.Some(test_budget.unlimited()),
+      option.Some(log),
+      manifests,
+      fn(_, _) {
+        process.sleep_forever()
+        Ok("unreachable")
+      },
+    )
+  gw
+}
+
+fn audited_outcome(
+  log,
+  tries: Int,
+) -> Result(#(audit_types.AuditResult, String), Nil) {
+  let found =
+    audit_actor.get_all(log)
+    |> list.find(fn(entry) { entry.operation == "tool_call" })
+  case found, tries {
+    Ok(entry), _ -> Ok(#(entry.result, entry.details))
+    Error(Nil), 0 -> Error(Nil)
+    Error(Nil), _ -> {
+      process.sleep(10)
+      audited_outcome(log, tries - 1)
+    }
+  }
+}
+
+pub fn a_call_cut_at_its_limit_is_audited_as_timeout_test() {
+  use root <- test_workspace.with_isolated_workspace("syscall-timeout")
+  let assert Ok(log) = audit_actor.start(root)
+  let gw = stuck_gateway(log)
+  tool_runner.run(100, fn() {
+    actor.invoke_tool(gw, "agent_1", "admin", "web", "{\"url\":\"x\"}")
+  })
+  |> should.equal(tool_runner.TimedOut(100))
+  audited_outcome(log, 200)
+  |> should.equal(Ok(#(audit_types.AuditFailure, "timeout")))
+  // The gateway forgets the claim.
+  actor.claimed_count_for_test(gw) |> should.equal(0)
+  actor.stop(gw)
+  audit_actor.stop(log)
+}
+
+pub fn a_call_whose_turn_died_is_audited_as_cancelled_test() {
+  use root <- test_workspace.with_isolated_workspace("syscall-cancel")
+  let assert Ok(log) = audit_actor.start(root)
+  let gw = stuck_gateway(log)
+  let turn =
+    process.spawn_unlinked(fn() {
+      tool_runner.run(60_000, fn() {
+        actor.invoke_tool(gw, "agent_1", "admin", "web", "{\"url\":\"x\"}")
+      })
+    })
+  // The call is running once its claim exists; then the turn dies.
+  wait_claimed(gw, 200)
+  process.kill(turn)
+  audited_outcome(log, 200)
+  |> should.equal(Ok(#(audit_types.AuditFailure, "cancelado")))
+  actor.stop(gw)
+  audit_actor.stop(log)
+}
+
+fn wait_claimed(gw, tries: Int) -> Nil {
+  case actor.claimed_count_for_test(gw) > 0, tries {
+    True, _ -> Nil
+    False, 0 -> panic as "the call never got its claim"
+    False, _ -> {
+      process.sleep(5)
+      wait_claimed(gw, tries - 1)
+    }
+  }
+}
+
+pub fn a_call_killed_from_outside_is_audited_as_interrupted_test() {
+  use root <- test_workspace.with_isolated_workspace("syscall-killed")
+  let assert Ok(log) = audit_actor.start(root)
+  let manifests =
+    dict.from_list([
+      #(
+        "admin",
+        cap_types.CapabilityManifest(allowed_tools: ["web"], denied_tools: []),
+      ),
+    ])
+  let assert Ok(gw) =
+    actor.start_with_capabilities(
+      option.None,
+      option.Some(test_budget.unlimited()),
+      option.Some(log),
+      manifests,
+      fn(_, _) {
+        process.kill(process.self())
+        Ok("unreachable")
+      },
+    )
+  let _ =
+    tool_runner.run(1000, fn() {
+      actor.invoke_tool(gw, "agent_1", "admin", "web", "{\"url\":\"x\"}")
+    })
+  let assert Ok(#(audit_types.AuditFailure, details)) =
+    audited_outcome(log, 200)
+  string.starts_with(details, "interrompida:") |> should.be_true
   actor.stop(gw)
   audit_actor.stop(log)
 }

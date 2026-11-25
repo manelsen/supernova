@@ -16,17 +16,16 @@ import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/result
 import gleam/string
 import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/budget_policy/types as budget_types
 import supernova/core/checkpoint/actor as checkpoint_actor
 import supernova/core/checkpoint/types as checkpoint_types
 import supernova/core/complexity_router
-import supernova/core/exception_guard
 import supernova/core/prompt_log
 import supernova/core/tool_dispatch
 import supernova/core/tool_limits
+import supernova/core/tool_runner
 import supernova/core/turn_outcome
 import supernova/llm/circuit_breaker/actor as cb_actor
 import supernova/llm/circuit_breaker/global as cb_global
@@ -866,8 +865,13 @@ fn execute_tool_calls(
   // when the model needs them all), so they run at the same time.
   let results =
     calls
-    |> run_concurrently(fn(call) {
-      execute_single_tool_call(call, tools, context)
+    |> list.sized_chunk(max_concurrent_tools)
+    |> list.flat_map(fn(chunk) {
+      // Every call of the chunk starts at once, each under a guard owned by
+      // this turn (PRD-F, F-02); the outcomes are collected in order.
+      chunk
+      |> list.map(begin_tool_call(_, tools, context))
+      |> list.map(finish_tool_call(_, context))
     })
     |> list.zip(calls, _)
     |> list.map(fn(pair) {
@@ -883,48 +887,6 @@ fn execute_tool_calls(
 
 /// Most tool calls of one round running at once; the rest wait for a slot.
 const max_concurrent_tools = 8
-
-/// `run` on each item, each in a process of its own, at most
-/// `max_concurrent_tools` at a time; the results in the items' order. A run
-/// that crashes, or whose process is killed, gives an error text instead of
-/// taking the turn down. One item runs here, with no process to start.
-fn run_concurrently(items: List(a), run: fn(a) -> String) -> List(String) {
-  items
-  |> list.sized_chunk(max_concurrent_tools)
-  |> list.flat_map(run_batch(_, run))
-}
-
-fn run_batch(items: List(a), run: fn(a) -> String) -> List(String) {
-  case items {
-    [] | [_] -> list.map(items, run)
-    _ ->
-      items
-      |> list.map(fn(item) {
-        let reply = process.new_subject()
-        let pid =
-          process.spawn_unlinked(fn() {
-            case exception_guard.run(fn() { process.send(reply, run(item)) }) {
-              Ok(Nil) -> Nil
-              Error(reason) ->
-                process.send(reply, "ERROR: tool crashed: " <> reason)
-            }
-          })
-        #(reply, process.monitor(pid))
-      })
-      |> list.map(fn(pending) {
-        let #(reply, monitor) = pending
-        let result =
-          process.new_selector()
-          |> process.select(reply)
-          |> process.select_specific_monitor(monitor, fn(down) {
-            "ERROR: tool stopped: " <> string.inspect(down)
-          })
-          |> process.selector_receive_forever
-        process.demonitor_process(monitor)
-        result
-      })
-  }
-}
 
 /// Append one round of tool calls and their results to the history.
 fn append_tool_round(
@@ -960,36 +922,55 @@ pub fn execute_tool_calls_for_test(
   execute_tool_calls(calls, tools, empty_run_context())
 }
 
-fn execute_single_tool_call(
+/// A call of the round: refused, or started under its guard.
+type BegunCall {
+  Undeclared(call: provider.ToolCall)
+  Running(call: provider.ToolCall, pending: tool_runner.Pending, start: Int)
+}
+
+fn begin_tool_call(
   call: provider.ToolCall,
   tools: List(provider.ToolDefinition),
   context: RunContext,
-) -> String {
+) -> BegunCall {
   case is_declared_tool(call.name, tools) {
-    False -> {
+    False -> Undeclared(call)
+    True -> {
+      let limit_ms = tool_limits.timeout_ms(tool_limits.current(), call.name)
+      Running(
+        call: call,
+        pending: tool_runner.start(limit_ms, fn() {
+          case context.invoke_tool {
+            Some(invoke) -> invoke(call.name, call.arguments)
+            None -> dispatch_builtin_tool(call.name, call.arguments)
+          }
+        }),
+        start: current_timestamp(),
+      )
+    }
+  }
+}
+
+fn finish_tool_call(begun: BegunCall, context: RunContext) -> String {
+  case begun {
+    Undeclared(call) -> {
       record_tool_error(call.name)
       "ERROR: Tool '" <> call.name <> "' is not declared for this turn"
     }
-    True -> {
-      let start = current_timestamp()
+    Running(call, pending, start) ->
       with_tool_span(call.name, fn() {
-        let limit_ms = tool_limits.timeout_ms(tool_limits.current(), call.name)
-        let result =
-          within(limit_ms, fn() {
-            case context.invoke_tool {
-              Some(invoke) -> invoke(call.name, call.arguments)
-              None -> dispatch_builtin_tool(call.name, call.arguments)
-            }
-          })
-          |> result.unwrap(Error(
-            "a ferramenta passou do tempo-limite de "
-            <> int.to_string(limit_ms / 1000)
-            <> " s e foi interrompida",
-          ))
+        let result = case tool_runner.await(pending) {
+          tool_runner.Done(result) -> result
+          tool_runner.TimedOut(limit_ms) ->
+            Error(
+              "a ferramenta passou do tempo-limite de "
+              <> int.to_string(limit_ms / 1000)
+              <> " s e foi interrompida",
+            )
+        }
         case result {
           Ok(output) -> {
-            let elapsed = current_timestamp() - start
-            record_tool_latency(call.name, elapsed)
+            record_tool_latency(call.name, current_timestamp() - start)
             report_tool_result(context, call.name, True)
             output
           }
@@ -1000,30 +981,6 @@ fn execute_single_tool_call(
           }
         }
       })
-    }
-  }
-}
-
-/// `work` in a process of its own, killed when `timeout_ms` passes first. A
-/// crash inside it is reported like a crash here.
-fn within(
-  timeout_ms: Int,
-  work: fn() -> Result(String, String),
-) -> Result(Result(String, String), Nil) {
-  let reply = process.new_subject()
-  let worker =
-    process.spawn_unlinked(fn() {
-      case exception_guard.run(fn() { process.send(reply, work()) }) {
-        Ok(Nil) -> Nil
-        Error(reason) -> process.send(reply, Error("tool crashed: " <> reason))
-      }
-    })
-  case process.receive(reply, timeout_ms) {
-    Ok(value) -> Ok(value)
-    Error(Nil) -> {
-      process.kill(worker)
-      Error(Nil)
-    }
   }
 }
 
