@@ -236,7 +236,9 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - um computador por pessoa, apagado no `/esquecer`;
   - uma tela que a pessoa pode assumir (noVNC) para login e captcha;
   - confirmação garantida pelo código antes de qualquer efeito fora da máquina;
-  - tarefas longas assíncronas.
+  - tarefas longas assíncronas;
+  - **objetivo (25/11):** a Belle ter uma agente com computador, o mais cedo que o roadmap permitir. Hoje há um computador por instância (`computador.gleam` ignora a pessoa), só para admins;
+  - a descrição da ferramenta promete "a Linux machine that is yours alone, isolated from … other people": só é verdade com um admin. Corrigir junto com o computador por pessoa.
 - **Yield manual de sessão.** O checkpoint por orçamento e por tempo existe no executor. Uma ferramenta para a agente ceder a vez por conta própria nunca foi exposta. Origem: `IMPLEMENTATION_TODO.md` 2.5.
 
 ### 3.4 Observabilidade e desempenho

@@ -21,3 +21,4 @@ harness.yaml
 harness-out/
 .harness-tmp/
 __pycache__/
+stress-out/
