@@ -28,6 +28,7 @@ import supernova/agenda/sweeper as agenda_sweeper
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/channel_kit
 import supernova/channel/health as channel_health
+import supernova/channel/inbound_media
 import supernova/channel/inbox
 import supernova/channel/port
 import supernova/channel/registry
@@ -308,6 +309,9 @@ fn start_services(
   // what the last stop left waiting is taken now: a message that arrives
   // once channels start is never part of it.
   let left_waiting = start_inbox(cfg.data_dir)
+
+  // Images of turns that never ran (PRD-C, C-05).
+  let _ = inbound_media.sweep(cfg.data_dir, inbound_media.max_age_ms)
 
   // Linked identities (PRD-I) resolve before any message is gated.
   case aliases.load(cfg.data_dir) {

@@ -22,7 +22,7 @@ pub fn a_private_text_is_answered_as_the_phone_test() {
     message(
       "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\",\"from_name\":\"John Doe\",\"body\":\"Hello, how are you?\"",
     )
-  let assert inbound.Answer(msg, learned: None) = inbound.decide(body)
+  let assert inbound.Answer(msg, learned: None, ..) = inbound.decide(body)
   msg.channel |> should.equal("whatsapp")
   msg.channel_id |> should.equal("628123456789@s.whatsapp.net")
   msg.user_id |> should.equal("628123456789")
@@ -36,7 +36,7 @@ pub fn a_message_with_both_ids_teaches_the_lid_test() {
     message(
       "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\",\"from_lid\":\"251556368777322@lid\",\"body\":\"oi\"",
     )
-  let assert inbound.Answer(_, learned: Some(pair)) = inbound.decide(body)
+  let assert inbound.Answer(_, learned: Some(pair), ..) = inbound.decide(body)
   pair
   |> should.equal(#("whatsapp:251556368777322@lid", "whatsapp:628123456789"))
 }
@@ -141,4 +141,30 @@ pub fn account_events_say_why_test() {
   |> should.equal(inbound.AccountDown(
     "suspensão temporária até 2026-10-29T09:00:00Z (101: you sent too many messages)",
   ))
+}
+
+/// PRD-C, C-05: an image GOWA downloaded comes with its path, with or
+/// without a caption; an image without text is still a message.
+pub fn an_image_comes_with_its_path_test() {
+  let private =
+    "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\","
+  let assert inbound.Answer(msg, image: Some(path), ..) =
+    inbound.decide(message(
+      private <> "\"image\":\"statics/media/1752404751-ad9e.jpeg\"",
+    ))
+  path |> should.equal("statics/media/1752404751-ad9e.jpeg")
+  msg.content |> should.equal("")
+  let assert inbound.Answer(msg, image: Some(_), ..) =
+    inbound.decide(message(
+      private
+      <> "\"body\":\"olha\",\"image\":{\"path\":\"statics/media/x.jpeg\",\"caption\":\"olha\"}",
+    ))
+  msg.content |> should.equal("olha")
+  // Not downloaded: only WhatsApp's encrypted URL, so no image.
+  let assert inbound.Answer(msg, image: None, ..) =
+    inbound.decide(message(
+      private
+      <> "\"image\":{\"url\":\"https://mmg.whatsapp.net/x\",\"caption\":\"veja\"}",
+    ))
+  msg.content |> should.equal("veja")
 }

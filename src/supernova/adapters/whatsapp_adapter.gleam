@@ -23,6 +23,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/adapters/whatsapp_inbound
 import supernova/channel/channel_kit
+import supernova/channel/inbound_media
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
 import supernova/channel/traits/whatsapp as whatsapp_traits
@@ -31,6 +32,7 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/runtime as closed_group_runtime
 import supernova/core/identity/aliases
 import supernova/metrics/record
+import supernova/tools/web
 
 const multipart_boundary: String = "supernova-whatsapp-bridge"
 
@@ -108,12 +110,7 @@ pub fn start(
         case bit_array.to_string(body) {
           Error(Nil) -> webhook_server.Malformed
           Ok(text) ->
-            act(
-              whatsapp_inbound.decide(text),
-              settings.data_dir,
-              send_fn,
-              on_down,
-            )
+            act(whatsapp_inbound.decide(text), settings, send_fn, on_down)
         }
       },
       dispatch: fn(inbound) {
@@ -142,17 +139,23 @@ pub fn start(
 /// Carry out a decision about one webhook.
 pub fn act(
   decision: whatsapp_inbound.Decision,
-  data_dir: String,
+  settings: Settings,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   on_down: fn(String) -> Nil,
 ) -> webhook_server.Outcome {
   case decision {
-    whatsapp_inbound.Answer(message, learned) -> {
+    whatsapp_inbound.Answer(message, learned, image) -> {
       case learned {
-        Some(#(lid, phone)) -> learn_lid(data_dir, lid, phone)
+        Some(#(lid, phone)) -> learn_lid(settings.data_dir, lid, phone)
         None -> Nil
       }
-      webhook_server.Deliver([port.InboundMessage(message)])
+      let content = case image {
+        None -> message.content
+        Some(path) -> message.content <> fetch_image(settings, path)
+      }
+      webhook_server.Deliver([
+        port.InboundMessage(port.ChannelMessage(..message, content: content)),
+      ])
     }
     whatsapp_inbound.AskPrivate(chat_id, reply_to) -> {
       record.count("whatsapp_unknown_lid_total", [#("chat", "group")])
@@ -192,6 +195,51 @@ pub fn act(
     whatsapp_inbound.Malformed -> webhook_server.Malformed
   }
 }
+
+/// The tag of an image GOWA downloaded (PRD-C, C-05), or a note that it
+/// could not be opened. GOWA serves its downloads under `/statics/media/`
+/// on the internal network; nothing else is fetched.
+fn fetch_image(settings: Settings, path: String) -> String {
+  let safe =
+    string.starts_with(path, "statics/media/") && !string.contains(path, "..")
+  let fetched = case safe {
+    False -> Error("unexpected media path")
+    True ->
+      case
+        web_fetch_get(
+          join_bridge_url(settings.bridge_url, "/" <> path),
+          inbound_media.max_bytes,
+        )
+      {
+        Ok(#(200, bytes)) -> inbound_media.store(settings.data_dir, bytes)
+        Ok(#(status, _)) -> Error("bridge answered " <> int.to_string(status))
+        Error(_) -> Error("download failed")
+      }
+  }
+  case fetched {
+    Ok(id) -> {
+      record.count("channel_media_total", [
+        #("channel", "whatsapp"),
+        #("outcome", "kept"),
+      ])
+      inbound_media.tag(id)
+    }
+    Error(reason) -> {
+      record.count("channel_media_total", [
+        #("channel", "whatsapp"),
+        #("outcome", "failed"),
+      ])
+      io.println("warn: whatsapp image not kept: " <> reason)
+      "\n[uma imagem que não consegui abrir]"
+    }
+  }
+}
+
+@external(erlang, "supernova_web_fetch_ffi", "get")
+fn web_fetch_get(
+  url: String,
+  max_bytes: Int,
+) -> Result(#(Int, BitArray), web.GetError)
 
 /// A LID seen next to a phone becomes an alias of that phone's person
 /// (PRD-I, I-04). Known LIDs are left alone.

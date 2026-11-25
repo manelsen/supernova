@@ -11,6 +11,7 @@ import gleeunit/should
 import gowa_fake
 import supernova/adapters/whatsapp_adapter
 import supernova/channel/channel_kit
+import supernova/channel/inbound_media
 import supernova/channel/port
 import supernova/channel/webhook_server
 import supernova/core/identity/aliases
@@ -91,6 +92,35 @@ pub fn whatsapp_end_to_end_test() {
   string.contains(out.body, "olá, 628123456789") |> should.be_true()
   // The LID that came along is now the same person.
   aliases.resolve("whatsapp:777@lid") |> should.equal("whatsapp:628123456789")
+
+  // An image GOWA downloaded reaches the agent as a tag; the file waits
+  // for the turn.
+  let photo =
+    message(
+      "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\",\"image\":{\"path\":\"statics/media/foto.png\",\"caption\":\"olha\"},\"body\":\"olha\"",
+    )
+  post(webhook_port, "/webhook/whatsapp", signed(photo), bit_array_from(photo)).0
+  |> should.equal(200)
+  let assert Ok(port.InboundMessage(with_photo)) = process.receive(seen, 2000)
+  let assert #("olha\n[imagem]", [id]) = inbound_media.split(with_photo.content)
+  let assert Ok(url) = inbound_media.take_data_url(dir, id)
+  string.starts_with(url, "data:image/png;base64,") |> should.be_true()
+  let assert Ok(download) = process.receive(sent, 5000)
+  download.path |> should.equal("/statics/media/foto.png")
+  let assert Ok(answer) = process.receive(sent, 5000)
+  answer.path |> should.equal("/send/message")
+
+  // A path outside GOWA's media is not fetched.
+  let odd =
+    message(
+      "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\",\"image\":\"../etc/passwd\"",
+    )
+  post(webhook_port, "/webhook/whatsapp", signed(odd), bit_array_from(odd)).0
+  |> should.equal(200)
+  let assert Ok(port.InboundMessage(not_opened)) = process.receive(seen, 2000)
+  not_opened.content
+  |> should.equal("\n[uma imagem que não consegui abrir]")
+  let assert Ok(_) = process.receive(sent, 5000)
 
   // Unsigned: refused, nothing reaches the agent.
   post(webhook_port, "/webhook/whatsapp", [], bit_array_from(body)).0

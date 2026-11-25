@@ -21,8 +21,13 @@ import supernova/channel/port
 import supernova/core/identity/aliases
 
 pub type Decision {
-  /// A message to answer; `learned` is a LID to link to the phone.
-  Answer(message: port.ChannelMessage, learned: Option(#(String, String)))
+  /// A message to answer; `learned` is a LID to link to the phone;
+  /// `image` is the path of an image GOWA downloaded (`statics/media/…`).
+  Answer(
+    message: port.ChannelMessage,
+    learned: Option(#(String, String)),
+    image: Option(String),
+  )
   /// A sender known only by an unknown LID wrote to the agent in a group.
   AskPrivate(chat_id: String, reply_to: String)
   Ignore(reason: String)
@@ -50,8 +55,12 @@ type Message {
     replied_to_id: Option(String),
     replied_to_sender: Option(String),
     mentions: List(String),
-    caption: Option(String),
+    image: Option(Image),
   )
+}
+
+type Image {
+  Image(path: Option(String), caption: Option(String))
 }
 
 pub fn decide(body: String) -> Decision {
@@ -99,8 +108,10 @@ pub fn decide(body: String) -> Decision {
 }
 
 fn decide_message(agent: String, message: Message) -> Decision {
+  let caption = option.then(message.image, fn(image) { image.caption })
+  let image_path = option.then(message.image, fn(image) { image.path })
   let content = case message.body {
-    "" -> option.unwrap(message.caption, "")
+    "" -> option.unwrap(caption, "")
     text -> text
   }
   let in_group = string.ends_with(message.chat_id, "@g.us")
@@ -109,11 +120,12 @@ fn decide_message(agent: String, message: Message) -> Decision {
     || list.contains(message.mentions, agent)
     || message.replied_to_sender == Some(agent)
     || string.starts_with(string.trim(content), "/")
-  case message.is_from_me, string.trim(content), addressed {
+  let empty = string.trim(content) == "" && image_path == None
+  case message.is_from_me, empty, addressed {
     True, _, _ -> Ignore("own message")
-    _, "", _ -> Ignore("empty message")
+    _, True, _ -> Ignore("empty message")
     _, _, False -> Ignore("group talk not addressed to the agent")
-    False, _, True ->
+    False, False, True ->
       case sender(message) {
         Phone(phone) ->
           Answer(
@@ -121,11 +133,16 @@ fn decide_message(agent: String, message: Message) -> Decision {
             learned: option.map(message.from_lid, fn(lid) {
               #("whatsapp:" <> lid, "whatsapp:" <> phone)
             }),
+            image: image_path,
           )
         Lid(lid) ->
           case aliases.resolve("whatsapp:" <> lid) == "whatsapp:" <> lid {
             False ->
-              Answer(to_channel_message(message, lid, content), learned: None)
+              Answer(
+                to_channel_message(message, lid, content),
+                learned: None,
+                image: image_path,
+              )
             True ->
               case in_group {
                 True -> AskPrivate(message.chat_id, message.id)
@@ -203,7 +220,7 @@ fn message_decoder() -> decode.Decoder(Message) {
     [],
     decode.list(decode.string),
   )
-  use caption <- decode.optional_field("image", None, caption_decoder())
+  use image <- decode.optional_field("image", None, image_decoder())
   decode.success(Message(
     id:,
     chat_id:,
@@ -215,18 +232,24 @@ fn message_decoder() -> decode.Decoder(Message) {
     replied_to_id:,
     replied_to_sender:,
     mentions:,
-    caption:,
+    image:,
   ))
 }
 
-/// An image is a path (no caption) or an object that may carry one.
-fn caption_decoder() -> decode.Decoder(Option(String)) {
-  decode.one_of(decode.string |> decode.map(fn(_) { None }), [
-    {
-      use caption <- optional_string("caption")
-      decode.success(caption)
-    },
-  ])
+/// An image is a path (downloaded, no caption) or an object with `path`
+/// (downloaded) or `url` (not downloaded: WhatsApp's encrypted URL, of no
+/// use here), and maybe a caption.
+fn image_decoder() -> decode.Decoder(Option(Image)) {
+  decode.one_of(
+    decode.string |> decode.map(fn(path) { Some(Image(Some(path), None)) }),
+    [
+      {
+        use path <- optional_string("path")
+        use caption <- optional_string("caption")
+        decode.success(Some(Image(path, caption)))
+      },
+    ],
+  )
 }
 
 fn account_decoder() -> decode.Decoder(#(Int, String, Option(String))) {

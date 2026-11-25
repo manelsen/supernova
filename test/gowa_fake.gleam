@@ -11,6 +11,9 @@ import gleam/int
 import gleam/result
 import mist
 
+/// The bytes of the image the fake serves.
+pub const png = <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 7, 7, 7>>
+
 pub type Recorded {
   Recorded(path: String, authorization: String, device: String, body: String)
 }
@@ -34,10 +37,17 @@ pub fn start(requests: Subject(Recorded)) -> String {
           body: body,
         ),
       )
-      response.new(200)
-      |> response.set_body(
-        mist.Bytes(bytes_tree.from_string("{\"code\":\"SUCCESS\"}")),
-      )
+      case req.path {
+        // A downloaded image, as GOWA serves its media.
+        "/statics/media/foto.png" ->
+          response.new(200)
+          |> response.set_body(mist.Bytes(bytes_tree.from_bit_array(png)))
+        _ ->
+          response.new(200)
+          |> response.set_body(
+            mist.Bytes(bytes_tree.from_string("{\"code\":\"SUCCESS\"}")),
+          )
+      }
     })
     |> mist.bind("127.0.0.1")
     |> mist.port(0)
