@@ -1,0 +1,15 @@
+{
+  "note": "transcrição do áudio sintético, inline",
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    "headers": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Transcrição do áudio\\nOlá, este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa para que o arquivo passe de 256 kB e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nFim da transcrição\",\n            \"thoughtSignature\": \"EpYBCpMBAWkUfROzAmmphupTXXBVOP1EbNsIQ6Gh+OmodF6zG5HyvlShvPPWJBYVNfXzMU/c3/cA8LgHSBlOphncXnkyaGxjUkj5wcSxwihs8wqwz3RxQOe15ssdEU2Fa08kIaeIe5dNOpdOAXpfSYSlMCKUq4oHP65cqp8ITYXqwBiPExTwStSrPtjXcP4xR2WvTh7Jwx2J\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 513,\n    \"candidatesTokenCount\": 73,\n    \"totalTokenCount\": 586,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 83\n      },\n      {\n        \"modality\": \"AUDIO\",\n        \"tokenCount\": 430\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.5-flash-lite\",\n  \"responseId\": \"fixture\"\n}"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "note": "parte 2 (777340 bytes)",
+  "request": {
+    "method": "POST",
+    "path": "/upload/resumable",
+    "headers": {
+      "x-goog-upload-offset": "8388608",
+      "x-goog-upload-command": "upload, finalize"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8",
+      "x-goog-upload-status": "final"
+    },
+    "body": "{\n  \"file\": {\n    \"name\": \"files/fixture\",\n    \"displayName\": \"supernova-media\",\n    \"mimeType\": \"audio/wav\",\n    \"sizeBytes\": \"9165948\",\n    \"createTime\": \"2026-11-25T02:11:51.409683Z\",\n    \"updateTime\": \"2026-11-25T02:11:51.409683Z\",\n    \"expirationTime\": \"2026-11-27T02:11:50.743496352Z\",\n    \"sha256Hash\": \"MzA1ZTEzN2M4YzM0ZjE2ZmFhNWJhOWZhZDEwOTMxMmJhYzcyNWRiYjZjYjUzNGJiM2MwM2QwZTY5ZGY4ZmIyMg==\",\n    \"uri\": \"https://generativelanguage.googleapis.com/v1beta/files/fixture\",\n    \"state\": \"ACTIVE\",\n    \"source\": \"UPLOADED\"\n  }\n}"
+  }
+}

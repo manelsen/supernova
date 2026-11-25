@@ -1,0 +1,22 @@
+{
+  "note": "início do upload resumable",
+  "request": {
+    "method": "POST",
+    "path": "/upload/v1beta/files",
+    "headers": {
+      "x-goog-upload-protocol": "resumable",
+      "x-goog-upload-command": "start"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "x-goog-upload-status": "active",
+      "x-goog-upload-url": "https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=FIXTURE&upload_protocol=resumable",
+      "x-goog-upload-control-url": "https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=FIXTURE&upload_protocol=resumable",
+      "x-goog-upload-chunk-granularity": "8388608"
+    },
+    "body": ""
+  }
+}

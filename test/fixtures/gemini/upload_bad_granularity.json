@@ -1,0 +1,18 @@
+{
+  "note": "erro real: parte de 262144 bytes, menor que a granularidade anunciada (gravação de 24/11/2026)",
+  "request": {
+    "method": "POST",
+    "path": "/upload/resumable",
+    "headers": {
+      "x-goog-upload-offset": "0",
+      "x-goog-upload-command": "upload"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8"
+    },
+    "body": "The client sent 262144 bytes, which is not a multiple of the 8388608 byte chunk granularity."
+  }
+}

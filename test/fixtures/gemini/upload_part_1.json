@@ -1,0 +1,19 @@
+{
+  "note": "parte 1 (8388608 bytes)",
+  "request": {
+    "method": "POST",
+    "path": "/upload/resumable",
+    "headers": {
+      "x-goog-upload-offset": "0",
+      "x-goog-upload-command": "upload"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "x-goog-upload-status": "active"
+    },
+    "body": ""
+  }
+}
