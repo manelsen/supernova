@@ -332,6 +332,16 @@ O resto desta seção descreve a primeira versão e fica como registro.
   | `sticker_items`, PNG e APNG | Sticker, baixado de `media.discordapp.net/stickers/<id>.png` |
   | `sticker_items`, Lottie (formato 3) | Ignorado: é JSON vetorial, não imagem |
 
+- **Fora do laço de eventos** (decidido na execução, D-05). O laço que lê
+  o gateway também confirma interações em até 3 s; uma mensagem com anexo
+  vai para um processo próprio, que baixa e depois entrega ao turno. Uma
+  mensagem de texto enviada logo depois de um vídeo grande pode chegar ao
+  turno antes dele.
+- **Só para quem tem acesso** (decidido na execução, D-05). Num servidor,
+  qualquer pessoa manda anexos. Antes de baixar, `core/closed_group/lookup`
+  confere acesso e chat sem efeito colateral (sem auditoria, sem aviso de
+  recusa). Quem não tem acesso não custa download; o gate recusa o turno
+  como sempre.
 - **Só do CDN do Discord.** A URL do anexo passa pela proteção de URL da
   PRD-E e precisa ser de `cdn.discordapp.com` ou `media.discordapp.net`.
   Outra origem é recusada.

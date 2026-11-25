@@ -869,6 +869,31 @@ pub fn parse_event(event_name: String, raw_data: String) -> ParsedEvent {
   }
 }
 
+/// A sticker on a message: `format_type` 1 is PNG, 2 APNG, 3 Lottie, 4 GIF.
+pub type StickerItem {
+  StickerItem(id: Snowflake, name: String, format_type: Int)
+}
+
+/// The stickers of a MESSAGE_CREATE payload (`sticker_items`).
+pub fn sticker_items(data: String) -> List(StickerItem) {
+  let item = {
+    use id <- decode.field("id", decode.string)
+    use name <- with_default("name", "", decode.string)
+    use format_type <- with_default("format_type", 1, decode.int)
+    decode.success(StickerItem(id: id, name: name, format_type: format_type))
+  }
+  json.parse(
+    data,
+    decode.optional_field(
+      "sticker_items",
+      [],
+      decode.list(item),
+      decode.success,
+    ),
+  )
+  |> result.unwrap([])
+}
+
 /// Parse a MESSAGE_CREATE payload.
 pub fn parse_message(data: String) -> Result(Message, Nil) {
   json.parse(data, message_decoder()) |> result.replace_error(Nil)

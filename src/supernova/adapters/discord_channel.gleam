@@ -13,9 +13,12 @@ import supernova/adapters/discord_rest
 import supernova/channel/channel_kit
 import supernova/channel/chunking
 import supernova/channel/health as channel_health
+import supernova/channel/inbound_media
 import supernova/channel/port
 import supernova/config
 import supernova/core/closed_group/commands as closed_group_commands
+import supernova/core/closed_group/global as closed_group_global
+import supernova/core/closed_group/lookup
 import supernova/core/closed_group/suggestions
 import supernova/infra/safe_io
 
@@ -128,6 +131,23 @@ pub fn start_discord_channel(
           )
         }
       }
+      // Attachments come only from Discord's CDN (or the local fake).
+      let #(media_origins, sticker_base) = case hooks.discord_gateway {
+        channel_kit.DiscordGatewayAt(api_url: api_url, ..) -> #(
+          [api_url <> "/"],
+          api_url <> "/stickers/",
+        )
+        _ -> #(discord_media_origins, discord_sticker_base)
+      }
+      let attach_media = fn(message, data, inbound) {
+        with_media(
+          message,
+          discord_events.sticker_items(data),
+          inbound,
+          media_origins,
+          sticker_base,
+        )
+      }
       let on_ready = case hooks.outbound_records {
         Some(_) -> fn(_ready) { Nil }
         None -> fn(ready: discord_gateway.ReadyData) {
@@ -145,6 +165,7 @@ pub fn start_discord_channel(
         stream_send_fn,
         acknowledge,
         on_ready,
+        attach_media,
         hooks.registry_id,
         hooks.turn_hard_timeout_ms,
       ))
@@ -176,6 +197,189 @@ pub fn start_discord_channel(
   }
 }
 
+/// Adds a message's media to its inbound (PRD-D, 6.4).
+type AttachMedia =
+  fn(discord_events.Message, String, port.ChannelInbound) -> port.ChannelInbound
+
+const discord_media_origins = [
+  "https://cdn.discordapp.com/", "https://media.discordapp.net/",
+]
+
+const discord_sticker_base = "https://media.discordapp.net/stickers/"
+
+/// `flags` bit of a voice message.
+const voice_message_flag = 8192
+
+/// The message's attachments and stickers fetched and tagged (PRD-A), as in
+/// Telegram. Only for someone with access in an allowed chat: nothing is
+/// downloaded for a message the gate would refuse.
+pub fn with_media(
+  message: discord_events.Message,
+  stickers: List(discord_events.StickerItem),
+  inbound: port.ChannelInbound,
+  origins: List(String),
+  sticker_base: String,
+) -> port.ChannelInbound {
+  case inbound {
+    port.InboundMessage(channel_message) ->
+      case
+        closed_group_global.get_config(),
+        lookup.role("discord", channel_message.channel_id, message.author.id)
+      {
+        Some(cfg), Some(_) ->
+          port.InboundMessage(
+            port.ChannelMessage(
+              ..channel_message,
+              content: channel_message.content
+                <> open_media(
+                  cfg.data_dir,
+                  message,
+                  stickers,
+                  origins,
+                  sticker_base,
+                ),
+            ),
+          )
+        _, _ -> inbound
+      }
+    _ -> inbound
+  }
+}
+
+fn open_media(
+  data_dir: String,
+  message: discord_events.Message,
+  stickers: List(discord_events.StickerItem),
+  origins: List(String),
+  sticker_base: String,
+) -> String {
+  let voice =
+    int.bitwise_and(option.unwrap(message.flags, 0), voice_message_flag) != 0
+  let attachments =
+    list.map(message.attachments, fn(attachment) {
+      "\n" <> open_attachment(data_dir, attachment, voice, origins)
+    })
+  let stickers =
+    list.map(stickers, fn(sticker) {
+      "\n" <> open_sticker(data_dir, sticker, sticker_base)
+    })
+  string.concat(list.append(attachments, stickers))
+}
+
+fn open_attachment(
+  data_dir: String,
+  attachment: discord_events.Attachment,
+  voice: Bool,
+  origins: List(String),
+) -> String {
+  let kind = case voice {
+    True -> inbound_media.Audio
+    False -> kind_of(attachment.content_type)
+  }
+  let declared =
+    inbound_media.Declared(
+      kind: kind,
+      mime: attachment.content_type,
+      seconds: None,
+      file_name: Some(attachment.filename),
+      voice_note: voice,
+      forwarded: False,
+    )
+  let from_discord =
+    list.any(origins, fn(origin) { string.starts_with(attachment.url, origin) })
+  let attempt = case
+    from_discord,
+    attachment.size > inbound_media.max_bytes_for(kind)
+  {
+    False, _ -> Error("origem desconhecida")
+    True, True -> Error("grande demais")
+    True, False -> fetch(data_dir, attachment.url, declared)
+  }
+  case attempt {
+    Ok(tag) -> tag
+    Error(reason) -> "[" <> unopened(kind, voice) <> ": " <> reason <> "]"
+  }
+}
+
+/// PNG is a still image; APNG and GIF are animated (read frame by frame,
+/// A-10); Lottie is vector JSON, not an image.
+fn open_sticker(
+  data_dir: String,
+  sticker: discord_events.StickerItem,
+  base: String,
+) -> String {
+  let attempt = case sticker.format_type {
+    1 ->
+      fetch(
+        data_dir,
+        base <> sticker.id <> ".png",
+        sticker_declared(inbound_media.Image, "image/png", sticker),
+      )
+    2 ->
+      fetch(
+        data_dir,
+        base <> sticker.id <> ".png",
+        sticker_declared(inbound_media.Sticker, "image/png", sticker),
+      )
+    4 ->
+      fetch(
+        data_dir,
+        base <> sticker.id <> ".gif",
+        sticker_declared(inbound_media.Sticker, "image/gif", sticker),
+      )
+    _ -> Error("Lottie")
+  }
+  case attempt {
+    Ok(tag) -> tag
+    Error("Lottie") -> "[uma figurinha animada]"
+    Error(reason) -> "[uma figurinha que não consegui abrir: " <> reason <> "]"
+  }
+}
+
+fn sticker_declared(
+  kind: inbound_media.Kind,
+  mime: String,
+  sticker: discord_events.StickerItem,
+) -> inbound_media.Declared {
+  inbound_media.Declared(
+    kind: kind,
+    mime: Some(mime),
+    seconds: None,
+    file_name: Some(sticker.name),
+    voice_note: False,
+    forwarded: False,
+  )
+}
+
+fn fetch(
+  data_dir: String,
+  url: String,
+  declared: inbound_media.Declared,
+) -> Result(String, String) {
+  inbound_media.fetch(data_dir, url, declared)
+  |> result.map(fn(kept) { string.drop_start(inbound_media.tag_for(kept), 1) })
+}
+
+fn kind_of(content_type: Option(String)) -> inbound_media.Kind {
+  case content_type {
+    Some("image/" <> _) -> inbound_media.Image
+    Some("audio/" <> _) -> inbound_media.Audio
+    Some("video/" <> _) -> inbound_media.Video
+    _ -> inbound_media.Document
+  }
+}
+
+fn unopened(kind: inbound_media.Kind, voice: Bool) -> String {
+  case kind, voice {
+    inbound_media.Audio, True -> "uma mensagem de voz que não consegui ouvir"
+    inbound_media.Audio, False -> "um áudio que não consegui ouvir"
+    inbound_media.Image, _ | inbound_media.Sticker, _ ->
+      "uma imagem que não consegui abrir"
+    inbound_media.Video, _ -> "um vídeo que não consegui ver"
+    inbound_media.Document, _ -> "um documento que não consegui ler"
+  }
+}
+
 /// Two missed heartbeats (Discord asks for one about every 41 s).
 const max_silence_ms = 120_000
 
@@ -196,6 +400,7 @@ fn start_discord_bridge(
   stream_send_fn: channel_kit.StreamSendFn,
   acknowledge: fn(discord_events.Interaction) -> Nil,
   on_ready: fn(discord_gateway.ReadyData) -> Nil,
+  attach_media: AttachMedia,
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Result(DiscordBridge, String) {
@@ -213,6 +418,7 @@ fn start_discord_bridge(
         stream_send_fn,
         acknowledge,
         on_ready,
+        attach_media,
         events,
         control,
         done,
@@ -234,6 +440,7 @@ fn discord_bridge_loop(
   stream_send_fn: channel_kit.StreamSendFn,
   acknowledge: fn(discord_events.Interaction) -> Nil,
   on_ready: fn(discord_gateway.ReadyData) -> Nil,
+  attach_media: AttachMedia,
   events: process.Subject(discord_gateway.DiscordEvent),
   control: process.Subject(DiscordBridgeControl),
   done: process.Subject(Nil),
@@ -251,6 +458,7 @@ fn discord_bridge_loop(
             stream_send_fn,
             acknowledge,
             on_ready,
+            attach_media,
             event,
             registry_id,
             turn_hard_timeout_ms,
@@ -261,6 +469,7 @@ fn discord_bridge_loop(
             stream_send_fn,
             acknowledge,
             on_ready,
+            attach_media,
             events,
             control,
             done,
@@ -275,6 +484,7 @@ fn discord_bridge_loop(
             stream_send_fn,
             acknowledge,
             on_ready,
+            attach_media,
             events,
             control,
             done,
@@ -298,6 +508,7 @@ fn dispatch_discord_event(
   stream_send_fn: channel_kit.StreamSendFn,
   acknowledge: fn(discord_events.Interaction) -> Nil,
   on_ready: fn(discord_gateway.ReadyData) -> Nil,
+  attach_media: AttachMedia,
   event: discord_gateway.DiscordEvent,
   registry_id: String,
   turn_hard_timeout_ms: Int,
@@ -306,15 +517,31 @@ fn dispatch_discord_event(
     discord_gateway.Ready(ready) -> on_ready(ready)
     discord_gateway.MessageCreate(data) ->
       case discord_events.parse_event("MESSAGE_CREATE", data) {
-        discord_events.EventMessageCreate(message) ->
-          channel_kit.dispatch_inbound(
-            handler,
-            send_fn,
-            stream_send_fn,
-            port.inbound_message(discord_message_to_port(message)),
-            registry_id,
-            turn_hard_timeout_ms,
-          )
+        discord_events.EventMessageCreate(message) -> {
+          let dispatch = fn(inbound) {
+            channel_kit.dispatch_inbound(
+              handler,
+              send_fn,
+              stream_send_fn,
+              inbound,
+              registry_id,
+              turn_hard_timeout_ms,
+            )
+          }
+          let inbound = port.inbound_message(discord_message_to_port(message))
+          case message.attachments, discord_events.sticker_items(data) {
+            [], [] -> dispatch(inbound)
+            // Downloading can take long: never in this loop, which also
+            // answers interactions within 3 s.
+            _, _ -> {
+              let _ =
+                process.spawn_unlinked(fn() {
+                  dispatch(attach_media(message, data, inbound))
+                })
+              Nil
+            }
+          }
+        }
         _ -> Nil
       }
     discord_gateway.RawEvent("INTERACTION_CREATE", data) ->

@@ -192,12 +192,12 @@ pub type Api {
 }
 
 pub opaque type ApiMsg {
-  Script(path_prefix: String, status: Int, body: String)
-  Answer(request: ApiRequest, reply: Subject(#(Int, String)))
+  Script(path_prefix: String, status: Int, body: BitArray)
+  Answer(request: ApiRequest, reply: Subject(#(Int, BitArray)))
 }
 
 type ApiState {
-  ApiState(scripts: List(#(String, Int, String)), next_id: Int)
+  ApiState(scripts: List(#(String, Int, BitArray)), next_id: Int)
 }
 
 /// Start the API fake. Every request is sent to `requests`, owned by the
@@ -227,6 +227,16 @@ pub fn start_api() -> Api {
 /// Answer the next request whose path starts with `path_prefix` with this
 /// status and body.
 pub fn script(api: Api, path_prefix: String, status: Int, body: String) -> Nil {
+  script_bytes(api, path_prefix, status, bit_array.from_string(body))
+}
+
+/// Like `script`, with a binary body (a file to download).
+pub fn script_bytes(
+  api: Api,
+  path_prefix: String,
+  status: Int,
+  body: BitArray,
+) -> Nil {
   process.send(api.state, Script(path_prefix, status, body))
 }
 
@@ -269,7 +279,7 @@ fn api_serve(
   let #(status, answer) = process.call(state, 2000, Answer(recorded, _))
   response.new(status)
   |> response.set_header("content-type", "application/json")
-  |> response.set_body(mist.Bytes(bytes_tree.from_string(answer)))
+  |> response.set_body(mist.Bytes(bytes_tree.from_bit_array(answer)))
 }
 
 fn http_method(method: http.Method) -> String {
@@ -302,7 +312,8 @@ fn api_handle(state: ApiState, msg: ApiMsg) -> actor.Next(ApiState, ApiMsg) {
         }
         Error(_) -> {
           let id = state.next_id
-          process.send(reply, default_answer(req, int.to_string(id)))
+          let #(status, body) = default_answer(req, int.to_string(id))
+          process.send(reply, #(status, bit_array.from_string(body)))
           actor.continue(ApiState(..state, next_id: id + 1))
         }
       }
@@ -311,10 +322,10 @@ fn api_handle(state: ApiState, msg: ApiMsg) -> actor.Next(ApiState, ApiMsg) {
 }
 
 fn take_script(
-  scripts: List(#(String, Int, String)),
+  scripts: List(#(String, Int, BitArray)),
   path: String,
-  skipped: List(#(String, Int, String)),
-) -> Result(#(Int, String, List(#(String, Int, String))), Nil) {
+  skipped: List(#(String, Int, BitArray)),
+) -> Result(#(Int, BitArray, List(#(String, Int, BitArray))), Nil) {
   case scripts {
     [] -> Error(Nil)
     [#(prefix, status, body) as first, ..rest] ->
@@ -359,4 +370,17 @@ fn message_json(id: String, channel_id: String) -> String {
   <> "\",\"channel_id\":\""
   <> channel_id
   <> "\",\"content\":\"\",\"timestamp\":\"2026-11-25T00:00:00Z\",\"author\":{\"id\":\"900000000000000001\",\"username\":\"supernova\",\"bot\":true}}"
+}
+
+/// No request to a path starting with `path_prefix` within `within` ms
+/// (requests to other paths are skipped).
+pub fn expect_no_request_to(api: Api, path_prefix: String, within: Int) -> Nil {
+  case process.receive(api.requests, within) {
+    Error(_) -> Nil
+    Ok(req) ->
+      case string.starts_with(req.path, path_prefix) {
+        True -> panic as { "unexpected request to " <> req.path }
+        False -> expect_no_request_to(api, path_prefix, within)
+      }
+  }
 }

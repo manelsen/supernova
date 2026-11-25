@@ -177,8 +177,9 @@ pub opaque type Outbound {
   CloseWith(Int)
 }
 
+/// Where the connection process takes outbound frames and close requests.
 type Connection =
-  Subject(stratus.InternalMessage(Outbound))
+  Subject(Outbound)
 
 pub type Message {
   GetStatus(reply_to: Subject(ConnectionStatus))
@@ -424,7 +425,7 @@ fn handle_message(
         True -> actor.continue(State(..state, connection: Some(connection)))
         // An older connection, or one nobody wants anymore.
         False -> {
-          process.send(connection, stratus.to_user_message(CloseWith(1000)))
+          process.send(connection, CloseWith(1000))
           actor.continue(state)
         }
       }
@@ -507,8 +508,7 @@ fn with_query(url: String) -> String {
 /// 1000 and 1001 keeps the session resumable on Discord's side.
 fn drop_connection(state: State, code: Int) -> State {
   case state.connection {
-    Some(connection) ->
-      process.send(connection, stratus.to_user_message(CloseWith(code)))
+    Some(connection) -> process.send(connection, CloseWith(code))
     None -> Nil
   }
   // A new generation makes the old connection's messages stale.
@@ -605,8 +605,7 @@ fn heartbeat_check(state: State) -> State {
 
 fn send(state: State, payload: String) -> Nil {
   case state.connection {
-    Some(connection) ->
-      process.send(connection, stratus.to_user_message(SendText(payload)))
+    Some(connection) -> process.send(connection, SendText(payload))
     None -> Nil
   }
 }
@@ -889,8 +888,19 @@ fn spawn_connection(gateway: Gateway, generation: Int, url: String) -> Nil {
       case websocket_request(url) {
         Error(_) -> process.send(gateway, ConnDown(generation))
         Ok(req) -> {
+          // `ConnUp` is sent from the socket process itself, before it
+          // reads any frame: Discord sends Hello right away, and a Hello
+          // that overtook `ConnUp` would find no connection to answer on.
           let builder =
-            stratus.new(request: req, state: Nil)
+            stratus.new_with_initialiser(request: req, init: fn() {
+              let outbound = process.new_subject()
+              process.send(gateway, ConnUp(generation, outbound))
+              stratus.initialised(Nil)
+              |> stratus.selecting(
+                process.new_selector() |> process.select(outbound),
+              )
+              |> Ok
+            })
             |> stratus.with_connect_timeout(10_000)
             |> stratus.on_message(fn(state, message, connection) {
               case message {
@@ -915,7 +925,6 @@ fn spawn_connection(gateway: Gateway, generation: Int, url: String) -> Nil {
           case stratus.start(builder) {
             Error(_) -> process.send(gateway, ConnDown(generation))
             Ok(started) -> {
-              process.send(gateway, ConnUp(generation, started.data))
               watch(gateway, started.pid, started.data)
               process.send(gateway, ConnDown(generation))
             }
@@ -926,7 +935,11 @@ fn spawn_connection(gateway: Gateway, generation: Int, url: String) -> Nil {
   Nil
 }
 
-fn watch(gateway: Gateway, socket: Pid, connection: Connection) -> Nil {
+fn watch(
+  gateway: Gateway,
+  socket: Pid,
+  connection: Subject(stratus.InternalMessage(Outbound)),
+) -> Nil {
   let selector =
     process.new_selector()
     |> process.select_trapped_exits(fn(exit) { SocketExited(exit.pid) })
@@ -943,7 +956,7 @@ fn watch(gateway: Gateway, socket: Pid, connection: Connection) -> Nil {
 fn wait(
   selector: process.Selector(Watch),
   socket: Pid,
-  connection: Connection,
+  connection: Subject(stratus.InternalMessage(Outbound)),
 ) -> Nil {
   case process.selector_receive_forever(selector) {
     SocketExited(pid) if pid == socket -> Nil

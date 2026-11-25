@@ -12,10 +12,9 @@ import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/store as agenda_store
 import supernova/core/access/actor as access_actor
 import supernova/core/access/types as access_types
-import supernova/core/agent_identity
 import supernova/core/closed_group/commands
 import supernova/core/closed_group/global
-import supernova/core/closed_group/pure
+import supernova/core/closed_group/lookup
 import supernova/llm/catalog
 
 /// Suggestions as `#(label, value)` for `command` (without the slash) while
@@ -27,35 +26,17 @@ pub fn for_sender(
   command: String,
   typed: String,
 ) -> List(#(String, String)) {
-  case global.get_runtime() {
-    None -> []
-    Some(runtime) -> {
-      let principal = agent_identity.principal_id(channel, user_id)
-      case access_actor.try_check(runtime.access, principal) {
-        Ok(access_types.Allowed(role)) -> {
-          let chat =
-            access_actor.check_chat(
-              runtime.access,
-              principal,
-              pure.chat_key(channel, chat_id),
-              pure.is_private_chat(channel, chat_id),
-            )
-          case chat {
-            access_types.ChatAllowed -> {
-              let is_admin = role == access_types.Admin
-              commands.suggest(
-                command,
-                typed,
-                is_admin,
-                sources(runtime.access, principal, command, is_admin),
-              )
-            }
-            access_types.ChatDenied -> []
-          }
-        }
-        _ -> []
-      }
+  case lookup.role(channel, chat_id, user_id), global.get_runtime() {
+    Some(#(principal, role)), Some(runtime) -> {
+      let is_admin = role == access_types.Admin
+      commands.suggest(
+        command,
+        typed,
+        is_admin,
+        sources(runtime.access, principal, command, is_admin),
+      )
     }
+    _, _ -> []
   }
 }
 
