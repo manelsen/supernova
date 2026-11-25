@@ -288,3 +288,20 @@ pub fn live_gateway_readiness_follows_the_connection_test() {
     registry.stop_channels(channel_registry)
   })
 }
+
+/// A member in a server that is not in `allowed_chats` gets no answer: the
+/// bot stays silent there (PRD-D, D3).
+pub fn member_in_an_unauthorized_server_gets_no_reply_test() {
+  support.with_runtime(cfg(["discord:456"]), fn() {
+    let recorder = process.new_subject()
+    let channel_registry =
+      support.discord_start_registry(
+        support.channel_config(),
+        support.discord_handler(support.mock_config()),
+        [support.discord_guild_message_event("oi", "456", "guild-alheia")],
+        recorder,
+      )
+    process.receive(recorder, within: 1500) |> should.equal(Error(Nil))
+    registry.stop_channels(channel_registry)
+  })
+}
