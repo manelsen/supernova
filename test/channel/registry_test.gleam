@@ -265,6 +265,7 @@ fn test_hooks(
 ) -> channel_kit.StartHooks {
   channel_kit.StartHooks(
     discord_events: discord_events,
+    discord_gateway: channel_kit.DiscordGatewayOff,
     telegram_updates: telegram_updates,
     slack_inbound_events: [],
     matrix_inbound_events: [],
@@ -286,6 +287,7 @@ fn test_hooks_with_slack_inbound(
 ) -> channel_kit.StartHooks {
   channel_kit.StartHooks(
     discord_events: [],
+    discord_gateway: channel_kit.DiscordGatewayOff,
     telegram_updates: [],
     slack_inbound_events: slack_events,
     matrix_inbound_events: [],
@@ -307,6 +309,7 @@ fn test_hooks_with_matrix_inbound(
 ) -> channel_kit.StartHooks {
   channel_kit.StartHooks(
     discord_events: [],
+    discord_gateway: channel_kit.DiscordGatewayOff,
     telegram_updates: [],
     slack_inbound_events: [],
     matrix_inbound_events: matrix_events,
@@ -343,6 +346,7 @@ fn test_hooks_with_recorder_and_keepalive(
 ) -> channel_kit.StartHooks {
   channel_kit.StartHooks(
     discord_events: discord_events,
+    discord_gateway: channel_kit.DiscordGatewayOff,
     telegram_updates: telegram_updates,
     slack_inbound_events: [],
     matrix_inbound_events: [],
@@ -1738,6 +1742,7 @@ pub fn slack_inbound_event_dispatched_to_handler_test() {
       ignoring_handler(received),
       channel_kit.StartHooks(
         discord_events: [],
+        discord_gateway: channel_kit.DiscordGatewayOff,
         telegram_updates: [],
         slack_inbound_events: [slack_fixture_message("hello slack")],
         matrix_inbound_events: [],
@@ -1897,6 +1902,7 @@ pub fn matrix_inbound_event_dispatched_to_handler_test() {
       ignoring_handler(received),
       channel_kit.StartHooks(
         discord_events: [],
+        discord_gateway: channel_kit.DiscordGatewayOff,
         telegram_updates: [],
         slack_inbound_events: [],
         matrix_inbound_events: [matrix_fixture_message("hello matrix")],
@@ -2672,6 +2678,7 @@ fn test_hooks_with_timeouts(
 ) -> channel_kit.StartHooks {
   channel_kit.StartHooks(
     discord_events: [],
+    discord_gateway: channel_kit.DiscordGatewayOff,
     telegram_updates: telegram_updates,
     slack_inbound_events: [],
     matrix_inbound_events: [],

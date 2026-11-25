@@ -194,6 +194,7 @@ pub fn telegram_start_registry(
       handler,
       channel_kit.StartHooks(
         discord_events: [],
+        discord_gateway: channel_kit.DiscordGatewayOff,
         telegram_updates: updates,
         slack_inbound_events: [],
         matrix_inbound_events: [],
@@ -238,6 +239,7 @@ pub fn telegram_start_registry_with_leave(
       handler,
       channel_kit.StartHooks(
         discord_events: [],
+        discord_gateway: channel_kit.DiscordGatewayOff,
         telegram_updates: updates,
         slack_inbound_events: [],
         matrix_inbound_events: [],
@@ -293,12 +295,30 @@ pub fn discord_start_registry(
   events: List(discord_gateway.DiscordEvent),
   recorder: process.Subject(channel_kit.OutboundRecord),
 ) -> registry.ChannelRegistry {
+  discord_start_registry_at(
+    cfg,
+    handler,
+    events,
+    recorder,
+    channel_kit.DiscordGatewayOff,
+  )
+}
+
+/// The Discord channel connected to a local gateway fake.
+pub fn discord_start_registry_at(
+  cfg: config.Config,
+  handler: port.ChannelHandler,
+  events: List(discord_gateway.DiscordEvent),
+  recorder: process.Subject(channel_kit.OutboundRecord),
+  gateway: channel_kit.DiscordGatewayHook,
+) -> registry.ChannelRegistry {
   let assert Ok(channel_registry) =
     registry.start_channels_with_handler_and_hooks(
       cfg,
       handler,
       channel_kit.StartHooks(
         discord_events: events,
+        discord_gateway: gateway,
         telegram_updates: [],
         slack_inbound_events: [],
         matrix_inbound_events: [],
@@ -394,6 +414,7 @@ pub fn telegram_start_registry_with_leave_result(
       handler,
       channel_kit.StartHooks(
         discord_events: [],
+        discord_gateway: channel_kit.DiscordGatewayOff,
         telegram_updates: updates,
         slack_inbound_events: [],
         matrix_inbound_events: [],

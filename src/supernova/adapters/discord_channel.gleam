@@ -12,6 +12,7 @@ import supernova/adapters/discord_gateway
 import supernova/adapters/discord_rest
 import supernova/channel/channel_kit
 import supernova/channel/chunking
+import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/config
 
@@ -38,31 +39,75 @@ pub fn start_discord_channel(
   discord_cfg: config.DiscordConfig,
   handler: port.ChannelHandler,
   hooks: channel_kit.StartHooks,
+  health: channel_health.ChannelHealth,
 ) -> Result(#(port.ChannelAdapter, channel_kit.StreamSendFn), String) {
   case discord_cfg.token {
     Some(token) -> {
+      let report = fn(status) {
+        channel_health.report(
+          health,
+          "discord",
+          status_outcome(status),
+          channel_health.now_ms(),
+        )
+      }
       let gateway_config =
         discord_gateway.GatewayConfig(
           ..discord_gateway.default_config(token),
           intents: discord_gateway.message_content_intents(),
           app_id: discord_cfg.app_id,
+          on_status: report,
         )
+      let gateway_config = case hooks.discord_gateway {
+        channel_kit.DiscordGatewayAt(gateway_url: url, ..) ->
+          discord_gateway.GatewayConfig(..gateway_config, url: url)
+        _ -> gateway_config
+      }
+      let rest_config = case hooks.discord_gateway {
+        channel_kit.DiscordGatewayAt(api_url: api_url, ..) ->
+          discord_rest.new_config(token) |> discord_rest.with_base_url(api_url)
+        _ -> discord_rest.new_config(token)
+      }
 
       use gateway <- result.try(
         discord_gateway.start(gateway_config)
         |> result.map_error(fn(_) { "failed to start gateway actor" }),
       )
 
-      use _ <- result.try(
-        discord_gateway.connect(gateway)
-        |> result.map_error(fn(error) {
-          "failed to connect gateway: "
-          <> discord_gateway.error_to_string(error)
-        }),
-      )
+      // Ready only after READY: until then the channel reports itself as
+      // connecting. A silent gateway (no heartbeat ACK) stops counting as
+      // ready after `max_silence_ms`.
+      case hooks.discord_gateway {
+        channel_kit.DiscordGatewayOff ->
+          channel_health.started(
+            health,
+            "discord",
+            None,
+            channel_health.now_ms(),
+          )
+        _ -> {
+          channel_health.started(
+            health,
+            "discord",
+            Some(max_silence_ms),
+            channel_health.now_ms(),
+          )
+          report(discord_gateway.Connecting)
+        }
+      }
+
+      use _ <- result.try(case hooks.discord_gateway {
+        channel_kit.DiscordGatewayOff -> Ok(Nil)
+        _ ->
+          discord_gateway.connect(gateway)
+          |> result.map_error(fn(error) {
+            "failed to connect gateway: "
+            <> discord_gateway.error_to_string(error)
+          })
+      })
 
       use rest_client <- result.try(
-        discord_rest.start(discord_rest.new_config(token))
+        discord_rest.start(rest_config)
         |> result.map_error(fn(_) { "failed to start REST client" }),
       )
 
@@ -101,6 +146,20 @@ pub fn start_discord_channel(
       ))
     }
     None -> Error("enabled but no token configured")
+  }
+}
+
+/// Two missed heartbeats (Discord asks for one about every 41 s).
+const max_silence_ms = 120_000
+
+/// How a gateway status reads as channel health.
+pub fn status_outcome(
+  status: discord_gateway.ConnectionStatus,
+) -> Result(Nil, String) {
+  case status {
+    discord_gateway.Connected -> Ok(Nil)
+    discord_gateway.ConnectionError(reason) -> Error(reason)
+    other -> Error("gateway " <> discord_gateway.status_to_string(other))
   }
 }
 
@@ -327,7 +386,8 @@ fn discord_optional_user_to_sender(
 ) -> #(String, String, Bool) {
   case user {
     Some(value) -> #(value.id, value.username, discord_is_bot(value.bot))
-    None -> #("unknown", "", False)
+    // No person on the interaction: `discord:unknown` is never authorized.
+    None -> #("unknown", "unknown", False)
   }
 }
 

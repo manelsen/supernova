@@ -1,5 +1,6 @@
 //// Tests for Discord Gateway module
 
+import discord_fake
 import gleam/erlang/process
 import gleam/option.{None, Some}
 import gleam/string
@@ -60,8 +61,9 @@ pub fn basic_intents_value_test() {
 }
 
 pub fn message_content_intents_value_test() {
+  // Guilds | GuildMessages | DirectMessages | MessageContent
   gateway.message_content_intents()
-  |> should.equal(33_281)
+  |> should.equal(37_377)
 }
 
 // ============================================================================
@@ -77,11 +79,8 @@ pub fn default_config_test() {
   config.intents
   |> should.equal(513)
 
-  config.max_reconnect_attempts
-  |> should.equal(5)
-
   config.reconnect_delay_ms
-  |> should.equal(5000)
+  |> should.equal(1000)
 }
 
 pub fn config_with_intents_test() {
@@ -336,7 +335,9 @@ pub fn subscribe_to_event_test() {
 }
 
 pub fn connect_sets_status_to_connecting_test() {
-  let config = gateway.default_config("test_token")
+  let fake = discord_fake.start()
+  let config =
+    gateway.GatewayConfig(..gateway.default_config("test_token"), url: fake.url)
   let assert Ok(gw) = gateway.start(config)
 
   gateway.connect(gw)
@@ -348,7 +349,9 @@ pub fn connect_sets_status_to_connecting_test() {
 }
 
 pub fn reconnect_without_session_starts_fresh_connect_test() {
-  let config = gateway.default_config("test_token")
+  let fake = discord_fake.start()
+  let config =
+    gateway.GatewayConfig(..gateway.default_config("test_token"), url: fake.url)
   let assert Ok(gw) = gateway.start(config)
 
   gateway.reconnect(gw)
@@ -460,10 +463,10 @@ pub fn ws_dispatch_unknown_event_emits_raw_event_test() {
   gateway.stop(gw)
 }
 
+/// Without a `connect`, op 7 does not open a connection by itself.
 pub fn ws_reconnect_opcode_sets_disconnected_status_test() {
   let config = gateway.default_config("test_token")
   let assert Ok(gw) = gateway.start(config)
-  let _ = gateway.connect(gw)
 
   process.send(gw, gateway.WsMessage("{\"op\":7,\"d\":{},\"s\":11}"))
 
@@ -486,7 +489,7 @@ pub fn ws_invalid_session_non_resumable_clears_session_info_test() {
   process.send(gw, gateway.WsMessage("{\"op\":9,\"d\":false,\"s\":14}"))
 
   gateway.get_status(gw)
-  |> should.equal(gateway.ConnectionError("Invalid session"))
+  |> should.equal(gateway.Disconnected)
   gateway.get_session_info(gw)
   |> should.equal(None)
 
@@ -517,6 +520,8 @@ pub fn ws_invalid_session_resumable_keeps_session_info_test() {
   gateway.stop(gw)
 }
 
+/// The second heartbeat without an ACK drops the connection. Without a
+/// `connect`, nothing reconnects.
 pub fn double_heartbeat_without_ack_marks_zombie_connection_test() {
   let config = gateway.default_config("test_token")
   let assert Ok(gw) = gateway.start(config)
@@ -530,7 +535,7 @@ pub fn double_heartbeat_without_ack_marks_zombie_connection_test() {
   let assert Ok(_) = process.receive(reply_two, within: 1000)
 
   gateway.get_status(gw)
-  |> should.equal(gateway.ConnectionError("Zombie connection"))
+  |> should.equal(gateway.Disconnected)
 
   gateway.stop(gw)
 }

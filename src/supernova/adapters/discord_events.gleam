@@ -8,11 +8,14 @@
 //// This module works with the Discord Gateway to process events.
 
 import gleam/dict.{type Dict}
+import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/result
 import gleam/string
 
 // ============================================================================
@@ -845,470 +848,351 @@ pub fn interaction_type_to_string(t: InteractionType) -> String {
 // Event Parsing
 // ============================================================================
 
-/// Parse a Discord event from raw JSON
 pub fn parse_event(event_name: String, raw_data: String) -> ParsedEvent {
-  case event_name {
-    "MESSAGE_CREATE" -> {
-      case parse_message(raw_data) {
-        Ok(msg) -> EventMessageCreate(msg)
-        Error(_) -> EventUnknown(event_name, raw_data)
-      }
-    }
-    "MESSAGE_UPDATE" -> parse_message_update(raw_data)
-    "MESSAGE_DELETE" -> parse_message_delete(raw_data)
-    "INTERACTION_CREATE" -> {
-      case parse_interaction(raw_data) {
-        Ok(inter) -> EventInteractionCreate(inter)
-        Error(_) -> EventUnknown(event_name, raw_data)
-      }
-    }
-    "MESSAGE_REACTION_ADD" -> parse_reaction_add(raw_data)
-    "MESSAGE_REACTION_REMOVE" -> parse_reaction_remove(raw_data)
-    _ -> EventUnknown(event_name, raw_data)
+  let parsed = case event_name {
+    "MESSAGE_CREATE" ->
+      json.parse(raw_data, message_decoder()) |> result.map(EventMessageCreate)
+    "MESSAGE_UPDATE" -> json.parse(raw_data, message_update_decoder())
+    "MESSAGE_DELETE" -> json.parse(raw_data, message_delete_decoder())
+    "INTERACTION_CREATE" ->
+      json.parse(raw_data, interaction_decoder())
+      |> result.map(EventInteractionCreate)
+    "MESSAGE_REACTION_ADD" -> json.parse(raw_data, reaction_add_decoder())
+    "MESSAGE_REACTION_REMOVE" -> json.parse(raw_data, reaction_remove_decoder())
+    _ -> Error(json.UnexpectedEndOfInput)
+  }
+  case parsed {
+    Ok(event) -> event
+    Error(_) -> EventUnknown(event_name, raw_data)
   }
 }
 
-/// Parse a MESSAGE_CREATE event
+/// Parse a MESSAGE_CREATE payload.
 pub fn parse_message(data: String) -> Result(Message, Nil) {
-  let top = strip_nested_objects(data)
-  case
-    json_decode_string_field(top, "id"),
-    json_decode_string_field(top, "channel_id"),
-    json_decode_string_field(top, "content"),
-    json_decode_string_field(top, "timestamp")
-  {
-    Some(id), Some(channel_id), Some(content), Some(timestamp) -> {
-      let author_data = json_decode_object_field(data, "author")
-      let author = parse_user(author_data)
-
-      Ok(Message(
-        id: id,
-        channel_id: channel_id,
-        guild_id: json_decode_string_field(top, "guild_id"),
-        author: author,
-        member: parse_optional_member(data),
-        content: content,
-        timestamp: timestamp,
-        edited_timestamp: json_decode_string_field(top, "edited_timestamp"),
-        tts: json_decode_bool_field(top, "tts") |> option.unwrap(False),
-        mention_everyone: json_decode_bool_field(top, "mention_everyone")
-          |> option.unwrap(False),
-        mentions: parse_mentions(data),
-        mention_roles: parse_mention_roles(data),
-        attachments: [],
-        embeds: [],
-        reactions: [],
-        pinned: json_decode_bool_field(top, "pinned") |> option.unwrap(False),
-        webhook_id: json_decode_string_field(top, "webhook_id"),
-        message_reference: parse_message_reference(data),
-        flags: json_decode_int_field(top, "flags"),
-      ))
-    }
-    _, _, _, _ -> Error(Nil)
-  }
+  json.parse(data, message_decoder()) |> result.replace_error(Nil)
 }
 
-/// Parse a MESSAGE_UPDATE event (partial message data)
-fn parse_message_update(data: String) -> ParsedEvent {
-  let top = strip_nested_objects(data)
-  let id = json_decode_string_field(top, "id") |> option.unwrap("unknown")
-  let channel_id =
-    json_decode_string_field(top, "channel_id") |> option.unwrap("unknown")
-  let guild_id = json_decode_string_field(top, "guild_id")
-  let content = json_decode_string_field(top, "content")
-  let edited_timestamp = json_decode_string_field(top, "edited_timestamp")
+/// Parse an INTERACTION_CREATE payload.
+pub fn parse_interaction(data: String) -> Result(Interaction, Nil) {
+  json.parse(data, interaction_decoder()) |> result.replace_error(Nil)
+}
 
-  let author_data = json_decode_object_field(data, "author")
-  let author = case author_data == "{}" {
-    True -> None
-    False -> Some(parse_user(author_data))
-  }
+// ============================================================================
+// Decoders
+// ============================================================================
 
-  EventMessageUpdate(
+/// A field that may be missing or `null`.
+fn optional(
+  name: String,
+  inner: decode.Decoder(a),
+  next: fn(Option(a)) -> decode.Decoder(b),
+) -> decode.Decoder(b) {
+  decode.optional_field(name, None, decode.optional(inner), next)
+}
+
+/// A field that may be missing or `null`, with a default.
+fn with_default(
+  name: String,
+  default: a,
+  inner: decode.Decoder(a),
+  next: fn(a) -> decode.Decoder(b),
+) -> decode.Decoder(b) {
+  use value <- optional(name, inner)
+  next(option.unwrap(value, default))
+}
+
+fn user_decoder() -> decode.Decoder(User) {
+  use id <- decode.field("id", decode.string)
+  use username <- with_default("username", "unknown", decode.string)
+  use discriminator <- with_default("discriminator", "0000", decode.string)
+  use bot <- optional("bot", decode.bool)
+  use avatar <- optional("avatar", decode.string)
+  decode.success(User(
+    id: id,
+    username: username,
+    discriminator: discriminator,
+    bot: bot,
+    avatar: avatar,
+  ))
+}
+
+fn member_decoder() -> decode.Decoder(Member) {
+  use user <- optional("user", user_decoder())
+  use nick <- optional("nick", decode.string)
+  use roles <- with_default("roles", [], decode.list(decode.string))
+  use joined_at <- optional("joined_at", decode.string)
+  decode.success(Member(
+    user: user,
+    nick: nick,
+    roles: roles,
+    joined_at: joined_at,
+  ))
+}
+
+fn emoji_decoder() -> decode.Decoder(Emoji) {
+  use id <- optional("id", decode.string)
+  use name <- optional("name", decode.string)
+  use animated <- optional("animated", decode.bool)
+  decode.success(Emoji(id: id, name: name, animated: animated))
+}
+
+fn attachment_decoder() -> decode.Decoder(Attachment) {
+  use id <- decode.field("id", decode.string)
+  use filename <- with_default("filename", "", decode.string)
+  use description <- optional("description", decode.string)
+  use content_type <- optional("content_type", decode.string)
+  use size <- with_default("size", 0, decode.int)
+  use url <- with_default("url", "", decode.string)
+  use proxy_url <- with_default("proxy_url", "", decode.string)
+  decode.success(Attachment(
+    id: id,
+    filename: filename,
+    description: description,
+    content_type: content_type,
+    size: size,
+    url: url,
+    proxy_url: proxy_url,
+  ))
+}
+
+fn message_reference_decoder() -> decode.Decoder(MessageReference) {
+  use message_id <- optional("message_id", decode.string)
+  use channel_id <- optional("channel_id", decode.string)
+  use guild_id <- optional("guild_id", decode.string)
+  decode.success(MessageReference(
+    message_id: message_id,
+    channel_id: channel_id,
+    guild_id: guild_id,
+  ))
+}
+
+fn message_decoder() -> decode.Decoder(Message) {
+  use id <- decode.field("id", decode.string)
+  use channel_id <- decode.field("channel_id", decode.string)
+  use guild_id <- optional("guild_id", decode.string)
+  use author <- decode.field("author", user_decoder())
+  use member <- optional("member", member_decoder())
+  // Always sent; empty when the Message Content intent is missing.
+  use content <- decode.field("content", decode.string)
+  use timestamp <- decode.field("timestamp", decode.string)
+  use edited_timestamp <- optional("edited_timestamp", decode.string)
+  use tts <- with_default("tts", False, decode.bool)
+  use mention_everyone <- with_default("mention_everyone", False, decode.bool)
+  use mentions <- with_default("mentions", [], decode.list(user_decoder()))
+  use mention_roles <- with_default(
+    "mention_roles",
+    [],
+    decode.list(decode.string),
+  )
+  use attachments <- with_default(
+    "attachments",
+    [],
+    decode.list(attachment_decoder()),
+  )
+  use pinned <- with_default("pinned", False, decode.bool)
+  use webhook_id <- optional("webhook_id", decode.string)
+  use message_reference <- optional(
+    "message_reference",
+    message_reference_decoder(),
+  )
+  use flags <- optional("flags", decode.int)
+  decode.success(Message(
+    id: id,
+    channel_id: channel_id,
+    guild_id: guild_id,
+    author: author,
+    member: member,
+    content: content,
+    timestamp: timestamp,
+    edited_timestamp: edited_timestamp,
+    tts: tts,
+    mention_everyone: mention_everyone,
+    mentions: mentions,
+    mention_roles: mention_roles,
+    attachments: attachments,
+    embeds: [],
+    reactions: [],
+    pinned: pinned,
+    webhook_id: webhook_id,
+    message_reference: message_reference,
+    flags: flags,
+  ))
+}
+
+fn message_update_decoder() -> decode.Decoder(ParsedEvent) {
+  use id <- decode.field("id", decode.string)
+  use channel_id <- decode.field("channel_id", decode.string)
+  use guild_id <- optional("guild_id", decode.string)
+  use content <- optional("content", decode.string)
+  use edited_timestamp <- optional("edited_timestamp", decode.string)
+  use author <- optional("author", user_decoder())
+  decode.success(EventMessageUpdate(
     id: id,
     channel_id: channel_id,
     guild_id: guild_id,
     content: content,
     edited_timestamp: edited_timestamp,
     author: author,
-  )
+  ))
 }
 
-/// Parse a MESSAGE_DELETE event
-fn parse_message_delete(data: String) -> ParsedEvent {
-  let id = json_decode_string_field(data, "id") |> option.unwrap("unknown")
-  let channel_id =
-    json_decode_string_field(data, "channel_id") |> option.unwrap("unknown")
-  let guild_id = json_decode_string_field(data, "guild_id")
-
-  EventMessageDelete(id: id, channel_id: channel_id, guild_id: guild_id)
+fn message_delete_decoder() -> decode.Decoder(ParsedEvent) {
+  use id <- decode.field("id", decode.string)
+  use channel_id <- decode.field("channel_id", decode.string)
+  use guild_id <- optional("guild_id", decode.string)
+  decode.success(EventMessageDelete(
+    id: id,
+    channel_id: channel_id,
+    guild_id: guild_id,
+  ))
 }
 
-/// Parse an INTERACTION_CREATE event
-pub fn parse_interaction(data: String) -> Result(Interaction, Nil) {
-  let top = strip_nested_objects(data)
-  case
-    json_decode_string_field(top, "id"),
-    json_decode_string_field(top, "application_id"),
-    json_decode_int_field(top, "type"),
-    json_decode_string_field(top, "token")
-  {
-    Some(id), Some(app_id), Some(type_code), Some(token) -> {
-      let interaction_type = int_to_interaction_type(type_code)
-
-      Ok(Interaction(
-        id: id,
-        application_id: app_id,
-        interaction_type: interaction_type,
-        data: parse_interaction_data(data, interaction_type),
-        guild_id: json_decode_string_field(top, "guild_id"),
-        channel_id: json_decode_string_field(top, "channel_id"),
-        member: parse_optional_member(data),
-        user: parse_optional_user(data),
-        token: token,
-        version: json_decode_int_field(top, "version") |> option.unwrap(1),
-        app_permissions: json_decode_string_field(top, "app_permissions"),
-        locale: json_decode_string_field(top, "locale"),
-        guild_locale: json_decode_string_field(top, "guild_locale"),
-      ))
-    }
-    _, _, _, _ -> Error(Nil)
-  }
-}
-
-/// Parse a reaction add event
-fn parse_reaction_add(data: String) -> ParsedEvent {
-  let user_id =
-    json_decode_string_field(data, "user_id") |> option.unwrap("unknown")
-  let channel_id =
-    json_decode_string_field(data, "channel_id") |> option.unwrap("unknown")
-  let message_id =
-    json_decode_string_field(data, "message_id") |> option.unwrap("unknown")
-  let guild_id = json_decode_string_field(data, "guild_id")
-  let emoji_data = json_decode_object_field(data, "emoji")
-  let emoji = parse_emoji(emoji_data)
-  let member = parse_optional_member(data)
-
-  EventReactionAdd(
+fn reaction_add_decoder() -> decode.Decoder(ParsedEvent) {
+  use user_id <- decode.field("user_id", decode.string)
+  use channel_id <- decode.field("channel_id", decode.string)
+  use message_id <- decode.field("message_id", decode.string)
+  use guild_id <- optional("guild_id", decode.string)
+  use emoji <- decode.field("emoji", emoji_decoder())
+  use member <- optional("member", member_decoder())
+  decode.success(EventReactionAdd(
     user_id: user_id,
     channel_id: channel_id,
     message_id: message_id,
     guild_id: guild_id,
     emoji: emoji,
     member: member,
-  )
+  ))
 }
 
-/// Parse a reaction remove event
-fn parse_reaction_remove(data: String) -> ParsedEvent {
-  let user_id =
-    json_decode_string_field(data, "user_id") |> option.unwrap("unknown")
-  let channel_id =
-    json_decode_string_field(data, "channel_id") |> option.unwrap("unknown")
-  let message_id =
-    json_decode_string_field(data, "message_id") |> option.unwrap("unknown")
-  let guild_id = json_decode_string_field(data, "guild_id")
-  let emoji_data = json_decode_object_field(data, "emoji")
-  let emoji = parse_emoji(emoji_data)
-
-  EventReactionRemove(
+fn reaction_remove_decoder() -> decode.Decoder(ParsedEvent) {
+  use user_id <- decode.field("user_id", decode.string)
+  use channel_id <- decode.field("channel_id", decode.string)
+  use message_id <- decode.field("message_id", decode.string)
+  use guild_id <- optional("guild_id", decode.string)
+  use emoji <- decode.field("emoji", emoji_decoder())
+  decode.success(EventReactionRemove(
     user_id: user_id,
     channel_id: channel_id,
     message_id: message_id,
     guild_id: guild_id,
     emoji: emoji,
-  )
+  ))
 }
 
-// ============================================================================
-// Entity Parsing Helpers
-// ============================================================================
-
-/// Parse user from JSON
-fn parse_user(data: String) -> User {
-  User(
-    id: json_decode_string_field(data, "id") |> option.unwrap("unknown"),
-    username: json_decode_string_field(data, "username")
-      |> option.unwrap("unknown"),
-    discriminator: json_decode_string_field(data, "discriminator")
-      |> option.unwrap("0000"),
-    bot: json_decode_bool_field(data, "bot"),
-    avatar: json_decode_string_field(data, "avatar"),
-  )
+fn interaction_decoder() -> decode.Decoder(Interaction) {
+  use id <- decode.field("id", decode.string)
+  use application_id <- decode.field("application_id", decode.string)
+  use type_code <- decode.field("type", decode.int)
+  let interaction_type = int_to_interaction_type(type_code)
+  use data <- optional("data", interaction_data_decoder(interaction_type))
+  use guild_id <- optional("guild_id", decode.string)
+  use channel_id <- optional("channel_id", decode.string)
+  use member <- optional("member", member_decoder())
+  use user <- optional("user", user_decoder())
+  use token <- decode.field("token", decode.string)
+  use version <- with_default("version", 1, decode.int)
+  use app_permissions <- optional("app_permissions", decode.string)
+  use locale <- optional("locale", decode.string)
+  use guild_locale <- optional("guild_locale", decode.string)
+  decode.success(Interaction(
+    id: id,
+    application_id: application_id,
+    interaction_type: interaction_type,
+    data: option.flatten(data),
+    guild_id: guild_id,
+    channel_id: channel_id,
+    member: member,
+    user: user,
+    token: token,
+    version: version,
+    app_permissions: app_permissions,
+    locale: locale,
+    guild_locale: guild_locale,
+  ))
 }
 
-/// Parse optional user from data
-fn parse_optional_user(data: String) -> Option(User) {
-  let user_data = json_decode_object_field(data, "user")
-  case string.is_empty(user_data) {
-    True -> None
-    False -> Some(parse_user(user_data))
-  }
-}
-
-/// Parse optional member from data
-fn parse_optional_member(data: String) -> Option(Member) {
-  let member_data = json_decode_object_field(data, "member")
-  case string.is_empty(member_data) || member_data == "{}" {
-    True -> None
-    False -> Some(parse_member(member_data))
-  }
-}
-
-/// Parse member from JSON
-fn parse_member(data: String) -> Member {
-  let user_data = json_decode_object_field(data, "user")
-  Member(
-    user: case string.is_empty(user_data) {
-      True -> None
-      False -> Some(parse_user(user_data))
-    },
-    nick: json_decode_string_field(data, "nick"),
-    roles: parse_string_list_field(data, "roles"),
-    joined_at: json_decode_string_field(data, "joined_at"),
-  )
-}
-
-/// Parse emoji from JSON
-fn parse_emoji(data: String) -> Emoji {
-  Emoji(
-    id: json_decode_string_field(data, "id"),
-    name: json_decode_string_field(data, "name"),
-    animated: json_decode_bool_field(data, "animated"),
-  )
-}
-
-/// Parse message reference
-fn parse_message_reference(data: String) -> Option(MessageReference) {
-  let ref_data = json_decode_object_field(data, "message_reference")
-  case string.is_empty(ref_data) || ref_data == "{}" {
-    True -> None
-    False ->
-      Some(MessageReference(
-        message_id: json_decode_string_field(ref_data, "message_id"),
-        channel_id: json_decode_string_field(ref_data, "channel_id"),
-        guild_id: json_decode_string_field(ref_data, "guild_id"),
-      ))
-  }
-}
-
-/// Parse mentions list
-fn parse_mentions(data: String) -> List(User) {
-  let mentions_data = json_decode_array_field(data, "mentions")
-  parse_user_list(mentions_data)
-}
-
-/// Parse list of users from array string
-fn parse_user_list(data: String) -> List(User) {
-  // Simple array parsing - split by }, { and parse each
-  case string.starts_with(data, "[") {
-    True -> {
-      let inner = string.drop_start(data, 1)
-      let inner = string.drop_end(inner, 1)
-      case string.is_empty(inner) {
-        True -> []
-        False -> {
-          // Split by },{ for rough object boundaries
-          let parts = string.split(inner, "},{")
-          parts
-          |> list.map(fn(part) {
-            let part = case string.starts_with(part, "{") {
-              True -> part
-              False -> "{" <> part
-            }
-            let part = case string.ends_with(part, "}") {
-              True -> part
-              False -> part <> "}"
-            }
-            parse_user(part)
-          })
-        }
-      }
-    }
-    False -> []
-  }
-}
-
-/// Parse mention roles list
-fn parse_mention_roles(data: String) -> List(Snowflake) {
-  parse_string_list_field(data, "mention_roles")
-}
-
-/// Parse string list field
-fn parse_string_list_field(data: String, field: String) -> List(String) {
-  let array_data = json_decode_array_field(data, field)
-  case string.starts_with(array_data, "[") {
-    True -> {
-      let inner = string.drop_start(array_data, 1)
-      let inner = string.drop_end(inner, 1)
-      case string.is_empty(inner) {
-        True -> []
-        False -> {
-          inner
-          |> string.split(",")
-          |> list.map(fn(s) {
-            s
-            |> string.trim()
-            |> string.replace("\"", "")
-          })
-          |> list.filter(fn(s) { !string.is_empty(s) })
-        }
-      }
-    }
-    False -> []
-  }
-}
-
-/// Parse interaction data
-fn parse_interaction_data(
-  data: String,
+fn interaction_data_decoder(
   interaction_type: InteractionType,
-) -> Option(InteractionData) {
-  let int_data = json_decode_object_field(data, "data")
-  case string.is_empty(int_data) || int_data == "{}" {
-    True -> None
-    False -> {
-      case interaction_type {
-        ApplicationCommand | ApplicationCommandAutocomplete ->
-          Some(ApplicationCommandData(
-            id: json_decode_string_field(int_data, "id")
-              |> option.unwrap("unknown"),
-            name: json_decode_string_field(int_data, "name")
-              |> option.unwrap("unknown"),
-            command_type: int_to_command_type(
-              json_decode_int_field(int_data, "type") |> option.unwrap(1),
-            ),
-            options: parse_command_options(int_data),
-            resolved: None,
-            target_id: json_decode_string_field(int_data, "target_id"),
-          ))
-        MessageComponent ->
-          Some(MessageComponentData(
-            custom_id: json_decode_string_field(int_data, "custom_id")
-              |> option.unwrap("unknown"),
-            component_type: int_to_component_type(
-              json_decode_int_field(int_data, "component_type")
-              |> option.unwrap(2),
-            ),
-            values: parse_component_values(int_data),
-            resolved: None,
-          ))
-        ModalSubmit ->
-          Some(
-            ModalSubmitData(
-              custom_id: json_decode_string_field(int_data, "custom_id")
-                |> option.unwrap("unknown"),
-              components: [],
-            ),
-          )
-        _ -> None
-      }
+) -> decode.Decoder(Option(InteractionData)) {
+  case interaction_type {
+    ApplicationCommand | ApplicationCommandAutocomplete -> {
+      use id <- with_default("id", "unknown", decode.string)
+      use name <- with_default("name", "unknown", decode.string)
+      use command_type <- with_default("type", 1, decode.int)
+      use options <- with_default(
+        "options",
+        [],
+        decode.list(command_option_decoder()),
+      )
+      use target_id <- optional("target_id", decode.string)
+      decode.success(
+        Some(ApplicationCommandData(
+          id: id,
+          name: name,
+          command_type: int_to_command_type(command_type),
+          options: options,
+          resolved: None,
+          target_id: target_id,
+        )),
+      )
     }
+    MessageComponent -> {
+      use custom_id <- with_default("custom_id", "unknown", decode.string)
+      use component_type <- with_default("component_type", 2, decode.int)
+      use values <- optional("values", decode.list(decode.string))
+      decode.success(
+        Some(MessageComponentData(
+          custom_id: custom_id,
+          component_type: int_to_component_type(component_type),
+          values: case values {
+            Some([]) -> None
+            other -> other
+          },
+          resolved: None,
+        )),
+      )
+    }
+    ModalSubmit -> {
+      use custom_id <- with_default("custom_id", "unknown", decode.string)
+      decode.success(
+        Some(ModalSubmitData(custom_id: custom_id, components: [])),
+      )
+    }
+    _ -> decode.success(None)
   }
 }
 
-fn parse_component_values(data: String) -> Option(List(String)) {
-  let values_data = json_decode_array_field(data, "values")
-
-  case string.starts_with(values_data, "[") {
-    True -> {
-      let inner = string.drop_start(values_data, 1)
-      let inner = string.drop_end(inner, 1)
-
-      case string.is_empty(string.trim(inner)) {
-        True -> None
-        False ->
-          inner
-          |> string.split(",")
-          |> list.map(fn(value) {
-            value
-            |> string.trim()
-            |> string.replace("\"", "")
-          })
-          |> list.filter(fn(value) { !string.is_empty(value) })
-          |> Some
-      }
-    }
-    False -> None
-  }
-}
-
-/// Parse command options
-fn parse_command_options(data: String) -> List(ApplicationCommandOption) {
-  let options_data = json_decode_array_field(data, "options")
-  case string.starts_with(options_data, "[") {
-    True -> {
-      let inner = string.drop_start(options_data, 1)
-      let inner = string.drop_end(inner, 1)
-      case string.is_empty(inner) {
-        True -> []
-        False -> {
-          let parts = split_json_objects(inner)
-          parts
-          |> list.map(parse_command_option)
-        }
-      }
-    }
-    False -> []
-  }
-}
-
-/// Parse single command option
-fn parse_command_option(data: String) -> ApplicationCommandOption {
-  let opt_type =
-    json_decode_int_field(data, "type")
-    |> option.unwrap(3)
-    |> int_to_option_type
-
-  ApplicationCommandOption(
-    name: json_decode_string_field(data, "name") |> option.unwrap("unknown"),
-    option_type: opt_type,
-    value: parse_option_value(data, opt_type),
-    options: parse_command_options(data),
-    focused: json_decode_bool_field(data, "focused"),
+fn command_option_decoder() -> decode.Decoder(ApplicationCommandOption) {
+  use name <- with_default("name", "unknown", decode.string)
+  use type_code <- with_default("type", 3, decode.int)
+  let option_type = int_to_option_type(type_code)
+  use value <- optional("value", option_value_decoder(option_type))
+  use options <- with_default(
+    "options",
+    [],
+    decode.list(decode.recursive(command_option_decoder)),
   )
+  use focused <- optional("focused", decode.bool)
+  decode.success(ApplicationCommandOption(
+    name: name,
+    option_type: option_type,
+    value: option.flatten(value),
+    options: options,
+    focused: focused,
+  ))
 }
 
-/// Parse option value based on type
-fn parse_option_value(data: String, opt_type: ApplicationCommandOptionType) {
-  case opt_type {
-    StringOption -> {
-      case json_decode_string_field(data, "value") {
-        Some(v) -> Some(StringValue(v))
-        None -> None
-      }
-    }
-    IntegerOption -> {
-      case json_decode_int_field(data, "value") {
-        Some(v) -> Some(IntValue(v))
-        None -> None
-      }
-    }
-    BooleanOption -> {
-      case json_decode_bool_field(data, "value") {
-        Some(v) -> Some(BoolValue(v))
-        None -> None
-      }
-    }
-    UserOption -> {
-      case json_decode_string_field(data, "value") {
-        Some(v) -> Some(UserValue(v))
-        None -> None
-      }
-    }
-    ChannelOption -> {
-      case json_decode_string_field(data, "value") {
-        Some(v) -> Some(ChannelValue(v))
-        None -> None
-      }
-    }
-    RoleOption -> {
-      case json_decode_string_field(data, "value") {
-        Some(v) -> Some(RoleValue(v))
-        None -> None
-      }
-    }
-    _ -> None
+fn option_value_decoder(
+  option_type: ApplicationCommandOptionType,
+) -> decode.Decoder(Option(CommandOptionValue)) {
+  case option_type {
+    StringOption -> decode.map(decode.string, fn(v) { Some(StringValue(v)) })
+    IntegerOption -> decode.map(decode.int, fn(v) { Some(IntValue(v)) })
+    BooleanOption -> decode.map(decode.bool, fn(v) { Some(BoolValue(v)) })
+    UserOption -> decode.map(decode.string, fn(v) { Some(UserValue(v)) })
+    ChannelOption -> decode.map(decode.string, fn(v) { Some(ChannelValue(v)) })
+    RoleOption -> decode.map(decode.string, fn(v) { Some(RoleValue(v)) })
+    _ -> decode.success(None)
   }
 }
 
@@ -1367,288 +1251,6 @@ fn int_to_component_type(code: Int) -> ComponentType {
     7 -> MentionableSelectType
     8 -> ChannelSelectType
     _ -> UnknownComponentType(code)
-  }
-}
-
-// ============================================================================
-// JSON Parsing Helpers
-// ============================================================================
-
-/// Strip all nested objects/arrays from a JSON object string, replacing each
-/// with `{}` or `[]`. This lets scalar field extraction via split_once
-/// operate on top-level fields only, avoiding false matches in nested objects.
-fn strip_nested_objects(json: String) -> String {
-  do_strip_nested(string.to_graphemes(json), 0, False, [])
-}
-
-fn do_strip_nested(
-  chars: List(String),
-  depth: Int,
-  in_string: Bool,
-  acc: List(String),
-) -> String {
-  case chars {
-    [] -> string.concat(list.reverse(acc))
-    [first, ..rest] ->
-      case in_string {
-        True ->
-          case first {
-            "\\" ->
-              case rest {
-                [] -> string.concat(list.reverse([first, ..acc]))
-                [escaped, ..rest2] ->
-                  do_strip_nested(rest2, depth, True, [escaped, first, ..acc])
-              }
-            "\"" -> do_strip_nested(rest, depth, False, [first, ..acc])
-            _ -> do_strip_nested(rest, depth, True, [first, ..acc])
-          }
-        False ->
-          case first {
-            "\"" -> do_strip_nested(rest, depth, True, [first, ..acc])
-            "{" ->
-              case depth >= 1 {
-                True -> {
-                  let remaining = skip_nested(rest, "{", "}", 1)
-                  do_strip_nested(remaining, depth, False, ["}", "{", ..acc])
-                }
-                False -> do_strip_nested(rest, depth + 1, False, [first, ..acc])
-              }
-            "}" -> do_strip_nested(rest, depth - 1, False, [first, ..acc])
-            "[" ->
-              case depth >= 1 {
-                True -> {
-                  let remaining = skip_nested(rest, "[", "]", 1)
-                  do_strip_nested(remaining, depth, False, ["]", "[", ..acc])
-                }
-                False -> do_strip_nested(rest, depth + 1, False, [first, ..acc])
-              }
-            "]" -> do_strip_nested(rest, depth - 1, False, [first, ..acc])
-            _ -> do_strip_nested(rest, depth, False, [first, ..acc])
-          }
-      }
-  }
-}
-
-fn skip_nested(
-  chars: List(String),
-  open: String,
-  close: String,
-  depth: Int,
-) -> List(String) {
-  case chars {
-    [] -> []
-    [first, ..rest] ->
-      case first {
-        "\"" -> skip_nested(skip_string_chars(rest), open, close, depth)
-        _ ->
-          case first == open {
-            True -> skip_nested(rest, open, close, depth + 1)
-            False ->
-              case first == close {
-                True ->
-                  case depth - 1 {
-                    0 -> rest
-                    new_depth -> skip_nested(rest, open, close, new_depth)
-                  }
-                False -> skip_nested(rest, open, close, depth)
-              }
-          }
-      }
-  }
-}
-
-fn skip_string_chars(chars: List(String)) -> List(String) {
-  case chars {
-    [] -> []
-    ["\\", ..rest] ->
-      case rest {
-        [] -> []
-        [_, ..rest2] -> skip_string_chars(rest2)
-      }
-    ["\"", ..rest] -> rest
-    [_, ..rest] -> skip_string_chars(rest)
-  }
-}
-
-/// Decode a string field from JSON string
-fn json_decode_string_field(json: String, field: String) -> Option(String) {
-  let pattern = "\"" <> field <> "\":\""
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      case string.split_once(rest, "\"") {
-        Ok(#(value, _)) -> Some(value)
-        Error(_) -> None
-      }
-    }
-    Error(_) -> None
-  }
-}
-
-/// Decode an integer field from JSON string
-fn json_decode_int_field(json: String, field: String) -> Option(Int) {
-  let pattern = "\"" <> field <> "\":"
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      let trimmed = string.trim_start(rest)
-      case string.split_once(trimmed, ",") {
-        Ok(#(value_str, _)) ->
-          int.parse(string.trim(value_str)) |> option.from_result
-        Error(_) -> {
-          // Try splitting by }
-          case string.split_once(trimmed, "}") {
-            Ok(#(value_str, _)) ->
-              int.parse(string.trim(value_str)) |> option.from_result
-            Error(_) -> int.parse(string.trim(trimmed)) |> option.from_result
-          }
-        }
-      }
-    }
-    Error(_) -> None
-  }
-}
-
-/// Decode a boolean field from JSON string
-fn json_decode_bool_field(json: String, field: String) -> Option(Bool) {
-  let pattern = "\"" <> field <> "\":"
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      let trimmed = string.trim_start(rest)
-      case string.starts_with(trimmed, "true") {
-        True -> Some(True)
-        False ->
-          case string.starts_with(trimmed, "false") {
-            True -> Some(False)
-            False -> None
-          }
-      }
-    }
-    Error(_) -> None
-  }
-}
-
-/// Decode an object field from JSON string
-fn json_decode_object_field(json: String, field: String) -> String {
-  let pattern = "\"" <> field <> "\":"
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      let trimmed = string.trim_start(rest)
-      case string.starts_with(trimmed, "{") {
-        True -> extract_json_object(trimmed)
-        False ->
-          case string.starts_with(trimmed, "[") {
-            True -> extract_json_array(trimmed)
-            False -> "{}"
-          }
-      }
-    }
-    Error(_) -> "{}"
-  }
-}
-
-/// Decode an array field from JSON string
-fn json_decode_array_field(json: String, field: String) -> String {
-  let pattern = "\"" <> field <> "\":"
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      let trimmed = string.trim_start(rest)
-      case string.starts_with(trimmed, "[") {
-        True -> extract_json_array(trimmed)
-        False -> "[]"
-      }
-    }
-    Error(_) -> "[]"
-  }
-}
-
-/// Extract a JSON object string (balanced braces)
-fn extract_json_object(s: String) -> String {
-  extract_balanced(s, "{", "}")
-}
-
-/// Extract a JSON array string (balanced brackets)
-fn extract_json_array(s: String) -> String {
-  extract_balanced(s, "[", "]")
-}
-
-/// Extract balanced delimited string
-fn extract_balanced(s: String, open: String, close: String) -> String {
-  let chars = string.to_graphemes(s)
-  do_extract_balanced(chars, open, close, 0, [])
-}
-
-fn do_extract_balanced(
-  chars: List(String),
-  open: String,
-  close: String,
-  depth: Int,
-  acc: List(String),
-) -> String {
-  case chars {
-    [] -> string.concat(list.reverse(acc))
-    [first, ..rest] -> {
-      let new_depth = case first == open {
-        True -> depth + 1
-        False ->
-          case first == close {
-            True -> depth - 1
-            False -> depth
-          }
-      }
-      case depth == 0 && new_depth == 1 {
-        True -> do_extract_balanced(rest, open, close, 1, [first])
-        False ->
-          case new_depth == 0 && depth == 1 {
-            True -> {
-              let final_acc = list.reverse([first, ..acc])
-              string.concat(final_acc)
-            }
-            False ->
-              do_extract_balanced(rest, open, close, new_depth, [first, ..acc])
-          }
-      }
-    }
-  }
-}
-
-/// Split JSON objects in array
-fn split_json_objects(s: String) -> List(String) {
-  // Split by top-level commas (not inside nested objects)
-  do_split_objects(string.to_graphemes(s), 0, [], [])
-}
-
-fn do_split_objects(
-  chars: List(String),
-  depth: Int,
-  current: List(String),
-  result: List(String),
-) -> List(String) {
-  case chars {
-    [] -> {
-      case current {
-        [] -> list.reverse(result)
-        _ -> list.reverse([string.concat(list.reverse(current)), ..result])
-      }
-    }
-    [",", ..rest] -> {
-      case depth {
-        0 -> {
-          case current {
-            [] -> do_split_objects(rest, 0, [], result)
-            _ ->
-              do_split_objects(rest, 0, [], [
-                string.concat(list.reverse(current)),
-                ..result
-              ])
-          }
-        }
-        _ -> do_split_objects(rest, depth, [",", ..current], result)
-      }
-    }
-    ["{", ..rest] -> do_split_objects(rest, depth + 1, ["{", ..current], result)
-    ["}", ..rest] -> do_split_objects(rest, depth - 1, ["}", ..current], result)
-    ["[", ..rest] -> do_split_objects(rest, depth + 1, ["[", ..current], result)
-    ["]", ..rest] -> do_split_objects(rest, depth - 1, ["]", ..current], result)
-    [c, ..rest] -> do_split_objects(rest, depth, [c, ..current], result)
   }
 }
 
