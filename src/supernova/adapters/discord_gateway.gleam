@@ -1,50 +1,54 @@
-//// Discord Gateway WebSocket Module
-//// Implements real-time Discord Gateway connection with:
-//// - WebSocket connection via stratus library
-//// - Handshake and bot identification
-//// - Automatic heartbeat mechanism
-//// - Resume capability after disconnect
-//// - Configurable gateway intents
+//// Discord Gateway client.
 ////
-//// This module provides an actor-based Discord Gateway client that supports:
-//// - Real-time event reception from Discord
-//// - Session management with resume support
-//// - Heartbeat maintenance with zombie detection
-//// - Intent-based event filtering
+//// One actor holds the session: status, sequence, session id, heartbeat and
+//// subscribers. The WebSocket itself (`stratus`) runs under a connection
+//// process that is not linked to the actor: a dropped socket ends that
+//// process, never the actor. Every connection carries a generation number,
+//// and messages from an older connection are ignored.
+////
+//// ```
+//// connect ─► WebSocket ◄─ op 10 Hello
+////                      ─► op 1 Heartbeat (jitter first, then every interval)
+////                      ─► op 2 Identify, or op 6 Resume when a session exists
+////                      ◄─ op 0 READY / RESUMED ─► Connected
+////                      ◄─ op 0 events ─► subscribers
+//// ```
+////
+//// Reconnection (PRD-D, 6.1): resume after a drop, a missed heartbeat ACK,
+//// op 7 or a resumable op 9; identify again after a non-resumable op 9 or
+//// close codes 4007 and 4009; stop for good on the fatal close codes (bad
+//// token, bad intents, intents not enabled in the Developer Portal).
 
 import gleam/dict.{type Dict}
-import gleam/erlang/process.{type Subject}
+import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
+import gleam/erlang/process.{type Pid, type Subject}
+import gleam/float
+import gleam/http/request
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/result
 import gleam/string
+import stratus
 
 // ============================================================================
-// Types - Gateway Opcodes
+// Opcodes and intents
 // ============================================================================
 
-/// Discord Gateway opcodes
 pub type Opcode {
-  /// An event was dispatched
   OpDispatch
-  /// Fired periodically to keep connection alive
   OpHeartbeat
-  /// Starts a new session during initial handshake
   OpIdentify
-  /// Resume a previous disconnected session
   OpResume
-  /// Server requests immediate reconnect/resume
   OpReconnect
-  /// Session invalidated; reconnect and identify/resume
   OpInvalidSession
-  /// Sent immediately after connecting
   OpHello
-  /// Acknowledges received heartbeat
   OpHeartbeatACK
 }
 
-/// Parse opcode from integer
 fn int_to_opcode(code: Int) -> Option(Opcode) {
   case code {
     0 -> Some(OpDispatch)
@@ -59,51 +63,27 @@ fn int_to_opcode(code: Int) -> Option(Opcode) {
   }
 }
 
-// ============================================================================
-// Types - Gateway Intents
-// ============================================================================
-
-/// Discord Gateway intents (bit flags)
 pub type GatewayIntent {
-  /// Guild related events
   Guilds
-  /// Guild member events (privileged)
   GuildMembers
-  /// Guild ban events
   GuildBans
-  /// Guild emoji events
   GuildEmojis
-  /// Guild integration events
   GuildIntegrations
-  /// Guild webhook events
   GuildWebhooks
-  /// Guild invite events
   GuildInvites
-  /// Guild voice state events
   GuildVoiceStates
-  /// Guild presence events (privileged)
   GuildPresences
-  /// Guild message events
   GuildMessages
-  /// Guild message reaction events
   GuildMessageReactions
-  /// Guild message typing events
   GuildMessageTyping
-  /// Direct message events
   DirectMessages
-  /// Direct message reaction events
   DirectMessageReactions
-  /// Direct message typing events
   DirectMessageTyping
-  /// Message content (privileged)
   MessageContent
-  /// Auto moderation config events
   AutoModerationConfig
-  /// Auto moderation execution events
   AutoModerationExecution
 }
 
-/// Convert intent to bit value
 pub fn intent_to_value(intent: GatewayIntent) -> Int {
   case intent {
     Guilds -> 1
@@ -127,81 +107,36 @@ pub fn intent_to_value(intent: GatewayIntent) -> Int {
   }
 }
 
-/// Calculate combined intents value
 pub fn combine_intents(intents: List(GatewayIntent)) -> Int {
-  intents
-  |> list.fold(0, fn(acc, intent) {
+  list.fold(intents, 0, fn(acc, intent) {
     int.bitwise_or(acc, intent_to_value(intent))
   })
 }
 
-/// Basic bot intents (Guilds + GuildMessages)
 pub fn basic_intents() -> Int {
   combine_intents([Guilds, GuildMessages])
 }
 
-/// Bot with message content (Guilds + GuildMessages + MessageContent)
+/// What the Supernova needs: server messages with their text, and direct
+/// messages. Without `DirectMessages`, nothing sent in private arrives.
 pub fn message_content_intents() -> Int {
-  combine_intents([Guilds, GuildMessages, MessageContent])
+  combine_intents([Guilds, GuildMessages, DirectMessages, MessageContent])
 }
 
 // ============================================================================
-// Types - Connection State
+// Types
 // ============================================================================
 
-/// Connection status
 pub type ConnectionStatus {
-  /// Connection is being established
   Connecting
-  /// WebSocket connected, waiting for Hello
   Handshaking
-  /// Identifying with Discord
   Identifying
-  /// Connection is active and healthy
   Connected
-  /// Connection is resuming after disconnect
   Resuming
-  /// Connection is disconnected
   Disconnected
-  /// Connection failed with error
   ConnectionError(reason: String)
 }
 
-/// Gateway connection state
-pub type GatewayState {
-  GatewayState(
-    /// Bot token
-    token: String,
-    /// Gateway intents value
-    intents: Int,
-    /// Current connection status
-    status: ConnectionStatus,
-    /// Session ID from Ready event (for resume)
-    session_id: Option(String),
-    /// Last sequence number received (for resume/heartbeat)
-    sequence: Option(Int),
-    /// Heartbeat interval in milliseconds
-    heartbeat_interval_ms: Int,
-    /// Whether last heartbeat was acknowledged
-    heartbeat_ack_received: Bool,
-    /// Resume gateway URL (from Ready event)
-    resume_gateway_url: Option(String),
-    /// Number of reconnect attempts
-    reconnect_attempts: Int,
-    /// Maximum reconnect attempts (0 = unlimited)
-    max_reconnect_attempts: Int,
-    /// Delay between reconnect attempts in milliseconds
-    reconnect_delay_ms: Int,
-    /// Application ID (optional, for slash commands)
-    app_id: Option(String),
-    /// Event subscribers
-    subscribers: Dict(Int, EventSubscription),
-    /// Subscriber counter for generating IDs
-    subscriber_counter: Int,
-  )
-}
-
-/// Event subscription
 pub type EventSubscription {
   EventSubscription(
     subscriber: Subject(DiscordEvent),
@@ -209,29 +144,16 @@ pub type EventSubscription {
   )
 }
 
-// ============================================================================
-// Types - Events
-// ============================================================================
-
-/// Discord Gateway event types
 pub type DiscordEvent {
-  /// Ready event - connection established
   Ready(data: ReadyData)
-  /// Guild create event
   GuildCreate(data: JsonData)
-  /// Guild delete event
   GuildDelete(data: JsonData)
-  /// Message create event
   MessageCreate(data: JsonData)
-  /// Message update event
   MessageUpdate(data: JsonData)
-  /// Message delete event
   MessageDelete(data: JsonData)
-  /// Raw event (for unhandled events)
   RawEvent(event_name: String, data: JsonData)
 }
 
-/// Ready event data
 pub type ReadyData {
   ReadyData(
     session_id: String,
@@ -241,710 +163,645 @@ pub type ReadyData {
   )
 }
 
-/// User data
 pub type UserData {
   UserData(id: String, username: String, discriminator: String, bot: Bool)
 }
 
-/// JSON data (opaque string for flexibility)
+/// The `d` of a dispatch, as JSON text.
 pub type JsonData =
   String
 
-// ============================================================================
-// Types - Messages
-// ============================================================================
+/// What the connection process can be asked to do.
+pub opaque type Outbound {
+  SendText(String)
+  CloseWith(Int)
+}
 
-/// Messages that can be sent to the Gateway actor
+/// Where the connection process takes outbound frames and close requests.
+type Connection =
+  Subject(Outbound)
+
 pub type Message {
-  /// Get current connection status
   GetStatus(reply_to: Subject(ConnectionStatus))
-  /// Connect to Discord Gateway
   ConnectGateway(reply_to: Subject(Result(Nil, GatewayError)))
-  /// Disconnect from Gateway
   DisconnectGateway(reply_to: Subject(Nil))
-  /// Reconnect to Gateway (with resume if possible)
   ReconnectGateway(reply_to: Subject(Result(Nil, GatewayError)))
-  /// Subscribe to Discord events
   Subscribe(
     reply_to: Subject(Int),
     subscriber: Subject(DiscordEvent),
     event_filter: Option(String),
   )
-  /// Unsubscribe from Discord events
   Unsubscribe(reply_to: Subject(Bool), subscription_id: Int)
-  /// Get session info
   GetSessionInfo(reply_to: Subject(Option(SessionInfo)))
-  /// Internal: Heartbeat timer fired
+  /// Runs one heartbeat check now (tests; the timer sends `HeartbeatDue`).
   HeartbeatTick(reply_to: Subject(Nil))
-  /// Internal: WebSocket message received
+  /// A frame for the current connection (tests inject frames this way).
   WsMessage(data: String)
-  /// Internal: WebSocket closed
-  WsClosed
-  /// Stop the Gateway actor
   Stop(reply_to: Subject(Nil))
+  ConnUp(generation: Int, connection: Connection)
+  ConnFrame(generation: Int, data: String)
+  ConnClosed(generation: Int, code: Option(Int))
+  ConnDown(generation: Int)
+  HeartbeatDue(generation: Int)
+  RetryConnect(generation: Int)
 }
 
-/// Session info for resume
 pub type SessionInfo {
   SessionInfo(session_id: String, sequence: Int, resume_gateway_url: String)
 }
 
-/// Gateway handle
 pub type Gateway =
   Subject(Message)
 
-/// Gateway error type
 pub type GatewayError {
-  /// Configuration error
   ConfigError(message: String)
-  /// WebSocket connection error
   WsError(message: String)
-  /// Authentication error
   AuthError(message: String)
-  /// Connection timeout
   TimeoutError(message: String)
-  /// Rate limit error
   RateLimitError(retry_after_ms: Int)
-  /// Invalid session
   SessionInvalid(resumable: Bool)
-  /// Connection failed after max attempts
   MaxReconnectError(attempts: Int)
 }
 
-// ============================================================================
-// Types - Gateway Configuration
-// ============================================================================
-
-/// Gateway configuration
 pub type GatewayConfig {
   GatewayConfig(
-    /// Bot token
     token: String,
-    /// Gateway intents
     intents: Int,
-    /// Application ID (optional)
     app_id: Option(String),
-    /// Maximum reconnect attempts (0 = unlimited)
-    max_reconnect_attempts: Int,
-    /// Delay between reconnect attempts in milliseconds
+    /// First wait before reconnecting; it doubles up to `max_backoff_ms`.
     reconnect_delay_ms: Int,
+    /// Where to connect when there is no session to resume.
+    url: String,
+    /// Called on every status change, and on every heartbeat ACK while
+    /// connected (the channel's liveness).
+    on_status: fn(ConnectionStatus) -> Nil,
   )
 }
 
-/// Default gateway configuration
+pub const gateway_url = "wss://gateway.discord.gg/?v=10&encoding=json"
+
+const default_heartbeat_interval = 45_000
+
+const max_backoff_ms = 60_000
+
 pub fn default_config(token: String) -> GatewayConfig {
   GatewayConfig(
     token: token,
     intents: basic_intents(),
     app_id: None,
-    max_reconnect_attempts: 5,
-    reconnect_delay_ms: 5000,
+    reconnect_delay_ms: 1000,
+    url: gateway_url,
+    on_status: fn(_) { Nil },
   )
 }
 
-/// Create config with specific intents
 pub fn config_with_intents(
   token: String,
   intents: List(GatewayIntent),
 ) -> GatewayConfig {
-  GatewayConfig(
-    token: token,
-    intents: combine_intents(intents),
-    app_id: None,
-    max_reconnect_attempts: 5,
-    reconnect_delay_ms: 5000,
+  GatewayConfig(..default_config(token), intents: combine_intents(intents))
+}
+
+type State {
+  State(
+    config: GatewayConfig,
+    self: Subject(Message),
+    status: ConnectionStatus,
+    session_id: Option(String),
+    sequence: Option(Int),
+    resume_gateway_url: Option(String),
+    heartbeat_interval_ms: Int,
+    heartbeat_ack_received: Bool,
+    reconnect_attempts: Int,
+    subscribers: Dict(Int, EventSubscription),
+    subscriber_counter: Int,
+    connection: Option(Connection),
+    generation: Int,
+    /// The current connection should send Resume instead of Identify.
+    resuming: Bool,
+    /// Close code of the current connection, when the server sent one.
+    close_code: Option(Int),
+    /// False after `disconnect`, `stop` or a fatal close code.
+    wanted: Bool,
   )
 }
 
 // ============================================================================
-// Constants
+// Actor
 // ============================================================================
 
-/// Discord Gateway WebSocket URL (used for actual connections)
-pub const gateway_url = "wss://gateway.discord.gg/?v=10&encoding=json"
-
-/// Default heartbeat interval if not received
-const default_heartbeat_interval = 45_000
-
-// ============================================================================
-// Actor Implementation
-// ============================================================================
-
-/// Start a Gateway connection actor
 pub fn start(config: GatewayConfig) -> Result(Gateway, actor.StartError) {
-  let initial_state =
-    GatewayState(
-      token: config.token,
-      intents: config.intents,
+  actor.new_with_initialiser(1000, fn(self) {
+    State(
+      config: config,
+      self: self,
       status: Disconnected,
       session_id: None,
       sequence: None,
+      resume_gateway_url: None,
       heartbeat_interval_ms: default_heartbeat_interval,
       heartbeat_ack_received: True,
-      resume_gateway_url: None,
       reconnect_attempts: 0,
-      max_reconnect_attempts: config.max_reconnect_attempts,
-      reconnect_delay_ms: config.reconnect_delay_ms,
-      app_id: config.app_id,
       subscribers: dict.new(),
       subscriber_counter: 0,
+      connection: None,
+      generation: 0,
+      resuming: False,
+      close_code: None,
+      wanted: False,
     )
-
-  case
-    actor.new(initial_state)
-    |> actor.on_message(handle_message)
-    |> actor.start
-  {
-    Ok(started) -> Ok(started.data)
-    Error(error) -> Error(error)
-  }
+    |> actor.initialised
+    |> actor.returning(self)
+    |> Ok
+  })
+  |> actor.on_message(handle_message)
+  |> actor.start
+  |> result.map(fn(started) { started.data })
 }
 
-/// Handle incoming messages
 fn handle_message(
-  state: GatewayState,
+  state: State,
   message: Message,
-) -> actor.Next(GatewayState, Message) {
+) -> actor.Next(State, Message) {
   case message {
     GetStatus(reply_to) -> {
-      actor.send(reply_to, state.status)
+      process.send(reply_to, state.status)
       actor.continue(state)
     }
 
     ConnectGateway(reply_to) -> {
-      case connect_to_gateway(state) {
-        Ok(new_state) -> {
-          actor.send(reply_to, Ok(Nil))
-          actor.continue(new_state)
-        }
-        Error(error) -> {
-          actor.send(reply_to, Error(error))
-          actor.continue(state)
-        }
+      process.send(reply_to, Ok(Nil))
+      case state.connection {
+        Some(_) -> actor.continue(state)
+        None -> actor.continue(open(State(..state, wanted: True), False))
       }
-    }
-
-    DisconnectGateway(reply_to) -> {
-      actor.send(reply_to, Nil)
-      actor.continue(GatewayState(..state, status: Disconnected))
     }
 
     ReconnectGateway(reply_to) -> {
-      case state.session_id, state.sequence {
-        Some(session_id), Some(seq) -> {
-          // Resume possible
-          case resume_gateway(state, session_id, seq) {
-            Ok(new_state) -> {
-              actor.send(reply_to, Ok(Nil))
-              actor.continue(new_state)
-            }
-            Error(error) -> {
-              actor.send(reply_to, Error(error))
-              actor.continue(state)
-            }
-          }
-        }
-        _, _ -> {
-          // No session to resume, fresh connect
-          case connect_to_gateway(state) {
-            Ok(new_state) -> {
-              actor.send(reply_to, Ok(Nil))
-              actor.continue(new_state)
-            }
-            Error(error) -> {
-              actor.send(reply_to, Error(error))
-              actor.continue(state)
-            }
-          }
-        }
-      }
+      process.send(reply_to, Ok(Nil))
+      let state = drop_connection(State(..state, wanted: True), 4000)
+      actor.continue(open(state, has_session(state)))
     }
 
-    Subscribe(reply_to, subscriber, event_filter) -> {
-      let sub_id = state.subscriber_counter + 1
-      let subscription =
-        EventSubscription(subscriber: subscriber, event_filter: event_filter)
-      let new_subscribers = dict.insert(state.subscribers, sub_id, subscription)
+    DisconnectGateway(reply_to) -> {
+      let state = drop_connection(State(..state, wanted: False), 1000)
+      process.send(reply_to, Nil)
+      actor.continue(set_status(state, Disconnected))
+    }
 
-      actor.send(reply_to, sub_id)
+    Subscribe(reply_to, subscriber, filter) -> {
+      let id = state.subscriber_counter + 1
+      process.send(reply_to, id)
       actor.continue(
-        GatewayState(
+        State(
           ..state,
-          subscribers: new_subscribers,
-          subscriber_counter: sub_id,
+          subscribers: dict.insert(
+            state.subscribers,
+            id,
+            EventSubscription(subscriber, filter),
+          ),
+          subscriber_counter: id,
         ),
       )
     }
 
-    Unsubscribe(reply_to, subscription_id) -> {
-      case dict.get(state.subscribers, subscription_id) {
-        Ok(_) -> {
-          let new_subscribers = dict.delete(state.subscribers, subscription_id)
-          actor.send(reply_to, True)
-          actor.continue(GatewayState(..state, subscribers: new_subscribers))
-        }
-        Error(_) -> {
-          actor.send(reply_to, False)
-          actor.continue(state)
-        }
-      }
+    Unsubscribe(reply_to, id) -> {
+      process.send(reply_to, dict.has_key(state.subscribers, id))
+      actor.continue(
+        State(..state, subscribers: dict.delete(state.subscribers, id)),
+      )
     }
 
     GetSessionInfo(reply_to) -> {
-      case state.session_id, state.sequence, state.resume_gateway_url {
-        Some(session_id), Some(seq), Some(url) -> {
-          actor.send(
-            reply_to,
-            Some(SessionInfo(
-              session_id: session_id,
-              sequence: seq,
-              resume_gateway_url: url,
-            )),
-          )
-          actor.continue(state)
-        }
-        _, _, _ -> {
-          actor.send(reply_to, None)
-          actor.continue(state)
-        }
+      let info = case
+        state.session_id,
+        state.sequence,
+        state.resume_gateway_url
+      {
+        Some(session_id), Some(sequence), Some(url) ->
+          Some(SessionInfo(session_id, sequence, url))
+        _, _, _ -> None
       }
+      process.send(reply_to, info)
+      actor.continue(state)
     }
 
     HeartbeatTick(reply_to) -> {
-      actor.send(reply_to, Nil)
-      // Check if last heartbeat was acknowledged
-      let new_state = case state.heartbeat_ack_received {
+      let state = heartbeat_check(state)
+      process.send(reply_to, Nil)
+      actor.continue(state)
+    }
+
+    HeartbeatDue(generation) ->
+      case generation == state.generation && state.connection != None {
+        False -> actor.continue(state)
         True -> {
-          // Send heartbeat
-          let _ = send_heartbeat(state)
-          GatewayState(..state, heartbeat_ack_received: False)
-        }
-        False -> {
-          // Zombie connection - need to reconnect
-          let _ = "Gateway: Zombie connection detected, reconnecting"
-          GatewayState(..state, status: ConnectionError("Zombie connection"))
+          let state = heartbeat_check(state)
+          case state.connection, generation == state.generation {
+            Some(_), True -> {
+              process.send_after(
+                state.self,
+                state.heartbeat_interval_ms,
+                HeartbeatDue(generation),
+              )
+              Nil
+            }
+            _, _ -> Nil
+          }
+          actor.continue(state)
         }
       }
-      actor.continue(new_state)
-    }
 
-    WsMessage(data) -> {
-      let new_state = handle_gateway_message(state, data)
-      actor.continue(new_state)
-    }
+    WsMessage(data) -> actor.continue(handle_frame(state, data))
 
-    WsClosed -> {
-      let new_state = GatewayState(..state, status: Disconnected)
-      actor.continue(new_state)
-    }
+    ConnFrame(generation, data) ->
+      case generation == state.generation {
+        True -> actor.continue(handle_frame(state, data))
+        False -> actor.continue(state)
+      }
+
+    ConnUp(generation, connection) ->
+      case generation == state.generation && state.wanted {
+        True -> actor.continue(State(..state, connection: Some(connection)))
+        // An older connection, or one nobody wants anymore.
+        False -> {
+          process.send(connection, CloseWith(1000))
+          actor.continue(state)
+        }
+      }
+
+    ConnClosed(generation, code) ->
+      case generation == state.generation {
+        True -> actor.continue(State(..state, close_code: code))
+        False -> actor.continue(state)
+      }
+
+    ConnDown(generation) ->
+      case generation == state.generation {
+        True -> actor.continue(connection_lost(state))
+        False -> actor.continue(state)
+      }
+
+    RetryConnect(generation) ->
+      case
+        generation == state.generation
+        && state.wanted
+        && state.connection == None
+      {
+        True -> actor.continue(open(state, has_session(state)))
+        False -> actor.continue(state)
+      }
 
     Stop(reply_to) -> {
-      actor.send(reply_to, Nil)
+      let _ = drop_connection(State(..state, wanted: False), 1000)
+      process.send(reply_to, Nil)
       actor.stop()
     }
   }
 }
 
 // ============================================================================
-// Gateway Connection Functions
+// Connection lifecycle
 // ============================================================================
 
-/// Connect to Discord Gateway
-fn connect_to_gateway(
-  state: GatewayState,
-) -> Result(GatewayState, GatewayError) {
-  // Create WebSocket connection
-  // Note: In production, this would start the actual stratus actor
-  // For now, we return state with Connecting status
-  Ok(GatewayState(..state, status: Connecting))
+fn has_session(state: State) -> Bool {
+  option.is_some(state.session_id) && option.is_some(state.sequence)
 }
 
-/// Resume gateway connection
-fn resume_gateway(
-  state: GatewayState,
-  _session_id: String,
-  _sequence: Int,
-) -> Result(GatewayState, GatewayError) {
-  // Connect to resume URL or default gateway
-  // Note: In production, this would start the actual stratus connection
-  // and send Resume payload after receiving Hello
-  Ok(GatewayState(..state, status: Resuming))
+/// Starts a new connection, resuming when asked and a session exists.
+fn open(state: State, resume: Bool) -> State {
+  let generation = state.generation + 1
+  let resume = resume && has_session(state)
+  let url = case resume, state.resume_gateway_url {
+    True, Some(url) -> with_query(url)
+    _, _ -> state.config.url
+  }
+  spawn_connection(state.self, generation, url)
+  let state =
+    State(
+      ..state,
+      generation: generation,
+      connection: None,
+      resuming: resume,
+      close_code: None,
+      heartbeat_ack_received: True,
+    )
+  case resume {
+    True -> set_status(state, Resuming)
+    False -> set_status(state, Connecting)
+  }
 }
 
-/// Handle incoming gateway message
-fn handle_gateway_message(state: GatewayState, data: String) -> GatewayState {
-  // Parse the gateway message
-  case parse_gateway_message(data) {
-    Ok(#(opcode, d, seq, event_name)) -> {
-      let state_with_seq = case seq {
-        Some(s) -> GatewayState(..state, sequence: Some(s))
-        None -> state
+/// `resume_gateway_url` comes without the version and encoding.
+fn with_query(url: String) -> String {
+  case string.contains(url, "?") {
+    True -> url
+    False ->
+      case string.ends_with(url, "/") {
+        True -> url <> "?v=10&encoding=json"
+        False -> url <> "/?v=10&encoding=json"
       }
+  }
+}
 
-      case opcode {
-        OpHello -> {
-          // Extract heartbeat interval
-          let heartbeat_interval = extract_heartbeat_interval(d)
-          // Send Identify
-          let _ = send_identify(state_with_seq)
-          GatewayState(
-            ..state_with_seq,
-            status: Identifying,
-            heartbeat_interval_ms: heartbeat_interval,
-            heartbeat_ack_received: True,
-          )
-        }
+/// Closes the current connection, if any, and forgets it. A code other than
+/// 1000 and 1001 keeps the session resumable on Discord's side.
+fn drop_connection(state: State, code: Int) -> State {
+  case state.connection {
+    Some(connection) -> process.send(connection, CloseWith(code))
+    None -> Nil
+  }
+  // A new generation makes the old connection's messages stale.
+  State(..state, connection: None, generation: state.generation + 1)
+}
 
-        OpHeartbeatACK -> {
-          GatewayState(..state_with_seq, heartbeat_ack_received: True)
-        }
-
-        OpDispatch -> {
-          // Handle specific events
-          case event_name {
-            Some("READY") -> {
-              case parse_ready_event(d) {
-                Ok(ready_data) -> {
-                  // Notify subscribers
-                  notify_subscribers(state_with_seq, Ready(ready_data))
-                  GatewayState(
-                    ..state_with_seq,
-                    status: Connected,
-                    session_id: Some(ready_data.session_id),
-                    resume_gateway_url: Some(ready_data.resume_gateway_url),
-                    reconnect_attempts: 0,
-                  )
-                }
-                Error(_) -> state_with_seq
-              }
-            }
-            Some("GUILD_CREATE") -> {
-              notify_subscribers(state_with_seq, GuildCreate(d))
-              state_with_seq
-            }
-            Some("GUILD_DELETE") -> {
-              notify_subscribers(state_with_seq, GuildDelete(d))
-              state_with_seq
-            }
-            Some("MESSAGE_CREATE") -> {
-              notify_subscribers(state_with_seq, MessageCreate(d))
-              state_with_seq
-            }
-            Some("MESSAGE_UPDATE") -> {
-              notify_subscribers(state_with_seq, MessageUpdate(d))
-              state_with_seq
-            }
-            Some("MESSAGE_DELETE") -> {
-              notify_subscribers(state_with_seq, MessageDelete(d))
-              state_with_seq
-            }
-            Some(name) -> {
-              notify_subscribers(state_with_seq, RawEvent(name, d))
-              state_with_seq
-            }
-            None -> state_with_seq
+/// The current connection ended. Decide, from the close code, whether to
+/// resume, identify again or give up.
+fn connection_lost(state: State) -> State {
+  let state = State(..state, connection: None)
+  case state.wanted, state.close_code {
+    False, _ -> set_status(state, Disconnected)
+    True, Some(code) ->
+      case fatal_close_reason(code) {
+        Some(reason) ->
+          set_status(State(..state, wanted: False), ConnectionError(reason))
+        None ->
+          case code == 4007 || code == 4009 {
+            True -> schedule_retry(forget_session(state))
+            False -> schedule_retry(state)
           }
-        }
-
-        OpReconnect -> {
-          // Server requests reconnect
-          GatewayState(..state_with_seq, status: Disconnected)
-        }
-
-        OpInvalidSession -> {
-          // Check if resumable
-          let resumable = parse_bool(data)
-          GatewayState(
-            ..state_with_seq,
-            status: ConnectionError("Invalid session"),
-            session_id: case resumable {
-              True -> state_with_seq.session_id
-              False -> None
-            },
-          )
-        }
-
-        _ -> state_with_seq
       }
-    }
-    Error(_) -> state
+    True, None -> schedule_retry(state)
   }
 }
 
-// ============================================================================
-// JSON Parsing Helpers
-// ============================================================================
-
-/// Parse a gateway message
-fn parse_gateway_message(
-  data: String,
-) -> Result(#(Opcode, JsonData, Option(Int), Option(String)), Nil) {
-  // Simple JSON parsing - in production would use gleam_json
-  // For now, use basic string operations
-  case json_decode_int_field(data, "op") {
-    Some(op_code) -> {
-      case int_to_opcode(op_code) {
-        Some(opcode) -> {
-          let d = json_decode_object_field(data, "d")
-          let seq = json_decode_int_field(data, "s")
-          let t = json_decode_string_field(data, "t")
-          Ok(#(opcode, d, seq, t))
-        }
-        None -> Error(Nil)
-      }
-    }
-    None -> Error(Nil)
-  }
+fn forget_session(state: State) -> State {
+  State(..state, session_id: None, sequence: None, resume_gateway_url: None)
 }
 
-/// Extract heartbeat interval from Hello data
-fn extract_heartbeat_interval(data: String) -> Int {
-  case json_decode_int_field(data, "heartbeat_interval") {
-    Some(interval) -> interval
-    None -> default_heartbeat_interval
-  }
-}
-
-/// Parse Ready event data
-fn parse_ready_event(data: String) -> Result(ReadyData, Nil) {
-  case
-    json_decode_string_field(data, "session_id"),
-    json_decode_string_field(data, "resume_gateway_url")
-  {
-    Some(session_id), Some(resume_url) -> {
-      // Basic user extraction
-      let user_data = json_decode_object_field(data, "user")
-      let user =
-        UserData(
-          id: json_decode_string_field(user_data, "id")
-            |> option.unwrap("unknown"),
-          username: json_decode_string_field(user_data, "username")
-            |> option.unwrap("unknown"),
-          discriminator: json_decode_string_field(user_data, "discriminator")
-            |> option.unwrap("0000"),
-          bot: json_decode_bool_field(user_data, "bot") |> option.unwrap(False),
-        )
-      Ok(
-        ReadyData(
-          session_id: session_id,
-          resume_gateway_url: resume_url,
-          user: user,
-          guilds: [],
-        ),
+/// The close codes after which reconnecting cannot help.
+pub fn fatal_close_reason(code: Int) -> Option(String) {
+  case code {
+    4004 -> Some("Discord recusou o token (4004)")
+    4010 -> Some("shard inválido (4010)")
+    4011 -> Some("o bot precisa de sharding (4011)")
+    4012 -> Some("versão do gateway inválida (4012)")
+    4013 -> Some("intents inválidas (4013)")
+    4014 ->
+      Some(
+        "intents não autorizadas (4014): ligue a Message Content Intent no Developer Portal",
       )
-    }
-    _, _ -> Error(Nil)
+    _ -> None
   }
 }
 
-/// Parse boolean from data
-fn parse_bool(data: String) -> Bool {
-  string.contains(data, "true")
+fn schedule_retry(state: State) -> State {
+  let delay =
+    backoff_ms(state.config.reconnect_delay_ms, state.reconnect_attempts)
+  process.send_after(state.self, delay, RetryConnect(state.generation))
+  State(..state, reconnect_attempts: state.reconnect_attempts + 1)
+  |> set_status(Disconnected)
+}
+
+/// The wait before reconnection attempt `attempts` (0-based): the base,
+/// doubled each time, up to a minute.
+pub fn backoff_ms(base: Int, attempts: Int) -> Int {
+  let doubled =
+    list.fold(list.repeat(Nil, int.min(attempts, 16)), base, fn(acc, _) {
+      acc * 2
+    })
+  int.min(doubled, max_backoff_ms)
+}
+
+fn set_status(state: State, status: ConnectionStatus) -> State {
+  case status == state.status {
+    True -> state
+    False -> {
+      state.config.on_status(status)
+      State(..state, status: status)
+    }
+  }
 }
 
 // ============================================================================
-// JSON Field Extraction (Simple String-Based)
+// Heartbeat
 // ============================================================================
 
-/// Decode an integer field from JSON string
-fn json_decode_int_field(json: String, field: String) -> Option(Int) {
-  let pattern = "\"" <> field <> "\":"
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      let trimmed = string.trim_start(rest)
-      case string.split_once(trimmed, ",") {
-        Ok(#(value_str, _)) ->
-          int.parse(string.trim(value_str)) |> option.from_result
-        Error(_) -> int.parse(string.trim(trimmed)) |> option.from_result
-      }
+/// A heartbeat is due. Without an ACK for the previous one, the connection
+/// is a zombie: drop it and resume.
+fn heartbeat_check(state: State) -> State {
+  case state.heartbeat_ack_received {
+    True -> {
+      send(state, heartbeat_payload_for(state.sequence))
+      State(..state, heartbeat_ack_received: False)
     }
-    Error(_) -> None
+    False ->
+      state
+      |> drop_connection(4000)
+      |> fn(state) { State(..state, close_code: None) }
+      |> connection_lost
   }
 }
 
-/// Decode a string field from JSON string
-fn json_decode_string_field(json: String, field: String) -> Option(String) {
-  let pattern = "\"" <> field <> "\":\""
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      case string.split_once(rest, "\"") {
-        Ok(#(value, _)) -> Some(value)
-        Error(_) -> None
-      }
-    }
-    Error(_) -> None
+fn send(state: State, payload: String) -> Nil {
+  case state.connection {
+    Some(connection) -> process.send(connection, SendText(payload))
+    None -> Nil
   }
 }
 
-/// Decode a boolean field from JSON string
-fn json_decode_bool_field(json: String, field: String) -> Option(Bool) {
-  let pattern = "\"" <> field <> "\":"
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      let trimmed = string.trim_start(rest)
-      case string.starts_with(trimmed, "true") {
-        True -> Some(True)
-        False ->
-          case string.starts_with(trimmed, "false") {
-            True -> Some(False)
-            False -> None
-          }
-      }
-    }
-    Error(_) -> None
-  }
+// ============================================================================
+// Frames
+// ============================================================================
+
+type Frame {
+  Frame(op: Int, d: Dynamic, s: Option(Int), t: Option(String))
 }
 
-/// Decode an object field from JSON string (returns the raw object string)
-fn json_decode_object_field(json: String, field: String) -> String {
-  let pattern = "\"" <> field <> "\":"
-  case string.split_once(json, pattern) {
-    Ok(#(_, rest)) -> {
-      let trimmed = string.trim_start(rest)
-      case string.starts_with(trimmed, "{") {
-        True -> {
-          // Find matching closing brace
-          extract_json_object(trimmed)
+fn frame_decoder() -> decode.Decoder(Frame) {
+  use op <- decode.field("op", decode.int)
+  use d <- decode.optional_field("d", dynamic.nil(), decode.dynamic)
+  use s <- decode.optional_field("s", None, decode.optional(decode.int))
+  use t <- decode.optional_field("t", None, decode.optional(decode.string))
+  decode.success(Frame(op: op, d: d, s: s, t: t))
+}
+
+fn handle_frame(state: State, data: String) -> State {
+  case json.parse(data, frame_decoder()) {
+    Error(_) -> state
+    Ok(frame) -> {
+      // Only dispatches (op 0) carry the sequence that heartbeats and
+      // Resume must echo.
+      let state = case frame.op, frame.s {
+        0, Some(sequence) -> State(..state, sequence: Some(sequence))
+        _, _ -> state
+      }
+      case int_to_opcode(frame.op) {
+        Some(OpHello) -> hello(state, frame.d)
+        Some(OpHeartbeat) -> {
+          send(state, heartbeat_payload_for(state.sequence))
+          state
         }
-        False ->
-          case string.starts_with(trimmed, "[") {
-            True -> extract_json_array(trimmed)
-            False -> trimmed
+        Some(OpHeartbeatACK) -> {
+          case state.status {
+            Connected -> state.config.on_status(Connected)
+            _ -> Nil
           }
-      }
-    }
-    Error(_) -> "{}"
-  }
-}
-
-/// Extract a JSON object string (balanced braces)
-fn extract_json_object(s: String) -> String {
-  extract_balanced(s, "{", "}")
-}
-
-/// Extract a JSON array string (balanced brackets)
-fn extract_json_array(s: String) -> String {
-  extract_balanced(s, "[", "]")
-}
-
-/// Extract balanced delimited string
-fn extract_balanced(s: String, open: String, close: String) -> String {
-  let chars = string.to_graphemes(s)
-  do_extract_balanced(chars, open, close, 0, [])
-}
-
-fn do_extract_balanced(
-  chars: List(String),
-  open: String,
-  close: String,
-  depth: Int,
-  acc: List(String),
-) -> String {
-  case chars {
-    [] -> string.concat(list.reverse(acc))
-    [first, ..rest] -> {
-      let new_depth = case first == open {
-        True -> depth + 1
-        False ->
-          case first == close {
-            True -> depth - 1
-            False -> depth
+          State(..state, heartbeat_ack_received: True)
+        }
+        Some(OpDispatch) -> dispatch(state, frame.t, frame.d)
+        Some(OpReconnect) -> {
+          let state = drop_connection(state, 4000)
+          case state.wanted {
+            True -> open(state, True)
+            False -> set_status(state, Disconnected)
           }
-      }
-      case depth == 0 && new_depth == 1 {
-        True -> do_extract_balanced(rest, open, close, 1, [first])
-        False ->
-          case new_depth == 0 && depth == 1 {
-            True -> {
-              let final_acc = list.reverse([first, ..acc])
-              string.concat(final_acc)
-            }
-            False ->
-              do_extract_balanced(rest, open, close, new_depth, [first, ..acc])
-          }
+        }
+        Some(OpInvalidSession) -> invalid_session(state, frame.d)
+        _ -> state
       }
     }
   }
 }
 
-// ============================================================================
-// JSON Encoding Helpers
-// ============================================================================
-
-/// Send Identify payload
-fn send_identify(state: GatewayState) -> Nil {
-  let payload = identify_payload(state.token, state.intents)
-  // In production, this would send via stratus WebSocket
-  let _ = payload
-  Nil
+fn hello(state: State, d: Dynamic) -> State {
+  let interval =
+    decode.run(d, decode.at(["heartbeat_interval"], decode.int))
+    |> result.unwrap(default_heartbeat_interval)
+  // The first heartbeat waits a random fraction of the interval.
+  let first = float.truncate(float.random() *. int.to_float(interval))
+  process.send_after(state.self, first, HeartbeatDue(state.generation))
+  let state =
+    State(
+      ..state,
+      heartbeat_interval_ms: interval,
+      heartbeat_ack_received: True,
+    )
+  case state.resuming, state.session_id, state.sequence {
+    True, Some(session_id), Some(sequence) -> {
+      send(state, resume_payload(state.config.token, session_id, sequence))
+      set_status(state, Resuming)
+    }
+    _, _, _ -> {
+      send(state, identify_payload(state.config.token, state.config.intents))
+      set_status(state, Identifying)
+    }
+  }
 }
 
-/// Build Identify payload JSON
-pub fn identify_payload(token: String, intents: Int) -> String {
-  "{\"op\":2,\"d\":{\"token\":\""
-  <> token
-  <> "\",\"intents\":"
-  <> int.to_string(intents)
-  <> ",\"properties\":{\"os\":\"linux\",\"browser\":\"supernova\",\"device\":\"supernova\"}}}"
+fn invalid_session(state: State, d: Dynamic) -> State {
+  let resumable = decode.run(d, decode.bool) |> result.unwrap(False)
+  let state = drop_connection(state, 4000)
+  case resumable, state.wanted {
+    _, False ->
+      case resumable {
+        True -> set_status(state, Disconnected)
+        False -> set_status(forget_session(state), Disconnected)
+      }
+    True, True -> open(state, True)
+    False, True -> {
+      // Discord asks for a wait of 1 to 5 seconds before identifying again
+      // (with the default base of 1 s).
+      let state = forget_session(state)
+      let base = state.config.reconnect_delay_ms
+      process.send_after(
+        state.self,
+        base + int.random(4 * base + 1),
+        RetryConnect(state.generation),
+      )
+      set_status(state, Disconnected)
+    }
+  }
 }
 
-/// Send Heartbeat payload
-fn send_heartbeat(state: GatewayState) -> Nil {
-  let seq = option.unwrap(state.sequence, 0)
-  let payload = heartbeat_payload(seq)
-  // In production, this would send via stratus WebSocket
-  let _ = payload
-  Nil
+fn dispatch(state: State, event: Option(String), d: Dynamic) -> State {
+  let data = encode_json(d)
+  case event {
+    Some("READY") ->
+      case decode.run(d, ready_decoder()) {
+        Ok(ready) -> {
+          notify(state, Ready(ready))
+          State(
+            ..state,
+            session_id: Some(ready.session_id),
+            resume_gateway_url: Some(ready.resume_gateway_url),
+            reconnect_attempts: 0,
+          )
+          |> set_status(Connected)
+        }
+        Error(_) -> state
+      }
+    Some("RESUMED") ->
+      State(..state, reconnect_attempts: 0) |> set_status(Connected)
+    Some("GUILD_CREATE") -> notify_and_keep(state, GuildCreate(data))
+    Some("GUILD_DELETE") -> notify_and_keep(state, GuildDelete(data))
+    Some("MESSAGE_CREATE") -> notify_and_keep(state, MessageCreate(data))
+    Some("MESSAGE_UPDATE") -> notify_and_keep(state, MessageUpdate(data))
+    Some("MESSAGE_DELETE") -> notify_and_keep(state, MessageDelete(data))
+    Some(name) -> notify_and_keep(state, RawEvent(name, data))
+    None -> state
+  }
 }
 
-/// Build Heartbeat payload JSON
-pub fn heartbeat_payload(sequence: Int) -> String {
-  "{\"op\":1,\"d\":" <> int.to_string(sequence) <> "}"
+fn notify_and_keep(state: State, event: DiscordEvent) -> State {
+  notify(state, event)
+  state
 }
 
-/// Build Resume payload JSON
-pub fn resume_payload(
-  token: String,
-  session_id: String,
-  sequence: Int,
-) -> String {
-  "{\"op\":6,\"d\":{\"token\":\""
-  <> token
-  <> "\",\"session_id\":\""
-  <> session_id
-  <> "\",\"seq\":"
-  <> int.to_string(sequence)
-  <> "}}"
+fn ready_decoder() -> decode.Decoder(ReadyData) {
+  use session_id <- decode.field("session_id", decode.string)
+  use resume_gateway_url <- decode.optional_field(
+    "resume_gateway_url",
+    "",
+    decode.string,
+  )
+  use user <- decode.field("user", user_decoder())
+  use guilds <- decode.optional_field(
+    "guilds",
+    [],
+    decode.list(decode.map(decode.dynamic, encode_json)),
+  )
+  decode.success(ReadyData(
+    session_id: session_id,
+    resume_gateway_url: resume_gateway_url,
+    user: user,
+    guilds: guilds,
+  ))
 }
 
-// ============================================================================
-// Event Notification
-// ============================================================================
+fn user_decoder() -> decode.Decoder(UserData) {
+  use id <- decode.field("id", decode.string)
+  use username <- decode.optional_field("username", "", decode.string)
+  use discriminator <- decode.optional_field(
+    "discriminator",
+    "0",
+    decode.string,
+  )
+  use bot <- decode.optional_field("bot", False, decode.bool)
+  decode.success(UserData(
+    id: id,
+    username: username,
+    discriminator: discriminator,
+    bot: bot,
+  ))
+}
 
-/// Notify all subscribers of an event
-fn notify_subscribers(state: GatewayState, event: DiscordEvent) -> Nil {
-  state.subscribers
-  |> dict.values()
-  |> list.each(fn(sub) {
-    case should_notify(sub, event) {
-      True -> actor.send(sub.subscriber, event)
-      False -> Nil
+@external(erlang, "supernova_discord_ffi", "encode_json")
+fn encode_json(term: Dynamic) -> String
+
+fn notify(state: State, event: DiscordEvent) -> Nil {
+  let name = event_to_name(event)
+  dict.values(state.subscribers)
+  |> list.each(fn(subscription) {
+    case subscription.event_filter {
+      None -> process.send(subscription.subscriber, event)
+      Some(filter) if filter == name ->
+        process.send(subscription.subscriber, event)
+      Some(_) -> Nil
     }
   })
 }
 
-/// Check if subscriber should receive event
-fn should_notify(subscription: EventSubscription, event: DiscordEvent) -> Bool {
-  case subscription.event_filter {
-    None -> True
-    Some(filter) -> {
-      let event_name = event_to_name(event)
-      event_name == filter
-    }
-  }
-}
-
-/// Get event name from event type
 fn event_to_name(event: DiscordEvent) -> String {
   case event {
     Ready(_) -> "READY"
@@ -958,35 +815,211 @@ fn event_to_name(event: DiscordEvent) -> String {
 }
 
 // ============================================================================
+// Payloads
+// ============================================================================
+
+pub fn identify_payload(token: String, intents: Int) -> String {
+  json.object([
+    #("op", json.int(2)),
+    #(
+      "d",
+      json.object([
+        #("token", json.string(token)),
+        #("intents", json.int(intents)),
+        #(
+          "properties",
+          json.object([
+            #("os", json.string("linux")),
+            #("browser", json.string("supernova")),
+            #("device", json.string("supernova")),
+          ]),
+        ),
+      ]),
+    ),
+  ])
+  |> json.to_string
+}
+
+pub fn heartbeat_payload(sequence: Int) -> String {
+  heartbeat_payload_for(Some(sequence))
+}
+
+/// Before the first dispatch there is no sequence, and Discord expects null.
+fn heartbeat_payload_for(sequence: Option(Int)) -> String {
+  json.object([#("op", json.int(1)), #("d", json.nullable(sequence, json.int))])
+  |> json.to_string
+}
+
+pub fn resume_payload(
+  token: String,
+  session_id: String,
+  sequence: Int,
+) -> String {
+  json.object([
+    #("op", json.int(6)),
+    #(
+      "d",
+      json.object([
+        #("token", json.string(token)),
+        #("session_id", json.string(session_id)),
+        #("seq", json.int(sequence)),
+      ]),
+    ),
+  ])
+  |> json.to_string
+}
+
+// ============================================================================
+// Connection process
+// ============================================================================
+
+type Watch {
+  SocketExited(Pid)
+  GatewayGone
+}
+
+/// Runs one WebSocket under a process not linked to the gateway actor. It
+/// reports `ConnUp`, every text frame, the close code and the end
+/// (`ConnDown`). If the gateway actor dies, the socket is closed.
+fn spawn_connection(gateway: Gateway, generation: Int, url: String) -> Nil {
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.trap_exits(True)
+      case websocket_request(url) {
+        Error(_) -> process.send(gateway, ConnDown(generation))
+        Ok(req) -> {
+          // `ConnUp` is sent from the socket process itself, before it
+          // reads any frame: Discord sends Hello right away, and a Hello
+          // that overtook `ConnUp` would find no connection to answer on.
+          let builder =
+            stratus.new_with_initialiser(request: req, init: fn() {
+              let outbound = process.new_subject()
+              process.send(gateway, ConnUp(generation, outbound))
+              stratus.initialised(Nil)
+              |> stratus.selecting(
+                process.new_selector() |> process.select(outbound),
+              )
+              |> Ok
+            })
+            |> stratus.with_connect_timeout(10_000)
+            |> stratus.on_message(fn(state, message, connection) {
+              case message {
+                stratus.Text(text) -> {
+                  process.send(gateway, ConnFrame(generation, text))
+                  stratus.continue(state)
+                }
+                stratus.Binary(_) -> stratus.continue(state)
+                stratus.User(SendText(text)) -> {
+                  let _ = stratus.send_text_message(connection, text)
+                  stratus.continue(state)
+                }
+                stratus.User(CloseWith(code)) -> {
+                  let _ = stratus.close_custom(connection, code, <<>>)
+                  stratus.stop()
+                }
+              }
+            })
+            |> stratus.on_close(fn(_state, reason) {
+              process.send(gateway, ConnClosed(generation, close_code(reason)))
+            })
+          case stratus.start(builder) {
+            Error(_) -> process.send(gateway, ConnDown(generation))
+            Ok(started) -> {
+              watch(gateway, started.pid, started.data)
+              process.send(gateway, ConnDown(generation))
+            }
+          }
+        }
+      }
+    })
+  Nil
+}
+
+fn watch(
+  gateway: Gateway,
+  socket: Pid,
+  connection: Subject(stratus.InternalMessage(Outbound)),
+) -> Nil {
+  let selector =
+    process.new_selector()
+    |> process.select_trapped_exits(fn(exit) { SocketExited(exit.pid) })
+  let selector = case process.subject_owner(gateway) {
+    Ok(owner) ->
+      process.select_specific_monitor(selector, process.monitor(owner), fn(_) {
+        GatewayGone
+      })
+    Error(_) -> selector
+  }
+  wait(selector, socket, connection)
+}
+
+fn wait(
+  selector: process.Selector(Watch),
+  socket: Pid,
+  connection: Subject(stratus.InternalMessage(Outbound)),
+) -> Nil {
+  case process.selector_receive_forever(selector) {
+    SocketExited(pid) if pid == socket -> Nil
+    SocketExited(_) -> wait(selector, socket, connection)
+    GatewayGone -> {
+      process.send(connection, stratus.to_user_message(CloseWith(1000)))
+      wait(selector, socket, connection)
+    }
+  }
+}
+
+/// `stratus` speaks http(s) URLs: wss becomes https, ws becomes http.
+fn websocket_request(url: String) -> Result(request.Request(String), Nil) {
+  let url = case url {
+    "wss://" <> rest -> "https://" <> rest
+    "ws://" <> rest -> "http://" <> rest
+    other -> other
+  }
+  request.to(url)
+}
+
+fn close_code(reason: stratus.CloseReason) -> Option(Int) {
+  case reason {
+    stratus.Custom(custom) -> Some(stratus.get_custom_code(custom))
+    stratus.Normal(_) -> Some(1000)
+    stratus.GoingAway(_) -> Some(1001)
+    stratus.ProtocolError(_) -> Some(1002)
+    stratus.UnexpectedDataType(_) -> Some(1003)
+    stratus.InconsistentDataType(_) -> Some(1007)
+    stratus.PolicyViolation(_) -> Some(1008)
+    stratus.MessageTooBig(_) -> Some(1009)
+    stratus.MissingExtensions(_) -> Some(1010)
+    stratus.UnexpectedCondition(_) -> Some(1011)
+    stratus.NotProvided -> None
+  }
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
-/// Get current connection status
 pub fn get_status(gateway: Gateway) -> ConnectionStatus {
   actor.call(gateway, waiting: 5000, sending: GetStatus)
 }
 
-/// Connect to Discord Gateway
+/// Starts connecting in the background. The result says only that the
+/// request was taken: readiness comes through `on_status`.
 pub fn connect(gateway: Gateway) -> Result(Nil, GatewayError) {
   actor.call(gateway, waiting: 10_000, sending: ConnectGateway)
 }
 
-/// Disconnect from Gateway
 pub fn disconnect(gateway: Gateway) -> Nil {
   actor.call(gateway, waiting: 5000, sending: DisconnectGateway)
 }
 
-/// Reconnect to Gateway
 pub fn reconnect(gateway: Gateway) -> Result(Nil, GatewayError) {
   actor.call(gateway, waiting: 10_000, sending: ReconnectGateway)
 }
 
-/// Subscribe to all Discord events
 pub fn subscribe(gateway: Gateway, subscriber: Subject(DiscordEvent)) -> Int {
   actor.call(gateway, waiting: 5000, sending: Subscribe(_, subscriber, None))
 }
 
-/// Subscribe to specific event type
 pub fn subscribe_to_event(
   gateway: Gateway,
   subscriber: Subject(DiscordEvent),
@@ -999,17 +1032,14 @@ pub fn subscribe_to_event(
   ))
 }
 
-/// Unsubscribe from events
 pub fn unsubscribe(gateway: Gateway, subscription_id: Int) -> Bool {
   actor.call(gateway, waiting: 5000, sending: Unsubscribe(_, subscription_id))
 }
 
-/// Get session info for resume capability
 pub fn get_session_info(gateway: Gateway) -> Option(SessionInfo) {
   actor.call(gateway, waiting: 5000, sending: GetSessionInfo)
 }
 
-/// Stop the Gateway actor
 pub fn stop(gateway: Gateway) -> Nil {
   actor.call(gateway, waiting: 5000, sending: Stop)
 }
@@ -1018,15 +1048,10 @@ pub fn stop(gateway: Gateway) -> Nil {
 // Utility Functions
 // ============================================================================
 
-/// Check if status is connected
 pub fn is_connected(status: ConnectionStatus) -> Bool {
-  case status {
-    Connected -> True
-    _ -> False
-  }
+  status == Connected
 }
 
-/// Check if status is an error
 pub fn is_error(status: ConnectionStatus) -> Bool {
   case status {
     ConnectionError(_) -> True
@@ -1034,7 +1059,6 @@ pub fn is_error(status: ConnectionStatus) -> Bool {
   }
 }
 
-/// Convert connection status to string
 pub fn status_to_string(status: ConnectionStatus) -> String {
   case status {
     Connecting -> "Connecting"
@@ -1047,7 +1071,6 @@ pub fn status_to_string(status: ConnectionStatus) -> String {
   }
 }
 
-/// Convert error to string
 pub fn error_to_string(error: GatewayError) -> String {
   case error {
     ConfigError(msg) -> "Config Error: " <> msg

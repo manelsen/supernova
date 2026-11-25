@@ -335,6 +335,7 @@ pub fn late_terminal_keeps_lane_until_content_is_delivered_test() {
   let hooks =
     channel_kit.StartHooks(
       discord_events: [],
+      discord_gateway: channel_kit.DiscordGatewayOff,
       telegram_updates: [
         support.telegram_update("777", "777", "first"),
         support.telegram_update("777", "777", "second"),

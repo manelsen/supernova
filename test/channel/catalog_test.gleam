@@ -21,7 +21,8 @@ pub fn discord_rules_test() {
   discord.chat_key("dm:42") |> should.equal("discord:dm:42")
   discord.chat_key("777@guild:9") |> should.equal("discord:guild:9")
   discord.chat_key("777") |> should.equal("discord:guild:777")
-  discord.private_delivery |> should.be_false()
+  // The adapter opens the DM channel when sending (PRD-D, D-06).
+  discord.private_delivery |> should.be_true()
 }
 
 pub fn generic_and_unknown_channels_test() {
@@ -62,14 +63,15 @@ pub fn inbound_routing_and_interactions_are_traits_test() {
   interactive |> should.equal(["telegram", "discord", "slack"])
 
   catalog.get("telegram").edits_interaction_source |> should.be_true()
-  catalog.get("discord").edits_interaction_source |> should.be_false()
+  // Discord edits the message that held the buttons too (PRD-D, D5).
+  catalog.get("discord").edits_interaction_source |> should.be_true()
   catalog.get("sim").turn_timeout_ms |> should.equal(300_000)
   catalog.get("telegram").turn_timeout_ms |> should.equal(30_000)
   catalog.get("nenhum").routes_inbound |> should.be_false()
 }
 
 pub fn a_person_is_reached_privately_through_the_traits_test() {
-  catalog.get("discord").private_chat_for("42") |> should.equal("open-dm:42")
+  catalog.get("discord").private_chat_for("42") |> should.equal("dm:42")
   catalog.get("telegram").private_chat_for("42") |> should.equal("42")
   catalog.get("matrix").private_chat_for("@a:b") |> should.equal("@a:b")
 }

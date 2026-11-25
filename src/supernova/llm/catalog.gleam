@@ -182,6 +182,11 @@ pub fn current(default: provider.ProviderConfig) -> Catalog {
   }
 }
 
+/// The catalog published at boot, whatever the default; None before boot.
+pub fn global() -> Option(Catalog) {
+  option.from_result(global_lookup(global_key))
+}
+
 pub fn clear_global() -> Nil {
   global_erase(global_key)
 }

@@ -159,11 +159,12 @@ fn starters(
     result.map(started, fn(adapter) { #(adapter, None) })
   }
   [
-    Starter("discord", False, fn() {
+    Starter("discord", True, fn() {
       streaming(discord_channel.start_discord_channel(
         cfg.discord,
         handler,
         hooks,
+        health,
       ))
     }),
     Starter("matrix", False, fn() {

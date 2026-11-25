@@ -24,9 +24,18 @@ import supernova/infra/safe_io
 import supernova/metrics/record
 
 /// Optional hooks for deterministic bootstrap tests.
+/// Where the Discord channel connects (PRD-D). Tests never reach Discord:
+/// they turn the gateway off or point it at a local fake.
+pub type DiscordGatewayHook {
+  DiscordGatewayLive
+  DiscordGatewayOff
+  DiscordGatewayAt(gateway_url: String, api_url: String)
+}
+
 pub type StartHooks {
   StartHooks(
     discord_events: List(discord_gateway.DiscordEvent),
+    discord_gateway: DiscordGatewayHook,
     telegram_updates: List(telegram.Update),
     slack_inbound_events: List(port.ChannelInbound),
     matrix_inbound_events: List(port.ChannelInbound),
@@ -76,6 +85,7 @@ pub fn current_timestamp() -> Int
 pub fn no_start_hooks() -> StartHooks {
   StartHooks(
     discord_events: [],
+    discord_gateway: DiscordGatewayLive,
     telegram_updates: [],
     slack_inbound_events: [],
     matrix_inbound_events: [],

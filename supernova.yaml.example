@@ -84,9 +84,16 @@ providers:
 # Required env vars noted per channel below.
 
 discord:
-  # Required: SUPERNOVA_DISCORD_TOKEN
+  # Required: SUPERNOVA_DISCORD_TOKEN (and the Message Content Intent on in
+  # the Developer Portal). See docs/operations/DISCORD.md.
   token: "${SUPERNOVA_DISCORD_TOKEN}"
   enabled: false
+  # Optional: the application id (SUPERNOVA_DISCORD_APP_ID); the bot's own
+  # id when absent.
+  # app_id: "123456789012345678"
+  # Optional: a server whose old copies of the slash commands are removed
+  # at every connection (commands are registered globally).
+  # guild_id: "123456789012345678"
 
 telegram:
   # Required: SUPERNOVA_TELEGRAM_TOKEN

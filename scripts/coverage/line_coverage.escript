@@ -236,7 +236,11 @@ print_module_functions(Name) ->
   Module = list_to_atom(Name),
   case cover:analyse(Module, coverage, function) of
     {ok, Rows} ->
-      io:format("Uncovered functions in ~s:~n", [Name]),
+      {AllCovered, AllNot} =
+        lists:foldl(fun({_, {C, N}}, {AccC, AccN}) -> {AccC + C, AccN + N} end,
+                    {0, 0}, Rows),
+      io:format("Uncovered functions in ~s (~.2f% of ~p lines):~n",
+                [Name, percent(AllCovered, AllCovered + AllNot), AllCovered + AllNot]),
       Gaps =
         lists:sort(
           fun({_, {_, A}}, {_, {_, B}}) -> A >= B end,

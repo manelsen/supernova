@@ -381,6 +381,7 @@ pub fn event_to_type_name_interaction_create_test() {
       app_permissions: None,
       locale: None,
       guild_locale: None,
+      message_id: None,
     )
 
   events.event_to_type_name(events.EventInteractionCreate(inter))
@@ -874,6 +875,7 @@ pub fn is_interaction_event_test() {
       app_permissions: None,
       locale: None,
       guild_locale: None,
+      message_id: None,
     )
 
   events.is_interaction_event(events.EventInteractionCreate(inter))
@@ -974,6 +976,7 @@ pub fn get_interaction_from_event_test() {
       app_permissions: None,
       locale: None,
       guild_locale: None,
+      message_id: None,
     )
 
   let event = events.EventInteractionCreate(inter)
@@ -1084,6 +1087,7 @@ pub fn format_event_for_log_interaction_test() {
       app_permissions: None,
       locale: None,
       guild_locale: None,
+      message_id: None,
     )
 
   let log = events.format_event_for_log(events.EventInteractionCreate(inter))
@@ -1273,6 +1277,7 @@ pub fn matches_filter_interaction_user_comes_from_member_user_test() {
       app_permissions: None,
       locale: None,
       guild_locale: None,
+      message_id: None,
     )
 
   events.matches_filter(events.EventInteractionCreate(interaction), filter)

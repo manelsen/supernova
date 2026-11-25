@@ -12,8 +12,15 @@ import supernova/adapters/discord_gateway
 import supernova/adapters/discord_rest
 import supernova/channel/channel_kit
 import supernova/channel/chunking
+import supernova/channel/health as channel_health
+import supernova/channel/inbound_media
 import supernova/channel/port
 import supernova/config
+import supernova/core/closed_group/commands as closed_group_commands
+import supernova/core/closed_group/global as closed_group_global
+import supernova/core/closed_group/lookup
+import supernova/core/closed_group/suggestions
+import supernova/infra/safe_io
 
 type DiscordBridgeControl {
   StopDiscordBridge
@@ -38,41 +45,127 @@ pub fn start_discord_channel(
   discord_cfg: config.DiscordConfig,
   handler: port.ChannelHandler,
   hooks: channel_kit.StartHooks,
+  health: channel_health.ChannelHealth,
 ) -> Result(#(port.ChannelAdapter, channel_kit.StreamSendFn), String) {
   case discord_cfg.token {
     Some(token) -> {
+      let report = fn(status) {
+        channel_health.report(
+          health,
+          "discord",
+          status_outcome(status),
+          channel_health.now_ms(),
+        )
+      }
       let gateway_config =
         discord_gateway.GatewayConfig(
           ..discord_gateway.default_config(token),
           intents: discord_gateway.message_content_intents(),
           app_id: discord_cfg.app_id,
+          on_status: report,
         )
+      let gateway_config = case hooks.discord_gateway {
+        channel_kit.DiscordGatewayAt(gateway_url: url, ..) ->
+          discord_gateway.GatewayConfig(..gateway_config, url: url)
+        _ -> gateway_config
+      }
+      let rest_config = case hooks.discord_gateway {
+        channel_kit.DiscordGatewayAt(api_url: api_url, ..) ->
+          discord_rest.new_config(token) |> discord_rest.with_base_url(api_url)
+        _ -> discord_rest.new_config(token)
+      }
 
       use gateway <- result.try(
         discord_gateway.start(gateway_config)
         |> result.map_error(fn(_) { "failed to start gateway actor" }),
       )
 
-      use _ <- result.try(
-        discord_gateway.connect(gateway)
-        |> result.map_error(fn(error) {
-          "failed to connect gateway: "
-          <> discord_gateway.error_to_string(error)
-        }),
-      )
+      // Ready only after READY: until then the channel reports itself as
+      // connecting. A silent gateway (no heartbeat ACK) stops counting as
+      // ready after `max_silence_ms`.
+      case hooks.discord_gateway {
+        channel_kit.DiscordGatewayOff ->
+          channel_health.started(
+            health,
+            "discord",
+            None,
+            channel_health.now_ms(),
+          )
+        _ -> {
+          channel_health.started(
+            health,
+            "discord",
+            Some(max_silence_ms),
+            channel_health.now_ms(),
+          )
+          report(discord_gateway.Connecting)
+        }
+      }
+
+      use _ <- result.try(case hooks.discord_gateway {
+        channel_kit.DiscordGatewayOff -> Ok(Nil)
+        _ ->
+          discord_gateway.connect(gateway)
+          |> result.map_error(fn(error) {
+            "failed to connect gateway: "
+            <> discord_gateway.error_to_string(error)
+          })
+      })
 
       use rest_client <- result.try(
-        discord_rest.start(discord_rest.new_config(token))
+        discord_rest.start(rest_config)
         |> result.map_error(fn(_) { "failed to start REST client" }),
       )
 
       let send_fn = discord_send(rest_client, hooks)
       let stream_send_fn = discord_stream_send(rest_client, hooks)
 
+      // Recorded test runs never reach Discord.
+      let acknowledge = case hooks.outbound_records {
+        Some(_) -> fn(_interaction) { Nil }
+        None -> fn(interaction) {
+          acknowledge_interaction(
+            rest_config,
+            interaction,
+            suggestions.for_sender,
+          )
+        }
+      }
+      // Attachments come only from Discord's CDN (or the local fake).
+      let #(media_origins, sticker_base) = case hooks.discord_gateway {
+        channel_kit.DiscordGatewayAt(api_url: api_url, ..) -> #(
+          [api_url <> "/"],
+          api_url <> "/stickers/",
+        )
+        _ -> #(discord_media_origins, discord_sticker_base)
+      }
+      let attach_media = fn(message, data, inbound) {
+        with_media(
+          message,
+          discord_events.sticker_items(data),
+          inbound,
+          media_origins,
+          sticker_base,
+        )
+      }
+      let on_ready = case hooks.outbound_records {
+        Some(_) -> fn(_ready) { Nil }
+        None -> fn(ready: discord_gateway.ReadyData) {
+          register_slash_commands(
+            rest_config,
+            option.unwrap(discord_cfg.app_id, ready.user.id),
+            discord_cfg.guild_id,
+          )
+        }
+      }
+
       use bridge <- result.try(start_discord_bridge(
         handler,
         send_fn,
         stream_send_fn,
+        acknowledge,
+        on_ready,
+        attach_media,
         hooks.registry_id,
         hooks.turn_hard_timeout_ms,
       ))
@@ -104,10 +197,210 @@ pub fn start_discord_channel(
   }
 }
 
+/// Adds a message's media to its inbound (PRD-D, 6.4).
+type AttachMedia =
+  fn(discord_events.Message, String, port.ChannelInbound) -> port.ChannelInbound
+
+const discord_media_origins = [
+  "https://cdn.discordapp.com/", "https://media.discordapp.net/",
+]
+
+const discord_sticker_base = "https://media.discordapp.net/stickers/"
+
+/// `flags` bit of a voice message.
+const voice_message_flag = 8192
+
+/// The message's attachments and stickers fetched and tagged (PRD-A), as in
+/// Telegram. Only for someone with access in an allowed chat: nothing is
+/// downloaded for a message the gate would refuse.
+pub fn with_media(
+  message: discord_events.Message,
+  stickers: List(discord_events.StickerItem),
+  inbound: port.ChannelInbound,
+  origins: List(String),
+  sticker_base: String,
+) -> port.ChannelInbound {
+  case inbound {
+    port.InboundMessage(channel_message) ->
+      case
+        closed_group_global.get_config(),
+        lookup.role("discord", channel_message.channel_id, message.author.id)
+      {
+        Some(cfg), Some(_) ->
+          port.InboundMessage(
+            port.ChannelMessage(
+              ..channel_message,
+              content: channel_message.content
+                <> open_media(
+                  cfg.data_dir,
+                  message,
+                  stickers,
+                  origins,
+                  sticker_base,
+                ),
+            ),
+          )
+        _, _ -> inbound
+      }
+    _ -> inbound
+  }
+}
+
+fn open_media(
+  data_dir: String,
+  message: discord_events.Message,
+  stickers: List(discord_events.StickerItem),
+  origins: List(String),
+  sticker_base: String,
+) -> String {
+  let voice =
+    int.bitwise_and(option.unwrap(message.flags, 0), voice_message_flag) != 0
+  let attachments =
+    list.map(message.attachments, fn(attachment) {
+      "\n" <> open_attachment(data_dir, attachment, voice, origins)
+    })
+  let stickers =
+    list.map(stickers, fn(sticker) {
+      "\n" <> open_sticker(data_dir, sticker, sticker_base)
+    })
+  string.concat(list.append(attachments, stickers))
+}
+
+fn open_attachment(
+  data_dir: String,
+  attachment: discord_events.Attachment,
+  voice: Bool,
+  origins: List(String),
+) -> String {
+  let kind = case voice {
+    True -> inbound_media.Audio
+    False -> kind_of(attachment.content_type)
+  }
+  let declared =
+    inbound_media.Declared(
+      kind: kind,
+      mime: attachment.content_type,
+      seconds: None,
+      file_name: Some(attachment.filename),
+      voice_note: voice,
+      forwarded: False,
+    )
+  let from_discord =
+    list.any(origins, fn(origin) { string.starts_with(attachment.url, origin) })
+  let attempt = case
+    from_discord,
+    attachment.size > inbound_media.max_bytes_for(kind)
+  {
+    False, _ -> Error("origem desconhecida")
+    True, True -> Error("grande demais")
+    True, False -> fetch(data_dir, attachment.url, declared)
+  }
+  case attempt {
+    Ok(tag) -> tag
+    Error(reason) -> "[" <> unopened(kind, voice) <> ": " <> reason <> "]"
+  }
+}
+
+/// PNG is a still image; APNG and GIF are animated (read frame by frame,
+/// A-10); Lottie is vector JSON, not an image.
+fn open_sticker(
+  data_dir: String,
+  sticker: discord_events.StickerItem,
+  base: String,
+) -> String {
+  let attempt = case sticker.format_type {
+    1 ->
+      fetch(
+        data_dir,
+        base <> sticker.id <> ".png",
+        sticker_declared(inbound_media.Image, "image/png", sticker),
+      )
+    2 ->
+      fetch(
+        data_dir,
+        base <> sticker.id <> ".png",
+        sticker_declared(inbound_media.Sticker, "image/png", sticker),
+      )
+    4 ->
+      fetch(
+        data_dir,
+        base <> sticker.id <> ".gif",
+        sticker_declared(inbound_media.Sticker, "image/gif", sticker),
+      )
+    _ -> Error("Lottie")
+  }
+  case attempt {
+    Ok(tag) -> tag
+    Error("Lottie") -> "[uma figurinha animada]"
+    Error(reason) -> "[uma figurinha que não consegui abrir: " <> reason <> "]"
+  }
+}
+
+fn sticker_declared(
+  kind: inbound_media.Kind,
+  mime: String,
+  sticker: discord_events.StickerItem,
+) -> inbound_media.Declared {
+  inbound_media.Declared(
+    kind: kind,
+    mime: Some(mime),
+    seconds: None,
+    file_name: Some(sticker.name),
+    voice_note: False,
+    forwarded: False,
+  )
+}
+
+fn fetch(
+  data_dir: String,
+  url: String,
+  declared: inbound_media.Declared,
+) -> Result(String, String) {
+  inbound_media.fetch(data_dir, url, declared)
+  |> result.map(fn(kept) { string.drop_start(inbound_media.tag_for(kept), 1) })
+}
+
+fn kind_of(content_type: Option(String)) -> inbound_media.Kind {
+  case content_type {
+    Some("image/" <> _) -> inbound_media.Image
+    Some("audio/" <> _) -> inbound_media.Audio
+    Some("video/" <> _) -> inbound_media.Video
+    _ -> inbound_media.Document
+  }
+}
+
+fn unopened(kind: inbound_media.Kind, voice: Bool) -> String {
+  case kind, voice {
+    inbound_media.Audio, True -> "uma mensagem de voz que não consegui ouvir"
+    inbound_media.Audio, False -> "um áudio que não consegui ouvir"
+    inbound_media.Image, _ | inbound_media.Sticker, _ ->
+      "uma imagem que não consegui abrir"
+    inbound_media.Video, _ -> "um vídeo que não consegui ver"
+    inbound_media.Document, _ -> "um documento que não consegui ler"
+  }
+}
+
+/// Two missed heartbeats (Discord asks for one about every 41 s).
+const max_silence_ms = 120_000
+
+/// How a gateway status reads as channel health.
+pub fn status_outcome(
+  status: discord_gateway.ConnectionStatus,
+) -> Result(Nil, String) {
+  case status {
+    discord_gateway.Connected -> Ok(Nil)
+    discord_gateway.ConnectionError(reason) -> Error(reason)
+    other -> Error("gateway " <> discord_gateway.status_to_string(other))
+  }
+}
+
 fn start_discord_bridge(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
+  acknowledge: fn(discord_events.Interaction) -> Nil,
+  on_ready: fn(discord_gateway.ReadyData) -> Nil,
+  attach_media: AttachMedia,
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Result(DiscordBridge, String) {
@@ -123,6 +416,9 @@ fn start_discord_bridge(
         handler,
         send_fn,
         stream_send_fn,
+        acknowledge,
+        on_ready,
+        attach_media,
         events,
         control,
         done,
@@ -142,6 +438,9 @@ fn discord_bridge_loop(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
+  acknowledge: fn(discord_events.Interaction) -> Nil,
+  on_ready: fn(discord_gateway.ReadyData) -> Nil,
+  attach_media: AttachMedia,
   events: process.Subject(discord_gateway.DiscordEvent),
   control: process.Subject(DiscordBridgeControl),
   done: process.Subject(Nil),
@@ -157,6 +456,9 @@ fn discord_bridge_loop(
             handler,
             send_fn,
             stream_send_fn,
+            acknowledge,
+            on_ready,
+            attach_media,
             event,
             registry_id,
             turn_hard_timeout_ms,
@@ -165,6 +467,9 @@ fn discord_bridge_loop(
             handler,
             send_fn,
             stream_send_fn,
+            acknowledge,
+            on_ready,
+            attach_media,
             events,
             control,
             done,
@@ -177,6 +482,9 @@ fn discord_bridge_loop(
             handler,
             send_fn,
             stream_send_fn,
+            acknowledge,
+            on_ready,
+            attach_media,
             events,
             control,
             done,
@@ -198,27 +506,49 @@ fn dispatch_discord_event(
   handler: port.ChannelHandler,
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
+  acknowledge: fn(discord_events.Interaction) -> Nil,
+  on_ready: fn(discord_gateway.ReadyData) -> Nil,
+  attach_media: AttachMedia,
   event: discord_gateway.DiscordEvent,
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Nil {
   case event {
+    discord_gateway.Ready(ready) -> on_ready(ready)
     discord_gateway.MessageCreate(data) ->
       case discord_events.parse_event("MESSAGE_CREATE", data) {
-        discord_events.EventMessageCreate(message) ->
-          channel_kit.dispatch_inbound(
-            handler,
-            send_fn,
-            stream_send_fn,
-            port.inbound_message(discord_message_to_port(message)),
-            registry_id,
-            turn_hard_timeout_ms,
-          )
+        discord_events.EventMessageCreate(message) -> {
+          let dispatch = fn(inbound) {
+            channel_kit.dispatch_inbound(
+              handler,
+              send_fn,
+              stream_send_fn,
+              inbound,
+              registry_id,
+              turn_hard_timeout_ms,
+            )
+          }
+          let inbound = port.inbound_message(discord_message_to_port(message))
+          case message.attachments, discord_events.sticker_items(data) {
+            [], [] -> dispatch(inbound)
+            // Downloading can take long: never in this loop, which also
+            // answers interactions within 3 s.
+            _, _ -> {
+              let _ =
+                process.spawn_unlinked(fn() {
+                  dispatch(attach_media(message, data, inbound))
+                })
+              Nil
+            }
+          }
+        }
         _ -> Nil
       }
     discord_gateway.RawEvent("INTERACTION_CREATE", data) ->
       case discord_events.parse_event("INTERACTION_CREATE", data) {
-        discord_events.EventInteractionCreate(interaction) ->
+        discord_events.EventInteractionCreate(interaction) -> {
+          // The answer to Discord goes first, before any turn: it has 3 s.
+          acknowledge(interaction)
           case discord_interaction_to_inbound(interaction) {
             Ok(inbound) ->
               channel_kit.dispatch_inbound(
@@ -231,9 +561,180 @@ fn dispatch_discord_event(
               )
             Error(_) -> Nil
           }
+        }
         _ -> Nil
       }
     _ -> Nil
+  }
+}
+
+/// Answers Discord for an interaction, in a process of its own so that a slow
+/// answer never holds the next event.
+fn acknowledge_interaction(
+  config: discord_rest.RestClientConfig,
+  interaction: discord_events.Interaction,
+  suggest: fn(String, String, String, String, String) -> List(#(String, String)),
+) -> Nil {
+  let answer = case autocomplete_request(interaction) {
+    Some(#(chat_id, user_id, command, typed)) ->
+      Some(fn() {
+        discord_rest.autocomplete_response(suggest(
+          "discord",
+          chat_id,
+          user_id,
+          command,
+          typed,
+        ))
+      })
+    None ->
+      interaction_answer(interaction)
+      |> option.map(fn(body) { fn() { body } })
+  }
+  case answer {
+    None -> Nil
+    Some(body_fn) -> {
+      let _ =
+        process.spawn_unlinked(fn() {
+          let body = body_fn()
+          case
+            discord_rest.interaction_callback(
+              config,
+              interaction.id,
+              interaction.token,
+              body,
+            )
+          {
+            Ok(Nil) -> Nil
+            Error(error) ->
+              safe_io.println(
+                "discord: interaction answer failed: " <> string.inspect(error),
+              )
+          }
+        })
+      Nil
+    }
+  }
+}
+
+/// For an autocomplete interaction: the chat, the person, the command and
+/// what is typed in its focused option.
+pub fn autocomplete_request(
+  interaction: discord_events.Interaction,
+) -> Option(#(String, String, String, String)) {
+  case interaction.interaction_type, interaction.data, interaction.channel_id {
+    discord_events.ApplicationCommandAutocomplete,
+      Some(discord_events.ApplicationCommandData(name:, options:, ..)),
+      Some(raw_channel_id)
+    -> {
+      let #(user_id, _, _) = discord_interaction_sender(interaction)
+      let chat_id =
+        discord_chat_id(raw_channel_id, interaction.guild_id, user_id)
+      let typed =
+        options
+        |> list.find(fn(option) { option.focused == Some(True) })
+        |> result.map(fn(option) {
+          case option.value {
+            Some(discord_events.StringValue(text)) -> text
+            _ -> ""
+          }
+        })
+        |> result.unwrap("")
+      Some(#(chat_id, user_id, name, typed))
+    }
+    _, _, _ -> None
+  }
+}
+
+/// Registers the member command list globally (D2): it reaches private
+/// chats and every server. A configured server gets an empty list, which
+/// removes old copies there: a command registered in both places shows
+/// twice in Discord.
+fn register_slash_commands(
+  config: discord_rest.RestClientConfig,
+  application_id: String,
+  guild_id: Option(String),
+) -> Nil {
+  let _ =
+    process.spawn_unlinked(fn() {
+      let #(valid, invalid) =
+        slash_commands()
+        |> list.partition(discord_rest.valid_slash_command)
+      list.each(invalid, fn(command) {
+        safe_io.println("discord: command skipped, invalid: " <> command.name)
+      })
+      report_registration(
+        "global",
+        discord_rest.overwrite_slash_commands(
+          config,
+          application_id,
+          None,
+          discord_rest.slash_commands_body(valid),
+        ),
+      )
+      case guild_id {
+        Some(guild) ->
+          report_registration(
+            "server " <> guild,
+            discord_rest.overwrite_slash_commands(
+              config,
+              application_id,
+              Some(guild),
+              "[]",
+            ),
+          )
+        None -> Nil
+      }
+    })
+  Nil
+}
+
+/// The member commands, from the single list `/help` and Telegram use.
+pub fn slash_commands() -> List(discord_rest.SlashCommand) {
+  closed_group_commands.for_role(False)
+  |> list.map(fn(command) {
+    discord_rest.SlashCommand(
+      name: command.name,
+      description: command.description,
+      takes_arguments: command.takes_arguments,
+    )
+  })
+}
+
+fn report_registration(
+  scope: String,
+  outcome: Result(Nil, discord_rest.DiscordRestError),
+) -> Nil {
+  case outcome {
+    Ok(Nil) -> Nil
+    Error(error) ->
+      safe_io.println(
+        "discord: command registration ("
+        <> scope
+        <> ") failed: "
+        <> string.inspect(error),
+      )
+  }
+}
+
+/// What Discord is told right away (PRD-D, 6.2): a button or menu is
+/// acknowledged and its message edited later; a slash command is shown in
+/// the channel, and the reply follows as a message.
+pub fn interaction_answer(
+  interaction: discord_events.Interaction,
+) -> Option(String) {
+  case interaction.interaction_type, interaction.data {
+    discord_events.MessageComponent, _ ->
+      Some(discord_rest.deferred_update_response())
+    discord_events.ApplicationCommand,
+      Some(discord_events.ApplicationCommandData(name:, options:, ..))
+    ->
+      Some(
+        discord_rest.command_echo_response(discord_slash_command_text(
+          name,
+          options,
+        )),
+      )
+    _, _ -> None
   }
 }
 
@@ -243,7 +744,11 @@ fn discord_message_to_port(
   port.ChannelMessage(
     id: message.id,
     channel: "discord",
-    channel_id: discord_chat_id(message.channel_id, message.guild_id),
+    channel_id: discord_chat_id(
+      message.channel_id,
+      message.guild_id,
+      message.author.id,
+    ),
     user_id: message.author.id,
     username: message.author.username,
     content: message.content,
@@ -252,10 +757,18 @@ fn discord_message_to_port(
   )
 }
 
-fn discord_chat_id(channel_id: String, guild_id: Option(String)) -> String {
+/// A server channel is `<channel_id>@guild:<guild_id>`; a private chat is
+/// `dm:<user_id>`, named after the person and not the DM channel, so the
+/// agenda and alerts reach the same conversation (`private_chat_for`). The
+/// DM channel is opened when sending.
+fn discord_chat_id(
+  channel_id: String,
+  guild_id: Option(String),
+  user_id: String,
+) -> String {
   case guild_id {
     Some(guild) -> channel_id <> "@guild:" <> guild
-    None -> "dm:" <> channel_id
+    None -> "dm:" <> user_id
   }
 }
 
@@ -272,8 +785,9 @@ fn discord_interaction_to_inbound(
   use raw_channel_id <- result.try(require_discord_channel_id(
     interaction.channel_id,
   ))
-  let channel_id = discord_chat_id(raw_channel_id, interaction.guild_id)
   let #(user_id, username, is_bot) = discord_interaction_sender(interaction)
+  let channel_id =
+    discord_chat_id(raw_channel_id, interaction.guild_id, user_id)
 
   case interaction.interaction_type, interaction.data {
     discord_events.ApplicationCommand, Some(command_data) ->
@@ -327,7 +841,8 @@ fn discord_optional_user_to_sender(
 ) -> #(String, String, Bool) {
   case user {
     Some(value) -> #(value.id, value.username, discord_is_bot(value.bot))
-    None -> #("unknown", "", False)
+    // No person on the interaction: `discord:unknown` is never authorized.
+    None -> #("unknown", "unknown", False)
   }
 }
 
@@ -377,10 +892,12 @@ fn discord_command_option_to_text(
   let discord_events.ApplicationCommandOption(name:, value:, options:, ..) =
     option
 
-  case value {
-    Some(option_value) ->
+  case value, name {
+    // The free-text option every command with arguments has (D6).
+    Some(option_value), "args" -> discord_option_value_to_text(option_value)
+    Some(option_value), _ ->
       name <> ":" <> discord_option_value_to_text(option_value)
-    None ->
+    None, _ ->
       case options {
         [] -> name
         _ ->
@@ -429,7 +946,7 @@ fn discord_component_interaction_to_inbound(
             id: interaction.id,
             action_id: custom_id,
             values: discord_component_values(values),
-            source_message_id: None,
+            source_message_id: interaction.message_id,
           ),
         )),
       )
@@ -465,10 +982,13 @@ fn discord_send(
         channel_kit.record_reply_for_test(recorder, "discord", replies)
       None ->
         channel_kit.send_chunked_replies(replies, fn(part) {
-          case discord_send_message(rest_client, part) {
-            Ok(_) -> Ok(Nil)
-            Error(error) -> Error(error)
+          // An answer to a button edits the message that held it (D5).
+          let sent = case part.edit_message_id {
+            Some(message_id) ->
+              discord_edit_message(rest_client, part, message_id)
+            None -> discord_send_message(rest_client, part)
           }
+          result.replace(sent, Nil)
         })
     }
   }
@@ -504,7 +1024,7 @@ fn discord_send_message(
   rest_client: discord_rest.RestClient,
   reply: port.ChannelReply,
 ) -> Result(discord_rest.SentMessage, port.ChannelError) {
-  use target_channel <- result.try(discord_delivery_channel(rest_client, reply))
+  use target_channel <- result.try(discord_target_channel(rest_client, reply))
   let options = discord_options_for_reply(reply)
 
   let typing_result = case reply.typing {
@@ -528,16 +1048,23 @@ fn discord_send_message(
   }
 }
 
-/// Alert DMs carry `open-dm:<user_id>`; ordinary replies carry a channel id.
-fn discord_delivery_channel(
+/// The Discord channel a reply goes to: its thread, the DM channel of a
+/// person (`dm:<user_id>`, or `open-dm:<user_id>` from older alerts),
+/// opened once and cached, or the server channel.
+fn discord_target_channel(
   rest_client: discord_rest.RestClient,
   reply: port.ChannelReply,
 ) -> Result(String, port.ChannelError) {
-  case string.starts_with(reply.channel_id, "open-dm:") {
-    True ->
-      discord_rest.open_dm(rest_client, string.drop_start(reply.channel_id, 8))
+  case reply.thread_id, reply.channel_id {
+    Some(thread_id), _ -> Ok(thread_id)
+    None, "dm:" <> user_id | None, "open-dm:" <> user_id ->
+      discord_rest.open_dm(rest_client, user_id)
       |> result.map_error(map_discord_send_error)
-    False -> Ok(discord_target_channel(reply))
+    None, channel_id ->
+      case string.split(channel_id, "@guild:") {
+        [target, _guild] -> Ok(target)
+        _ -> Ok(channel_id)
+      }
   }
 }
 
@@ -547,7 +1074,7 @@ fn discord_edit_message(
   message_id: String,
 ) -> Result(discord_rest.SentMessage, port.ChannelError) {
   let options = discord_options_for_reply(reply)
-  let target_channel = discord_target_channel(reply)
+  use target_channel <- result.try(discord_target_channel(rest_client, reply))
 
   case
     discord_rest.edit_message_with_options(
@@ -565,14 +1092,22 @@ fn discord_edit_message(
 fn discord_options_for_reply(
   reply: port.ChannelReply,
 ) -> discord_rest.SendMessageOptions {
+  // The agent never pings anyone: no @everyone, @here, role or user,
+  // whatever the model writes (PRD-D, 6.6).
+  let base =
+    discord_rest.new_message_options()
+    |> discord_rest.with_content(reply.content)
+    |> discord_rest.with_allowed_mentions(discord_rest.AllowedMentions(
+      parse: [],
+      users: [],
+      roles: [],
+      replied_user: None,
+    ))
   let options = case reply.reply_to_id {
     Some(message_id) ->
-      discord_rest.new_message_options()
-      |> discord_rest.with_content(reply.content)
+      base
       |> discord_rest.with_message_reference(discord_rest.reply_to(message_id))
-    None ->
-      discord_rest.new_message_options()
-      |> discord_rest.with_content(reply.content)
+    None -> base
   }
 
   case reply.interactive {
@@ -587,30 +1122,11 @@ fn discord_options_for_reply(
   }
 }
 
-fn discord_target_channel(reply: port.ChannelReply) -> String {
-  case reply.thread_id {
-    Some(thread_id) -> thread_id
-    None -> discord_route_channel(reply.channel_id)
-  }
-}
-
-/// Strip policy-only routing annotations before calling Discord.
-fn discord_route_channel(channel_id: String) -> String {
-  case string.starts_with(channel_id, "dm:") {
-    True -> string.drop_start(channel_id, 3)
-    False ->
-      case string.split(channel_id, "@guild:") {
-        [target, _guild] -> target
-        _ -> channel_id
-      }
-  }
-}
-
 fn discord_trigger_typing(
   rest_client: discord_rest.RestClient,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
-  let target_channel = discord_target_channel(reply)
+  use target_channel <- result.try(discord_target_channel(rest_client, reply))
 
   case discord_rest.trigger_typing_indicator(rest_client, target_channel) {
     Ok(_) -> Ok(Nil)
@@ -792,8 +1308,9 @@ fn map_discord_send_error(
   error: discord_rest.DiscordRestError,
 ) -> port.ChannelError {
   case error {
+    // Rounded up: 350 ms waits 1 s, never 0.
     discord_rest.RateLimited(retry_after_ms) ->
-      port.RateLimited(retry_after_seconds: retry_after_ms / 1000)
+      port.RateLimited(retry_after_seconds: { retry_after_ms + 999 } / 1000)
     discord_rest.BadRequest(message) -> port.SendFailed(message)
     discord_rest.Forbidden(message) -> port.SendFailed(message)
     discord_rest.NotFound(message) -> port.SendFailed(message)

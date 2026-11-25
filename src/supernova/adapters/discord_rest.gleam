@@ -233,6 +233,9 @@ pub type RestClientState {
     config: RestClientConfig,
     rate_limits: Dict(String, BucketState),
     global_rate_limit_until: Option(Int),
+    /// DM channel of each person already opened: Discord keeps it, so it
+    /// is asked once per person.
+    dm_channels: Dict(Snowflake, Snowflake),
   )
 }
 
@@ -307,6 +310,7 @@ pub fn start(config: RestClientConfig) -> Result(RestClient, actor.StartError) {
       config: config,
       rate_limits: dict.new(),
       global_rate_limit_until: None,
+      dm_channels: dict.new(),
     )
 
   case
@@ -373,6 +377,170 @@ pub fn edit_message_with_options(
     message_id,
     options,
   ))
+}
+
+/// Answer an interaction (PRD-D, 6.2). Runs in the caller's process, not
+/// through the client actor: Discord gives 3 s, and the answer must not wait
+/// behind other requests.
+pub fn interaction_callback(
+  config: RestClientConfig,
+  interaction_id: Snowflake,
+  token: String,
+  body: String,
+) -> Result(Nil, DiscordRestError) {
+  use req <- result.try(base_request(
+    config,
+    http.Post,
+    "/interactions/" <> interaction_id <> "/" <> token <> "/callback",
+  ))
+  use resp <- result.try(
+    req
+    |> request.prepend_header("Content-Type", "application/json")
+    |> request.set_body(body)
+    |> execute_request,
+  )
+  case resp.status {
+    200 | 204 -> Ok(Nil)
+    400 -> Error(BadRequest(extract_error_message(resp.body)))
+    401 -> Error(Unauthorized)
+    404 -> Error(NotFound(extract_error_message(resp.body)))
+    429 -> Error(RateLimited(extract_retry_after(resp.body)))
+    status -> Error(UnknownError(status, resp.body))
+  }
+}
+
+/// A slash command to register: name, description and whether it takes
+/// arguments (one optional `args` text option with autocomplete, D6).
+pub type SlashCommand {
+  SlashCommand(name: String, description: String, takes_arguments: Bool)
+}
+
+/// Whether Discord accepts this command: a lowercase name of 1 to 32
+/// letters, digits, `-` or `_`, and a description of 1 to 100 characters.
+pub fn valid_slash_command(command: SlashCommand) -> Bool {
+  let name_ok =
+    string.length(command.name) >= 1
+    && string.length(command.name) <= 32
+    && string.lowercase(command.name) == command.name
+    && list.all(string.to_graphemes(command.name), fn(char) {
+      char == "-"
+      || char == "_"
+      || string.contains("abcdefghijklmnopqrstuvwxyz0123456789", char)
+    })
+  let description_length = string.length(command.description)
+  name_ok && description_length >= 1 && description_length <= 100
+}
+
+/// The body of a bulk overwrite: the whole list replaces what was there.
+pub fn slash_commands_body(commands: List(SlashCommand)) -> String {
+  json.array(commands, fn(command) {
+    let options = case command.takes_arguments {
+      False -> []
+      True -> [
+        json.object([
+          #("type", json.int(3)),
+          #("name", json.string("args")),
+          #("description", json.string("O que vem depois do comando")),
+          #("required", json.bool(False)),
+          #("autocomplete", json.bool(True)),
+        ]),
+      ]
+    }
+    json.object([
+      #("name", json.string(command.name)),
+      #("description", json.string(command.description)),
+      #("type", json.int(1)),
+      #("options", json.preprocessed_array(options)),
+    ])
+  })
+  |> json.to_string
+}
+
+/// Replace the application's slash commands, globally or in one server.
+/// Runs in the caller's process.
+pub fn overwrite_slash_commands(
+  config: RestClientConfig,
+  application_id: Snowflake,
+  guild_id: Option(Snowflake),
+  body: String,
+) -> Result(Nil, DiscordRestError) {
+  let path = case guild_id {
+    Some(guild) ->
+      "/applications/" <> application_id <> "/guilds/" <> guild <> "/commands"
+    None -> "/applications/" <> application_id <> "/commands"
+  }
+  use req <- result.try(base_request(config, http.Put, path))
+  use resp <- result.try(
+    req
+    |> request.prepend_header("Content-Type", "application/json")
+    |> request.set_body(body)
+    |> execute_request,
+  )
+  case resp.status {
+    200 | 201 | 204 -> Ok(Nil)
+    400 -> Error(BadRequest(extract_error_message(resp.body)))
+    401 -> Error(Unauthorized)
+    403 -> Error(Forbidden(extract_error_message(resp.body)))
+    429 -> Error(RateLimited(extract_retry_after(resp.body)))
+    status -> Error(UnknownError(status, resp.body))
+  }
+}
+
+/// Acknowledge a button or menu without changing anything yet (type 6). The
+/// answer comes later by editing the message that held it.
+pub fn deferred_update_response() -> String {
+  json.object([#("type", json.int(6))]) |> json.to_string
+}
+
+/// Answer a slash command by showing it in the channel (type 4), the way a
+/// typed command shows in Telegram. The agent's reply follows as a message.
+pub fn command_echo_response(content: String) -> String {
+  json.object([
+    #("type", json.int(4)),
+    #(
+      "data",
+      json.object([
+        #("content", json.string(content)),
+        #("allowed_mentions", no_mentions()),
+      ]),
+    ),
+  ])
+  |> json.to_string
+}
+
+/// Suggestions while a slash command option is typed (type 8). Discord takes
+/// at most 25, each up to 100 characters.
+pub fn autocomplete_response(choices: List(#(String, String))) -> String {
+  let choices =
+    choices
+    |> list.filter(fn(choice) { choice.1 != "" })
+    |> list.map(fn(choice) {
+      #(string.slice(choice.0, 0, 100), string.slice(choice.1, 0, 100))
+    })
+    |> list.take(25)
+  json.object([
+    #("type", json.int(8)),
+    #(
+      "data",
+      json.object([
+        #(
+          "choices",
+          json.array(choices, fn(choice) {
+            json.object([
+              #("name", json.string(choice.0)),
+              #("value", json.string(choice.1)),
+            ])
+          }),
+        ),
+      ]),
+    ),
+  ])
+  |> json.to_string
+}
+
+/// `allowed_mentions` that pings nobody: no @everyone, @here, role or user.
+pub fn no_mentions() -> json.Json {
+  json.object([#("parse", json.preprocessed_array([]))])
 }
 
 /// Trigger Discord's typing indicator for a channel or thread.
@@ -742,11 +910,31 @@ fn handle_message(
       actor.continue(state)
     }
 
-    OpenDm(reply_to, user_id) -> {
-      let result = do_open_dm(state, user_id)
-      process.send(reply_to, result)
-      actor.continue(state)
-    }
+    OpenDm(reply_to, user_id) ->
+      case dict.get(state.dm_channels, user_id) {
+        Ok(channel_id) -> {
+          process.send(reply_to, Ok(channel_id))
+          actor.continue(state)
+        }
+        Error(Nil) -> {
+          let result = do_open_dm(state, user_id)
+          process.send(reply_to, result)
+          case result {
+            Ok(channel_id) ->
+              actor.continue(
+                RestClientState(
+                  ..state,
+                  dm_channels: dict.insert(
+                    state.dm_channels,
+                    user_id,
+                    channel_id,
+                  ),
+                ),
+              )
+            Error(_) -> actor.continue(state)
+          }
+        }
+      }
 
     EditMessage(reply_to, channel_id, message_id, options) -> {
       let result = do_edit_message(state, channel_id, message_id, options)
@@ -880,22 +1068,11 @@ fn execute_json_request(
   path: String,
   body: String,
 ) -> Result(Response(String), DiscordRestError) {
-  let url = get_base_url(state.config) <> path
-
-  let req =
-    request.new()
-    |> request.set_method(method)
-    |> request.prepend_header("Authorization", "Bot " <> state.config.bot_token)
-    |> request.prepend_header("Content-Type", "application/json")
-    |> request.prepend_header(
-      "User-Agent",
-      "SupernovaBot (https://supernova.bot, v1.0)",
-    )
-
-  let req_with_body = request.set_body(req, body)
-  let req_with_url = request.set_host(req_with_body, url)
-
-  execute_request(req_with_url)
+  use req <- result.try(base_request(state.config, method, path))
+  req
+  |> request.prepend_header("Content-Type", "application/json")
+  |> request.set_body(body)
+  |> execute_request
 }
 
 fn execute_empty_request(
@@ -903,20 +1080,31 @@ fn execute_empty_request(
   method: http.Method,
   path: String,
 ) -> Result(Response(String), DiscordRestError) {
-  let url = get_base_url(state.config) <> path
+  use req <- result.try(base_request(state.config, method, path))
+  execute_request(request.set_body(req, ""))
+}
 
-  let req =
-    request.new()
-    |> request.set_method(method)
-    |> request.prepend_header("Authorization", "Bot " <> state.config.bot_token)
-    |> request.prepend_header(
-      "User-Agent",
-      "SupernovaBot (https://supernova.bot, v1.0)",
-    )
-    |> request.set_body("")
-    |> request.set_host(url)
-
-  execute_request(req)
+/// A request to `base_url <> path`, with the bot's authorization. The URL is
+/// parsed into scheme, host, port and path: putting the whole URL in the host
+/// (as before) made every request fail to connect.
+fn base_request(
+  config: RestClientConfig,
+  method: http.Method,
+  path: String,
+) -> Result(Request(String), DiscordRestError) {
+  case request.to(get_base_url(config) <> path) {
+    Error(_) -> Error(HttpError("invalid Discord API URL"))
+    Ok(req) ->
+      Ok(
+        req
+        |> request.set_method(method)
+        |> request.prepend_header("Authorization", "Bot " <> config.bot_token)
+        |> request.prepend_header(
+          "User-Agent",
+          "DiscordBot (https://supernova.bot, 0.4)",
+        ),
+      )
+  }
 }
 
 fn execute_request(
@@ -985,13 +1173,25 @@ fn parse_empty_response(
   }
 }
 
-fn parse_sent_message(body: String) -> Result(SentMessage, DiscordRestError) {
+pub fn parse_sent_message(
+  body: String,
+) -> Result(SentMessage, DiscordRestError) {
   let decoder = {
     use id <- decode.field("id", decode.string)
     use channel_id <- decode.field("channel_id", decode.string)
-    use guild_id <- decode.field("guild_id", decode.optional(decode.string))
-    use content <- decode.field("content", decode.string)
-    use timestamp <- decode.field("timestamp", decode.optional(decode.string))
+    // A REST message carries no `guild_id`, and `content` is empty for a
+    // message with only attachments.
+    use guild_id <- decode.optional_field(
+      "guild_id",
+      None,
+      decode.optional(decode.string),
+    )
+    use content <- decode.optional_field("content", "", decode.string)
+    use timestamp <- decode.optional_field(
+      "timestamp",
+      None,
+      decode.optional(decode.string),
+    )
     decode.success(SentMessage(
       id: id,
       channel_id: channel_id,
@@ -1027,25 +1227,14 @@ fn extract_error_message(body: String) -> String {
   }
 }
 
-fn extract_retry_after(body: String) -> Int {
-  let decoder = {
-    use retry_after <- decode.field("retry_after", decode.int)
-    decode.success(retry_after)
-  }
-  case json.parse(from: body, using: decoder) {
-    Ok(ms) -> ms
-    Error(_) -> {
-      // Try float version
-      let decoder2 = {
-        use retry_after <- decode.field("retry_after", decode.float)
-        decode.success(retry_after)
-      }
-      case json.parse(from: body, using: decoder2) {
-        Ok(secs) -> float.truncate(secs *. 1000.0)
-        Error(_) -> 5000
-        // Default 5 seconds
-      }
-    }
+/// Discord's `retry_after` is in seconds, whole or fractional (`5`,
+/// `0.35`); the result is in milliseconds, rounded up. Without one, 5 s.
+pub fn extract_retry_after(body: String) -> Int {
+  let seconds =
+    decode.one_of(decode.float, or: [decode.map(decode.int, int.to_float)])
+  case json.parse(from: body, using: decode.at(["retry_after"], seconds)) {
+    Ok(secs) -> float.round(float.ceiling(secs *. 1000.0))
+    Error(_) -> 5000
   }
 }
 
@@ -1398,11 +1587,21 @@ fn json_bool(b: Bool) -> String {
 
 fn escape_json_string(s: String) -> String {
   s
-  |> string.replace("\\", "\\\\")
-  |> string.replace("\"", "\\\"")
-  |> string.replace("\n", "\\n")
-  |> string.replace("\r", "\\r")
-  |> string.replace("\t", "\\t")
+  |> string.to_utf_codepoints
+  |> list.map(fn(codepoint) {
+    case string.utf_codepoint_to_int(codepoint) {
+      0x5C -> "\\\\"
+      0x22 -> "\\\""
+      0x0A -> "\\n"
+      0x0D -> "\\r"
+      0x09 -> "\\t"
+      // Any other control character is invalid raw in JSON.
+      code if code < 0x20 ->
+        "\\u00" <> string.pad_start(int.to_base16(code), 2, "0")
+      _ -> string.from_utf_codepoints([codepoint])
+    }
+  })
+  |> string.concat
 }
 
 fn get_base_url(config: RestClientConfig) -> String {

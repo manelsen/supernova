@@ -96,7 +96,8 @@ pub fn channels_without_private_delivery_are_refused_test() {
   use dir <- with_data_dir
   run(
     dir,
-    "discord:42",
+    // Discord delivers privately since PRD-D; Matrix still does not.
+    "matrix:42",
     "{\"action\":\"add\",\"when\":\"0 5 * * *\",\"request\":\"x\"}",
   )
   |> should.be_error
