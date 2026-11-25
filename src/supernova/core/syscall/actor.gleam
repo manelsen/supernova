@@ -30,9 +30,8 @@ import supernova/core/safe_call
 import supernova/core/syscall/pure
 import supernova/core/syscall/types.{
   type SyscallCommand, type SyscallOp, type SyscallResult, type SyscallState,
-  AuditDenied, AuditFailed, AuditOk, CancelSchedule, EmitEvent, GetBudget,
-  KillAgent, ReadFile, ReadWorld, RecordAudit, Schedule, SpawnAgent,
-  SyscallDenied, SyscallFailed, SyscallOk, WriteFile, WriteWorld,
+  AuditDenied, AuditFailed, AuditOk, ReadFile, RecordAudit, SyscallDenied,
+  SyscallFailed, SyscallOk, WriteFile,
 }
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types as policy_types
@@ -257,7 +256,17 @@ fn check_budget_policy(
         Error(exceeded) -> Error(exceeded.message)
       }
     }
-    None -> Ok(Nil)
+    None -> budget_unavailable(actor_state)
+  }
+}
+
+/// No budget policy: allowed only without capability manifests (development
+/// and tests); in production the call is denied, like a missing workspace
+/// policy (PRD-E, E-04).
+fn budget_unavailable(actor_state: ActorState) -> Result(Nil, String) {
+  case dict.is_empty(actor_state.capability_manifests) {
+    True -> Ok(Nil)
+    False -> Error("budget policy unavailable")
   }
 }
 
@@ -355,51 +364,13 @@ fn execute_op(
   }
 }
 
-/// Execute the operation itself (step 4 — actual kernel action).
-fn run_op(op: SyscallOp, agent_id: String) -> SyscallResult {
-  case op {
-    SpawnAgent(config) -> SyscallOk("spawned:agent_config=" <> config)
-    KillAgent(target_id) -> SyscallOk("killed:" <> target_id)
-    ReadWorld(pattern) -> SyscallOk("world_facts:pattern=" <> pattern)
-    WriteWorld(content, confidence) ->
-      SyscallOk(
-        "fact_asserted:confidence="
-        <> float_to_string(confidence)
-        <> ":"
-        <> content,
-      )
-    ReadFile(path) -> SyscallOk("file_content:path=" <> path)
-    WriteFile(path, content) ->
-      SyscallOk(
-        "file_written:path="
-        <> path
-        <> ":bytes="
-        <> int.to_string(string_length(content)),
-      )
-    Schedule(task_id, delay_ms) ->
-      SyscallOk("scheduled:" <> task_id <> ":delay=" <> int.to_string(delay_ms))
-    CancelSchedule(task_id) -> SyscallOk("cancelled:" <> task_id)
-    GetBudget -> SyscallOk("budget:agent=" <> agent_id)
-    EmitEvent(event_type, payload) ->
-      SyscallOk("event_emitted:" <> event_type <> ":" <> payload)
-  }
+/// Execute the operation itself (step 4). No operation is wired to a real
+/// kernel action yet: each one fails instead of reporting a success that
+/// did not happen (PRD-E, E-05). Policies, counting and audit still run
+/// before this step.
+fn run_op(op: SyscallOp, _agent_id: String) -> SyscallResult {
+  SyscallFailed("not implemented: " <> types.op_to_string(op))
 }
-
-// ============================================================================
-// FFI — String helpers
-// ============================================================================
-
-@external(erlang, "erlang", "byte_size")
-fn string_length(s: String) -> Int
-
-fn float_to_string(f: Float) -> String {
-  // Use Erlang's io_lib:format to get a clean decimal representation
-  // rather than scientific notation for values like 0.9
-  do_float_to_string(f)
-}
-
-@external(erlang, "supernova_ledger_ffi", "format_float")
-fn do_float_to_string(f: Float) -> String
 
 fn argument_path(args: String) -> Option(String) {
   case json.parse(from: args, using: path_decoder()) {
@@ -521,7 +492,7 @@ fn check_tool_budget(
   amount: Int,
 ) -> Result(Nil, String) {
   case actor_state.budget_policy {
-    None -> Ok(Nil)
+    None -> budget_unavailable(actor_state)
     Some(policy) -> {
       case
         budget_actor.check(

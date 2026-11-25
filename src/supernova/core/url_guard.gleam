@@ -1,144 +1,156 @@
 //// URL Guard — validates URLs to prevent SSRF attacks.
 ////
-//// Blocks requests to internal networks, cloud metadata endpoints,
-//// and non-HTTP schemes.
+//// Only http and https. The host is checked as an address: a literal is
+//// checked directly; a name is resolved (A and AAAA) and blocked when any
+//// address is loopback, private, CGNAT, link-local, unique-local,
+//// multicast, reserved, or an IPv4 address embedded in IPv6. Numeric
+//// forms other than canonical ones (decimal, octal, hex, short dotted) and
+//// single-label names (Docker service names) are blocked outright.
+////
+//// Residual risk: the name may resolve differently between this check and
+//// the connection (DNS rebinding). The network layout is the defence
+//// against that (PRD-E, risks).
 
+import gleam/list
 import gleam/string
 
+type HostKind {
+  Literal
+  Ambiguous
+  Name
+}
+
+@external(erlang, "supernova_url_guard_ffi", "host_kind")
+fn host_kind(host: String) -> HostKind
+
+@external(erlang, "supernova_url_guard_ffi", "resolve")
+fn resolve(host: String) -> Result(List(String), Nil)
+
+@external(erlang, "supernova_url_guard_ffi", "address_blocked")
+fn address_blocked(address: String) -> Bool
+
 /// Validate that a URL is safe to fetch (no SSRF).
-/// Only allows http:// and https:// schemes to non-internal hosts.
 pub fn validate_url(url: String) -> Result(String, String) {
-  validate_url_with_schemes(url, False)
+  check(url, False, resolve)
 }
 
 /// Validate URL with optional data: scheme support (for browser tool).
 pub fn validate_url_allow_data(url: String) -> Result(String, String) {
-  validate_url_with_schemes(url, True)
+  check(url, True, resolve)
 }
 
-fn validate_url_with_schemes(
+/// `validate_url` with the name resolution injected (tests).
+pub fn validate_url_with_resolver(
+  url: String,
+  resolver: fn(String) -> Result(List(String), Nil),
+) -> Result(String, String) {
+  check(url, False, resolver)
+}
+
+fn check(
   url: String,
   allow_data: Bool,
+  resolver: fn(String) -> Result(List(String), Nil),
 ) -> Result(String, String) {
   let lower = string.lowercase(url)
-
-  // data: URLs don't make network requests — safe from SSRF
   case allow_data && string.starts_with(lower, "data:") {
+    // data: URLs make no network request.
     True -> Ok(url)
-    False -> {
-      // Block non-HTTP schemes
+    False ->
       case
         string.starts_with(lower, "http://")
         || string.starts_with(lower, "https://")
       {
         False -> Error("Blocked URL scheme (only http/https allowed): " <> url)
-        True -> {
-          // Extract host portion from URL
-          let host = extract_host(lower)
-          case is_blocked_host(host) {
-            True ->
+        True ->
+          case host_allowed(extract_host(lower), resolver) {
+            True -> Ok(url)
+            False ->
               Error("Blocked URL targeting internal/reserved network: " <> url)
-            False -> Ok(url)
           }
-        }
       }
-    }
   }
 }
 
-/// Extract the host from a URL (after scheme, before port/path).
+fn host_allowed(
+  host: String,
+  resolver: fn(String) -> Result(List(String), Nil),
+) -> Bool {
+  case host {
+    "" -> False
+    _ ->
+      case host_kind(host) {
+        Literal -> !address_blocked(host)
+        Ambiguous -> False
+        Name ->
+          case named_internal(host) {
+            True -> False
+            False ->
+              case resolver(host) {
+                Ok([_, ..] as addresses) ->
+                  !list.any(addresses, address_blocked)
+                _ -> False
+              }
+          }
+      }
+  }
+}
+
+/// Names that are internal whatever they resolve to.
+fn named_internal(host: String) -> Bool {
+  let host = case string.ends_with(host, ".") {
+    True -> string.drop_end(host, 1)
+    False -> host
+  }
+  !string.contains(host, ".")
+  || host == "localhost"
+  || string.ends_with(host, ".localhost")
+  || string.ends_with(host, ".internal")
+  || string.ends_with(host, ".local")
+  || host == "metadata.google"
+}
+
+/// The host of an http(s) URL: after the scheme and userinfo, before the
+/// port, path, query or fragment; IPv6 literals lose their brackets.
 fn extract_host(url: String) -> String {
-  url
-  |> string.replace("https://", "")
-  |> string.replace("http://", "")
-  |> strip_userinfo
-  |> take_until_port_or_path
-  |> string.trim
-}
-
-fn strip_userinfo(host_and_path: String) -> String {
-  case string.split_once(host_and_path, "@") {
-    Ok(#(_, after_at)) -> after_at
-    Error(_) -> host_and_path
+  let rest = case string.split_once(url, "://") {
+    Ok(#(_, rest)) -> rest
+    Error(_) -> url
+  }
+  let authority = take_until(rest, ["/", "?", "#", "\\"])
+  let hostport = case string.split_once(reverse(authority), "@") {
+    Ok(#(after_at, _)) -> reverse(after_at)
+    Error(_) -> authority
+  }
+  case string.starts_with(hostport, "[") {
+    True ->
+      case string.split_once(string.drop_start(hostport, 1), "]") {
+        Ok(#(inside, _)) -> inside
+        Error(_) -> ""
+      }
+    False -> take_until(hostport, [":"]) |> string.trim
   }
 }
 
-fn take_until_port_or_path(host_and_rest: String) -> String {
-  host_and_rest
-  |> split_first_of(":/")
+fn reverse(s: String) -> String {
+  string.reverse(s)
 }
 
-fn split_first_of(s: String, separators: String) -> String {
-  let chars = string.to_graphemes(s)
-  let sep_chars = string.to_graphemes(separators)
-  take_until_any(chars, sep_chars, "")
+fn take_until(s: String, separators: List(String)) -> String {
+  do_take_until(string.to_graphemes(s), separators, [])
 }
 
-fn take_until_any(
+fn do_take_until(
   chars: List(String),
-  seps: List(String),
-  acc: String,
+  separators: List(String),
+  acc: List(String),
 ) -> String {
   case chars {
-    [] -> acc
     [c, ..rest] ->
-      case list_contains(seps, c) {
-        True -> acc
-        False -> take_until_any(rest, seps, acc <> c)
+      case list.contains(separators, c) {
+        True -> string.concat(list.reverse(acc))
+        False -> do_take_until(rest, separators, [c, ..acc])
       }
+    [] -> string.concat(list.reverse(acc))
   }
-}
-
-fn list_contains(items: List(String), target: String) -> Bool {
-  case items {
-    [] -> False
-    [item, ..rest] ->
-      case item == target {
-        True -> True
-        False -> list_contains(rest, target)
-      }
-  }
-}
-
-/// Check if a host is in the SSRF blocklist.
-fn is_blocked_host(host: String) -> Bool {
-  // Loopback
-  host == "localhost"
-  || host == "127.0.0.1"
-  || string.starts_with(host, "127.")
-  || host == "[::1]"
-  || host == "0.0.0.0"
-  // Private networks (RFC 1918)
-  || string.starts_with(host, "10.")
-  || starts_with_172_private(host)
-  || string.starts_with(host, "192.168.")
-  // Link-local
-  || string.starts_with(host, "169.254.")
-  // Cloud metadata endpoints
-  || host == "metadata.google.internal"
-  || host == "metadata.google"
-  // Decimal IP for 169.254.169.254
-  || host == "2852039166"
-  // Common metadata alias
-  || host == "instance-data"
-}
-
-/// Check for 172.16.0.0/12 range (172.16.x - 172.31.x)
-fn starts_with_172_private(host: String) -> Bool {
-  string.starts_with(host, "172.16.")
-  || string.starts_with(host, "172.17.")
-  || string.starts_with(host, "172.18.")
-  || string.starts_with(host, "172.19.")
-  || string.starts_with(host, "172.20.")
-  || string.starts_with(host, "172.21.")
-  || string.starts_with(host, "172.22.")
-  || string.starts_with(host, "172.23.")
-  || string.starts_with(host, "172.24.")
-  || string.starts_with(host, "172.25.")
-  || string.starts_with(host, "172.26.")
-  || string.starts_with(host, "172.27.")
-  || string.starts_with(host, "172.28.")
-  || string.starts_with(host, "172.29.")
-  || string.starts_with(host, "172.30.")
-  || string.starts_with(host, "172.31.")
 }

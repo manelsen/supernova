@@ -415,6 +415,9 @@ pub type ToolsConfig {
   ToolsConfig(
     /// Browser tool configuration
     browser: BrowserToolsConfig,
+    /// `tools.timeouts`: seconds per tool name, and `default` for the rest
+    /// (PRD-E, D3). Empty means the built-in limits.
+    timeouts: Dict(String, Int),
   )
 }
 
@@ -566,7 +569,7 @@ pub fn default_capabilities_config() -> CapabilitiesConfig {
         "web", "web_fetch", "file_system", "canvas", "github", "agenda",
         "buscar_conversa", "lembrar",
       ],
-      denied: ["safe_shell", "process", "browser", "gateway", "computador"],
+      denied: ["safe_shell", "process", "browser", "computador"],
     ),
     admin: RoleCapabilitiesConfig(allowed: ["*"], denied: []),
   )
@@ -616,7 +619,10 @@ pub fn default_drift_config() -> DriftConfig {
 }
 
 pub fn default_tools_config() -> ToolsConfig {
-  ToolsConfig(browser: BrowserToolsConfig(allow_evaluate: False))
+  ToolsConfig(
+    browser: BrowserToolsConfig(allow_evaluate: False),
+    timeouts: dict.new(),
+  )
 }
 
 /// Create a default budgets configuration
@@ -1404,9 +1410,25 @@ fn decode_tools(root: yay.Node) -> ToolsConfig {
           ))
         Error(_) -> default.browser
       }
-      ToolsConfig(browser: browser)
+      ToolsConfig(browser: browser, timeouts: decode_tool_timeouts(tools_node))
     }
     Error(_) -> default
+  }
+}
+
+/// `tools.timeouts`: positive whole seconds by tool name; anything else is
+/// ignored.
+fn decode_tool_timeouts(tools_node: yay.Node) -> Dict(String, Int) {
+  case yay.select_sugar(tools_node, "timeouts") {
+    Ok(yay.NodeMap(pairs)) ->
+      list.fold(pairs, dict.new(), fn(acc, pair) {
+        case pair {
+          #(yay.NodeStr(name), yay.NodeInt(seconds)) if seconds > 0 ->
+            dict.insert(acc, name, seconds)
+          _ -> acc
+        }
+      })
+    _ -> dict.new()
   }
 }
 
@@ -1687,9 +1709,10 @@ pub fn apply_env_overrides(config: Config) -> Config {
     reflection: config.reflection,
     drift: config.drift,
     data_dir: data_dir,
-    tools: ToolsConfig(browser: BrowserToolsConfig(
-      allow_evaluate: browser_allow_evaluate,
-    )),
+    tools: ToolsConfig(
+      browser: BrowserToolsConfig(allow_evaluate: browser_allow_evaluate),
+      timeouts: config.tools.timeouts,
+    ),
   )
 }
 

@@ -111,7 +111,7 @@ A channel without its own traits module gets `traits.generic`.
 
 ### Channel runtimes
 
-`channel/registry.gleam` only starts, stops and routes: a table of starters is the one place that lists the adapters. The runtime of each channel lives with it: `adapters/telegram_channel.gleam` (polling worker, update conversion, leaving unauthorized groups, sending, streaming), `adapters/discord_channel.gleam` (gateway bridge, events and interactions, components), `adapters/slack_channel.gleam` and `adapters/matrix_channel.gleam`. What they share (start hooks, turn dispatch, generic streaming) is in `channel/channel_kit.gleam`, which knows no channel by name.
+`channel/registry.gleam` only starts, stops and routes: a table of starters is the one place that lists the adapters. The runtime of each channel lives with it: `adapters/telegram_channel.gleam` (polling worker, update conversion, leaving unauthorized groups, sending, streaming), `adapters/discord_channel.gleam` (events and interactions, components; receiving is not implemented yet, because the gateway connection in `adapters/discord_gateway.gleam` is a stub), `adapters/slack_channel.gleam` and `adapters/matrix_channel.gleam`. What they share (start hooks, turn dispatch, generic streaming) is in `channel/channel_kit.gleam`, which knows no channel by name.
 
 ## Safety and Control Planes
 

@@ -16,6 +16,7 @@ import supernova/core/tool_dispatch
 import supernova/memory/decision
 import supernova/memory/runtime
 import supernova/tools/lembrar
+import test_budget
 import test_workspace
 
 const base = 1_795_694_400_000
@@ -93,7 +94,7 @@ pub fn the_gateway_recalls_for_the_caller_test() {
   let assert Ok(gateway) =
     actor.start_with_capabilities(
       option.None,
-      option.None,
+      option.Some(test_budget.unlimited()),
       option.None,
       manifests,
       fn(_, _) { Error("the raw executor must not run lembrar") },

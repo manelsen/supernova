@@ -54,6 +54,7 @@ import supernova/core/session/history_store
 import supernova/core/session/supervisor
 import supernova/core/syscall/actor as syscall_actor
 import supernova/core/tool_dispatch
+import supernova/core/tool_limits
 import supernova/core/workspace_policy/actor as workspace_policy_actor
 import supernova/health/server as health_server
 import supernova/llm/catalog
@@ -227,6 +228,7 @@ fn start_services(
   clock: fn() -> Int,
 ) -> Result(Runtime, String) {
   browser.set_evaluate_allowed(cfg.tools.browser.allow_evaluate)
+  tool_limits.configure(tool_limits.from_seconds(cfg.tools.timeouts))
   use _ <- result.try(prompt_log.validate(cfg))
   use _ <- result.try(config.validate_recall(cfg))
   closed_group_global.set_clock(clock)

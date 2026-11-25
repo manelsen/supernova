@@ -1124,6 +1124,24 @@ pub fn tools_browser_allow_evaluate_overridden_by_env_test() {
   cfg.tools.browser.allow_evaluate |> should_equal(True)
 }
 
+pub fn tools_timeouts_are_read_in_seconds_test() {
+  let yaml =
+    "
+app_name: supernova
+tools:
+  timeouts:
+    default: 30
+    computador: 600
+    zero: 0
+    texto: muito
+"
+  let assert Ok(cfg) = load(yaml)
+  cfg.tools.timeouts
+  |> should_equal(dict.from_list([#("default", 30), #("computador", 600)]))
+  let assert Ok(plain) = load("app_name: supernova\n")
+  plain.tools.timeouts |> should_equal(dict.new())
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================

@@ -28,6 +28,8 @@ pub fn known_tool_names() -> List(String) {
     "safe_shell",
     "browser",
     "canvas",
+    // Retired (PRD-E, E-05); still accepted so older capability lists that
+    // deny it stay valid.
     "gateway",
     "process",
     "github",

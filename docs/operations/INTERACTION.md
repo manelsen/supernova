@@ -4,7 +4,7 @@ This page describes what a person sees when they talk to their agent. Setup and 
 
 ## Channels
 
-Telegram and Discord are the supported channels: access, budget, capabilities, rate limits and the commands below all work there. Slack, Matrix, Lark, Google Chat, Mattermost, WeChat Work and WhatsApp have native adapters, but they do not go through the closed group yet. Supernova warns about them at boot. The order in which they will be brought up to the same level is in [`docs/PENDENCIAS.md`](../PENDENCIAS.md), section 3.2.
+Telegram is the supported channel: access, budget, capabilities, rate limits and the commands below all work there. Discord has the same pipeline but does not receive messages yet (its gateway connection is a stub). Slack, Matrix, Lark, Google Chat, Mattermost, WeChat Work and WhatsApp have native adapters that only send, and they do not go through the closed group yet. Supernova warns about them at boot. The order in which they will be brought up to the same level is in [`docs/PENDENCIAS.md`](../PENDENCIAS.md), section 3.2.
 
 ## One agent per person
 
