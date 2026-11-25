@@ -1,6 +1,7 @@
 //// Channel rules come from each channel's traits.
 
 import gleam/list
+import gleam/string
 import gleeunit/should
 import supernova/channel/catalog
 
@@ -86,4 +87,6 @@ pub fn whatsapp_rules_test() {
   whatsapp.private_chat_for("999@lid") |> should.equal("999@lid")
   whatsapp.receives_by_webhook |> should.be_true()
   whatsapp.supports_interactions |> should.be_false()
+  whatsapp.sends_voice |> should.be_true()
+  string.contains(whatsapp.help_commands, "/voz") |> should.be_true()
 }
