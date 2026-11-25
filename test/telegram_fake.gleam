@@ -171,6 +171,19 @@ fn default_answer(
 
 fn answer_method(state: State, recorded: Recorded) -> #(#(Int, String), State) {
   case recorded.method {
+    // A file a person sent (PRD-A, A-11), in the shape of the Bot API's
+    // File object, then the file itself under /file/bot<token>/.
+    "getFile" -> #(
+      #(
+        200,
+        "{\"ok\":true,\"result\":{\"file_id\":\"F1\",\"file_unique_id\":\"U1\",\"file_size\":11,\"file_path\":\"voice/file_1.oga\"}}",
+      ),
+      state,
+    )
+    "/file/bot" <> _ -> #(
+      #(200, "OggS\u{0}\u{2}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}"),
+      state,
+    )
     "getUpdates" -> {
       // A short long poll with nothing new.
       process.sleep(50)

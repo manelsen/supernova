@@ -26,7 +26,7 @@ What is open, and in what order, is in [PENDENCIAS.md](PENDENCIAS.md). This page
 | Discord | Sends only: receiving messages is not implemented (the gateway connection is a stub). The closed-group pipeline is in place for when it receives. Parity with Telegram is decided ([PENDENCIAS](PENDENCIAS.md) 3.2). |
 | Slack, Matrix, Lark, Google Chat, Mattermost, WeChat Work | Send only, experimental: they do not receive messages, are not behind the closed group and have no end-to-end tests. Supernova warns at boot. |
 
-On WhatsApp, the agent opens what the person sends (PRD-A): images go to its model with audio description rules; voice notes, videos, documents and animated stickers are read into text by Gemini before the turn and stay in the memory; location, contact and poll become text. `/voz` answers with voice notes, `/transcricao` gives the transcription back, `/curto`, `/longo` and `/cego` set the detail. Telegram does not read media yet.
+On WhatsApp, the agent opens what the person sends (PRD-A): images go to its model with audio description rules; voice notes, videos, documents and animated stickers are read into text by Gemini before the turn and stay in the memory; location, contact and poll become text. `/voz` answers with voice notes, `/transcricao` gives the transcription back, `/curto`, `/longo` and `/cego` set the detail. Telegram reads the same media (photos, voice, audio, video, documents, stickers; Lottie stickers become a note; files over the Bot API's 20 MB become a note); voice answers are WhatsApp only.
 
 ## Runtime
 
