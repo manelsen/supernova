@@ -1,7 +1,8 @@
 [PRD]
 # PRD F: Ferramentas como atores, e em segundo plano
 
-> **Situação em 23/11/2026:** proposta. Faltam as decisões D1–D7 da seção 5.
+> **Situação em 25/11/2026:** aprovada. D3, D4 e D7 decididas pelo
+> mantenedor; D1, D2, D5 e D6 seguem a recomendação (seção 5).
 > A fase A não depende de outra PRD. A fase B depende da P-03 da
 > [PRD-P](PRD-P-paralelismo.md), o processo da agente.
 
@@ -112,12 +113,19 @@ recomendação.
 
   Uma chamada sem vaga espera até 10 s. Depois disso, o modelo recebe "a
   ferramenta está ocupada; tente de novo ou siga sem ela".
-- **D3. Quais ferramentas podem rodar em segundo plano.** Recomendação:
+- **D3. Quais ferramentas podem rodar em segundo plano.** **Decidido:** as
+  longas e também as curtas que não são instantâneas. Ficam de fora só as
+  instantâneas, que mexem em arquivos locais em milissegundos (`agenda`,
+  `file_system`, `canvas`). Entram `computador`, `browser`, `web`, `github`,
+  `buscar_conversa`, `lembrar`, `safe_shell`, `process`, `git_inspect` e as
+  que chegarem depois, salvo se a ficha (`ToolSpec`) as declarar
+  instantâneas. A F-00 confere a lista pelo tempo medido.
+  Recomendação original:
   `computador`, `browser`, `web` e `github`. As ferramentas da própria agente
   (`file_system`, `agenda`, `buscar_conversa`, `canvas`) não podem: são
   rápidas, e o resultado só serve dentro do turno.
-- **D4. Tarefas em segundo plano por agente.** Recomendação: **no máximo 3
-  ao mesmo tempo**, cada uma com prazo de até 30 min.
+- **D4. Tarefas em segundo plano por agente.** **Decidido: no máximo 7 ao
+  mesmo tempo**, cada uma com prazo de até 30 min (a recomendação era 3).
 - **D5. Para onde vai o resultado.** Recomendação: **para o chat em que a
   tarefa foi pedida**, porque o que foi pedido num grupo volta ao grupo, e o
   privado, ao privado. A resposta passa pelo gate e conta no orçamento da
@@ -136,6 +144,13 @@ recomendação.
   - rede desligada quando a ferramenta não precisa;
   - `--die-with-parent`, para que matar o processo da chamada (F-02) mate a
     árvore inteira.
+
+  **Decidido: testar.** A F-08 começa pelo teste que decide o resto: o
+  `bwrap` funciona no host (0.9.0, conferido em 25/11), mas a Supernova roda
+  num container, onde ele precisa de user namespaces. Se funcionar no
+  container com um ajuste aceitável (perfil seccomp ou AppArmor documentado),
+  entra como abaixo; se exigir `--privileged`, fica `none` no container e o
+  relatório registra por quê.
 
   Recomendação: entra, como F-08, para essas quatro ferramentas, atrás da
   configuração `tools.sandbox: bwrap | none`, com padrão `bwrap` quando o
@@ -349,7 +364,7 @@ registro em `tasks.jsonl`, limite (D4) e ferramentas permitidas (D3).
 **Aceite:**
 - [ ] Iniciar uma `lenta(2000)` em segundo plano devolve na hora, e o turno
       responde sem esperar.
-- [ ] Uma quarta tarefa simultânea é recusada com uma mensagem clara.
+- [ ] Uma oitava tarefa simultânea é recusada com uma mensagem clara (D4).
 - [ ] Uma ferramenta fora da lista do D3 é recusada.
 - [ ] I6 passa.
 - [ ] Commit: `feat(self): tarefas em segundo plano`.
@@ -402,6 +417,6 @@ Orçamento esgotado guarda a entrega para a próxima mensagem da pessoa (D5).
 |---|---|
 | O modelo usa `tarefa` para tudo e a conversa vira um vaivém de mensagens | D3 limita as ferramentas; a descrição diz para usar só no que demora; o cenário de harness mede |
 | O modelo anuncia o resultado antes de ele chegar | o cenário de harness tem critério de "não inventar" (como o `nao_inventar`); a resposta de `iniciar` diz "o resultado chega como mensagem" |
-| Custo: cada entrega é um turno a mais do LLM | conta no orçamento da pessoa (D5), com limite de 3 tarefas (D4) |
+| Custo: cada entrega é um turno a mais do LLM | conta no orçamento da pessoa (D5), com limite de 7 tarefas (D4) |
 | Matar um processo no meio de uma escrita em disco | as ferramentas que escrevem gravam em `.tmp` e depois fazem `rename` (como já fazem as do self); a F-00 levanta as que não fazem, e elas ganham isso antes da F-02 |
 | Supervisor de ferramenta vira gargalo | as vagas são contadas na ETS, sem passar pelo supervisor; ele só inicia e cancela |
