@@ -1,10 +1,8 @@
 [PRD]
 # PRD A: a agente abre tudo o que a pessoa manda
 
-> **Situação em 24/11/2026:** D1 a D5 decididos pelo mantenedor; D6 aberta
-> (seção 5). O desenho das seções 6 e 7 será revisto para refletir D1 e
-> D4 (texto em vez de mídia crua para áudio, vídeo e documento) quando D6
-> fechar. Depende da PRD-C (capacidade de mídia, C-05).
+> **Situação em 24/11/2026:** aprovada pelo mantenedor (D1 a D6, seção 5).
+> Depende da PRD-C (capacidade de mídia, C-05).
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality
@@ -84,8 +82,7 @@ falso), com payloads copiados da documentação.
     para OGG/Opus com ffmpeg. O TTS do DeepSeek não fala português;
   - tudo trocável na configuração (Groq Whisper como `transcribe`, por
     exemplo).
-- **D6. (aberta) Quando transcrever de volta e quando conversar.**
-  Proposta:
+- **D6. Quando transcrever de volta e quando conversar** (aprovada):
   - áudio **encaminhado** volta como transcrição (se o GOWA informar o
     encaminhamento; conferir na execução);
   - áudio **da própria pessoa** é conversa;
@@ -106,92 +103,117 @@ Supernova (admissão no ledger, orçamento da pessoa, tempo-limite).
 
 ```yaml
 media:
-  image:    { reader: turn }                               # o modelo da agente
-  audio:    { reader: model, model: gemini/<flash-lite> }  # D1 (a)
-  video:    { reader: model, model: gemini/<flash-lite> }
-  document: { reader: model, model: gemini/<flash-lite> }
-  # alternativa para áudio:
-  # audio:  { reader: transcribe, model: groq/whisper-large-v3-turbo }
+  # Quem lê áudio, vídeo e documento.
+  reader: gemini/gemini-3.5-flash-lite
+  # A voz das respostas de quem pediu /voz.
+  speech: gemini/gemini-3.8-flash-lite-tts
+  voice: Kore
+  image: turn       # turn: o modelo da agente vê | read: o leitor descreve | off
+  audio: read       # read: transcreve | off
+  video: read       # read: audiodescrição e transcrição das falas | off
+  document: read    # read: texto do documento | off
 ```
 
-Os leitores:
+O `check-config` recusa `image: turn` quando o modelo da agente não vê
+imagem, e `read` sem leitor configurado com chave.
 
-- `turn`: a mídia vai ao modelo da agente.
-- `model`: o turno daquela mensagem roda no modelo dado (D1 a).
-- `transcribe`: o áudio vira texto antes do turno.
-- `off`: a agente recebe a nota de que não abre aquele tipo.
+### 6.2 Do arquivo ao texto
 
-O `check-config` recusa uma combinação que o modelo não aceita (por
-exemplo, áudio com `reader: turn` no DeepSeek).
+A mídia chega pela capacidade de mídia (C-05), estendida a todos os tipos:
+arquivo temporário gravado enquanto chega, tipo conferido pelos bytes e
+pelo MIME, e a tag no texto (`[áudio:<id> 0:42]`).
 
-### 6.2 Capacidade de mídia (estende a C-05)
+Antes do turno, cada mídia `read` é lida pelo leitor com os prompts da
+Amélie:
 
-`inbound_media` passa a guardar qualquer tipo, com o tipo conferido pelos
-bytes e pelo MIME que o canal informa: imagem, áudio (OGG/Opus, MP3, M4A,
-AAC, WAV), vídeo (MP4, 3GP, WebM, MOV) e documento (PDF, Office, texto).
-O teto de tamanho é o do leitor configurado: 20 MB inline, ou 2 GB pela
-Files API do Gemini. O arquivo é gravado em disco enquanto chega, nunca
-inteiro na memória. A tag no texto ganha o tipo e os metadados:
-`[áudio:<id> 0:42]`, `[documento:<id> contrato.pdf]`.
+- **áudio:** transcrição literal;
+- **vídeo:** audiodescrição com transcrição obrigatória das falas, sem
+  inventar som em vídeo mudo;
+- **documento:** o texto.
 
-### 6.3 Provedores
+O texto toma o lugar da tag ("[áudio de 0:42, transcrito]\n…"). Daí em
+diante, o turno, a memória, o `buscar_conversa` e o `/esquecer` lidam
+com texto (D4).
 
-- **Gemini nativo** (`llm/providers/gemini`): mensagens, tools, imagem,
-  áudio, vídeo e documento como partes `inline_data`; acima de 20 MB,
-  sobe pela Files API e usa `file_data`. A Supernova apaga o arquivo no
-  Google depois do turno (D3).
-- **Groq** (`llm/providers/groq`): só `/openai/v1/audio/transcriptions`,
-  com `language: pt` (o `pt` não está documentado; testar na execução).
-- O **DeepSeek direto** (Files API para PDF) fica de fora: o Gemini cobre
-  documento.
+Até 20 MB, a mídia vai `inline_data`; acima, pela Files API, apagada
+depois.
 
-### 6.4 O turno
+Cada leitura passa pelo kernel:
 
-O roteador comum lê as tags da mensagem e escolhe o leitor de cada mídia:
+- admissão no ledger antes, com a estimativa da documentação (25
+  tokens/s de áudio, 70 tokens/quadro de vídeo, cerca de 560
+  tokens/página);
+- cobrança no orçamento da pessoa;
+- tempo-limite.
 
-- `turn` e `model` montam a mensagem com as partes;
-- `model` troca o modelo daquele turno (como o `/model`, só para essa
-  mensagem);
-- `transcribe` chama o Whisper antes e põe o texto no lugar da tag.
+Se a leitura falhar ou for negada, a tag vira uma nota ("[um áudio que
+não consegui ouvir: <motivo curto>]").
 
-Admissão no ledger antes da chamada, com a estimativa de tokens da
-documentação: áudio 32 tokens/s, vídeo cerca de 100 tokens/s, PDF cerca
-de 560 tokens/página. A cobrança vai para o orçamento da pessoa. Se a
-admissão negar (orçamento), a agente recebe a nota e responde.
+### 6.3 Transcrição de volta (D6)
 
-### 6.5 WhatsApp
+- **Áudio encaminhado** (o canal informa): a agente responde com a
+  transcrição ("Transcrição do áudio" … "Fim da transcrição"), sem turno
+  do modelo. A troca fica no histórico.
+- **Áudio da própria pessoa:** é conversa, e o texto vai ao turno. Com
+  `/transcricao` ligado, a transcrição sai antes da resposta.
+- `/transcricao` e `/voz` são preferências da pessoa, guardadas na pasta
+  dela e apagadas no `/esquecer`.
 
-O tradutor reconhece `audio`, `video`, `document` e `sticker` (texto ou
-objeto com `path`, legenda e nome do arquivo). Localização e contato viram
-nota. Nada mais é descartado por "mensagem vazia".
+### 6.4 Voz (D6)
+
+Com `/voz` ligado, a resposta da agente:
+
+1. passa pelo saneamento para voz da Amélie (sem linhas decorativas,
+   tabelas nem emojis repetidos);
+2. vira áudio no TTS (WAV, 24 kHz);
+3. é enviada como mensagem de voz pelo canal (trait `sends_voice`; no
+   WhatsApp, `/send/audio` com `ptt: true`, convertido pelo GOWA).
+
+O texto também fica no histórico. O TTS passa pelo ledger como as outras
+chamadas.
+
+### 6.5 Base
+
+O cliente Gemini nativo da Amélie é portado como `llm/gemini_media`:
+
+- `generateContent` com `inline_data` e `file_data`;
+- Files API com upload, espera e remoção;
+- TTS.
+
+Também vêm os prompts de mídia (`core/media_prompts`) e o saneamento
+para voz (`channel/voice_text`).
 
 ## 7. Histórias
 
-- **A-01:** nada some: todo tipo vira tag ou nota, e a agente responde
-  ("[um áudio que ainda não consigo abrir]") com o leitor `off`. Isso já
-  resolve o silêncio, antes de qualquer provedor novo.
-- **A-02:** `inbound_media` para todos os tipos, gravando em disco enquanto
-  chega, com metadados (duração, páginas, nome).
-- **A-03:** provedor Gemini nativo: chat com tools e as quatro mídias
-  inline, contra um servidor falso.
-- **A-04:** Files API do Gemini: envio acima de 20 MB, apagado depois do
-  turno e no `/esquecer`.
-- **A-05:** configuração `media.*`, leitores `turn`, `model` e `off`, troca
-  de modelo no turno, admissão no ledger por tipo, `check-config`.
-- **A-06:** Groq Whisper e o leitor `transcribe`.
-- **A-07:** WhatsApp: áudio, vídeo, documento e figurinha pelo GOWA;
-  localização e contato como nota.
-- **A-08:** documentação: config, custos por tipo, o que fica na memória.
+- **A-01:** nada some. O WhatsApp reconhece áudio, vídeo, documento,
+  figurinha, localização e contato. Todo tipo vira tag ou nota, e a
+  agente responde ("[a pessoa mandou um áudio, que ainda não consigo
+  ouvir]").
+- **A-02:** capacidade de mídia para todos os tipos: gravação enquanto
+  chega, tipo, duração, páginas, nome do arquivo.
+- **A-03:** cliente Gemini (portado da Amélie) contra um servidor falso:
+  `inline_data`, Files API (upload, espera, remoção), extração da
+  resposta, erros.
+- **A-04:** configuração `media.*`, leitores `read` e `off`, prompts da
+  Amélie, o texto no lugar da tag, admissão e cobrança no ledger, nota de
+  falha, `check-config`.
+- **A-05:** transcrição de volta: áudio encaminhado e `/transcricao`.
+- **A-06:** voz: TTS, saneamento, `/voz`, envio como mensagem de voz pelo
+  GOWA.
+- **A-07:** documentação: configuração, custos, o que fica na memória,
+  os comandos.
 
 ## 8. Critérios de aceite
 
 | Critério | Meta |
 |---|---|
 | Mídia que some | nenhuma: todo tipo vira tag ou nota |
-| Áudio do WhatsApp (OGG/Opus) | chega ao modelo configurado, e a agente responde sobre o conteúdo (servidor falso nos testes; manual no piloto) |
+| Áudio do WhatsApp (OGG/Opus) | vira transcrição literal no texto do turno e na memória (servidor falso nos testes; manual no piloto) |
+| Áudio encaminhado | volta como transcrição |
+| `/voz` | a resposta chega como mensagem de voz |
 | Arquivo acima de 20 MB | vai pela Files API e é apagado depois |
 | Custo | admitido no ledger antes da chamada, no orçamento da pessoa |
-| Piloto (manual) | a Belle manda um áudio e a agente dela responde ao que ela disse |
+| Piloto (manual) | a Belle, com `/voz`, fala com a agente dela e ouve a resposta |
 
 ## 9. Riscos
 
