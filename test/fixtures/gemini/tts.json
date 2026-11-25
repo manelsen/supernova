@@ -1,5 +1,5 @@
 {
-  "note": "TTS da frase fixa",
+  "note": "TTS da frase fixa; o áudio real foi trocado por um WAV válido de 10 ms de silêncio (24 kHz, 16 bits, mono, o formato que a API devolveu)",
   "request": {
     "method": "POST",
     "path": "/v1beta/models/gemini-3.8-flash-lite-tts:generateContent",
@@ -10,6 +10,6 @@
     "headers": {
       "content-type": "application/json; charset=UTF-8"
     },
-    "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"inlineData\": {\n              \"mimeType\": \"audio/wav\",\n              \"data\": \"UklGRhS3DABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAA...(encurtado)\"\n            }\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 61,\n    \"candidatesTokenCount\": 430,\n    \"totalTokenCount\": 491,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 61\n      }\n    ],\n    \"candidatesTokensDetails\": [\n      {\n        \"modality\": \"AUDIO\",\n        \"tokenCount\": 430\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.8-flash-lite-tts\",\n  \"responseId\": \"fixture\"\n}"
+    "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"inlineData\": {\n              \"mimeType\": \"audio/wav\",\n              \"data\": \"UklGRgQCAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YeABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n            }\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 61,\n    \"candidatesTokenCount\": 430,\n    \"totalTokenCount\": 491,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 61\n      }\n    ],\n    \"candidatesTokensDetails\": [\n      {\n        \"modality\": \"AUDIO\",\n        \"tokenCount\": 430\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.8-flash-lite-tts\",\n  \"responseId\": \"fixture\"\n}"
   }
 }

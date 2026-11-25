@@ -32,5 +32,6 @@ pub fn channel() -> ChannelTraits {
       }
     },
     receives_by_webhook: True,
+    sends_voice: True,
   )
 }

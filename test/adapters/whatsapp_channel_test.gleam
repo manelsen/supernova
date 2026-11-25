@@ -13,8 +13,10 @@ import supernova/adapters/whatsapp_adapter
 import supernova/channel/channel_kit
 import supernova/channel/inbound_media
 import supernova/channel/port
+import supernova/channel/voice
 import supernova/channel/webhook_server
 import supernova/core/identity/aliases
+import supernova/core/preferences
 import test_workspace
 
 const webhook_port = 18_805
@@ -212,4 +214,88 @@ pub fn a_pairing_code_is_asked_of_gowa_test() {
     whatsapp_adapter.Settings(..settings, device_id: None),
   )
   |> should.be_error
+}
+
+/// PRD-A, A-06: with /voz, the answer leaves as a voice note (the WAV in
+/// the body, ptt for GOWA to turn it into OGG/Opus).
+pub fn with_voice_the_answer_is_a_voice_note_test() {
+  let dir = test_workspace.create_temp_dir("wa-voice")
+  let sent = process.new_subject()
+  let bridge = gowa_fake.start(sent)
+  voice.configure(
+    voice.Settings(
+      data_dir: dir,
+      speak: fn(_) { Ok(#(<<"RIFF":utf8, 4, 0, 0, 0, "WAVEvoz":utf8>>, 1, 1)) },
+      admit: fn(_, _, _) { Ok(fn(_, _) { Nil }) },
+    ),
+  )
+  let assert Ok(Nil) =
+    preferences.save(
+      dir,
+      "whatsapp:628123456789",
+      preferences.Preferences(..preferences.none, voice: True),
+    )
+  let handler = fn(inbound, _events) {
+    case inbound {
+      port.InboundMessage(msg) ->
+        Ok(port.ImmediateReply(port.reply(to: msg, content: "olá em voz")))
+      _ -> Error(port.Ignored("no"))
+    }
+  }
+  let assert Ok(adapter) =
+    whatsapp_adapter.start(
+      whatsapp_adapter.Settings(
+        bridge_url: bridge,
+        device_id: Some(agent),
+        basic_auth: "supernova:senha",
+        webhook_secret: secret,
+        data_dir: dir,
+        allow_groups: False,
+      ),
+      handler,
+      channel_kit.no_start_hooks(),
+      fn(_) { Nil },
+    )
+  let assert Ok(server) = webhook_server.start("127.0.0.1", webhook_port + 1)
+  let body =
+    message(
+      "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\",\"body\":\"fala comigo\"",
+    )
+  post(
+    webhook_port + 1,
+    "/webhook/whatsapp",
+    signed(body),
+    bit_array_from(body),
+  ).0
+  |> should.equal(200)
+  let assert Ok(out) = process.receive(sent, 5000)
+  out.path |> should.equal("/send/audio")
+  string.contains(out.body, "name=\"ptt\"") |> should.be_true()
+  string.contains(out.body, "WAVEvoz") |> should.be_true()
+
+  // A local file outside the voice notes is never sent.
+  adapter.send(
+    port.ChannelReply(
+      ..port.reply(
+        to: port.ChannelMessage(
+          id: "x",
+          channel: "whatsapp",
+          channel_id: "628123456789@s.whatsapp.net",
+          user_id: "628123456789",
+          username: "",
+          content: "",
+          is_bot: False,
+          reply_to_id: None,
+        ),
+        content: "",
+      ),
+      media: [port.AudioMedia("file:///etc/passwd", None)],
+    ),
+  )
+  |> should.be_error
+
+  webhook_server.stop(server)
+  adapter.stop()
+  voice.clear()
+  test_workspace.remove_dir_recursive(dir)
 }

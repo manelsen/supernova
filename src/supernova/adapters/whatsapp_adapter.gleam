@@ -29,6 +29,7 @@ import supernova/channel/pairing
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
 import supernova/channel/traits/whatsapp as whatsapp_traits
+import supernova/channel/voice
 import supernova/channel/webhook_server
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/runtime as closed_group_runtime
@@ -941,6 +942,21 @@ fn build_media_send_plan(
         download: None,
       ))
 
+    // A voice note the agent spoke (PRD-A, A-06): the file goes in the
+    // body, and GOWA turns it into OGG/Opus (`ptt`).
+    port.AudioMedia("file://" <> _ as url, mime) ->
+      Ok(BridgeRequestPlan(
+        path: "/send/audio",
+        content_type: BridgeMultipart,
+        fields: [#("phone", phone), #("ptt", "true")],
+        download: Some(BridgeDownload(
+          field_name: "audio",
+          source_url: url,
+          filename: "voz.wav",
+          mime_type: mime,
+        )),
+      ))
+
     port.AudioMedia(url, _) ->
       Ok(BridgeRequestPlan(
         path: "/send/audio",
@@ -1006,7 +1022,36 @@ fn do_send(
   settings: Settings,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
-  case build_send_plan(reply) {
+  case local_files_allowed(settings, reply), build_send_plan(reply) {
+    False, _ ->
+      Error(port.SendFailed("local file outside the voice notes directory"))
+    True, plan -> send_plan(settings, plan)
+  }
+}
+
+/// A reply may carry a local file only from the voice notes directory: no
+/// answer, not even one the model was led into, sends any other file.
+fn local_files_allowed(settings: Settings, reply: port.ChannelReply) -> Bool {
+  let allowed = voice.dir(settings.data_dir) <> "/"
+  list.all(reply.media, fn(media) {
+    let url = case media {
+      port.ImageMedia(url, _) -> url
+      port.AudioMedia(url, _) -> url
+      port.DocumentMedia(url, _, _) -> url
+    }
+    case url {
+      "file://" <> path ->
+        string.starts_with(path, allowed) && !string.contains(path, "..")
+      _ -> True
+    }
+  })
+}
+
+fn send_plan(
+  settings: Settings,
+  plan: Result(BridgeRequestPlan, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  case plan {
     Error(error) -> Error(error)
     Ok(plan) -> {
       let url = join_bridge_url(settings.bridge_url, plan.path)
@@ -1160,6 +1205,19 @@ fn multipart_download_part(
 fn download_remote_file(
   source_url: String,
 ) -> Result(BitArray, port.ChannelError) {
+  case source_url {
+    // Checked by do_send: only the voice notes directory.
+    "file://" <> path ->
+      read_local(path)
+      |> result.replace_error(port.SendFailed("voice note not readable"))
+    _ -> download_http(source_url)
+  }
+}
+
+@external(erlang, "file", "read_file")
+fn read_local(path: String) -> Result(BitArray, decode.Dynamic)
+
+fn download_http(source_url: String) -> Result(BitArray, port.ChannelError) {
   case request.to(source_url) {
     Error(_) -> Error(port.SendFailed("invalid media URL"))
     Ok(req) ->

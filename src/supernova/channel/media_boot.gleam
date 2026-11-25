@@ -6,6 +6,7 @@ import gleam/int
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import supernova/channel/media_reading
+import supernova/channel/voice
 import supernova/config
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/resource_ledger/actor as ledger_actor
@@ -123,19 +124,113 @@ pub fn admit(
   }
 }
 
-/// Publish the reader, or turn reading off. True when on.
+/// Publish the reader and the voice, or turn both off. True when on.
 pub fn publish(cfg: config.Config) -> Bool {
   case settings(cfg, gemini_media.google) {
     Some(settings) -> {
       media_reading.configure(settings)
+      let assert Some(speaking) =
+        voice_settings(cfg, gemini_media.google, now_ms)
+      voice.configure(speaking)
       True
     }
     None -> {
       media_reading.clear()
+      voice.clear()
       False
     }
   }
 }
+
+/// gemini-3.8-flash-lite-tts, paid tier, as listed on 24/11/2026: US$ 0.50
+/// per million input tokens and US$ 6.00 per million audio tokens through
+/// 31/12/2026; US$ 1.00 and US$ 12.00 from 1/1/2027.
+pub fn speech_usd_per_million(now_ms: Int) -> #(Float, Float) {
+  case now_ms < 1_798_761_600_000 {
+    True -> #(0.5, 6.0)
+    False -> #(1.0, 12.0)
+  }
+}
+
+/// The voice of `/voz` (PRD-A, A-06): the same key, the TTS model and voice
+/// of `media`, admitted and charged like the readings.
+pub fn voice_settings(
+  cfg: config.Config,
+  base: String,
+  now: fn() -> Int,
+) -> Option(voice.Settings) {
+  case cfg.media.api_key {
+    None -> None
+    Some(key) -> {
+      let client = gemini_media.Client(api_key: key, base: base)
+      let model = cfg.media.speech_model
+      let price = fn() { speech_usd_per_million(now()) }
+      let cost = fn(input: Int, output: Int) {
+        let #(in_rate, out_rate) = price()
+        int.to_float(input)
+        *. in_rate
+        /. 1_000_000.0
+        +. int.to_float(output)
+        *. out_rate
+        /. 1_000_000.0
+      }
+      Some(
+        voice.Settings(
+          data_dir: cfg.data_dir,
+          speak: fn(text) {
+            gemini_media.speak(client, model, cfg.media.voice, text)
+            |> result.map(fn(spoken) {
+              let #(wav, usage) = spoken
+              #(wav, usage.input_tokens, usage.output_tokens)
+            })
+          },
+          admit: fn(principal, input, output) {
+            case closed_group_global.get_ledger() {
+              None -> Error(Nil)
+              Some(ledger) -> {
+                let call_id = "voice:" <> int.to_string(unique_integer())
+                case
+                  ledger_actor.admit_llm_call(
+                    ledger,
+                    call_id,
+                    cfg.instance_budget.daily_usd,
+                    cost(input, output),
+                  )
+                {
+                  Error(_) -> Error(Nil)
+                  Ok(Nil) ->
+                    Ok(fn(input, output) {
+                      case input + output > 0 {
+                        False ->
+                          ledger_actor.release_reservation(ledger, call_id)
+                        True -> {
+                          let _ =
+                            ledger_actor.try_record_llm_usage_with_call_id(
+                              ledger,
+                              principal,
+                              "gemini",
+                              model,
+                              input,
+                              output,
+                              cost(input, output),
+                              call_id,
+                            )
+                          Nil
+                        }
+                      }
+                    })
+                }
+              }
+            }
+          },
+        ),
+      )
+    }
+  }
+}
+
+@external(erlang, "supernova_ledger_ffi", "current_timestamp")
+fn now_ms() -> Int
 
 /// Split an animated sticker into up to `max` composed frames (PNG), with
 /// `priv/media/sticker_frames.py` (Pillow). The frames' directory is

@@ -415,6 +415,15 @@ pub fn detail_is_a_preference_test() {
 
     say(router, message("/cego", "dora"))
     |> should.equal("Modo de audiodescrição detalhada desligado.")
+    // /voz (A-06) turns voice answers on and off.
+    say(router, message("/voz", "dora"))
+    |> string.starts_with(
+      "Pronto: a partir de agora respondo com mensagens de voz",
+    )
+    |> should.be_true()
+    preferences.load(root, "sim:dora").voice |> should.be_true()
+    say(router, message("/voz", "dora"))
+    |> should.equal("Pronto: volto a responder por escrito.")
     say(router, message("/longo", "dora"))
     |> should.equal("Pronto: descrições completas e detalhadas.")
   })

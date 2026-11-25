@@ -113,6 +113,79 @@ pub fn read_frames(
   generate_parts(client, model, instruction, parts)
 }
 
+/// Speak `text` with a prebuilt voice (PRD-A, A-06): WAV, 24 kHz, mono,
+/// 16 bits, as the API answers a whole (not streamed) request.
+pub fn speak(
+  client: Client,
+  model: String,
+  voice: String,
+  text: String,
+) -> Result(#(BitArray, Usage), String) {
+  let body =
+    json.object([
+      #(
+        "contents",
+        json.preprocessed_array([
+          json.object([#("parts", json.preprocessed_array([text_part(text)]))]),
+        ]),
+      ),
+      #(
+        "generationConfig",
+        json.object([
+          #(
+            "responseModalities",
+            json.preprocessed_array([json.string("AUDIO")]),
+          ),
+          #(
+            "speechConfig",
+            json.object([
+              #(
+                "voiceConfig",
+                json.object([
+                  #(
+                    "prebuiltVoiceConfig",
+                    json.object([#("voiceName", json.string(voice))]),
+                  ),
+                ]),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    ])
+    |> json.to_string
+  let url = client.base <> "/v1beta/models/" <> model <> ":generateContent"
+  use answer <- result.try(call(client, Post, url, bit_array.from_string(body)))
+  let part = {
+    use data <- decode.optional_field("inlineData", "", {
+      use data <- decode.field("data", decode.string)
+      decode.success(data)
+    })
+    decode.success(data)
+  }
+  let decoder = {
+    use audio <- decode.optional_field(
+      "candidates",
+      [],
+      decode.list(decode.at(["content", "parts"], decode.list(part))),
+    )
+    use usage <- decode.optional_field("usageMetadata", Usage(0, 0), {
+      use input <- decode.optional_field("promptTokenCount", 0, decode.int)
+      use output <- decode.optional_field("candidatesTokenCount", 0, decode.int)
+      decode.success(Usage(input, output))
+    })
+    decode.success(#(audio, usage))
+  }
+  case json.parse(answer, decoder) {
+    Ok(#([[data, ..], ..], usage)) ->
+      case bit_array.base64_decode(data) {
+        Ok(wav) if wav != <<>> -> Ok(#(wav, usage))
+        _ -> Error("Gemini answered without audio")
+      }
+    _ -> Error("Gemini answered without audio")
+  }
+}
+
 fn base_mime(mime: String) -> String {
   case string.split_once(mime, ";") {
     Ok(#(base, _)) -> string.trim(base)

@@ -314,5 +314,28 @@ pub fn the_boot_wires_frames_to_gemini_test() {
   test_workspace.remove_dir_recursive(dir)
 }
 
+/// PRD-A, A-06: the voice is wired at boot to Gemini's TTS, priced by date
+/// (the price doubles on 1/1/2027).
+pub fn the_boot_wires_the_voice_test() {
+  let base = config.default_config()
+  media_boot.voice_settings(base, "http://x", fn() { 0 }) |> should.equal(None)
+  let keyed =
+    config.Config(
+      ..base,
+      media: config.MediaConfig(..base.media, api_key: Some("chave")),
+    )
+  let gemini = gemini_fake.start(process.new_subject())
+  let assert Some(speaking) =
+    media_boot.voice_settings(keyed, gemini, fn() { 0 })
+  let assert Ok(#(wav, 61, 430)) = speaking.speak("Olá!")
+  let assert <<"RIFF":utf8, _:bits>> = wav
+  // Without a ledger, no paid speech.
+  speaking.admit("x", 1, 1) |> should.equal(Error(Nil))
+  media_boot.speech_usd_per_million(1_798_761_599_999)
+  |> should.equal(#(0.5, 6.0))
+  media_boot.speech_usd_per_million(1_798_761_600_000)
+  |> should.equal(#(1.0, 12.0))
+}
+
 @external(erlang, "supernova_inbound_media_ffi", "write")
 fn write(path: String, bytes: BitArray) -> Result(Nil, String)

@@ -39,5 +39,6 @@ pub fn channel() -> ChannelTraits {
     turn_timeout_ms: 30_000,
     private_chat_for: fn(user_id) { user_id },
     receives_by_webhook: False,
+    sends_voice: False,
   )
 }

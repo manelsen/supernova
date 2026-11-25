@@ -2189,6 +2189,23 @@ fn maybe_handle_preferences(
         ),
         "Pronto: descrições completas e detalhadas.",
       )
+    "/voz", Some(cfg) -> {
+      let current = preferences.load(cfg.data_dir, profile.agent_id)
+      case current.voice {
+        True ->
+          save(
+            cfg,
+            preferences.Preferences(..current, voice: False),
+            "Pronto: volto a responder por escrito.",
+          )
+        False ->
+          save(
+            cfg,
+            preferences.Preferences(..current, voice: True),
+            "Pronto: a partir de agora respondo com mensagens de voz, no WhatsApp. Mande /voz de novo para voltar ao texto.",
+          )
+      }
+    }
     "/cego", Some(cfg) -> {
       let current = preferences.load(cfg.data_dir, profile.agent_id)
       case current.detail {

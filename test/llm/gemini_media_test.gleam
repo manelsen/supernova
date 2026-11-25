@@ -168,3 +168,24 @@ pub fn frames_are_read_in_one_call_test() {
   string.split(sent, "\"image/png\"") |> list.length |> should.equal(3)
   test_workspace.remove_dir_recursive(dir)
 }
+
+/// PRD-A, A-06: speech comes back as WAV, with the tokens it cost
+/// (recorded; the audio itself replaced by 10 ms of silence).
+pub fn speech_comes_back_as_wav_test() {
+  let requests = process.new_subject()
+  let base = gemini_fake.start(requests)
+  let assert Ok(#(wav, usage)) =
+    gemini_media.speak(
+      gemini_media.Client(api_key: "chave", base: base),
+      "gemini-3.8-flash-lite-tts",
+      "Kore",
+      "Olá!",
+    )
+  let assert <<"RIFF":utf8, _:bytes-size(4), "WAVE":utf8, _:bits>> = wav
+  usage |> should.equal(gemini_media.Usage(61, 430))
+  let assert [call] = drain(requests, [])
+  let sent = gemini_fake.text(call.body)
+  string.contains(sent, "\"voiceName\":\"Kore\"") |> should.be_true()
+  string.contains(sent, "\"responseModalities\":[\"AUDIO\"]")
+  |> should.be_true()
+}
