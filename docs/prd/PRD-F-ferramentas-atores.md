@@ -100,7 +100,10 @@ sem warnings, testes, cobertura que não cai e `git status` limpo. Mais:
 Cada uma tem uma recomendação. Se a decisão não vier, o executor segue a
 recomendação.
 
-- **D1. Prazo padrão de uma ferramenta.** Recomendação: **120 s**. A
+- **D1. Prazo padrão de uma ferramenta.** **Substituída pela PRD-E (D3,
+  24/11), que já está no código:** 60 s por padrão, 300 s para o
+  `computador`, configuráveis em `tools.timeouts` (`core/tool_limits`). A
+  F-02 usa esses prazos. Recomendação original: **120 s**. A
   ferramenta que declara prazo próprio recebe o dela mais 15 s de folga. O
   `computador`, por exemplo, fica em até 315 s.
 - **D2. Limites.** Recomendação:
