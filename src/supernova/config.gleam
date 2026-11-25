@@ -138,7 +138,8 @@ pub fn default_media_config() -> MediaConfig {
   MediaConfig(
     reader_model: "gemini-3.5-flash-lite",
     speech_model: "gemini-3.8-flash-lite-tts",
-    voice: "Kore",
+    // Chosen by ear among eight voices reading Portuguese (25/11/2026).
+    voice: "Sulafat",
     audio: True,
     video: True,
     document: True,

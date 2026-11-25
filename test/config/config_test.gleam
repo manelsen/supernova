@@ -1166,6 +1166,7 @@ pub fn media_is_read_with_modes_test() {
   let assert Ok(plain) = load("app_name: supernova\n")
   plain.media.audio |> should_equal(True)
   plain.media.reader_model |> should_equal("gemini-3.5-flash-lite")
+  plain.media.voice |> should_equal("Sulafat")
   let assert Ok(cfg) =
     load(
       "app_name: supernova\nmedia:\n  reader_model: gemini-3.1-flash-lite\n  audio: read\n  video: off\n  document: qualquer\n",
