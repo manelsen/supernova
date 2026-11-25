@@ -113,6 +113,10 @@ A channel without its own traits module gets `traits.generic`.
 
 `channel/registry.gleam` only starts, stops and routes: a table of starters is the one place that lists the adapters. The runtime of each channel lives with it: `adapters/telegram_channel.gleam` (polling worker, update conversion, leaving unauthorized groups, sending, streaming), `adapters/discord_channel.gleam` (events and interactions, components; receiving is not implemented yet, because the gateway connection in `adapters/discord_gateway.gleam` is a stub), `adapters/slack_channel.gleam` and `adapters/matrix_channel.gleam`. What they share (start hooks, turn dispatch, generic streaming) is in `channel/channel_kit.gleam`, which knows no channel by name.
 
+The core never chooses by channel name: it asks the channel's traits (`channel/traits`, `channel/catalog`), and an architecture test fails if `supernova.gleam` or the common router compares a name. One router serves every channel (`adapters/channel_router.gleam`); the per-channel router modules are thin wrappers. Channels that receive by webhook (WhatsApp, through GOWA) register a route on one shared server, `channel/webhook_server.gleam` (`POST /webhook/<channel>`, verified by the channel, 401 without a valid signature). A message is in the durable inbox before the webhook answers 200. Media a person sends goes through `channel/inbound_media.gleam`: a temporary file, an `[imagem:<id>]` tag in the text, and one read when the turn's messages are built.
+
+**One person, every channel.** A person's first identity (`telegram:123`) is canonical. Identities linked later with `/vincular` (`whatsapp:5511…`, a WhatsApp LID) are aliases of it, in `core/identity/aliases.gleam` (`data_dir/identity/aliases.json`). Aliases are resolved where a principal is derived: in the closed-group gate, before the access check, and in `agent_identity`. So the agent folder, conversations, memory, access, budget and `/esquecer` all follow the person.
+
 ## Safety and Control Planes
 
 ### Budget Control

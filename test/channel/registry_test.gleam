@@ -1209,6 +1209,7 @@ pub fn e2e_discord_help_command_routes_from_adapter_to_reply_test() {
       <> "/help - Show this help\n"
       <> "/start - Start a new session\n"
       <> "/status - Show session status\n"
+      <> "/vincular - Bring another app to the same agent\n"
       <> "/model - Change LLM model\n"
       <> "/project - Start project wizard\n",
     message_id: Some("discord-send-1"),
@@ -1787,6 +1788,7 @@ pub fn e2e_slack_help_command_routes_from_inbound_to_reply_test() {
       <> "/help - Show this help\n"
       <> "/start - Start a new session\n"
       <> "/status - Show session status\n"
+      <> "/vincular - Bring another app to the same agent\n"
       <> "/model - Change LLM model\n",
     message_id: Some("slack-send-1"),
   ))
@@ -1945,6 +1947,7 @@ pub fn e2e_matrix_help_command_routes_from_inbound_to_reply_test() {
       <> "/help - Show this help\n"
       <> "/start - Start a new session\n"
       <> "/status - Show session status\n"
+      <> "/vincular - Bring another app to the same agent\n"
       <> "/model - Change LLM model\n",
     message_id: Some("matrix-send-1"),
   ))

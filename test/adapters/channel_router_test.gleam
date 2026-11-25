@@ -740,6 +740,7 @@ pub fn telegram_router_help_uses_channel_specific_text_test() {
         <> "/start - Start a new session\n"
         <> "/help - Show this help\n"
         <> "/status - Show session status\n"
+        <> "/vincular - Bring another app to the same agent\n"
         <> "/commands - List all commands\n"
         <> "/reasoning - Toggle reasoning mode\n"
         <> "/model - Change LLM model\n",
@@ -1300,6 +1301,7 @@ pub fn discord_router_help_uses_channel_specific_text_test() {
         <> "/help - Show this help\n"
         <> "/start - Start a new session\n"
         <> "/status - Show session status\n"
+        <> "/vincular - Bring another app to the same agent\n"
         <> "/model - Change LLM model\n"
         <> "/project - Start project wizard\n",
       )

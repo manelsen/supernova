@@ -52,6 +52,7 @@ pub const basic_help_commands =
   <> "/help - Show this help\n"
   <> "/start - Start a new session\n"
   <> "/status - Show session status\n"
+  <> "/vincular - Bring another app to the same agent\n"
 
 pub const default_help_commands =
   basic_help_commands <> "/model - Change LLM model\n"

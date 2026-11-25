@@ -122,8 +122,19 @@ wechat_work:
   enabled: false
 
 whatsapp:
-  # Required: SUPERNOVA_WHATSAPP_WEBHOOK_VERIFY_TOKEN, SUPERNOVA_WHATSAPP_WEBHOOK_URL
+  # Through GOWA (docs/operations/WHATSAPP.md). Required in .env:
+  # SUPERNOVA_WHATSAPP_BASIC_AUTH and SUPERNOVA_WHATSAPP_WEBHOOK_SECRET.
+  # The compose file sets bridge_url to http://gowa:3000.
   enabled: false
+
+# Channels that receive by webhook (WhatsApp) and plain-http hosts.
+channels:
+  # GOWA talks plain http inside the compose network.
+  internal_hosts: [gowa]
+  webhook:
+    # Inside the container; the port is not published (compose only).
+    bind: 0.0.0.0
+    port: 8790
 
 # Budgets (per-agent limits, -1 = unlimited)
 budgets:

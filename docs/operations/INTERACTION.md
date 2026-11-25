@@ -4,7 +4,7 @@ This page describes what a person sees when they talk to their agent. Setup and 
 
 ## Channels
 
-Telegram is the supported channel: access, budget, capabilities, rate limits and the commands below all work there. Discord has the same pipeline but does not receive messages yet (its gateway connection is a stub). Slack, Matrix, Lark, Google Chat, Mattermost, WeChat Work and WhatsApp have native adapters that only send, and they do not go through the closed group yet. Supernova warns about them at boot. The order in which they will be brought up to the same level is in [`docs/PENDENCIAS.md`](../PENDENCIAS.md), section 3.2.
+Telegram and WhatsApp ([WHATSAPP.md](WHATSAPP.md)) are the supported channels: access, budget, capabilities, rate limits and the commands below all work there. Discord has the same pipeline but does not receive messages yet (its gateway connection is a stub). Slack, Matrix, Lark, Google Chat, Mattermost and WeChat Work have native adapters that only send, and they do not go through the closed group yet. Supernova warns about them at boot. The order in which they will be brought up to the same level is in [`docs/PENDENCIAS.md`](../PENDENCIAS.md), section 3.2.
 
 ## One agent per person
 
@@ -23,6 +23,8 @@ The conversation survives a restart: each person's conversation in each chat is 
 |---|---|---|
 | `/eu` | Everyone, even unauthorized people | Shows your principal id, so an admin can authorize you. |
 | `/esquecer` | Members and admins | Explains what forgetting erases. `/esquecer confirmo` erases everything the person told the agent: conversations, memories, what it learned from them, the files it kept for them, and the agenda. The agent's name and character stay. |
+| `/vincular` | Members and admins, in private | Gives a code (six characters, valid for 10 minutes, used once) to bring another channel to the same agent. On the other channel, in private, send `/vincular CÓDIGO`. From then on it is the same agent, memory and agenda on both. You are told on the first channel when a channel is linked. |
+| `/desvincular` | Members and admins | On a linked channel, unlinks it. On your first channel, lists the linked ones; `/desvincular <id>` unlinks one. `/esquecer` keeps the links. |
 | `/agenda` | Members and admins | Lists what you asked your agent to do later. `/agenda remover <id>` removes one entry. |
 | `/uso` | Members and admins | Your own spending. |
 | `/model` | Members and admins | Chooses the provider and model with buttons (inline keyboard on Telegram, components on Discord). |
