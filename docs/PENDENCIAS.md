@@ -30,7 +30,7 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 
 | # | Item | Situação | Próximo passo |
 |---|---|---|---|
-| 1 | **Discord com paridade do Telegram** ([3.2](#32-canais)) | O Discord só envia: o gateway é um esboço e não abre a conexão (`discord_gateway.gleam`, `connect_to_gateway`). O pipeline do grupo fechado já espera por ele. | Escrever a PRD: gateway WebSocket real, anexos, prontidão no `/health/ready` ([3.4](#34-observabilidade-e-desempenho)), cobertura ([3.5](#35-qualidade)). |
+| 1 | **[PRD-D](prd/PRD-D-discord.md): Discord com paridade do Telegram** ([3.2](#32-canais)) | Proposta. O Discord só envia: o gateway é um esboço e não abre a conexão. As interações nunca são confirmadas, os comandos `/` nunca são registrados e os anexos se perdem. | Decisões D1–D6 do mantenedor. |
 | 2 | **[PRD-F](prd/PRD-F-ferramentas-atores.md), fase A**: cada ferramenta com prazo, cancelamento e limites | Proposta. Hoje uma ferramenta travada prende o turno por 5 min e deixa processos vivos. | Decisões D1–D7 do mantenedor. |
 | 3 | **[PRD-S](prd/PRD-S-sondas.md)**: sondas | Desenho com as decisões S1 a S11, sem histórias. As PRDs E e C, de que a segunda versão dependia, estão feitas. | Escrever a segunda versão, com as histórias e os servidores MCP conferidos (nome, licença, versão). Executar depois da fase A da F, que dá prazo e cancelamento às tarefas longas das sondas. |
 | 4 | **Aprovação por botões, computador fase 2 e [PRD-F](prd/PRD-F-ferramentas-atores.md) fase B** ([3.3](#33-interação-e-computador)) | Decididos em 22/11, sem PRD. A fase B da F depende da P-03, já feita. | Escrever uma PRD que junte os três: a aprovação é o portão das tarefas em segundo plano e do computador. |
@@ -223,7 +223,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 - **Nunca testados com mensagem real:** Slack e Matrix. Origem: `audit/production.md`.
 - **QQ nunca foi feito.** Origem: `IMPLEMENTATION_READY.md` 4.6.
 - **Matrix:** o limite de tamanho não é verificado nas edições. Origem: relatório B1.1.
-- **Discord:** um `retry_after` abaixo de um segundo é truncado para segundos. Origem: relatório B1.1.
+- **Discord:** um `retry_after` inteiro é lido como milissegundos (o Discord manda segundos). Origem: relatório B1.1; corrigido na [PRD-D](prd/PRD-D-discord.md), D-06.
 - **Slack, streaming nativo:** se o modelo cai no fallback sem streaming depois de já ter mandado texto, a conclusão pode não começar pelo texto já enviado. O `finish_progress` manda a resposta inteira, e a mensagem pode mostrar as duas versões. O caminho normal não é afetado. Corrigir pede uma decisão de desenho: reabrir a mensagem ou substituí-la. Origem: revisão da #40.
 - **`StartHooks` por canal.** Os hooks de teste ainda têm campos de Telegram, Discord, Slack e Matrix, e `config.channel_support` marca Telegram e Discord como suportados pelo nome. Origem: #40.
 
