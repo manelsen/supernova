@@ -172,9 +172,9 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 ### 3.2 Canais
 
 - ~~**O menu de comandos do Telegram e o `/help` não batem com o que a Supernova faz.**~~ Feito em 23/11 (#51): `core/closed_group/commands` é a lista única; o `/help` responde por papel, e o boot publica o menu (`setMyCommands`) nos escopos default, privados e grupos, sem idioma, em pt e em en, e o de admin no chat de cada admin do `supernova.yaml`. Um admin adicionado depois por `/acesso` vê o menu de membro até o próximo boot.
-- **A pessoa não consegue mandar imagens, áudio nem documentos.** O Telegram ignora `photo` na entrada, e no Discord os `attachments` chegam sempre vazios. O caminho de imagem até o modelo já existe, desde a PR #34.
+- **No Discord os `attachments` chegam sempre vazios.** No Telegram a entrada já abre foto, voz, áudio, vídeo e documento desde a A-11 (#72), e a imagem chega ao modelo desde a C-05 e a C-05b (#71); no WhatsApp a imagem também entra desde a C-05. O caminho de imagem até o modelo existe desde a PR #34.
 - **O grupo fechado só existe em Telegram e Discord.**
-  - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais".
+  - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais". O WhatsApp passou a receber (webhook próprio, `C-02` e `C-03`, e pareamento pela API do GOWA, `C-04`, na #71) e continua nesse caminho genérico.
   - Origem: `TODO.md` P1.
 - **Slack e Matrix sem paridade com Telegram e Discord.** Faltam sessão, comandos, interações e testes de ponta a ponta. Origem: `TODO.md`, pós-PRD.
 - **Nunca testados com mensagem real:** Slack e Matrix. Origem: `audit/production.md`.
