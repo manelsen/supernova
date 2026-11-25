@@ -100,6 +100,8 @@ pub fn forget(
           )),
         ),
       )
+      // How the person asked to be answered (/transcricao, /voz) goes too.
+      use _ <- result.try(delete_file(preferences.path(data_dir, principal)))
       let state = self_state.from_dir(self_dir)
       self_state.save_in(
         self_dir,

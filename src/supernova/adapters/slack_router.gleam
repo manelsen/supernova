@@ -3,6 +3,7 @@
 
 import gleam/erlang/process.{type Subject}
 import gleam/otp/actor
+import supernova/adapters/channel_common_router
 import supernova/adapters/channel_router
 import supernova/channel/port
 import supernova/core/session/supervisor
@@ -65,7 +66,7 @@ pub fn direct_handler(
       inbound,
       llm_config,
       state,
-      resolve_session,
+      channel_router.session_resolver("slack"),
       session_supervisor,
       stream_events,
     ).1

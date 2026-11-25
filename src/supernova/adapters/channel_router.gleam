@@ -122,13 +122,19 @@ pub fn route_inbound_for_handler(
   )
 }
 
+/// The session id of a chat and a person on one channel. One shape for
+/// every channel (PRD-C, C-01): the channel name, the chat and the person.
+pub fn session_resolver(
+  channel: String,
+) -> channel_common_router.ResolveSessionFromParticipant {
+  fn(chat_id, user_id) { channel <> ":" <> chat_id <> ":" <> user_id }
+}
+
 fn handle_message(
   state: State,
   message: Message,
 ) -> actor.Next(State, Message) {
-  let resolve = fn(chat_id: String, user_id: String) {
-    state.channel <> ":" <> chat_id <> ":" <> user_id
-  }
+  let resolve = session_resolver(state.channel)
   case message {
     HandleInbound(reply_to, inbound) -> {
       let #(next, result) = case state.session_supervisor {
