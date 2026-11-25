@@ -383,47 +383,52 @@ fn run_inbound_turn(
 
   let voice_for = wants_voice(inbound)
 
-  let outcome = case handler(inbound, stream_events), voice_for {
+  let #(handled, shell) =
+    call_in_shell(handler, inbound, stream_events, turn_hard_timeout_ms)
+  let #(outcome, gave_up) = case handled, voice_for {
     // The person asked for voice (PRD-A, A-06): the answer, whole, goes
     // as a voice note; text if speaking fails.
     Ok(port.ImmediateReply(reply)), Some(#(settings, principal)) ->
       case voice_or_text(settings, principal, reply, send_fn) {
-        Ok(_) -> "replied"
-        Error(error) -> send_failed(channel, error)
+        Ok(_) -> #("replied", False)
+        Error(error) -> #(send_failed(channel, error), False)
       }
     Ok(port.StreamReply(base_reply)), Some(#(settings, principal)) ->
       case await_whole(stream_events, base_reply, stream_timeout_ms) {
         Ok(reply) ->
           case voice_or_text(settings, principal, reply, send_fn) {
-            Ok(_) -> "replied"
-            Error(error) -> send_failed(channel, error)
+            Ok(_) -> #("replied", False)
+            Error(error) -> #(send_failed(channel, error), False)
           }
-        Error(error) -> send_failed(channel, error)
+        Error(error) -> #(send_failed(channel, error), False)
       }
     Ok(port.ImmediateReply(reply)), None ->
       case send_fn(reply) {
-        Ok(_) -> "replied"
-        Error(error) -> send_failed(channel, error)
+        Ok(_) -> #("replied", False)
+        Error(error) -> #(send_failed(channel, error), False)
       }
     Ok(port.StreamReply(base_reply)), None -> {
       case stream_send_fn(base_reply, stream_events) {
-        Ok(_) -> "streamed"
+        Ok(_) -> #("streamed", False)
         Error(port.SendFailed("stream timed out")) -> {
-          await_late_terminal(
-            stream_events,
-            send_fn,
-            base_reply,
-            chat_key,
-            current_timestamp() + turn_hard_timeout_ms,
-          )
-          "stream_timeout"
+          let gave_up =
+            await_late_terminal(
+              stream_events,
+              send_fn,
+              base_reply,
+              chat_key,
+              current_timestamp() + turn_hard_timeout_ms,
+            )
+          #("stream_timeout", gave_up)
         }
-        Error(error) -> send_failed(channel, error)
+        Error(error) -> #(send_failed(channel, error), False)
       }
     }
-    Error(port.Ignored(_)), _ -> "ignored"
-    Error(_), _ -> "handler_error"
+    Error(port.Ignored(_)), _ -> #("ignored", False)
+    Error(_), _ -> #("handler_error", False)
   }
+  // A turn the lane gives up on is stopped, and its tool calls with it.
+  end_shell(shell, gave_up)
   record.duration_ms("turn_duration_seconds", current_timestamp() - started, [
     #("channel", channel),
     #("outcome", outcome),
@@ -486,19 +491,22 @@ fn send_failed(channel: String, error: port.ChannelError) -> String {
   "send_error"
 }
 
+/// Waits for the end of a turn whose stream timed out, until `deadline`.
+/// True when the lane gives up on it (PRD-F, F-04).
 fn await_late_terminal(
   events: process.Subject(port.ChannelStreamEvent),
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   base_reply: port.ChannelReply,
   chat_key: String,
   deadline: Int,
-) -> Nil {
+) -> Bool {
   let remaining = deadline - current_timestamp()
+  let give_up = fn() {
+    io.println("error: chat lane turn hard timeout key=" <> chat_key)
+    True
+  }
   case remaining <= 0 {
-    True -> {
-      io.println("error: chat lane turn hard timeout key=" <> chat_key)
-      Nil
-    }
+    True -> give_up()
     False ->
       case process.receive(events, within: remaining) {
         Ok(port.StreamComplete(reply)) -> {
@@ -517,15 +525,85 @@ fn await_late_terminal(
               Nil
             }
           }
+          False
         }
-        Ok(port.StreamFailure(_)) -> Nil
+        Ok(port.StreamFailure(_)) -> False
         Ok(port.StreamUpdate(_)) ->
           await_late_terminal(events, send_fn, base_reply, chat_key, deadline)
-        Error(_) -> {
-          io.println("error: chat lane turn hard timeout key=" <> chat_key)
-          Nil
-        }
+        Error(_) -> give_up()
       }
+  }
+}
+
+/// The handler of one turn runs in a shell process (PRD-F, F-04). The turn
+/// the handler starts is linked to it, so the lane can stop the turn, and
+/// through the guards its tool calls, by stopping the shell when it gives
+/// up. On a turn that ends, the shell is released and exits normally,
+/// which leaves the turn to finish its own work (history, journal).
+type Shell {
+  Shell(pid: process.Pid, release: process.Subject(Nil))
+}
+
+type ShellReply {
+  ShellReply(
+    result: Result(port.ChannelHandlerResult, port.ChannelError),
+    release: process.Subject(Nil),
+  )
+}
+
+fn call_in_shell(
+  handler: port.ChannelHandler,
+  inbound: port.ChannelInbound,
+  stream_events: process.Subject(port.ChannelStreamEvent),
+  limit_ms: Int,
+) -> #(Result(port.ChannelHandlerResult, port.ChannelError), Option(Shell)) {
+  let lane = process.self()
+  let reply = process.new_subject()
+  let pid =
+    process.spawn_unlinked(fn() {
+      let release = process.new_subject()
+      let lane_down = process.monitor(lane)
+      process.send(reply, ShellReply(handler(inbound, stream_events), release))
+      let ended =
+        process.new_selector()
+        |> process.select_map(release, fn(_) { True })
+        |> process.select_specific_monitor(lane_down, fn(_) { False })
+        |> process.selector_receive_forever
+      case ended {
+        // The lane finished the turn: leave it to end on its own.
+        True -> Nil
+        // The lane is gone: nobody will deliver this turn.
+        False -> process.kill(process.self())
+      }
+    })
+  let shell_down = process.monitor(pid)
+  let answer =
+    process.new_selector()
+    |> process.select_map(reply, Ok)
+    |> process.select_specific_monitor(shell_down, fn(down) { Error(down) })
+    |> process.selector_receive(limit_ms)
+  process.demonitor_process(shell_down)
+  case answer {
+    Ok(Ok(ShellReply(result, release))) -> #(
+      result,
+      Some(Shell(pid: pid, release: release)),
+    )
+    Ok(Error(down)) -> #(
+      Error(port.SendFailed("handler crashed: " <> string.inspect(down.reason))),
+      None,
+    )
+    Error(Nil) -> {
+      process.kill(pid)
+      #(Error(port.SendFailed("handler timed out")), None)
+    }
+  }
+}
+
+fn end_shell(shell: Option(Shell), gave_up: Bool) -> Nil {
+  case shell, gave_up {
+    Some(shell), True -> process.kill(shell.pid)
+    Some(shell), False -> process.send(shell.release, Nil)
+    None, _ -> Nil
   }
 }
 

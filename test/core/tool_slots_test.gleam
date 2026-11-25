@@ -1,12 +1,16 @@
 //// Slots per tool and per agent (PRD-F, F-03, D2).
 
+import exception
 import gleam/erlang/process
 import gleam/int
 import gleam/list
 import gleam/option.{Some}
+import gleam/string
 import gleeunit/should
 import supernova/core/tool_runner
 import supernova/core/tool_slots
+import supernova/metrics/actor as metrics_actor
+import supernova/metrics/global as metrics_global
 
 fn in_slot(tool: String, agent: String, wait_ms: Int, work) {
   tool_runner.start_in_slot(
@@ -154,4 +158,87 @@ fn wait_until(check: fn() -> Bool, tries: Int) -> Nil {
       wait_until(check, tries - 1)
     }
   }
+}
+
+// Telemetry (PRD-F, F-04): calls in flight, waiting, cut and cancelled.
+
+fn with_metrics(body: fn(metrics_actor.Metrics) -> a) -> a {
+  let previous = metrics_global.get_metrics()
+  let assert Ok(metrics) = metrics_actor.start()
+  use <- exception.defer(fn() {
+    case previous {
+      Some(previous) -> metrics_global.set_metrics(previous)
+      option.None -> metrics_global.clear_metrics()
+    }
+  })
+  metrics_global.set_metrics(metrics)
+  body(metrics)
+}
+
+fn await_metric(metrics, fragment: String, tries: Int) -> Bool {
+  case string.contains(metrics_actor.get_metrics(metrics), fragment), tries {
+    True, _ -> True
+    False, 0 -> False
+    False, _ -> {
+      process.sleep(10)
+      await_metric(metrics, fragment, tries - 1)
+    }
+  }
+}
+
+pub fn cut_and_cancelled_calls_are_counted_test() {
+  use metrics <- with_metrics
+  tool_runner.start_in_slot(
+    30,
+    Some(tool_runner.SlotRequest("web", "slots-g", 1000)),
+    fn() {
+      process.sleep_forever()
+      Ok("unreachable")
+    },
+  )
+  |> tool_runner.await
+  |> should.equal(tool_runner.TimedOut(30))
+  await_metric(metrics, "tool_timeouts_total{tool=\"web\"} 1", 200)
+  |> should.be_true
+
+  let turn =
+    process.spawn_unlinked(fn() {
+      in_slot("web", "slots-g", 1000, fn() {
+        process.sleep_forever()
+        Ok("unreachable")
+      })
+      |> tool_runner.await
+    })
+  wait_until(fn() { tool_slots.running_for("web", "slots-g") == 1 }, 200)
+  await_metric(metrics, "tool_running{tool=\"web\"} 1", 200) |> should.be_true
+  process.kill(turn)
+  await_metric(metrics, "tool_cancelled_total{tool=\"web\"} 1", 200)
+  |> should.be_true
+  await_metric(metrics, "tool_running{tool=\"web\"} 0", 200) |> should.be_true
+}
+
+pub fn waiting_calls_are_shown_test() {
+  use metrics <- with_metrics
+  let releases = process.new_subject()
+  let held =
+    [1, 2]
+    |> list.map(fn(_) {
+      in_slot("computador", "slots-h", 5000, fn() {
+        let release = process.new_subject()
+        process.send(releases, release)
+        let _ = process.receive(release, 5000)
+        Ok("liberado")
+      })
+    })
+  let assert Ok(first) = process.receive(releases, 1000)
+  let assert Ok(second) = process.receive(releases, 1000)
+  let waiting = in_slot("computador", "slots-h", 5000, fn() { Ok("depois") })
+  await_metric(metrics, "tool_waiting{tool=\"computador\"} 1", 200)
+  |> should.be_true
+  process.send(first, Nil)
+  tool_runner.await(waiting) |> should.equal(tool_runner.Done(Ok("depois")))
+  process.send(second, Nil)
+  list.each(held, tool_runner.await)
+  await_metric(metrics, "tool_waiting{tool=\"computador\"} 0", 200)
+  |> should.be_true
 }

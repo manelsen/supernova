@@ -1963,8 +1963,11 @@ fn start_streamed_message_reply(
   // /esquecer that comes after waits for it (and one in progress makes it
   // wait). The router waits for that, so no /esquecer slips in between.
   let counted = process.new_subject()
+  // Linked to the process that called the handler (the lane's shell, PRD-F
+  // F-04): when the lane gives up on the turn and stops the shell, the turn
+  // stops too, and its tool calls with it.
   let _ =
-    process.spawn_unlinked(fn() {
+    process.spawn(fn() {
       case closed_data_dir() {
         Some(data_dir) ->
           desk.turn_started(data_dir, profile.agent_id, process.self())

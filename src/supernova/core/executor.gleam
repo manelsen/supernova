@@ -37,6 +37,7 @@ import supernova/llm/stream
 import supernova/llm/tool_images
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
+import supernova/metrics/record
 import supernova/tracing/global as tracing_global
 import supernova/tracing/types as tracing_types
 
@@ -81,6 +82,17 @@ pub fn declare_metrics(provider_name: String, model: String) -> Nil {
     }
     option.None -> Nil
   }
+}
+
+/// Publish every tool's timeout and cancellation counters at zero (PRD-F,
+/// F-04), so the first event after a restart is counted too.
+pub fn declare_tool_metrics() -> Nil {
+  list.each(builtin_tools(), fn(tool) {
+    record.declare("tool_timeouts_total", [#("tool", tool.name)])
+    record.declare("tool_cancelled_total", [#("tool", tool.name)])
+    record.gauge("tool_running", 0, [#("tool", tool.name)])
+    record.gauge("tool_waiting", 0, [#("tool", tool.name)])
+  })
 }
 
 fn record_llm_latency(provider_name: String, model: String, latency_ms: Int) {

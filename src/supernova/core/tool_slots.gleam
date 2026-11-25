@@ -58,6 +58,18 @@ pub fn give_back(slot: Slot) -> Nil {
   give_back_key(slot.agent_key)
 }
 
+/// A call of `tool` starts waiting for a slot; returns how many wait now.
+pub fn wait_started(tool: String) -> Int {
+  let _ = take(#("waiting", tool), 1_000_000_000)
+  count(#("waiting", tool))
+}
+
+/// A call of `tool` stops waiting; returns how many still wait.
+pub fn wait_ended(tool: String) -> Int {
+  give_back_key(#("waiting", tool))
+  count(#("waiting", tool))
+}
+
 /// Calls of `tool` running in the whole instance.
 pub fn running(tool: String) -> Int {
   count(#("instance", tool))

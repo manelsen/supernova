@@ -28,6 +28,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/core/exception_guard
 import supernova/core/tool_slots
+import supernova/metrics/record
 
 /// How a call ended.
 pub type Outcome {
@@ -131,17 +132,25 @@ fn run_guard(
     process.new_selector()
     |> process.select_specific_monitor(owner_monitor, fn(_) { Nil })
   case slot {
-    None -> guard_call(owner_monitor, reply, limit_ms, work)
-    Some(request) ->
-      case wait_for_slot(owner_down, request, now() + request.wait_ms) {
+    None -> guard_call(owner_monitor, reply, limit_ms, None, work)
+    Some(request) -> {
+      let tool = request.tool
+      let labels = [#("tool", tool)]
+      record.gauge("tool_waiting", tool_slots.wait_started(tool), labels)
+      let waited = wait_for_slot(owner_down, request, now() + request.wait_ms)
+      record.gauge("tool_waiting", tool_slots.wait_ended(tool), labels)
+      case waited {
         // The turn died while waiting: nothing to run, nobody to answer.
-        SlotOwnerGone -> Nil
+        SlotOwnerGone -> record.count("tool_cancelled_total", labels)
         SlotBusy -> process.send(reply, Done(Error(tool_slots.busy_message)))
         SlotTaken(taken) -> {
-          guard_call(owner_monitor, reply, limit_ms, work)
+          record.gauge("tool_running", tool_slots.running(tool), labels)
+          guard_call(owner_monitor, reply, limit_ms, Some(tool), work)
           tool_slots.give_back(taken)
+          record.gauge("tool_running", tool_slots.running(tool), labels)
         }
       }
+    }
   }
 }
 
@@ -177,6 +186,7 @@ fn guard_call(
   owner_monitor: Monitor,
   reply: Subject(Outcome),
   limit_ms: Int,
+  tool: Option(String),
   work: fn() -> Result(String, String),
 ) -> Nil {
   let result = process.new_subject()
@@ -196,7 +206,7 @@ fn guard_call(
     |> process.select_map(limit, fn(_) { LimitPassed })
     |> process.select_specific_monitor(owner_monitor, fn(_) { OwnerDown })
     |> process.select_trapped_exits(WorkerExited)
-  guard_loop(events, worker, reply, limit_ms)
+  guard_loop(events, worker, reply, limit_ms, tool)
   let _ = process.cancel_timer(timer)
   Nil
 }
@@ -206,21 +216,33 @@ fn guard_loop(
   worker: Pid,
   reply: Subject(Outcome),
   limit_ms: Int,
+  tool: Option(String),
 ) -> Nil {
+  let count = fn(name) {
+    case tool {
+      Some(tool) -> record.count(name, [#("tool", tool)])
+      None -> Nil
+    }
+  }
   case process.selector_receive_forever(events) {
     Finished(result) -> process.send(reply, Done(result))
     LimitPassed -> {
       process.send_abnormal_exit(worker, timeout_reason)
+      count("tool_timeouts_total")
       process.send(reply, TimedOut(limit_ms))
     }
-    OwnerDown -> process.send_abnormal_exit(worker, cancelled_reason)
+    OwnerDown -> {
+      process.send_abnormal_exit(worker, cancelled_reason)
+      count("tool_cancelled_total")
+    }
     WorkerExited(exit) ->
       case exit.pid == worker, exit.reason {
         // A worker that finished normally already sent its result.
-        True, process.Normal -> guard_loop(events, worker, reply, limit_ms)
+        True, process.Normal ->
+          guard_loop(events, worker, reply, limit_ms, tool)
         True, reason ->
           process.send(reply, Done(Error("tool stopped: " <> describe(reason))))
-        False, _ -> guard_loop(events, worker, reply, limit_ms)
+        False, _ -> guard_loop(events, worker, reply, limit_ms, tool)
       }
   }
 }

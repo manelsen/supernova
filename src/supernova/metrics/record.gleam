@@ -20,6 +20,13 @@ pub fn count_by(
   })
 }
 
+/// Set a gauge to `value`.
+pub fn gauge(name: String, value: Int, labels: List(#(String, String))) -> Nil {
+  with_metrics(fn(metrics) {
+    metrics_actor.set_gauge(metrics, name, value, labels)
+  })
+}
+
 /// Observe a duration given in milliseconds, in a `_seconds` histogram.
 pub fn duration_ms(
   name: String,
