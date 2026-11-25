@@ -30,6 +30,10 @@ open_port(Command, Args, Env) ->
             exit_status
           ]
         ),
+        %% Ports are owned without a link: a server that dies must surface
+        %% as an error on the next call, never as an exit signal (epipe)
+        %% that kills its owner.
+        true = unlink(Port),
         {ok, Port};
       {error, Reason} ->
         {error, list_to_binary(Reason)}
@@ -71,6 +75,7 @@ send_and_receive_classified(Port, Data, TimeoutMs) ->
   try
     %% Ensure this process is the port's controlling process
     erlang:port_connect(Port, self()),
+    true = unlink(Port),
     Port ! {self(), {command, <<Data/binary, "\n">>}},
     wait_for_line_classified(Port, TimeoutMs)
   catch
@@ -88,6 +93,7 @@ receive_line(Port, TimeoutMs) ->
 receive_line_classified(Port, TimeoutMs) ->
   try
     erlang:port_connect(Port, self()),
+    true = unlink(Port),
     wait_for_line_classified(Port, TimeoutMs)
   catch
     _:Reason ->
@@ -111,6 +117,7 @@ monotonic_ms() ->
 send_data(Port, Data) ->
   try
     erlang:port_connect(Port, self()),
+    true = unlink(Port),
     Port ! {self(), {command, <<Data/binary, "\n">>}},
     {ok, nil}
   catch
