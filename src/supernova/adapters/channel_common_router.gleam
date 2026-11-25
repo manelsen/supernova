@@ -22,6 +22,7 @@ import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
 import supernova/channel/catalog as channel_catalog
+import supernova/channel/inbound_media
 import supernova/channel/port
 import supernova/config
 import supernova/core/agent_identity
@@ -2296,7 +2297,7 @@ fn executor_messages_for_turn(
       let #(prepared, report) =
         memory_gate.prepare(
           messages,
-          content,
+          inbound_media.for_history(content),
           context.data_dir,
           profile.agent_id,
           context.offset_minutes,
@@ -2304,6 +2305,24 @@ fn executor_messages_for_turn(
       memory_metrics.record_turn(report)
       prepared
     }
+  }
+}
+
+/// The person's message for this turn. Images they sent (PRD-C, C-05b) go
+/// to the model here, once: the temporary file is deleted as it is read,
+/// and the history keeps `[imagem]`.
+fn current_user_message(content: String) -> provider.ChatMessage {
+  let #(text, ids) = inbound_media.split(content)
+  let images = case ids, closed_group_global.get_config() {
+    [], _ | _, None -> []
+    _, Some(cfg) ->
+      list.filter_map(ids, fn(id) {
+        inbound_media.take_data_url(cfg.data_dir, id)
+      })
+  }
+  case images {
+    [] -> provider.user_message(text)
+    _ -> provider.user_message_with_images(text, images)
   }
 }
 
@@ -2317,9 +2336,9 @@ fn turn_messages(
       list.append(
         rich_session.get_history(session)
           |> provider_messages_from_session_history,
-        [provider.user_message(content)],
+        [current_user_message(content)],
       )
-    None -> [provider.user_message(content)]
+    None -> [current_user_message(content)]
   }
 
   let workspace_path = workspace_path_for_agent(profile.agent_id)
@@ -2565,7 +2584,12 @@ fn record_session_turn(
         rich_session.append_messages(
           session,
           list.flatten([
-            [rich_session.ChatMessage(role: "user", content: user_content)],
+            [
+              rich_session.ChatMessage(
+                role: "user",
+                content: inbound_media.for_history(user_content),
+              ),
+            ],
             tool_messages,
             [
               rich_session.ChatMessage(
@@ -2643,7 +2667,12 @@ fn apply_current_success_self_state(
   let updated =
     self_state.apply_outcome(current, outcome, "turn_success", suggestion)
   save_self_state_for_agent(profile.agent_id, updated)
-  append_journal_turn(profile, session_id, user_content, content)
+  append_journal_turn(
+    profile,
+    session_id,
+    inbound_media.for_history(user_content),
+    content,
+  )
   apply_relationship_event(profile, relationship.TurnSuccess)
   reflection.schedule(profile.agent_id, llm_config)
   Nil
