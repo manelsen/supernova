@@ -34,8 +34,9 @@ pub type Decision {
   /// A sender known only by an unknown LID wrote to the agent in a group.
   AskPrivate(chat_id: String, reply_to: String)
   Ignore(reason: String)
-  /// The account was logged out or suspended.
-  AccountDown(reason: String)
+  /// The account was logged out (a new pairing is needed) or suspended
+  /// (the session is kept until the suspension ends).
+  AccountDown(reason: String, logged_out: Bool)
   Malformed
 }
 
@@ -190,29 +191,32 @@ fn decide_with(body: String, allow_groups: Bool) -> Decision {
             Ok(#(code, reason, _)) ->
               AccountDown(
                 "a conta foi desconectada ("
-                <> int.to_string(code)
-                <> ": "
-                <> reason
-                <> ")",
+                  <> int.to_string(code)
+                  <> ": "
+                  <> reason
+                  <> ")",
+                logged_out: True,
               )
-            Error(_) -> AccountDown("a conta foi desconectada")
+            Error(_) ->
+              AccountDown("a conta foi desconectada", logged_out: True)
           }
         "device.temporary_ban" ->
           case decode.run(envelope.payload, account_decoder()) {
             Ok(#(code, reason, until)) ->
               AccountDown(
                 "suspensão temporária"
-                <> case until {
+                  <> case until {
                   Some(at) -> " até " <> at
                   None -> ""
                 }
-                <> " ("
-                <> int.to_string(code)
-                <> ": "
-                <> reason
-                <> ")",
+                  <> " ("
+                  <> int.to_string(code)
+                  <> ": "
+                  <> reason
+                  <> ")",
+                logged_out: False,
               )
-            Error(_) -> AccountDown("suspensão temporária")
+            Error(_) -> AccountDown("suspensão temporária", logged_out: False)
           }
         other -> Ignore("event " <> other)
       }

@@ -13,6 +13,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import supernova/channel/catalog
+import supernova/channel/pairing
 import supernova/config
 import supernova/core/access/actor as access_actor
 import supernova/core/access/pure as access_pure
@@ -464,6 +465,18 @@ fn handle_command(
 ) -> Option(String) {
   let is_admin = role == access_types.Admin
 
+  case string.trim(content), is_admin {
+    "/parear", True -> Some(pairing_reply())
+    _, _ -> handle_known_command(runtime, principal_id, is_admin, content)
+  }
+}
+
+fn handle_known_command(
+  runtime: types.Runtime,
+  principal_id: String,
+  is_admin: Bool,
+  content: String,
+) -> Option(String) {
   case access_pure.parse_command(content) {
     Some(command) ->
       Some(handle_access_command(runtime, principal_id, is_admin, command))
@@ -1041,13 +1054,31 @@ pub fn channel_down_alert(
   runtime: types.Runtime,
   channel: String,
   reason: String,
+  text: String,
 ) -> Nil {
-  dispatch_alert(
+  // Never through the channel that fell (PRD-A, A-12): admins whose
+  // identity is on it are skipped, and the log says when nobody is left.
+  let elsewhere = fn(admin: String) {
+    case principal.parse(admin) {
+      Ok(parsed) -> parsed.channel != channel
+      Error(Nil) -> False
+    }
+  }
+  dispatch_alert_to(
     runtime,
     alerts_pure.ChannelDown,
     channel <> ":" <> reason,
-    "O canal " <> channel <> " caiu: " <> reason,
+    text,
+    elsewhere,
   )
+}
+
+/// `/parear` (admins): a new pairing code for the WhatsApp account.
+fn pairing_reply() -> String {
+  case pairing.request("whatsapp") {
+    Ok(code) -> pairing.whatsapp_instructions(code)
+    Error(why) -> "Não consegui pedir o código de pareamento: " <> why <> "."
+  }
 }
 
 fn dispatch_alert(
@@ -1055,6 +1086,16 @@ fn dispatch_alert(
   kind: alerts_pure.GroupAlertKind,
   subject: String,
   text: String,
+) -> Nil {
+  dispatch_alert_to(runtime, kind, subject, text, fn(_) { True })
+}
+
+fn dispatch_alert_to(
+  runtime: types.Runtime,
+  kind: alerts_pure.GroupAlertKind,
+  subject: String,
+  text: String,
+  reachable: fn(String) -> Bool,
 ) -> Nil {
   case alerts_actor.take(runtime.alerts, kind, subject, runtime.clock()) {
     False -> Nil
@@ -1065,7 +1106,14 @@ fn dispatch_alert(
             "warn: alert dropped because no effective admins are configured",
           )
         Ok(admins) ->
-          list.each(admins, fn(admin) { runtime.send_alert(admin, text) })
+          case list.filter(admins, reachable) {
+            [] ->
+              io.println(
+                "warn: alert dropped because no admin is reachable on another channel",
+              )
+            reached ->
+              list.each(reached, fn(admin) { runtime.send_alert(admin, text) })
+          }
         Error(_) -> {
           io.println("warn: alert dropped because access is unavailable")
           audit_action(

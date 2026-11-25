@@ -5,7 +5,7 @@
 //// learned.
 
 import gleam/erlang/process
-import gleam/option.{Some}
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
 import gowa_fake
@@ -188,4 +188,28 @@ fn hmac_hex(secret: String, body: BitArray) -> String
 
 fn bit_array_from(text: String) -> BitArray {
   <<text:utf8>>
+}
+
+/// PRD-A, A-12: a pairing code for the agent's number, asked of GOWA with
+/// its credentials.
+pub fn a_pairing_code_is_asked_of_gowa_test() {
+  let sent = process.new_subject()
+  let bridge = gowa_fake.start(sent)
+  let settings =
+    whatsapp_adapter.Settings(
+      bridge_url: bridge,
+      device_id: Some("5511999990000@s.whatsapp.net"),
+      basic_auth: "supernova:senha",
+      webhook_secret: secret,
+      data_dir: "/tmp/nao-usado",
+      allow_groups: False,
+    )
+  whatsapp_adapter.pairing_code(settings) |> should.equal(Ok("ABCD-1234"))
+  let assert Ok(asked) = process.receive(sent, 2000)
+  asked.path |> should.equal("/app/login-with-code")
+  asked.authorization |> should.equal("Basic c3VwZXJub3ZhOnNlbmhh")
+  whatsapp_adapter.pairing_code(
+    whatsapp_adapter.Settings(..settings, device_id: None),
+  )
+  |> should.be_error
 }

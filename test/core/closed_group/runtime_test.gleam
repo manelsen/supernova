@@ -7,6 +7,7 @@ import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
 import supernova
+import supernova/channel/pairing
 import supernova/config
 import supernova/core/access/actor as access_actor
 import supernova/core/access/types as access_types
@@ -365,6 +366,54 @@ pub fn linking_refusals_test() {
 
 @external(erlang, "supernova_file_system_ffi", "ensure_dir")
 fn ensure_dir(path: String) -> Result(Nil, String)
+
+/// PRD-A, A-12: /parear gives admins a new pairing code; members just talk.
+pub fn admins_can_ask_for_a_pairing_code_test() {
+  pairing.register("whatsapp", fn() { Ok("WXYZ-9876") })
+  with_runtime(
+    config_with_access(["telegram:a12-admin"], ["telegram:a12-member"], []),
+    fn(runtime) {
+      let assert cg_types.Reply(text) =
+        cg_runtime.gate(
+          runtime,
+          "telegram",
+          "a12-admin",
+          "a12-admin",
+          "/parear",
+        )
+      string.contains(text, "WXYZ-9876") |> should.be_true()
+      let assert cg_types.Allowed(_) =
+        cg_runtime.gate(
+          runtime,
+          "telegram",
+          "a12-member",
+          "a12-member",
+          "/parear",
+        )
+    },
+  )
+  pairing.unregister("whatsapp")
+}
+
+/// The alert that a channel fell never goes through that channel.
+pub fn a_channel_down_alert_skips_that_channel_test() {
+  let alerts = process.new_subject()
+  with_runtime_alerts(
+    config_with_access(["telegram:a12-t", "whatsapp:a12-w"], [], []),
+    fn(to, text) { process.send(alerts, #(to, text)) },
+    fn(runtime) {
+      cg_runtime.channel_down_alert(
+        runtime,
+        "whatsapp",
+        "logout",
+        "O WhatsApp caiu: logout.",
+      )
+      process.receive(alerts, 100)
+      |> should.equal(Ok(#("telegram:a12-t", "O WhatsApp caiu: logout.")))
+      process.receive(alerts, 50) |> should.equal(Error(Nil))
+    },
+  )
+}
 
 pub fn eu_works_even_when_denied_test() {
   with_runtime(config_with_access([], [], []), fn(runtime) {

@@ -137,12 +137,14 @@ pub fn account_events_say_why_test() {
   )
   |> should.equal(inbound.AccountDown(
     "a conta foi desconectada (401: logged out from another device)",
+    logged_out: True,
   ))
   inbound.decide(
     "{\"event\":\"device.temporary_ban\",\"device_id\":\"628123456789@s.whatsapp.net\",\"session_id\":\"org_2\",\"timestamp\":\"2026-10-28T09:00:00Z\",\"payload\":{\"code\":101,\"reason\":\"you sent too many messages\",\"expires_in_seconds\":86400,\"expires_at\":\"2026-10-29T09:00:00Z\"}}",
   )
   |> should.equal(inbound.AccountDown(
     "suspensão temporária até 2026-10-29T09:00:00Z (101: you sent too many messages)",
+    logged_out: False,
   ))
 }
 

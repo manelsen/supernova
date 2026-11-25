@@ -20,10 +20,12 @@ import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import supernova/adapters/whatsapp_inbound
 import supernova/channel/channel_kit
 import supernova/channel/inbound_media
+import supernova/channel/pairing
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
 import supernova/channel/traits/whatsapp as whatsapp_traits
@@ -136,14 +138,64 @@ pub fn start(
     ),
   )
 
+  pairing.register("whatsapp", fn() { pairing_code(settings) })
+
   Ok(
     port.ChannelAdapter(
       name: "whatsapp",
       send: send_fn,
-      stop: fn() { webhook_server.unregister("whatsapp") },
+      stop: fn() {
+        webhook_server.unregister("whatsapp")
+        pairing.unregister("whatsapp")
+      },
       stop_ingress: fn() { webhook_server.unregister("whatsapp") },
     ),
   )
+}
+
+/// A pairing code for the agent's number, asked of GOWA
+/// (`GET /app/login-with-code?phone=…`, documented in GOWA v9.10's
+/// openapi; the answer carries `results.pair_code`). The number comes from
+/// the device id (`5511…@s.whatsapp.net`).
+pub fn pairing_code(settings: Settings) -> Result(String, String) {
+  case settings.device_id {
+    None -> Error("SUPERNOVA_WHATSAPP_DEVICE_ID is not set")
+    Some(device) -> {
+      let phone = case string.split_once(device, "@") {
+        Ok(#(digits, _)) -> digits
+        Error(Nil) -> device
+      }
+      let url =
+        join_bridge_url(
+          settings.bridge_url,
+          "/app/login-with-code?phone=" <> phone,
+        )
+      case request.to(url) {
+        Error(_) -> Error("invalid bridge URL")
+        Ok(req) -> {
+          let req =
+            req
+            |> request.set_method(http.Get)
+            |> maybe_set_device_header(settings.device_id)
+            |> request.set_header(
+              "Authorization",
+              basic_authorization(settings.basic_auth),
+            )
+          case hackney.send(req) {
+            Ok(response) if response.status == 200 ->
+              json.parse(
+                response.body,
+                decode.at(["results", "pair_code"], decode.string),
+              )
+              |> result.replace_error("GOWA answered without a code")
+            Ok(response) ->
+              Error("GOWA answered " <> int.to_string(response.status))
+            Error(_) -> Error("GOWA unreachable")
+          }
+        }
+      }
+    }
+  }
 }
 
 /// Carry out a decision about one webhook.
@@ -195,13 +247,31 @@ pub fn act(
       webhook_server.Handled
     }
     whatsapp_inbound.Ignore(_) -> webhook_server.Handled
-    whatsapp_inbound.AccountDown(reason) -> {
+    whatsapp_inbound.AccountDown(reason, logged_out) -> {
       record.count("whatsapp_account_down_total", [])
       io.println("error: whatsapp " <> reason)
       on_down(reason)
+      // Logged out: the alert already carries a new pairing code (PRD-A,
+      // A-12). Suspended: the session is kept; the alert says until when.
+      let next_step = case logged_out {
+        False -> ""
+        True ->
+          case pairing.request("whatsapp") {
+            Ok(code) -> "\n" <> pairing.whatsapp_instructions(code)
+            Error(why) ->
+              "\nNão consegui pedir o código de reconexão ("
+              <> why
+              <> "). Mande /parear aqui para tentar de novo."
+          }
+      }
       case closed_group_global.get_runtime() {
         Some(runtime) ->
-          closed_group_runtime.channel_down_alert(runtime, "whatsapp", reason)
+          closed_group_runtime.channel_down_alert(
+            runtime,
+            "whatsapp",
+            reason,
+            "O WhatsApp caiu: " <> reason <> "." <> next_step,
+          )
         None -> Nil
       }
       webhook_server.Handled

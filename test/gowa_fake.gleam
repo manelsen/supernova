@@ -41,6 +41,15 @@ pub fn start(requests: Subject(Recorded)) -> String {
         ),
       )
       case req.path {
+        // A pairing code, in the shape GOWA v9.10's openapi documents
+        // (not recorded: that needs a logged-out session).
+        "/app/login-with-code" ->
+          response.new(200)
+          |> response.set_body(
+            mist.Bytes(bytes_tree.from_string(
+              "{\"code\":\"SUCCESS\",\"message\":\"Success\",\"results\":{\"pair_code\":\"ABCD-1234\"}}",
+            )),
+          )
         // A downloaded voice note.
         "/statics/media/voz.ogg" ->
           response.new(200)
