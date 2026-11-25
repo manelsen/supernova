@@ -329,7 +329,7 @@ fn run_inbound_turn(
   }
   let stream_events = process.new_subject()
   // Audio, video and documents become text before the turn (PRD-A, A-04).
-  let inbound = media_reading.prepare_inbound(inbound)
+  let inbound = media_reading.prepare_turn(inbound, send_fn)
 
   let outcome = case handler(inbound, stream_events) {
     Ok(port.ImmediateReply(reply)) ->

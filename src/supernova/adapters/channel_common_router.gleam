@@ -23,6 +23,7 @@ import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/inbound_media
+import supernova/channel/media_reading
 import supernova/channel/port
 import supernova/config
 import supernova/core/agent_identity
@@ -41,6 +42,7 @@ import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
 import supernova/core/persona/loader as persona_loader
 import supernova/core/persona/types as persona_types
+import supernova/core/preferences
 import supernova/core/prompt_assembly
 import supernova/core/session/server as rich_session
 import supernova/core/session/supervisor as session_supervisor
@@ -524,6 +526,7 @@ fn handle_inbound_message_allowed_for_handler(
                   msg,
                   profile,
                   supervisor,
+                  rich_session,
                 )
               {
                 Some(#(next_state, content)) -> #(
@@ -717,6 +720,7 @@ fn handle_inbound_message_allowed(
                   msg,
                   profile,
                   supervisor,
+                  rich_session,
                 )
               {
                 Some(#(next_state, content)) -> #(
@@ -2104,10 +2108,79 @@ fn maybe_handle_control(
   msg: port.ChannelMessage,
   profile: SessionProfile,
   supervisor: Option(session_supervisor.SessionSupervisor),
+  rich_session: Option(rich_session.Session),
 ) -> Option(#(InteractiveRouterState, String)) {
-  case maybe_handle_agenda(msg, profile) {
-    Some(reply) -> Some(#(state, reply))
-    None -> maybe_handle_forget(state, msg, profile, supervisor)
+  case
+    maybe_forwarded_transcript(msg, rich_session),
+    maybe_handle_preferences(msg, profile)
+  {
+    Some(reply), _ -> Some(#(state, reply))
+    None, Some(reply) -> Some(#(state, reply))
+    None, None ->
+      case maybe_handle_agenda(msg, profile) {
+        Some(reply) -> Some(#(state, reply))
+        None -> maybe_handle_forget(state, msg, profile, supervisor)
+      }
+  }
+}
+
+/// A message that only carried forwarded audio is answered with its
+/// transcription, without the model (PRD-A, D6). The exchange stays in the
+/// history, so the agent can talk about it later.
+fn maybe_forwarded_transcript(
+  msg: port.ChannelMessage,
+  rich_session: Option(rich_session.Session),
+) -> Option(String) {
+  case string.split_once(msg.content, media_reading.forwarded_marker) {
+    Ok(#("", transcript)) -> {
+      case rich_session {
+        Some(session) -> {
+          let _ =
+            rich_session.append_messages(session, [
+              rich_session.ChatMessage(
+                role: "user",
+                content: "[áudio encaminhado]\n" <> transcript,
+              ),
+              rich_session.ChatMessage(
+                role: "assistant",
+                content: "[transcrição devolvida à pessoa]",
+              ),
+            ])
+          Nil
+        }
+        None -> Nil
+      }
+      Some(transcript)
+    }
+    _ -> None
+  }
+}
+
+/// `/transcricao` turns on and off the transcription of the person's own
+/// audio (PRD-A, D6).
+fn maybe_handle_preferences(
+  msg: port.ChannelMessage,
+  profile: SessionProfile,
+) -> Option(String) {
+  case string.trim(msg.content), closed_group_global.get_config() {
+    "/transcricao", Some(cfg) | "/transcrição", Some(cfg) -> {
+      let current = preferences.load(cfg.data_dir, profile.agent_id)
+      let next =
+        preferences.Preferences(
+          ..current,
+          transcription: !current.transcription,
+        )
+      case preferences.save(cfg.data_dir, profile.agent_id, next) {
+        Error(_) -> Some("Não consegui guardar essa preferência agora.")
+        Ok(Nil) ->
+          Some(case next.transcription {
+            True ->
+              "Pronto: quando você me mandar áudio, eu te devolvo a transcrição antes de responder."
+            False -> "Pronto: não devolvo mais a transcrição dos seus áudios."
+          })
+      }
+    }
+    _, _ -> None
   }
 }
 

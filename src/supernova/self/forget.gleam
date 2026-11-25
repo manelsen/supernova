@@ -10,6 +10,7 @@ import supernova/core/audit_log/types as audit_types
 import supernova/core/introspection/lesson
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
+import supernova/core/preferences
 import supernova/core/session/history_store
 import supernova/core/session/supervisor as session_supervisor
 import supernova/self/audit
@@ -103,6 +104,9 @@ pub fn forget(
       last_reflection: "Sem reflexão registrada.",
     ),
   ))
+
+  // How the person asked to be answered (/transcricao, /voz) goes too.
+  use _ <- result.try(delete_file(preferences.path(data_dir, principal)))
 
   let session_count = clear_sessions(supervisor, principal)
   // Messages still waiting in the durable inbox are what the owner said too;

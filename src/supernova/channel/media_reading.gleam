@@ -23,6 +23,7 @@ import supernova/core/access/types as access_types
 import supernova/core/agent_identity
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/media_prompts
+import supernova/core/preferences
 
 /// What a reader made of a medium, and what it cost in tokens.
 pub type Read {
@@ -79,11 +80,100 @@ pub fn current() -> Option(Settings) {
 /// for a person with access: a stranger's video costs nothing, and the
 /// gate answers them as usual.
 pub fn prepare_inbound(inbound: port.ChannelInbound) -> port.ChannelInbound {
+  read_inbound(inbound).0
+}
+
+/// Marks a message that only carried forwarded audio: the router answers
+/// it with the transcription, without the model (PRD-A, D6). It starts
+/// with an invisible separator, so a person cannot type it by accident.
+pub const forwarded_marker = "\u{2063}[transcrição encaminhada]\n"
+
+/// The turn's inbound with its media read, and the transcriptions D6 asks
+/// for:
+/// - a message with only forwarded audio becomes the transcription,
+///   marked for the router to answer without the model;
+/// - with `/transcricao`, the person's own audio comes back transcribed
+///   before the agent's answer, through `send`.
+pub fn prepare_turn(
+  inbound: port.ChannelInbound,
+  send: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> port.ChannelInbound {
+  case inbound, read_inbound(inbound) {
+    port.InboundMessage(original), #(port.InboundMessage(read), readings) -> {
+      let audio = list.filter(readings, fn(r) { r.kind == Audio })
+      let forwarded = list.filter(audio, fn(r) { r.forwarded })
+      let own = list.filter(audio, fn(r) { !r.forwarded })
+      case only_media(original.content), forwarded, readings == forwarded {
+        True, [_, ..], True ->
+          port.InboundMessage(
+            port.ChannelMessage(
+              ..read,
+              content: forwarded_marker <> transcript_reply(forwarded),
+            ),
+          )
+        _, _, _ -> {
+          case own, wants_transcription(original) {
+            [_, ..], True -> {
+              let _ =
+                send(port.reply(to: original, content: transcript_reply(own)))
+              Nil
+            }
+            _, _ -> Nil
+          }
+          port.InboundMessage(read)
+        }
+      }
+    }
+    _, #(read, _) -> read
+  }
+}
+
+/// The transcription as Amélie gives it: easy to find and to read with a
+/// screen reader.
+pub fn transcript_reply(readings: List(Reading)) -> String {
+  readings
+  |> list.map(fn(r) {
+    media_prompts.audio_start
+    <> "\n"
+    <> r.text
+    <> "\n"
+    <> media_prompts.audio_end
+  })
+  |> string.join("\n\n")
+}
+
+/// True when the message had media and nothing else to say.
+fn only_media(content: String) -> Bool {
+  let #(text, refs) = inbound_media.parse(content)
+  refs != []
+  && list.fold(
+    ["[imagem]", "[áudio]", "[vídeo]", "[documento]"],
+    text,
+    fn(t, p) { string.replace(t, p, "") },
+  )
+  |> string.trim
+  == ""
+}
+
+fn wants_transcription(message: port.ChannelMessage) -> Bool {
+  case closed_group_global.get_config() {
+    None -> False
+    Some(cfg) ->
+      preferences.load(
+        cfg.data_dir,
+        agent_identity.principal_id(message.channel, message.user_id),
+      ).transcription
+  }
+}
+
+fn read_inbound(
+  inbound: port.ChannelInbound,
+) -> #(port.ChannelInbound, List(Reading)) {
   case inbound {
-    port.InboundInteraction(_) -> inbound
+    port.InboundInteraction(_) -> #(inbound, [])
     port.InboundMessage(message) ->
       case non_image_refs(message.content), closed_group_global.get_config() {
-        False, _ | _, None -> inbound
+        False, _ | _, None -> #(inbound, [])
         True, Some(cfg) -> {
           let principal =
             agent_identity.principal_id(message.channel, message.user_id)
@@ -100,11 +190,13 @@ pub fn prepare_inbound(inbound: port.ChannelInbound) -> port.ChannelInbound {
                 document: False,
               )
           }
-          port.InboundMessage(
-            port.ChannelMessage(
-              ..message,
-              content: prepare(settings, principal, message.content),
+          let #(content, readings) =
+            read_all(settings, principal, message.content)
+          #(
+            port.InboundMessage(
+              port.ChannelMessage(..message, content: content),
             ),
+            readings,
           )
         }
       }
@@ -127,37 +219,60 @@ fn has_access(principal: String) -> Bool {
   }
 }
 
+/// What was read from one medium.
+pub type Reading {
+  Reading(kind: Kind, forwarded: Bool, voice_note: Bool, text: String)
+}
+
 /// The content with every audio, video and document tag turned into text.
 pub fn prepare(
   settings: Settings,
   principal: String,
   content: String,
 ) -> String {
+  read_all(settings, principal, content).0
+}
+
+/// `prepare`, and what was read (only the readings that succeeded).
+pub fn read_all(
+  settings: Settings,
+  principal: String,
+  content: String,
+) -> #(String, List(Reading)) {
   inbound_media.refs(content)
-  |> list.fold(content, fn(content, ref) {
+  |> list.fold(#(content, []), fn(acc, ref) {
+    let #(content, readings) = acc
     let #(kind, id) = ref
     case kind, inbound_media.load(settings.data_dir, id) {
-      Image, _ -> content
-      _, Error(Nil) -> content
-      _, Ok(media) ->
-        string.replace(
-          content,
-          inbound_media.tag_for(media),
-          "\n" <> read_one(settings, principal, media),
+      Image, _ -> acc
+      _, Error(Nil) -> acc
+      _, Ok(media) -> {
+        let #(text, reading) = read_one(settings, principal, media)
+        #(
+          string.replace(content, inbound_media.tag_for(media), "\n" <> text),
+          case reading {
+            Some(reading) -> list.append(readings, [reading])
+            None -> readings
+          },
         )
+      }
     }
   })
 }
 
-fn read_one(settings: Settings, principal: String, media: Media) -> String {
+fn read_one(
+  settings: Settings,
+  principal: String,
+  media: Media,
+) -> #(String, Option(Reading)) {
   let on = case media.kind {
     Audio -> settings.audio
     Video -> settings.video
     Document -> settings.document
     Image -> False
   }
-  let text = case on {
-    False -> unopened(media)
+  let result = case on {
+    False -> #(unopened(media), None)
     True ->
       case
         settings.admit(
@@ -165,7 +280,10 @@ fn read_one(settings: Settings, principal: String, media: Media) -> String {
           estimate_tokens(media.kind, media.seconds, media.size),
         )
       {
-        Error(Nil) -> failed(media, "o limite de gasto do dia foi atingido")
+        Error(Nil) -> #(
+          failed(media, "o limite de gasto do dia foi atingido"),
+          None,
+        )
         Ok(settle) -> {
           let #(instruction, start, end) = instruction(media.kind)
           case
@@ -178,20 +296,27 @@ fn read_one(settings: Settings, principal: String, media: Media) -> String {
           {
             Ok(read) -> {
               settle(read.input_tokens, read.output_tokens)
-              heading(media)
-              <> "\n"
-              <> media_prompts.strip_markers(read.text, start, end)
+              let text = media_prompts.strip_markers(read.text, start, end)
+              #(
+                heading(media) <> "\n" <> text,
+                Some(Reading(
+                  kind: media.kind,
+                  forwarded: media.forwarded,
+                  voice_note: media.voice_note,
+                  text: text,
+                )),
+              )
             }
             Error(reason) -> {
               settle(0, 0)
-              failed(media, reason)
+              #(failed(media, reason), None)
             }
           }
         }
       }
   }
   inbound_media.discard(settings.data_dir, media.id)
-  text
+  result
 }
 
 fn instruction(kind: Kind) -> #(String, String, String) {
