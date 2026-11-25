@@ -1,10 +1,10 @@
 [PRD]
 # PRD A: a agente abre tudo o que a pessoa manda
 
-> **Situação em 24/11/2026:** rascunho para o mantenedor. Direção decidida
-> (24/11): a mídia vai crua ao modelo, o modelo é escolhido por tipo de
-> mídia, e os únicos limites são os do modelo. D1 a D5 esperam decisão
-> (seção 5). Depende da PRD-C (capacidade de mídia, C-05).
+> **Situação em 24/11/2026:** D1 a D5 decididos pelo mantenedor; D6 aberta
+> (seção 5). O desenho das seções 6 e 7 será revisto para refletir D1 e
+> D4 (texto em vez de mídia crua para áudio, vídeo e documento) quando D6
+> fechar. Depende da PRD-C (capacidade de mídia, C-05).
 
 > **Executor:** agente autônomo. Leia este documento inteiro antes de começar.
 > Execute as histórias **na ordem**. Cada história termina com os quality
@@ -54,37 +54,51 @@ Os de sempre (`AGENTS.md`). Nenhum teste chama provedor de verdade: os
 provedores novos são testados contra servidores falsos (como o GOWA
 falso), com payloads copiados da documentação.
 
-## 5. Decisões do mantenedor
+## 5. Decisões do mantenedor (24/11)
 
-- **D1. O que acontece quando a mídia vai a um modelo que não é o da
-  agente.**
-  - (a) O turno daquela mensagem roda inteiro no modelo da mídia, com o
-    mesmo prompt (núcleo, memória, tools). A agente "ouve" diretamente; é
-    uma chamada só.
-  - (b) O modelo da mídia lê e descreve, e o modelo da agente responde
-    lendo a descrição. São duas chamadas, e a voz fica sempre no mesmo
-    modelo.
-  - **Recomendação: (a)**, por ser o "cru ao modelo" decidido. A voz pode
-    variar um pouco entre modelos; o núcleo segura o caráter.
-- **D2. Provedor Gemini.** A API nativa (`generateContent`, com tools e
-  Files API), porque o endpoint compatível com OpenAI não documenta PDF
-  nem vídeo. **Recomendação: assim.**
-- **D3. Arquivos grandes no Google.** Acima de 20 MB, o arquivo sobe para a
-  Files API, que o guarda por 48 h. A Supernova apaga o arquivo lá logo
-  depois do turno, e o `/esquecer` apaga os que ainda estiverem lá.
-  **Recomendação: assim.**
-- **D4. O que fica na memória.** Mídia crua não vira texto: o histórico
-  guarda `[áudio 0:42]`, `[vídeo 1:10]`, `[documento: contrato.pdf, 12
-  páginas]`, e a resposta da agente (que costuma falar do conteúdo) fica
-  como sempre. **Recomendação: assim.** Para o futuro, fica a opção de o
-  leitor de áudio ser o Whisper (`reader: transcribe`): aí o texto entra
-  na memória.
-- **D5. Padrões.**
-  - imagem: o modelo da agente (o DeepSeek do piloto vê imagem);
-  - áudio, vídeo e documento: Gemini Flash-Lite (o id exato será conferido
-    pela API de modelos na execução);
-  - Groq Whisper disponível como `transcribe` para áudio.
-  - **Recomendação: assim.**
+- **D1. Áudio é transcrito.** A transcrição tem dois usos:
+  - **devolver o texto à pessoa.** Caso de uso: pessoas autistas, para quem
+    áudios longos, com pausas, idas e voltas, serializam a atenção, e
+    texto se lê em paralelo;
+  - **conversar:** a transcrição entra no turno como se a pessoa tivesse
+    escrito, e fica na memória (D4).
+  - Volta completa em áudio (ouvir, responder, falar), para quem tem baixa
+    visão ou é cega, é desejada; ver D6.
+- **D2. Gemini pela API do AI Studio** (`generativelanguage.googleapis.com`,
+  nativa, com Files API).
+- **D3. Arquivos acima de 20 MB** vão pela Files API, que os guarda por 48
+  h; a Supernova apaga logo depois do turno e no `/esquecer`. Ciente.
+- **D4. Na memória fica o texto:** a transcrição do áudio, a audiodescrição
+  e transcrição do vídeo, o texto do documento.
+- **D5. Modelos:**
+  - imagem no modelo da agente: o DeepSeek do piloto vê imagem, sem chamada
+    extra. Custo comparável ao Flash-Lite, cerca de US$ 0,0003 por imagem
+    de entrada nos dois, e saída mais barata no DeepSeek;
+  - áudio, vídeo e documento no `gemini-3.5-flash-lite`, com os prompts da
+    Amélie (transcrição literal, audiodescrição com transcrição das falas),
+    já provados em uso. Áudio pelo Flash-Lite custa cerca de US$ 0,05/h
+    (25 tokens/s a US$ 0,30/M);
+  - TTS no `gemini-3.8-flash-lite-tts` (fala português, 30 vozes, WAV 24
+    kHz; cerca de US$ 0,01 por minuto de fala até 31/12/2026, o dobro
+    depois). O GOWA manda como mensagem de voz (`ptt: true`) e converte
+    para OGG/Opus com ffmpeg. O TTS do DeepSeek não fala português;
+  - tudo trocável na configuração (Groq Whisper como `transcribe`, por
+    exemplo).
+- **D6. (aberta) Quando transcrever de volta e quando conversar.**
+  Proposta:
+  - áudio **encaminhado** volta como transcrição (se o GOWA informar o
+    encaminhamento; conferir na execução);
+  - áudio **da própria pessoa** é conversa;
+  - `/voz` liga as respostas em áudio;
+  - `/transcricao` devolve também a transcrição dos áudios da própria
+    pessoa.
+
+**Base de código:** o cliente Gemini nativo da Amélie
+(`~/git/amelie/src/adaptadores/gemini_http.gleam`: `inline_data`, Files API
+com upload, espera e remoção), os prompts de mídia
+(`core/prompt/montador.gleam`) e o saneamento para leitor de tela e voz
+(`core/acessibilidade.gleam`) são portados, adaptados ao kernel da
+Supernova (admissão no ledger, orçamento da pessoa, tempo-limite).
 
 ## 6. Desenho
 
