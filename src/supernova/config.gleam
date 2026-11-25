@@ -200,6 +200,9 @@ pub type WhatsAppConfig {
     /// Shared secret of the webhook signature (`WHATSAPP_WEBHOOK_SECRET`);
     /// env SUPERNOVA_WHATSAPP_WEBHOOK_SECRET
     webhook_secret: Option(String),
+    /// `whatsapp.allow_groups`: off by default, every conversation is in
+    /// private and group messages are dropped unread.
+    allow_groups: Bool,
   )
 }
 
@@ -1021,6 +1024,7 @@ pub fn default_whatsapp_config() -> WhatsAppConfig {
     enabled: False,
     basic_auth: None,
     webhook_secret: None,
+    allow_groups: False,
   )
 }
 
@@ -1032,6 +1036,7 @@ fn decode_whatsapp(root: yay.Node) -> WhatsAppConfig {
         bridge_url: get_optional_string(node, "bridge_url"),
         device_id: get_optional_string(node, "device_id"),
         enabled: get_bool_or(node, "enabled", False),
+        allow_groups: get_bool_or(node, "allow_groups", False),
       )
     Error(_) -> default_whatsapp_config()
   }
@@ -1744,6 +1749,7 @@ pub fn apply_env_overrides(config: Config) -> Config {
         get_env("SUPERNOVA_WHATSAPP_WEBHOOK_SECRET"),
         config.whatsapp.webhook_secret,
       ),
+      allow_groups: config.whatsapp.allow_groups,
     ),
     budgets: config.budgets,
     access: AccessConfig(

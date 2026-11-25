@@ -179,6 +179,7 @@ fn enabled_whatsapp_config() -> config.Config {
       enabled: True,
       basic_auth: Some("supernova:senha"),
       webhook_secret: Some("segredo"),
+      allow_groups: False,
     ),
   )
 }

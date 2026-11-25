@@ -455,6 +455,7 @@ pub fn validate_additional_channels_enabled_without_token_test() {
         enabled: True,
         basic_auth: None,
         webhook_secret: None,
+        allow_groups: False,
       ),
     )
 
@@ -580,6 +581,7 @@ pub fn validate_all_additional_channels_enabled_with_token_test() {
         enabled: True,
         basic_auth: Some("supernova:senha"),
         webhook_secret: Some("segredo"),
+        allow_groups: False,
       ),
     )
 
@@ -992,6 +994,7 @@ pub fn is_new_channels_enabled_true_test() {
         enabled: True,
         basic_auth: Some("supernova:senha"),
         webhook_secret: Some("segredo"),
+        allow_groups: False,
       ),
     )
 
@@ -1028,6 +1031,7 @@ pub fn is_new_channels_enabled_false_without_token_test() {
         enabled: True,
         basic_auth: None,
         webhook_secret: None,
+        allow_groups: False,
       ),
     )
 
@@ -1148,6 +1152,14 @@ tools:
   |> should_equal(dict.from_list([#("default", 30), #("computador", 600)]))
   let assert Ok(plain) = load("app_name: supernova\n")
   plain.tools.timeouts |> should_equal(dict.new())
+}
+
+pub fn whatsapp_groups_are_off_unless_allowed_test() {
+  let assert Ok(plain) = load("app_name: supernova\n")
+  plain.whatsapp.allow_groups |> should_equal(False)
+  let assert Ok(cfg) =
+    load("app_name: supernova\nwhatsapp:\n  allow_groups: true\n")
+  cfg.whatsapp.allow_groups |> should_equal(True)
 }
 
 pub fn channels_webhook_is_read_test() {

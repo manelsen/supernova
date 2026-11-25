@@ -340,6 +340,7 @@ fn start_whatsapp_channel(
           basic_auth: basic_auth,
           webhook_secret: webhook_secret,
           data_dir: cfg.data_dir,
+          allow_groups: whatsapp.allow_groups,
         ),
         handler,
         hooks,

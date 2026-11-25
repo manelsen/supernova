@@ -92,14 +92,18 @@ settings:
   `/vincular CÓDIGO` to the agent's WhatsApp, also in private. From then on
   it is the same agent, with the same memory, on both channels.
   `/desvincular` undoes the link.
-- **Groups** are authorized as `whatsapp:<group id>@g.us` in
-  `access.allowed_chats` (or `/acesso chat` from inside the group). In a
-  group, the agent answers only when mentioned, when someone replies to it,
-  or when the message is a command.
-- **LIDs.** WhatsApp sometimes hides the phone behind a LID (`…@lid`),
-  mostly in groups. Supernova learns which phone a LID belongs to when both
-  arrive together. If someone it does not recognize yet calls it in a
-  group, the agent asks them to write in private once.
+- **Groups are off.** Every conversation is in private: a message from a
+  group is dropped unread, even a mention or a command, and the agent says
+  nothing in the group. Metric `whatsapp_group_messages_dropped_total`.
+  To turn groups on later, set `whatsapp.allow_groups: true`; groups are
+  then authorized as `whatsapp:<group id>@g.us` in `access.allowed_chats`
+  (or `/acesso chat` from inside the group), and the agent answers only
+  when mentioned, when someone replies to it, or when the message is a
+  command.
+- **LIDs.** WhatsApp sometimes hides the phone behind a LID (`…@lid`).
+  Supernova learns which phone a LID belongs to when both arrive together.
+  With groups on, someone it does not recognize yet who calls it in a group
+  is asked to write in private.
 - **Images.** Images the person sends (up to 5 MB) reach the model once.
   The history keeps `[imagem]`. Audio and documents are not read yet.
 
@@ -110,7 +114,7 @@ settings:
 | No turn when a message arrives | GOWA log: webhook errors. Supernova log: `401` means the two `WEBHOOK_SECRET` values differ |
 | Replies fail with "Unauthorized" | `SUPERNOVA_WHATSAPP_BASIC_AUTH` differs from GOWA's `APP_BASIC_AUTH` (both come from the same `.env` line) |
 | "O canal whatsapp caiu" | Pair again (see above). After a temporary ban, wait until the time in the alert |
-| A person in a group is never answered | Check that they mentioned or replied to the agent, and that the group is in `access.allowed_chats` |
+| A person in a group is never answered | Groups are off by default (`whatsapp.allow_groups`). With them on: check that they mentioned or replied to the agent, and that the group is in `access.allowed_chats` |
 
 Metrics: `whatsapp_lid_learned_total`, `whatsapp_unknown_lid_total`,
-`whatsapp_account_down_total`, `channel_media_total{channel="whatsapp"}`.
+`whatsapp_account_down_total`, `whatsapp_group_messages_dropped_total`, `channel_media_total{channel="whatsapp"}`.

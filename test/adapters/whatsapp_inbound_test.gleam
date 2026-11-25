@@ -76,10 +76,12 @@ pub fn in_a_group_only_what_is_addressed_to_the_agent_test() {
     "\"chat_id\":\"120363012345678901@g.us\",\"from\":\"628123456789@s.whatsapp.net\","
   // Talk among the others: not for the agent.
   let assert inbound.Ignore(_) =
-    inbound.decide(message(group <> "\"body\":\"bom dia, gente\""))
+    inbound.decide_allowing_groups(message(
+      group <> "\"body\":\"bom dia, gente\"",
+    ))
   // A mention of the agent.
   let assert inbound.Answer(msg, ..) =
-    inbound.decide(message(
+    inbound.decide_allowing_groups(message(
       group
       <> "\"body\":\"@628987654321 pode ver isso?\",\"mentions\":[\""
       <> agent
@@ -88,7 +90,7 @@ pub fn in_a_group_only_what_is_addressed_to_the_agent_test() {
   msg.channel_id |> should.equal("120363012345678901@g.us")
   // A reply to the agent.
   let assert inbound.Answer(..) =
-    inbound.decide(message(
+    inbound.decide_allowing_groups(message(
       group
       <> "\"body\":\"isso\",\"replied_to_id\":\"Z\",\"replied_to_sender\":\""
       <> agent
@@ -96,10 +98,10 @@ pub fn in_a_group_only_what_is_addressed_to_the_agent_test() {
     ))
   // A command.
   let assert inbound.Answer(..) =
-    inbound.decide(message(group <> "\"body\":\"/eu\""))
+    inbound.decide_allowing_groups(message(group <> "\"body\":\"/eu\""))
   // A mention of someone else.
   let assert inbound.Ignore(_) =
-    inbound.decide(message(
+    inbound.decide_allowing_groups(message(
       group
       <> "\"body\":\"@628111111111 oi\",\"mentions\":[\"628111111111@s.whatsapp.net\"]",
     ))
@@ -109,20 +111,21 @@ pub fn a_known_lid_is_its_person_an_unknown_one_is_asked_to_write_privately_test
   let dir = test_workspace.create_temp_dir("wa-lid")
   let group =
     "\"chat_id\":\"120363012345678901@g.us\",\"from\":\"999@lid\",\"body\":\"/eu\""
-  inbound.decide(message(group))
+  inbound.decide_allowing_groups(message(group))
   |> should.equal(inbound.AskPrivate(
     chat_id: "120363012345678901@g.us",
     reply_to: "3EB0C127D7BACC83D6A1",
   ))
   // In private an unknown LID is only logged.
   let assert inbound.Ignore(_) =
-    inbound.decide(message(
+    inbound.decide_allowing_groups(message(
       "\"chat_id\":\"999@lid\",\"from\":\"999@lid\",\"body\":\"oi\"",
     ))
 
   let assert Ok(Nil) =
     aliases.link(dir, "whatsapp:999@lid", "whatsapp:62999", "whatsapp", 1)
-  let assert inbound.Answer(msg, ..) = inbound.decide(message(group))
+  let assert inbound.Answer(msg, ..) =
+    inbound.decide_allowing_groups(message(group))
   msg.user_id |> should.equal("999@lid")
   let assert Ok(Nil) = aliases.unlink(dir, "whatsapp:999@lid")
   test_workspace.remove_dir_recursive(dir)
@@ -167,4 +170,27 @@ pub fn an_image_comes_with_its_path_test() {
       <> "\"image\":{\"url\":\"https://mmg.whatsapp.net/x\",\"caption\":\"veja\"}",
     ))
   msg.content |> should.equal("veja")
+}
+
+/// The maintainer's rule for now: every conversation in private. With
+/// groups off (the default), a group message is dropped unread, even a
+/// mention or a command, and no one is asked anything in the group.
+pub fn groups_are_off_by_default_test() {
+  let group =
+    "\"chat_id\":\"120363012345678901@g.us\",\"from\":\"628123456789@s.whatsapp.net\","
+  inbound.decide(message(
+    group <> "\"body\":\"@628987654321 oi\",\"mentions\":[\"" <> agent <> "\"]",
+  ))
+  |> should.equal(inbound.Ignore("groups are off"))
+  inbound.decide(message(group <> "\"body\":\"/eu\""))
+  |> should.equal(inbound.Ignore("groups are off"))
+  inbound.decide(message(
+    "\"chat_id\":\"120363012345678901@g.us\",\"from\":\"999@lid\",\"body\":\"/eu\"",
+  ))
+  |> should.equal(inbound.Ignore("groups are off"))
+  // Private chats are as before.
+  let assert inbound.Answer(..) =
+    inbound.decide(message(
+      "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\",\"body\":\"oi\"",
+    ))
 }

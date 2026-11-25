@@ -463,6 +463,7 @@ pub fn start_adapter_send_invalid_bridge_url_returns_error_test() {
         basic_auth: "u:p",
         webhook_secret: "s",
         data_dir: "/tmp/nao-usado",
+        allow_groups: False,
       ),
       fn(_, _) { Error(port.Ignored("not used")) },
       channel_kit.no_start_hooks(),

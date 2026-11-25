@@ -71,6 +71,8 @@ pub type Settings {
     /// Shared secret of the webhook signature.
     webhook_secret: String,
     data_dir: String,
+    /// Groups are off unless `whatsapp.allow_groups` is on.
+    allow_groups: Bool,
   )
 }
 
@@ -110,7 +112,15 @@ pub fn start(
         case bit_array.to_string(body) {
           Error(Nil) -> webhook_server.Malformed
           Ok(text) ->
-            act(whatsapp_inbound.decide(text), settings, send_fn, on_down)
+            act(
+              case settings.allow_groups {
+                True -> whatsapp_inbound.decide_allowing_groups(text)
+                False -> whatsapp_inbound.decide(text)
+              },
+              settings,
+              send_fn,
+              on_down,
+            )
         }
       },
       dispatch: fn(inbound) {
@@ -173,6 +183,10 @@ pub fn act(
           ),
           content: whatsapp_inbound.ask_private_text,
         ))
+      webhook_server.Handled
+    }
+    whatsapp_inbound.Ignore("groups are off") -> {
+      record.count("whatsapp_group_messages_dropped_total", [])
       webhook_server.Handled
     }
     whatsapp_inbound.Ignore("unknown lid") -> {

@@ -61,7 +61,7 @@ More in [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
 | Channel | Status |
 |---|---|
 | **Telegram** | Supported: receives and sends; closed group, commands, buttons, streaming |
-| **WhatsApp** | Supported through the GOWA bridge: receives and sends; closed group, private chats and groups, images; one agent across channels with `/vincular`. See [docs/operations/WHATSAPP.md](docs/operations/WHATSAPP.md) |
+| **WhatsApp** | Supported through the GOWA bridge: receives and sends, private chats only (groups off for now); closed group, images; one agent across channels with `/vincular`. See [docs/operations/WHATSAPP.md](docs/operations/WHATSAPP.md) |
 | **sim** | Local HTTP channel used by the test harness |
 | **Discord** | Sends only: receiving messages (the gateway connection) is not implemented yet. Parity with Telegram is planned |
 | Slack, Matrix, Lark, Google Chat, Mattermost, WeChat Work | Send only, experimental: the adapters can deliver messages but do not receive them yet, and are not behind the closed group |

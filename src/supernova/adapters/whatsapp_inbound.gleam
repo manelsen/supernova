@@ -63,14 +63,31 @@ type Image {
   Image(path: Option(String), caption: Option(String))
 }
 
+/// What to do with a webhook, with groups off: every group message is
+/// dropped unread (the maintainer's rule for now: all conversations in
+/// private).
 pub fn decide(body: String) -> Decision {
+  decide_with(body, False)
+}
+
+/// `decide` with groups on (`whatsapp.allow_groups`): in a group the agent
+/// answers a mention, a reply to it, or a command.
+pub fn decide_allowing_groups(body: String) -> Decision {
+  decide_with(body, True)
+}
+
+fn decide_with(body: String, allow_groups: Bool) -> Decision {
   case json.parse(body, envelope_decoder()) {
     Error(_) -> Malformed
     Ok(envelope) ->
       case envelope.event {
         "message" ->
           case decode.run(envelope.payload, message_decoder()) {
-            Ok(message) -> decide_message(envelope.device_id, message)
+            Ok(message) ->
+              case allow_groups, string.ends_with(message.chat_id, "@g.us") {
+                False, True -> Ignore("groups are off")
+                _, _ -> decide_message(envelope.device_id, message)
+              }
             Error(_) -> Malformed
           }
         "device.logged_out" ->

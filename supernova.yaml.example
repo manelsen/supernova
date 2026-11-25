@@ -126,6 +126,8 @@ whatsapp:
   # SUPERNOVA_WHATSAPP_BASIC_AUTH and SUPERNOVA_WHATSAPP_WEBHOOK_SECRET.
   # The compose file sets bridge_url to http://gowa:3000.
   enabled: false
+  # Every conversation in private: group messages are dropped unread.
+  allow_groups: false
 
 # Channels that receive by webhook (WhatsApp) and plain-http hosts.
 channels:

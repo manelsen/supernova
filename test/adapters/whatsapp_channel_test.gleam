@@ -67,6 +67,7 @@ pub fn whatsapp_end_to_end_test() {
         basic_auth: "supernova:senha",
         webhook_secret: secret,
         data_dir: dir,
+        allow_groups: False,
       ),
       handler,
       channel_kit.no_start_hooks(),
@@ -127,16 +128,15 @@ pub fn whatsapp_end_to_end_test() {
   |> should.equal(401)
   process.receive(seen, 100) |> should.equal(Error(Nil))
 
-  // An unknown LID calls the agent in a group: asked to write in private.
+  // Groups are off: a group message is dropped, nothing is sent, nothing
+  // reaches the agent, not even the request to write in private.
   let group =
     message(
       "\"chat_id\":\"1203630@g.us\",\"from\":\"555@lid\",\"body\":\"/eu\"",
     )
   post(webhook_port, "/webhook/whatsapp", signed(group), bit_array_from(group)).0
   |> should.equal(200)
-  let assert Ok(ask) = process.receive(sent, 5000)
-  string.contains(ask.body, "Me chama no privado") |> should.be_true()
-  string.contains(ask.body, "\"phone\":\"1203630@g.us\"") |> should.be_true()
+  process.receive(sent, 200) |> should.equal(Error(Nil))
   process.receive(seen, 100) |> should.equal(Error(Nil))
 
   // A lost account is reported.
