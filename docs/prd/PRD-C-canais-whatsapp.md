@@ -191,7 +191,7 @@ interface, QR ou código, conferir o webhook, `/acesso` da pessoa).
 | Núcleo | nenhum `case` ou `==` sobre nome de canal fora de `channel/` e `adapters/` |
 | Webhook | sem assinatura válida, 401; com, a mensagem chega ao inbox antes do 200 |
 | WhatsApp falso | privado, grupo com menção, resposta citada, imagem, `is_from_me` ignorado, conta caída gera alerta |
-| Piloto (manual, pelo mantenedor) | a Belle conversa com a Selene pelo WhatsApp |
+| Piloto (manual, pelo mantenedor) | a Belle, membro pelo WhatsApp, ganha a agente dela: nasce na primeira mensagem e recebe o nome que ela der |
 
 ## 9. Riscos
 
