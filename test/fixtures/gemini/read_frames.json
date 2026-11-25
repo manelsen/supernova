@@ -1,0 +1,15 @@
+{
+  "note": "8 quadros de uma figurinha animada sintética (ffmpeg testsrc), em ordem, numa chamada (gravação de 25/11/2026)",
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    "headers": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Audiodescrição do sticker: O sticker mostra barras de teste de televisão coloridas, no estilo SMPTE, dentro de um círculo preto e branco. Na parte superior, as barras verticais exibem as cores cinza claro, amarelo, ciano, verde, magenta, vermelho e azul. No terço inferior, uma faixa horizontal exibe um gradiente de cores que varia do amarelo ao verde, passando por tons de azul, roxo e vermelho. Dentro de um quadrado preto localizado no lado direito, um display de sete segmentos exibe números que contam regressivamente, em cor branca: inicialmente mostra o número 0, depois muda para 1 e, por fim, exibe o número 2. A animação se repete em loop.\\n\\nFim da audiodescrição\",\n            \"thoughtSignature\": \"EpYBCpMBAWkUfRP2lS18UqFj1jF7r6P+Ei3VSQvOXBI07mXbzthkK2nLIq/d0FDDA/Sn+fRK5X88V6FFXtz8GP+uf+kF5Dsjey+0bzmcQrk/KG61M5fXFHpMza4qJx5X79v1GwApaWzq0nqqzbIb6gjuoZZ/W+TJPsnSB65Jx5e3VBq3mYbQOduZemBhqBE6JoIDnd5YLW9o\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 8828,\n    \"candidatesTokenCount\": 163,\n    \"totalTokenCount\": 8991,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 8712\n      },\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 116\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.5-flash-lite\",\n  \"responseId\": \"fixture\"\n}"
+  }
+}

@@ -15,7 +15,11 @@ import supernova/channel/catalog
 import supernova/channel/chat_lanes
 import supernova/channel/chunking
 import supernova/channel/inbox
+import supernova/channel/media_reading
 import supernova/channel/port
+import supernova/channel/voice
+import supernova/core/agent_identity
+import supernova/core/preferences
 import supernova/infra/safe_io
 import supernova/metrics/record
 
@@ -327,14 +331,34 @@ fn run_inbound_turn(
     port.InboundInteraction(interaction) -> interaction.channel
   }
   let stream_events = process.new_subject()
+  // Audio, video and documents become text before the turn (PRD-A, A-04).
+  let inbound = media_reading.prepare_turn(inbound, send_fn)
 
-  let outcome = case handler(inbound, stream_events) {
-    Ok(port.ImmediateReply(reply)) ->
+  let voice_for = wants_voice(inbound)
+
+  let outcome = case handler(inbound, stream_events), voice_for {
+    // The person asked for voice (PRD-A, A-06): the answer, whole, goes
+    // as a voice note; text if speaking fails.
+    Ok(port.ImmediateReply(reply)), Some(#(settings, principal)) ->
+      case voice_or_text(settings, principal, reply, send_fn) {
+        Ok(_) -> "replied"
+        Error(error) -> send_failed(channel, error)
+      }
+    Ok(port.StreamReply(base_reply)), Some(#(settings, principal)) ->
+      case await_whole(stream_events, base_reply, stream_timeout_ms) {
+        Ok(reply) ->
+          case voice_or_text(settings, principal, reply, send_fn) {
+            Ok(_) -> "replied"
+            Error(error) -> send_failed(channel, error)
+          }
+        Error(error) -> send_failed(channel, error)
+      }
+    Ok(port.ImmediateReply(reply)), None ->
       case send_fn(reply) {
         Ok(_) -> "replied"
         Error(error) -> send_failed(channel, error)
       }
-    Ok(port.StreamReply(base_reply)) -> {
+    Ok(port.StreamReply(base_reply)), None -> {
       case stream_send_fn(base_reply, stream_events) {
         Ok(_) -> "streamed"
         Error(port.SendFailed("stream timed out")) -> {
@@ -350,8 +374,8 @@ fn run_inbound_turn(
         Error(error) -> send_failed(channel, error)
       }
     }
-    Error(port.Ignored(_)) -> "ignored"
-    Error(_) -> "handler_error"
+    Error(port.Ignored(_)), _ -> "ignored"
+    Error(_), _ -> "handler_error"
   }
   record.duration_ms("turn_duration_seconds", current_timestamp() - started, [
     #("channel", channel),
@@ -639,6 +663,65 @@ pub fn record_stream_for_test(
     timeout_ms,
     keepalive_ms,
   )
+}
+
+/// The voice settings and the person, when this message's answer should
+/// be a voice note: the person asked `/voz`, the channel sends voice, and a
+/// speaker is configured.
+fn wants_voice(
+  inbound: port.ChannelInbound,
+) -> Option(#(voice.Settings, String)) {
+  case inbound, voice.current() {
+    port.InboundMessage(message), Some(settings) ->
+      case catalog.get(message.channel).sends_voice {
+        False -> None
+        True -> {
+          let principal =
+            agent_identity.principal_id(message.channel, message.user_id)
+          case preferences.load(settings.data_dir, principal).voice {
+            True -> Some(#(settings, principal))
+            False -> None
+          }
+        }
+      }
+    _, _ -> None
+  }
+}
+
+/// A transcription given back stays text: reading it aloud helps nobody.
+fn voice_or_text(
+  settings: voice.Settings,
+  principal: String,
+  reply: port.ChannelReply,
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  case string.starts_with(reply.content, "Transcrição do áudio") {
+    True -> send_fn(reply)
+    False -> voice.deliver(settings, principal, reply, send_fn)
+  }
+}
+
+/// The whole answer of a stream, for a voice note.
+fn await_whole(
+  events: process.Subject(port.ChannelStreamEvent),
+  base_reply: port.ChannelReply,
+  wait_ms: Int,
+) -> Result(port.ChannelReply, port.ChannelError) {
+  case process.receive(events, within: wait_ms) {
+    Ok(port.StreamUpdate(_)) -> await_whole(events, base_reply, wait_ms)
+    Ok(port.StreamComplete(reply)) ->
+      Ok(
+        port.ChannelReply(
+          ..base_reply,
+          content: reply.content,
+          media: reply.media,
+          edit_message_id: None,
+          typing: False,
+        ),
+      )
+    Ok(port.StreamFailure(error)) -> Error(error)
+    Error(Nil) -> Error(port.SendFailed("stream timed out"))
+  }
 }
 
 /// The stream sender of a channel that cannot edit a message (PRD-C, C-04):

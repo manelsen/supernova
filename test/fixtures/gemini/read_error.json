@@ -1,0 +1,15 @@
+{
+  "note": "erro proposital: MIME inválido",
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    "headers": {}
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Unable to process input: the file or media data is empty, corrupted, or malformed.\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}"
+  }
+}

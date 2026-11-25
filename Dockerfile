@@ -5,6 +5,11 @@ ARG TARGETARCH
 
 RUN apk add --no-cache curl tar rebar3
 
+# Animated stickers are split into frames with Pillow before the reader sees
+# them (priv/media/sticker_frames.py, PRD-A A-10): Gemini sees only the first
+# frame of an animated WebP.
+RUN apk add --no-cache python3 py3-pillow
+
 RUN case "$TARGETARCH" in \
   amd64) GLEAM_ARCH="x86_64-unknown-linux-musl" ;; \
   arm64) GLEAM_ARCH="aarch64-unknown-linux-musl" ;; \

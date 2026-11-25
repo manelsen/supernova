@@ -10,6 +10,7 @@
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
+import gleam/float
 import gleam/hackney
 import gleam/http
 import gleam/http/request
@@ -113,6 +114,30 @@ pub type MessageEntity {
   )
 }
 
+/// A medium a person sent (PRD-A, A-11): what to fetch with `getFile`.
+pub type MediaKind {
+  Photo
+  Voice
+  AudioFile
+  VideoFile
+  VideoNote
+  DocumentFile
+  StillSticker
+  VideoSticker
+  /// Lottie (`.tgs`): not opened.
+  AnimatedSticker
+}
+
+pub type Media {
+  Media(
+    kind: MediaKind,
+    file_id: String,
+    seconds: Option(Int),
+    mime: Option(String),
+    file_name: Option(String),
+  )
+}
+
 /// Telegram Message (without recursive reply_to_message to avoid circular decoder issues)
 pub type Message {
   Message(
@@ -128,6 +153,12 @@ pub type Message {
     entities: List(MessageEntity),
     caption_entities: List(MessageEntity),
     reply_to_message_id: Option(Int),
+    /// Photos, voice, audio, video, documents, stickers (A-11).
+    media: List(Media),
+    /// Location, venue and contact, as text the agent can read.
+    notes: List(String),
+    /// The person passed on someone else's message.
+    forwarded: Bool,
   )
 }
 
@@ -683,6 +714,79 @@ fn decode_message() -> decode.Decoder(Message) {
     None,
     decode.optional(decode.dynamic),
   )
+  let file = fn(kind: MediaKind) {
+    use file_id <- decode.field("file_id", decode.string)
+    use seconds <- decode.optional_field(
+      "duration",
+      None,
+      decode.optional(decode.int),
+    )
+    use mime <- decode.optional_field(
+      "mime_type",
+      None,
+      decode.optional(decode.string),
+    )
+    use file_name <- decode.optional_field(
+      "file_name",
+      None,
+      decode.optional(decode.string),
+    )
+    decode.success(Media(kind, file_id, seconds, mime, file_name))
+  }
+  let one = fn(key: String, kind: MediaKind, next) {
+    decode.optional_field(key, None, decode.map(file(kind), Some), next)
+  }
+  // The sizes of a photo come smallest first: the last is the largest.
+  use photo <- decode.optional_field(
+    "photo",
+    None,
+    decode.list(file(Photo))
+      |> decode.map(fn(sizes) { list.last(sizes) |> option.from_result }),
+  )
+  use voice <- one("voice", Voice)
+  use audio <- one("audio", AudioFile)
+  use video <- one("video", VideoFile)
+  use video_note <- one("video_note", VideoNote)
+  use document <- one("document", DocumentFile)
+  use sticker <- decode.optional_field("sticker", None, {
+    use is_animated <- decode.optional_field("is_animated", False, decode.bool)
+    use is_video <- decode.optional_field("is_video", False, decode.bool)
+    let kind = case is_animated, is_video {
+      True, _ -> AnimatedSticker
+      _, True -> VideoSticker
+      _, _ -> StillSticker
+    }
+    decode.map(file(kind), Some)
+  })
+  use location <- decode.optional_field("location", None, {
+    use latitude <- decode.field("latitude", decode.float)
+    use longitude <- decode.field("longitude", decode.float)
+    decode.success(Some(
+      "[localização: ("
+      <> float.to_string(latitude)
+      <> ", "
+      <> float.to_string(longitude)
+      <> ")]",
+    ))
+  })
+  use venue <- decode.optional_field("venue", None, {
+    use title <- decode.optional_field("title", "", decode.string)
+    use address <- decode.optional_field("address", "", decode.string)
+    decode.success(Some("[local: " <> title <> ", " <> address <> "]"))
+  })
+  use contact <- decode.optional_field("contact", None, {
+    use phone <- decode.optional_field("phone_number", "", decode.string)
+    use first <- decode.optional_field("first_name", "", decode.string)
+    use last <- decode.optional_field("last_name", "", decode.string)
+    decode.success(Some(
+      "[contato: " <> string.trim(first <> " " <> last) <> ", " <> phone <> "]",
+    ))
+  })
+  use forward_origin <- decode.optional_field(
+    "forward_origin",
+    None,
+    decode.optional(decode.dynamic),
+  )
   let reply_to_message_id = case reply_to_message {
     Some(data) -> decode_reply_message_id(data)
     None -> None
@@ -701,6 +805,21 @@ fn decode_message() -> decode.Decoder(Message) {
     entities: option.unwrap(entities, []),
     caption_entities: option.unwrap(caption_entities, []),
     reply_to_message_id: reply_to_message_id,
+    media: option.values([
+      photo,
+      voice,
+      audio,
+      video,
+      video_note,
+      document,
+      sticker,
+    ]),
+    // A venue also carries its location; the venue says more.
+    notes: case venue {
+      Some(_) -> option.values([venue, contact])
+      None -> option.values([location, contact])
+    },
+    forwarded: forward_origin != None || forward_date != None,
   ))
 }
 
@@ -1520,6 +1639,36 @@ pub fn leave_chat(
   case api_post(config, "leaveChat", body) {
     Ok(_response) -> Ok(Nil)
     Error(error) -> Error(error)
+  }
+}
+
+// ============================================================================
+// API Methods - getFile (PRD-A, A-11)
+// ============================================================================
+
+/// The download URL of a file a person sent: `getFile` gives its path,
+/// and the file is under `<base>/file/bot<token>/<path>`. The Bot API
+/// serves files up to 20 MB this way.
+pub fn file_url(config: Config, file_id: String) -> Result(String, String) {
+  case
+    api_post(
+      config,
+      "getFile",
+      json.to_string(json.object([#("file_id", json.string(file_id))])),
+    )
+  {
+    Error(error) -> Error(describe_poll_error(error))
+    Ok(body) ->
+      case json.parse(body, decode.at(["result", "file_path"], decode.string)) {
+        Error(_) -> Error("the Bot API gave no file path")
+        Ok(path) -> {
+          let base = case string.ends_with(config.api_base_url, "/bot") {
+            True -> string.drop_end(config.api_base_url, 4)
+            False -> config.api_base_url
+          }
+          Ok(base <> "/file/bot" <> config.token <> "/" <> path)
+        }
+      }
   }
 }
 

@@ -1,0 +1,15 @@
+{
+  "note": "transcrição pelo arquivo da Files API",
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    "headers": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=UTF-8"
+    },
+    "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Transcrição do áudio\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nOlá. Este é um áudio de teste da Supernova.\\n1, 2, 3.\\nAgora uma frase um pouco mais longa, para que o arquivo passe de 256 kB, e o envio aconteça em mais de uma parte.\\n4, 5, 6.\\nFim da transcrição\",\n            \"thoughtSignature\": \"EpYBCpMBAWkUfROShcE+84trY3sKADMeRwKaFttreULdoX5RxuCfeZTwINemBC81KHbwgIzSRjrs+Jd1at5z7JNMKQAUTIETnmerWP+m4DMq66swt5H93RN2AA0serEolVGERXhkMnnOdOj2aIslFQq/twDiTcSabyPB4ZUe249qtBTM2cTFukNSqyVNOa6PmhzwoJS0sGZJ\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 4857,\n    \"candidatesTokenCount\": 651,\n    \"totalTokenCount\": 5508,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"AUDIO\",\n        \"tokenCount\": 4774\n      },\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 83\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.5-flash-lite\",\n  \"responseId\": \"fixture\"\n}"
+  }
+}

@@ -775,6 +775,9 @@ fn decode_message_helper() -> decode.Decoder(telegram.Message) {
     entities: option.unwrap(entities, []),
     caption_entities: option.unwrap(caption_entities, []),
     reply_to_message_id: None,
+    media: [],
+    notes: [],
+    forwarded: False,
   ))
 }
 

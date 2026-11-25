@@ -125,8 +125,68 @@ log shows the turn. If nothing happens, see the troubleshooting section.
   Supernova learns which phone a LID belongs to when both arrive together.
   With groups on, someone it does not recognize yet who calls it in a group
   is asked to write in private.
-- **Images.** Images the person sends (up to 5 MB) reach the model once.
-  The history keeps `[imagem]`. Audio and documents are not read yet.
+## What the agent opens
+
+Nothing a person sends disappears. Each kind becomes something the agent
+can answer:
+
+| The person sends | The agent gets |
+|---|---|
+| Text | The text |
+| Image, still sticker | The image itself, with Amélie's audio description rules for when the person asked nothing else |
+| Voice note, audio | A literal transcription ("[mensagem de voz de 0:42, transcrita]" and the text) |
+| Video, round video | An audio description with the speech transcribed |
+| Document (PDF, Word, Excel, PowerPoint, text) | Its content, with what matters first: amount, due date and full barcode line of a bill; parties and terms of a contract |
+| Animated sticker | A description of the animation, read from up to eight frames |
+| Location, contact, poll | Text: "[localização: …]", "[contato: …]", "[enquete: …]" |
+
+Audio, video, documents and animated stickers are read before the turn by a
+Gemini model (`media.reader_model`, `gemini-3.5-flash-lite`, with
+`SUPERNOVA_GEMINI_API_KEY`), using Amélie's media prompts. The text takes
+the medium's place: it stays in the conversation and the memory, the agent
+can search it later, and `/esquecer` erases it. Images go to the agent's
+own model. Without the Gemini key, these become a note the agent answers
+("[uma mensagem de voz de 0:42, que ainda não consigo ouvir]").
+
+Every reading is admitted in the ledger first and charged to the person
+(US$ 0.30 per million input tokens, US$ 2.50 per million output tokens):
+about US$ 0.001 for a one-minute voice note, US$ 0.003 for an animated
+sticker. A stranger's media is never read: it costs nothing, and the gate
+answers them as usual. A reading that fails, or a day's budget that ran
+out, becomes a note with the reason. The file is deleted once read.
+
+Animated stickers are split into frames with Pillow
+(`priv/media/sticker_frames.py`): Gemini sees only the first frame of an
+animated WebP. The image installs `python3` and `py3-pillow`.
+
+## Commands for how the agent answers
+
+Each is a preference of the person, kept in their agent folder and erased
+by `/esquecer`.
+
+| Command | What it does |
+|---|---|
+| `/voz` | Answers come as voice notes (Gemini TTS, voice `media.voice`, Sulafat by default), cited to the person's message. Again to go back to text. If speaking fails, the answer goes as text. |
+| `/transcricao` | Your own voice notes also come back transcribed before the answer. |
+| `/curto`, `/longo` | Short or complete descriptions of images, videos and documents. |
+| `/cego` | Turns the complete audio description on and off. |
+
+A forwarded audio, alone, comes back as its transcription ("Transcrição do
+áudio" … "Fim da transcrição"), without the model: the use case is reading
+someone else's long audio instead of listening to it. The exchange stays in
+the history. Speech costs US$ 0.50 per million input tokens and US$ 6.00
+per million audio tokens through 31/12/2026 (about US$ 0.01 a minute), and
+twice that from 1/1/2027.
+
+## When the number falls
+
+When GOWA reports `device.logged_out`, the admins get an alert on another
+channel (never through WhatsApp itself; Telegram in the pilot) that already
+carries a new pairing code: "Para reconectar, no celular da agente:
+WhatsApp → Aparelhos conectados → Conectar aparelho → Conectar com número
+de telefone, e digite o código …". `SUPERNOVA_WHATSAPP_DEVICE_ID` gives the
+number. If the code expires, an admin sends `/parear` (on Telegram) for a
+new one. A temporary ban keeps the session; the alert says until when.
 
 ## Troubleshooting
 
@@ -134,8 +194,12 @@ log shows the turn. If nothing happens, see the troubleshooting section.
 |---|---|
 | No turn when a message arrives | GOWA log: webhook errors. Supernova log: `401` means the two `WEBHOOK_SECRET` values differ |
 | Replies fail with "Unauthorized" | `SUPERNOVA_WHATSAPP_BASIC_AUTH` differs from GOWA's `APP_BASIC_AUTH` (both come from the same `.env` line) |
-| "O canal whatsapp caiu" | Pair again (see above). After a temporary ban, wait until the time in the alert |
+| "O WhatsApp caiu" | Type the code from the alert on the agent's phone, or `/parear` for a new one. After a temporary ban, wait until the time in the alert |
+| Audio comes as "que ainda não consigo ouvir" | `SUPERNOVA_GEMINI_API_KEY` is not set, or `media.audio: off` |
+| Animated stickers come as notes | `python3` or `py3-pillow` missing in the image ("Pillow is not installed" in the note) |
 | A person in a group is never answered | Groups are off by default (`whatsapp.allow_groups`). With them on: check that they mentioned or replied to the agent, and that the group is in `access.allowed_chats` |
 
 Metrics: `whatsapp_lid_learned_total`, `whatsapp_unknown_lid_total`,
-`whatsapp_account_down_total`, `whatsapp_group_messages_dropped_total`, `channel_media_total{channel="whatsapp"}`.
+`whatsapp_account_down_total`, `whatsapp_group_messages_dropped_total`,
+`channel_media_total{channel="whatsapp"}`. Media readings and speech show in
+the ledger as `gemini` usage of the person.

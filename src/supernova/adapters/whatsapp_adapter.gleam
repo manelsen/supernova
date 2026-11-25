@@ -20,13 +20,16 @@ import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import supernova/adapters/whatsapp_inbound
 import supernova/channel/channel_kit
 import supernova/channel/inbound_media
+import supernova/channel/pairing
 import supernova/channel/port
 import supernova/channel/session.{type SessionResolver, without_manager}
 import supernova/channel/traits/whatsapp as whatsapp_traits
+import supernova/channel/voice
 import supernova/channel/webhook_server
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/runtime as closed_group_runtime
@@ -136,14 +139,64 @@ pub fn start(
     ),
   )
 
+  pairing.register("whatsapp", fn() { pairing_code(settings) })
+
   Ok(
     port.ChannelAdapter(
       name: "whatsapp",
       send: send_fn,
-      stop: fn() { webhook_server.unregister("whatsapp") },
+      stop: fn() {
+        webhook_server.unregister("whatsapp")
+        pairing.unregister("whatsapp")
+      },
       stop_ingress: fn() { webhook_server.unregister("whatsapp") },
     ),
   )
+}
+
+/// A pairing code for the agent's number, asked of GOWA
+/// (`GET /app/login-with-code?phone=…`, documented in GOWA v9.10's
+/// openapi; the answer carries `results.pair_code`). The number comes from
+/// the device id (`5511…@s.whatsapp.net`).
+pub fn pairing_code(settings: Settings) -> Result(String, String) {
+  case settings.device_id {
+    None -> Error("SUPERNOVA_WHATSAPP_DEVICE_ID is not set")
+    Some(device) -> {
+      let phone = case string.split_once(device, "@") {
+        Ok(#(digits, _)) -> digits
+        Error(Nil) -> device
+      }
+      let url =
+        join_bridge_url(
+          settings.bridge_url,
+          "/app/login-with-code?phone=" <> phone,
+        )
+      case request.to(url) {
+        Error(_) -> Error("invalid bridge URL")
+        Ok(req) -> {
+          let req =
+            req
+            |> request.set_method(http.Get)
+            |> maybe_set_device_header(settings.device_id)
+            |> request.set_header(
+              "Authorization",
+              basic_authorization(settings.basic_auth),
+            )
+          case hackney.send(req) {
+            Ok(response) if response.status == 200 ->
+              json.parse(
+                response.body,
+                decode.at(["results", "pair_code"], decode.string),
+              )
+              |> result.replace_error("GOWA answered without a code")
+            Ok(response) ->
+              Error("GOWA answered " <> int.to_string(response.status))
+            Error(_) -> Error("GOWA unreachable")
+          }
+        }
+      }
+    }
+  }
 }
 
 /// Carry out a decision about one webhook.
@@ -154,15 +207,15 @@ pub fn act(
   on_down: fn(String) -> Nil,
 ) -> webhook_server.Outcome {
   case decision {
-    whatsapp_inbound.Answer(message, learned, image) -> {
+    whatsapp_inbound.Answer(message, learned, attachments, forwarded) -> {
       case learned {
         Some(#(lid, phone)) -> learn_lid(settings.data_dir, lid, phone)
         None -> Nil
       }
-      let content = case image {
-        None -> message.content
-        Some(path) -> message.content <> fetch_image(settings, path)
-      }
+      let content =
+        list.fold(attachments, message.content, fn(content, attachment) {
+          content <> open_attachment(settings, attachment, forwarded)
+        })
       webhook_server.Deliver([
         port.InboundMessage(port.ChannelMessage(..message, content: content)),
       ])
@@ -195,13 +248,31 @@ pub fn act(
       webhook_server.Handled
     }
     whatsapp_inbound.Ignore(_) -> webhook_server.Handled
-    whatsapp_inbound.AccountDown(reason) -> {
+    whatsapp_inbound.AccountDown(reason, logged_out) -> {
       record.count("whatsapp_account_down_total", [])
       io.println("error: whatsapp " <> reason)
       on_down(reason)
+      // Logged out: the alert already carries a new pairing code (PRD-A,
+      // A-12). Suspended: the session is kept; the alert says until when.
+      let next_step = case logged_out {
+        False -> ""
+        True ->
+          case pairing.request("whatsapp") {
+            Ok(code) -> "\n" <> pairing.whatsapp_instructions(code)
+            Error(why) ->
+              "\nNão consegui pedir o código de reconexão ("
+              <> why
+              <> "). Mande /parear aqui para tentar de novo."
+          }
+      }
       case closed_group_global.get_runtime() {
         Some(runtime) ->
-          closed_group_runtime.channel_down_alert(runtime, "whatsapp", reason)
+          closed_group_runtime.channel_down_alert(
+            runtime,
+            "whatsapp",
+            reason,
+            "O WhatsApp caiu: " <> reason <> "." <> next_step,
+          )
         None -> Nil
       }
       webhook_server.Handled
@@ -210,13 +281,73 @@ pub fn act(
   }
 }
 
+/// What an attachment becomes in the message text (PRD-A, A-01): an
+/// image (or a still sticker) goes to the model; what the agent cannot
+/// open yet becomes a note it can answer, never silence.
+fn open_attachment(
+  settings: Settings,
+  attachment: whatsapp_inbound.Attachment,
+  forwarded: Bool,
+) -> String {
+  let kind = case attachment.kind {
+    whatsapp_inbound.Audio -> Ok(inbound_media.Audio)
+    whatsapp_inbound.Video -> Ok(inbound_media.Video)
+    whatsapp_inbound.Document -> Ok(inbound_media.Document)
+    // Read frame by frame at the start of the turn (A-10).
+    whatsapp_inbound.AnimatedSticker -> Ok(inbound_media.Sticker)
+    _ -> Error(Nil)
+  }
+  case attachment.kind, attachment.path, kind {
+    whatsapp_inbound.Image, Some(path), _
+    | whatsapp_inbound.Sticker, Some(path), _
+    -> fetch_image(settings, path)
+    // Audio, video and documents are kept for the reader at the start of
+    // the turn (PRD-A, A-04).
+    _, Some(path), Ok(kind) ->
+      case
+        safe_media_path(path),
+        inbound_media.fetch(
+          settings.data_dir,
+          join_bridge_url(settings.bridge_url, "/" <> path),
+          inbound_media.Declared(
+            kind: kind,
+            mime: attachment.mime,
+            seconds: attachment.seconds,
+            file_name: attachment.file_name,
+            voice_note: attachment.voice_note,
+            forwarded: forwarded,
+          ),
+        )
+      {
+        True, Ok(media) -> {
+          record.count("channel_media_total", [
+            #("channel", "whatsapp"),
+            #("outcome", "kept"),
+          ])
+          inbound_media.tag_for(media)
+        }
+        _, _ -> {
+          record.count("channel_media_total", [
+            #("channel", "whatsapp"),
+            #("outcome", "failed"),
+          ])
+          "\n" <> whatsapp_inbound.unopened_note(attachment, forwarded)
+        }
+      }
+    _, _, _ -> "\n" <> whatsapp_inbound.unopened_note(attachment, forwarded)
+  }
+}
+
+/// GOWA serves its downloads under `statics/media/`; nothing else.
+fn safe_media_path(path: String) -> Bool {
+  string.starts_with(path, "statics/media/") && !string.contains(path, "..")
+}
+
 /// The tag of an image GOWA downloaded (PRD-C, C-05), or a note that it
 /// could not be opened. GOWA serves its downloads under `/statics/media/`
 /// on the internal network; nothing else is fetched.
 fn fetch_image(settings: Settings, path: String) -> String {
-  let safe =
-    string.starts_with(path, "statics/media/") && !string.contains(path, "..")
-  let fetched = case safe {
+  let fetched = case safe_media_path(path) {
     False -> Error("unexpected media path")
     True ->
       case
@@ -811,6 +942,21 @@ fn build_media_send_plan(
         download: None,
       ))
 
+    // A voice note the agent spoke (PRD-A, A-06): the file goes in the
+    // body, and GOWA turns it into OGG/Opus (`ptt`).
+    port.AudioMedia("file://" <> _ as url, mime) ->
+      Ok(BridgeRequestPlan(
+        path: "/send/audio",
+        content_type: BridgeMultipart,
+        fields: [#("phone", phone), #("ptt", "true")],
+        download: Some(BridgeDownload(
+          field_name: "audio",
+          source_url: url,
+          filename: "voz.wav",
+          mime_type: mime,
+        )),
+      ))
+
     port.AudioMedia(url, _) ->
       Ok(BridgeRequestPlan(
         path: "/send/audio",
@@ -876,7 +1022,36 @@ fn do_send(
   settings: Settings,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
-  case build_send_plan(reply) {
+  case local_files_allowed(settings, reply), build_send_plan(reply) {
+    False, _ ->
+      Error(port.SendFailed("local file outside the voice notes directory"))
+    True, plan -> send_plan(settings, plan)
+  }
+}
+
+/// A reply may carry a local file only from the voice notes directory: no
+/// answer, not even one the model was led into, sends any other file.
+fn local_files_allowed(settings: Settings, reply: port.ChannelReply) -> Bool {
+  let allowed = voice.dir(settings.data_dir) <> "/"
+  list.all(reply.media, fn(media) {
+    let url = case media {
+      port.ImageMedia(url, _) -> url
+      port.AudioMedia(url, _) -> url
+      port.DocumentMedia(url, _, _) -> url
+    }
+    case url {
+      "file://" <> path ->
+        string.starts_with(path, allowed) && !string.contains(path, "..")
+      _ -> True
+    }
+  })
+}
+
+fn send_plan(
+  settings: Settings,
+  plan: Result(BridgeRequestPlan, port.ChannelError),
+) -> Result(Nil, port.ChannelError) {
+  case plan {
     Error(error) -> Error(error)
     Ok(plan) -> {
       let url = join_bridge_url(settings.bridge_url, plan.path)
@@ -1030,6 +1205,19 @@ fn multipart_download_part(
 fn download_remote_file(
   source_url: String,
 ) -> Result(BitArray, port.ChannelError) {
+  case source_url {
+    // Checked by do_send: only the voice notes directory.
+    "file://" <> path ->
+      read_local(path)
+      |> result.replace_error(port.SendFailed("voice note not readable"))
+    _ -> download_http(source_url)
+  }
+}
+
+@external(erlang, "file", "read_file")
+fn read_local(path: String) -> Result(BitArray, decode.Dynamic)
+
+fn download_http(source_url: String) -> Result(BitArray, port.ChannelError) {
   case request.to(source_url) {
     Error(_) -> Error(port.SendFailed("invalid media URL"))
     Ok(req) ->

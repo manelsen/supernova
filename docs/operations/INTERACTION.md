@@ -25,10 +25,14 @@ The conversation survives a restart: each person's conversation in each chat is 
 | `/esquecer` | Members and admins | Explains what forgetting erases. `/esquecer confirmo` erases everything the person told the agent: conversations, memories, what it learned from them, the files it kept for them, and the agenda. The agent's name and character stay. |
 | `/vincular` | Members and admins, in private | Gives a code (six characters, valid for 10 minutes, used once) to bring another channel to the same agent. On the other channel, in private, send `/vincular CÓDIGO`. From then on it is the same agent, memory and agenda on both. You are told on the first channel when a channel is linked. |
 | `/desvincular` | Members and admins | On a linked channel, unlinks it. On your first channel, lists the linked ones; `/desvincular <id>` unlinks one. `/esquecer` keeps the links. |
+| `/voz` | Members and admins, on WhatsApp (Telegram answers in text) | Answers as voice notes; again to go back to text. See [WHATSAPP.md](WHATSAPP.md). |
+| `/transcricao` | Members and admins | Your own voice notes also come back transcribed. A forwarded audio always comes back transcribed. |
+| `/curto`, `/longo`, `/cego` | Members and admins | How much detail descriptions of images, videos and documents carry; `/cego` turns the complete audio description on and off. |
 | `/agenda` | Members and admins | Lists what you asked your agent to do later. `/agenda remover <id>` removes one entry. |
 | `/uso` | Members and admins | Your own spending. |
 | `/model` | Members and admins | Chooses the provider and model with buttons (inline keyboard on Telegram, components on Discord). |
 | `/help`, `/status` | Members and admins | Help and session status. |
+| `/parear` | Admins | A new pairing code for the WhatsApp number. |
 | `/uso todos`, `/acesso …`, `/teto liberar <usd>`, `/auditoria [n]` | Admins | Instance spending, access, the daily ceiling and the audit log. See [DEPLOY.md](../../DEPLOY.md). |
 
 `/help` answers with this list, by role: admins also see their commands. On Telegram, Supernova sets the same list as the bot's command menu at every boot (members' commands in every chat, the longer list in each admin's private chat, for the admins in `supernova.yaml`), replacing whatever menu was set before with the same token. The list lives in `core/closed_group/commands.gleam`.

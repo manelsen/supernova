@@ -11,10 +11,16 @@
 ////   - getUpdates_Media.json contains raw Message objects (no update_id) and
 ////     cannot be parsed as Update objects.
 
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import supernova/adapters/telegram
+import supernova/adapters/telegram_channel
+import supernova/channel/inbound_media
+import telegram_fake
+import test_workspace
 
 // ============================================================================
 // getUpdates_All — single text message
@@ -358,4 +364,123 @@ fn fixture_callback_query_a() -> String {
 
 fn fixture_callback_query_b() -> String {
   "{\"id\":12345678,\"from\":{\"is_bot\":false,\"id\":12345678,\"language_code\":\"pt-br\",\"last_name\":\"Name\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message\":{\"chat\":{\"id\":12345678,\"type\":\"private\",\"last_name\":\"Name\",\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"message_id\":159,\"from\":{\"is_bot\":true,\"id\":12345678,\"first_name\":\"AnonymizedUser\",\"username\":\"anonymized_bot\"},\"text\":\"Anonymized message content\",\"date\":1774567811},\"chat_instance\":\"123456789012345679\",\"data\":\"choice_b\"}"
+}
+
+/// PRD-A, A-11: what a Telegram message carries besides text.
+pub fn media_and_notes_are_decoded_test() {
+  let json =
+    "{\"update_id\":1,\"message\":{\"message_id\":7,\"date\":1,\"chat\":{\"id\":42,\"type\":\"private\"},\"from\":{\"id\":42,\"is_bot\":false,\"first_name\":\"Ana\"},"
+    <> "\"photo\":[{\"file_id\":\"small\",\"file_unique_id\":\"a\",\"width\":90,\"height\":90},{\"file_id\":\"large\",\"file_unique_id\":\"b\",\"width\":1280,\"height\":1280}],"
+    <> "\"voice\":{\"file_id\":\"V\",\"file_unique_id\":\"c\",\"duration\":42,\"mime_type\":\"audio/ogg\"},"
+    <> "\"sticker\":{\"file_id\":\"S\",\"file_unique_id\":\"d\",\"type\":\"regular\",\"width\":512,\"height\":512,\"is_animated\":true,\"is_video\":false},"
+    <> "\"contact\":{\"phone_number\":\"5511\",\"first_name\":\"Bia\"},"
+    <> "\"location\":{\"latitude\":-23.5,\"longitude\":-46.6},"
+    <> "\"forward_origin\":{\"type\":\"hidden_user\",\"date\":1,\"sender_user_name\":\"X\"}}}"
+  let assert Ok(update) = telegram.parse_update(json)
+  let assert Some(message) = update.message
+  list.map(message.media, fn(m) { #(m.kind, m.file_id) })
+  |> should.equal([
+    #(telegram.Photo, "large"),
+    #(telegram.Voice, "V"),
+    #(telegram.AnimatedSticker, "S"),
+  ])
+  message.notes
+  |> should.equal(["[localização: (-23.5, -46.6)]", "[contato: Bia, 5511]"])
+  message.forwarded |> should.be_true()
+}
+
+/// The media are fetched with getFile and tagged; a Lottie sticker is a
+/// note.
+pub fn media_are_fetched_and_tagged_test() {
+  let requests = process.new_subject()
+  let fake = telegram_fake.start(requests)
+  let config =
+    telegram.new_config("TOKEN") |> telegram.with_base_url(fake.base_url)
+  let dir = test_workspace.create_temp_dir("tg-media")
+  let message =
+    telegram.Message(
+      message_id: 7,
+      from: None,
+      sender_chat: None,
+      date: 1,
+      chat: telegram.Chat(
+        id: "42",
+        chat_type: telegram.PrivateChat,
+        title: None,
+        username: None,
+        first_name: None,
+        last_name: None,
+      ),
+      forward_from: None,
+      forward_date: None,
+      text: None,
+      caption: None,
+      entities: [],
+      caption_entities: [],
+      reply_to_message_id: None,
+      media: [
+        telegram.Media(telegram.Voice, "V", Some(42), Some("audio/ogg"), None),
+        telegram.Media(telegram.AnimatedSticker, "S", None, None, None),
+      ],
+      notes: [],
+      forwarded: False,
+    )
+  let content = telegram_channel.open_media(config, dir, message)
+  let assert [#(inbound_media.Audio, id)] = inbound_media.refs(content)
+  let assert Ok(kept) = inbound_media.load(dir, id)
+  kept.voice_note |> should.be_true()
+  kept.seconds |> should.equal(Some(42))
+  string.ends_with(content, "\n[uma figurinha animada]") |> should.be_true()
+  test_workspace.remove_dir_recursive(dir)
+}
+
+/// A file the Bot API will not give (over 20 MB, for one) becomes a note.
+pub fn a_file_that_cannot_be_fetched_is_a_note_test() {
+  let requests = process.new_subject()
+  let fake = telegram_fake.start(requests)
+  telegram_fake.queue(
+    fake,
+    "getFile",
+    400,
+    telegram_fake.error_body(400, "Bad Request: file is too big"),
+  )
+  let config =
+    telegram.new_config("TOKEN") |> telegram.with_base_url(fake.base_url)
+  let dir = test_workspace.create_temp_dir("tg-media-fail")
+  let message =
+    telegram.Message(
+      message_id: 8,
+      from: None,
+      sender_chat: None,
+      date: 1,
+      chat: telegram.Chat(
+        id: "42",
+        chat_type: telegram.PrivateChat,
+        title: None,
+        username: None,
+        first_name: None,
+        last_name: None,
+      ),
+      forward_from: None,
+      forward_date: None,
+      text: None,
+      caption: None,
+      entities: [],
+      caption_entities: [],
+      reply_to_message_id: None,
+      media: [
+        telegram.Media(telegram.VideoFile, "BIG", Some(600), None, None),
+        telegram.Media(telegram.DocumentFile, "DOC", None, None, Some("a.pdf")),
+      ],
+      notes: [],
+      forwarded: True,
+    )
+  let content = telegram_channel.open_media(config, dir, message)
+  string.starts_with(content, "\n[um vídeo que não consegui ver: ")
+  |> should.be_true()
+  // The second file came back as the fake's voice note bytes: a document
+  // that is not a document is refused too.
+  string.contains(content, "[um documento que não consegui ler: ")
+  |> should.be_true()
+  test_workspace.remove_dir_recursive(dir)
 }

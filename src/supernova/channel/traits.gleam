@@ -44,6 +44,8 @@ pub type ChannelTraits {
     private_chat_for: fn(String) -> String,
     /// Messages arrive at the webhook server (`channel/webhook_server`).
     receives_by_webhook: Bool,
+    /// The channel delivers voice notes (`/voz`, PRD-A A-06).
+    sends_voice: Bool,
   )
 }
 
@@ -85,6 +87,7 @@ pub fn generic(name: String) -> ChannelTraits {
     turn_timeout_ms: 30_000,
     private_chat_for: fn(user_id) { user_id },
     receives_by_webhook: False,
+    sends_voice: False,
   )
 }
 

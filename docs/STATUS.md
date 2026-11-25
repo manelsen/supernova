@@ -22,11 +22,11 @@ What is open, and in what order, is in [PENDENCIAS.md](PENDENCIAS.md). This page
 | Channel | Status |
 |---|---|
 | Telegram | Supported: closed group, commands, buttons, streaming, typing, threads, chunking |
-| WhatsApp | Supported through GOWA: closed group, private chats only (groups off by default, `whatsapp.allow_groups`), images, account-down alert. Same agent as on another channel after `/vincular`. |
+| WhatsApp | Supported through GOWA: closed group, private chats only (groups off by default, `whatsapp.allow_groups`), every kind of media read, voice answers, account-down alert with a pairing code on Telegram. Same agent as on another channel after `/vincular`. |
 | Discord | Sends only: receiving messages is not implemented (the gateway connection is a stub). The closed-group pipeline is in place for when it receives. Parity with Telegram is decided ([PENDENCIAS](PENDENCIAS.md) 3.2). |
 | Slack, Matrix, Lark, Google Chat, Mattermost, WeChat Work | Send only, experimental: they do not receive messages, are not behind the closed group and have no end-to-end tests. Supernova warns at boot. |
 
-WhatsApp accepts images from the person (up to 5 MB, shown to the model once). Audio and documents are not read on any channel yet.
+On WhatsApp, the agent opens what the person sends (PRD-A): images go to its model with audio description rules; voice notes, videos, documents and animated stickers are read into text by Gemini before the turn and stay in the memory; location, contact and poll become text. `/voz` answers with voice notes, `/transcricao` gives the transcription back, `/curto`, `/longo` and `/cego` set the detail. Telegram reads the same media (photos, voice, audio, video, documents, stickers; Lottie stickers become a note; files over the Bot API's 20 MB become a note); voice answers are WhatsApp only.
 
 ## Runtime
 

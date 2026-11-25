@@ -13,6 +13,7 @@ import supernova/adapters/telegram
 import supernova/channel/channel_kit
 import supernova/channel/chunking
 import supernova/channel/health as channel_health
+import supernova/channel/inbound_media
 import supernova/channel/port
 import supernova/config
 import supernova/core/access/actor as access_actor
@@ -279,7 +280,8 @@ fn dispatch_telegram_update(
     None -> Nil
   }
   case telegram_update_to_inbound(update) {
-    Ok(inbound) ->
+    Ok(inbound) -> {
+      let inbound = with_media(telegram_config, update, inbound)
       channel_kit.dispatch_inbound(
         handler,
         send_fn,
@@ -288,7 +290,31 @@ fn dispatch_telegram_update(
         registry_id,
         turn_hard_timeout_ms,
       )
+    }
     Error(_) -> Nil
+  }
+}
+
+/// The message's media fetched and tagged; without a data directory (no
+/// runtime), the media become notes.
+fn with_media(
+  config: telegram.Config,
+  update: telegram.Update,
+  inbound: port.ChannelInbound,
+) -> port.ChannelInbound {
+  case update.message, inbound, closed_group_global.get_config() {
+    Some(telegram.Message(media: [_, ..], ..) as message),
+      port.InboundMessage(channel_message),
+      Some(cfg)
+    ->
+      port.InboundMessage(
+        port.ChannelMessage(
+          ..channel_message,
+          content: channel_message.content
+            <> open_media(config, cfg.data_dir, message),
+        ),
+      )
+    _, _, _ -> inbound
   }
 }
 
@@ -667,13 +693,83 @@ fn telegram_username(user: telegram.User) -> String {
 }
 
 fn telegram_message_content(message: telegram.Message) -> String {
-  case message.text {
+  let said = case message.text {
     Some(text) -> text
     None ->
       case message.caption {
         Some(caption) -> caption
         None -> ""
       }
+  }
+  case said, message.notes {
+    _, [] -> said
+    "", notes -> string.join(notes, "\n")
+    _, notes -> said <> "\n" <> string.join(notes, "\n")
+  }
+}
+
+/// The media of a message, kept for the reader at the start of the turn
+/// (PRD-A, A-11): fetched with `getFile`, checked by their bytes, and
+/// tagged in the text. What cannot be opened becomes a note.
+pub fn open_media(
+  config: telegram.Config,
+  data_dir: String,
+  message: telegram.Message,
+) -> String {
+  list.map(message.media, fn(media) {
+    "\n" <> open_one(config, data_dir, media, message.forwarded)
+  })
+  |> string.concat
+}
+
+fn open_one(
+  config: telegram.Config,
+  data_dir: String,
+  media: telegram.Media,
+  forwarded: Bool,
+) -> String {
+  let kept = fn(kind, mime, voice_note) {
+    use url <- result.try(telegram.file_url(config, media.file_id))
+    inbound_media.fetch(
+      data_dir,
+      url,
+      inbound_media.Declared(
+        kind: kind,
+        mime: option.or(media.mime, mime),
+        seconds: media.seconds,
+        file_name: media.file_name,
+        voice_note: voice_note,
+        forwarded: forwarded,
+      ),
+    )
+    |> result.map(fn(kept) { string.drop_start(inbound_media.tag_for(kept), 1) })
+  }
+  let attempt = case media.kind {
+    telegram.Photo -> kept(inbound_media.Image, Some("image/jpeg"), False)
+    telegram.StillSticker ->
+      kept(inbound_media.Image, Some("image/webp"), False)
+    telegram.Voice -> kept(inbound_media.Audio, Some("audio/ogg"), True)
+    telegram.AudioFile -> kept(inbound_media.Audio, None, False)
+    telegram.VideoFile | telegram.VideoNote | telegram.VideoSticker ->
+      kept(inbound_media.Video, None, False)
+    telegram.DocumentFile -> kept(inbound_media.Document, None, False)
+    telegram.AnimatedSticker -> Error("Lottie")
+  }
+  case attempt, media.kind {
+    Ok(tag), _ -> tag
+    Error(_), telegram.AnimatedSticker -> "[uma figurinha animada]"
+    Error(reason), kind -> "[" <> unopened(kind) <> ": " <> reason <> "]"
+  }
+}
+
+fn unopened(kind: telegram.MediaKind) -> String {
+  case kind {
+    telegram.Photo | telegram.StillSticker ->
+      "uma imagem que não consegui abrir"
+    telegram.Voice -> "uma mensagem de voz que não consegui ouvir"
+    telegram.AudioFile -> "um áudio que não consegui ouvir"
+    telegram.DocumentFile -> "um documento que não consegui ler"
+    _ -> "um vídeo que não consegui ver"
   }
 }
 

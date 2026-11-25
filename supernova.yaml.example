@@ -129,6 +129,21 @@ whatsapp:
   # Every conversation in private: group messages are dropped unread.
   allow_groups: false
 
+# Media people send (PRD-A). Audio, video and documents are read into text
+# before the turn by a Gemini model (needs SUPERNOVA_GEMINI_API_KEY in .env):
+# a literal transcription, an audio description with the speech
+# transcribed, the document's content. The text stays in the conversation
+# and the memory. Each reading is charged to the person. Images go to the
+# agent's own model. Without the key, media become notes the agent answers.
+# media:
+#   reader_model: gemini-3.5-flash-lite
+#   # /voz answers (Gemini TTS): one of the 30 prebuilt voices.
+#   speech_model: gemini-3.8-flash-lite-tts
+#   voice: Sulafat
+#   audio: read        # read | off
+#   video: read
+#   document: read
+
 # Channels that receive by webhook (WhatsApp) and plain-http hosts.
 channels:
   # GOWA talks plain http inside the compose network.

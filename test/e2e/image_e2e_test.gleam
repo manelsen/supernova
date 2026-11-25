@@ -90,8 +90,13 @@ pub fn an_image_reaches_the_model_once_test() {
     let _ = say(router, "sim")
 
     let assert Ok(id) = inbound_media.store(root, png)
+    clear_prompts()
     say(router, "olha" <> inbound_media.tag(id))
     |> should.equal("vi 1 imagem(ns)")
+    // Amélie's audio description rules went with the image (A-08)...
+    prompt_texts()
+    |> list.any(fn(p) { string.contains(p, "faça a audiodescrição") })
+    |> should.be_true()
     // The file was read once and is gone.
     inbound_media.take_data_url(root, id) |> should.be_error
 
@@ -102,6 +107,15 @@ pub fn an_image_reaches_the_model_once_test() {
     list.contains(said, "olha\n[imagem]") |> should.be_true()
     list.any(said, fn(text) { string.contains(text, "[imagem:") })
     |> should.be_false()
+    // ...but only to the model, never into the history.
+    list.any(said, fn(text) { string.contains(text, "audiodescrição") })
+    |> should.be_false()
     session_supervisor.stop(sessions)
   })
 }
+
+@external(erlang, "supernova_mock_ffi", "clear_prompts")
+fn clear_prompts() -> Nil
+
+@external(erlang, "supernova_mock_ffi", "prompts")
+fn prompt_texts() -> List(String)

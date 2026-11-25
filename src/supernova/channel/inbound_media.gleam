@@ -11,7 +11,10 @@
 //// audio and documents come later on the same capability.
 
 import gleam/bit_array
+import gleam/dynamic/decode
+import gleam/json
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 
@@ -22,8 +25,6 @@ pub const max_bytes = 5_242_880
 pub const max_age_ms = 86_400_000
 
 const open = "[imagem:"
-
-const placeholder = "\n[imagem]"
 
 @external(erlang, "supernova_inbound_media_ffi", "write")
 fn write(path: String, bytes: BitArray) -> Result(Nil, String)
@@ -40,12 +41,317 @@ fn sweep_dir(dir: String, max_age_ms: Int) -> Int
 @external(erlang, "supernova_inbound_media_ffi", "random_id")
 fn random_id() -> String
 
+@external(erlang, "supernova_inbound_media_ffi", "download")
+fn download(url: String, path: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_inbound_media_ffi", "file_size")
+fn file_size(path: String) -> Int
+
+@external(erlang, "supernova_inbound_media_ffi", "read_head")
+fn read_head(path: String) -> Result(BitArray, Nil)
+
 fn dir(data_dir: String) -> String {
   data_dir <> "/inbound_media"
 }
 
 fn path(data_dir: String, id: String) -> String {
   dir(data_dir) <> "/" <> id
+}
+
+/// The large kinds of media (PRD-A).
+pub type Kind {
+  Image
+  Audio
+  Video
+  Document
+  /// An animated sticker: read frame by frame (A-10).
+  Sticker
+}
+
+/// What the channel says about a medium.
+pub type Declared {
+  Declared(
+    kind: Kind,
+    mime: Option(String),
+    seconds: Option(Int),
+    file_name: Option(String),
+    voice_note: Bool,
+    forwarded: Bool,
+  )
+}
+
+/// A medium kept for a turn: the file is `file_path(data_dir, id)`.
+pub type Media {
+  Media(
+    id: String,
+    kind: Kind,
+    mime: String,
+    size: Int,
+    seconds: Option(Int),
+    file_name: Option(String),
+    voice_note: Bool,
+    forwarded: Bool,
+  )
+}
+
+/// Largest file of a kind: images go inline to the model (20 MB); audio,
+/// video and documents may go through the Gemini Files API (2 GB).
+pub fn max_bytes_for(kind: Kind) -> Int {
+  case kind {
+    Image | Sticker -> 20_000_000
+    _ -> 2_000_000_000
+  }
+}
+
+pub fn file_path(data_dir: String, id: String) -> String {
+  path(data_dir, id)
+}
+
+fn meta_path(data_dir: String, id: String) -> String {
+  path(data_dir, id) <> ".json"
+}
+
+/// Keep a medium given whole.
+pub fn keep(
+  data_dir: String,
+  bytes: BitArray,
+  declared: Declared,
+) -> Result(Media, String) {
+  let id = random_id()
+  use _ <- result.try(write(path(data_dir, id), bytes))
+  finish(data_dir, id, declared)
+}
+
+/// Download a medium straight to disk (videos can be large) and keep it.
+pub fn fetch(
+  data_dir: String,
+  url: String,
+  declared: Declared,
+) -> Result(Media, String) {
+  let id = random_id()
+  use _ <- result.try(download(url, path(data_dir, id)))
+  finish(data_dir, id, declared)
+}
+
+fn finish(
+  data_dir: String,
+  id: String,
+  declared: Declared,
+) -> Result(Media, String) {
+  let file = path(data_dir, id)
+  let size = file_size(file)
+  let kept = case size > max_bytes_for(declared.kind), read_head(file) {
+    True, _ -> Error("larger than the limit for this kind")
+    False, Error(Nil) -> Error("could not read the file")
+    False, Ok(head) ->
+      case sniff(head, declared) {
+        Error(reason) -> Error(reason)
+        Ok(mime) -> {
+          let media =
+            Media(
+              id: id,
+              kind: declared.kind,
+              mime: mime,
+              size: size,
+              seconds: declared.seconds,
+              file_name: declared.file_name,
+              voice_note: declared.voice_note,
+              forwarded: declared.forwarded,
+            )
+          write(meta_path(data_dir, id), bit_array.from_string(encode(media)))
+          |> result.map(fn(_) { media })
+        }
+      }
+  }
+  case kept {
+    Ok(media) -> Ok(media)
+    Error(reason) -> {
+      discard(data_dir, id)
+      Error(reason)
+    }
+  }
+}
+
+const office = [
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "application/vnd.oasis.opendocument.presentation",
+]
+
+/// The MIME type of these first bytes, when they are what the channel
+/// declared.
+fn sniff(head: BitArray, declared: Declared) -> Result(String, String) {
+  let declared_mime =
+    declared.mime
+    |> option.map(fn(mime) {
+      case string.split_once(mime, ";") {
+        Ok(#(base, _)) -> string.trim(base)
+        Error(Nil) -> string.trim(mime)
+      }
+    })
+  let family = case head {
+    <<"OggS":utf8, _:bits>> -> Ok(#("ogg", [Audio]))
+    <<"ID3":utf8, _:bits>>
+    | <<0xFF, 0xFB, _:bits>>
+    | <<0xFF, 0xF3, _:bits>>
+    | <<0xFF, 0xF2, _:bits>> -> Ok(#("mpeg", [Audio]))
+    <<"RIFF":utf8, _:bytes-size(4), "WAVE":utf8, _:bits>> ->
+      Ok(#("wav", [Audio]))
+    <<"RIFF":utf8, _:bytes-size(4), "AVI ":utf8, _:bits>> ->
+      Ok(#("avi", [Video]))
+    <<"fLaC":utf8, _:bits>> -> Ok(#("flac", [Audio]))
+    <<_:bytes-size(4), "ftyp":utf8, brand:bytes-size(4), _:bits>> ->
+      case brand {
+        <<"qt  ":utf8>> -> Ok(#("quicktime", [Video]))
+        <<"3gp":utf8, _:bits>> -> Ok(#("3gpp", [Video, Audio]))
+        _ -> Ok(#("mp4", [Video, Audio]))
+      }
+    <<0x1A, 0x45, 0xDF, 0xA3, _:bits>> -> Ok(#("webm", [Video, Audio]))
+    <<"%PDF":utf8, _:bits>> -> Ok(#("pdf", [Document]))
+    <<0x50, 0x4B, 0x03, 0x04, _:bits>> -> Ok(#("zip", [Document]))
+    _ ->
+      case image_type(head) {
+        Ok(mime) -> Ok(#(mime, [Image, Sticker]))
+        Error(Nil) ->
+          case is_text(head) {
+            True -> Ok(#("text", [Document]))
+            False -> Error(Nil)
+          }
+      }
+  }
+  case family {
+    Error(Nil) -> Error("not a type we open")
+    Ok(#(name, allowed)) ->
+      case list.contains(allowed, declared.kind) {
+        False -> Error("the bytes are not what the channel declared")
+        True ->
+          case name, declared.kind {
+            "ogg", _ -> Ok("audio/ogg")
+            "mpeg", _ -> Ok("audio/mpeg")
+            "wav", _ -> Ok("audio/wav")
+            "flac", _ -> Ok("audio/flac")
+            "avi", _ -> Ok("video/x-msvideo")
+            "quicktime", _ -> Ok("video/quicktime")
+            "3gpp", Audio -> Ok("audio/3gpp")
+            "3gpp", _ -> Ok("video/3gpp")
+            "mp4", Audio -> Ok("audio/mp4")
+            "mp4", _ -> Ok("video/mp4")
+            "webm", Audio -> Ok("audio/webm")
+            "webm", _ -> Ok("video/webm")
+            "pdf", _ -> Ok("application/pdf")
+            "zip", _ ->
+              case declared_mime {
+                Some(mime) ->
+                  case list.contains(office, mime) {
+                    True -> Ok(mime)
+                    False -> Error("an archive that is not an Office document")
+                  }
+                None -> Error("an archive that is not an Office document")
+              }
+            "text", _ ->
+              case declared_mime {
+                Some("text/" <> _ as mime) -> Ok(mime)
+                _ -> Ok("text/plain")
+              }
+            image, _ -> Ok(image)
+          }
+      }
+  }
+}
+
+/// UTF-8 without NUL bytes in the first bytes.
+fn is_text(head: BitArray) -> Bool {
+  case bit_array.to_string(head) {
+    Ok(text) -> !string.contains(text, "\u{0000}") && text != ""
+    // The head may cut a multi-byte character at its end.
+    Error(Nil) ->
+      case bit_array.slice(head, 0, bit_array.byte_size(head) - 3) {
+        Ok(shorter) ->
+          case bit_array.to_string(shorter) {
+            Ok(text) -> !string.contains(text, "\u{0000}") && text != ""
+            Error(Nil) -> False
+          }
+        Error(Nil) -> False
+      }
+  }
+}
+
+/// The metadata of a kept medium.
+pub fn load(data_dir: String, id: String) -> Result(Media, Nil) {
+  case is_id(id) {
+    False -> Error(Nil)
+    True -> {
+      use bytes <- result.try(read(meta_path(data_dir, id)))
+      use text <- result.try(bit_array.to_string(bytes))
+      json.parse(text, decoder(id)) |> result.replace_error(Nil)
+    }
+  }
+}
+
+/// Delete a kept medium and its metadata.
+pub fn discard(data_dir: String, id: String) -> Nil {
+  delete(path(data_dir, id))
+  delete(meta_path(data_dir, id))
+  // The frames an animated sticker was split into (A-10).
+  delete_dir(path(data_dir, id) <> ".frames")
+}
+
+@external(erlang, "supernova_inbound_media_ffi", "delete_dir")
+fn delete_dir(path: String) -> Nil
+
+fn kind_name(kind: Kind) -> String {
+  case kind {
+    Image -> "image"
+    Audio -> "audio"
+    Video -> "video"
+    Document -> "document"
+    Sticker -> "sticker"
+  }
+}
+
+fn encode(media: Media) -> String {
+  json.object([
+    #("kind", json.string(kind_name(media.kind))),
+    #("mime", json.string(media.mime)),
+    #("size", json.int(media.size)),
+    #("seconds", json.nullable(media.seconds, json.int)),
+    #("file_name", json.nullable(media.file_name, json.string)),
+    #("voice_note", json.bool(media.voice_note)),
+    #("forwarded", json.bool(media.forwarded)),
+  ])
+  |> json.to_string
+}
+
+fn decoder(id: String) -> decode.Decoder(Media) {
+  use kind <- decode.field(
+    "kind",
+    decode.string
+      |> decode.then(fn(name) {
+        case list.find(kinds, fn(kind) { kind_name(kind) == name }) {
+          Ok(kind) -> decode.success(kind)
+          Error(Nil) -> decode.failure(Image, "kind")
+        }
+      }),
+  )
+  use mime <- decode.field("mime", decode.string)
+  use size <- decode.field("size", decode.int)
+  use seconds <- decode.field("seconds", decode.optional(decode.int))
+  use file_name <- decode.field("file_name", decode.optional(decode.string))
+  use voice_note <- decode.field("voice_note", decode.bool)
+  use forwarded <- decode.field("forwarded", decode.bool)
+  decode.success(Media(
+    id:,
+    kind:,
+    mime:,
+    size:,
+    seconds:,
+    file_name:,
+    voice_note:,
+    forwarded:,
+  ))
 }
 
 /// The image type of these bytes, if it is one we accept.
@@ -76,26 +382,82 @@ pub fn tag(id: String) -> String {
   "\n" <> open <> id <> "]"
 }
 
-/// The text with each image tag replaced by `[imagem]`, and the ids found.
-pub fn split(content: String) -> #(String, List(String)) {
-  case string.split_once(content, "\n" <> open) {
-    Error(Nil) -> #(content, [])
-    Ok(#(before, after)) ->
-      case string.split_once(after, "]") {
-        Ok(#(id, rest)) ->
-          case is_id(id) {
-            True -> {
-              let #(text, ids) = split(rest)
-              #(before <> placeholder <> text, [id, ..ids])
-            }
-            False -> {
-              let #(text, ids) = split(after)
-              #(before <> "\n" <> open <> text, ids)
-            }
-          }
-        Error(Nil) -> #(content, [])
-      }
+/// The tag of a kept medium of any kind.
+pub fn tag_for(media: Media) -> String {
+  "\n[" <> label(media.kind) <> ":" <> media.id <> "]"
+}
+
+fn label(kind: Kind) -> String {
+  case kind {
+    Image -> "imagem"
+    Audio -> "áudio"
+    Video -> "vídeo"
+    Document -> "documento"
+    Sticker -> "figurinha"
   }
+}
+
+const kinds = [Image, Audio, Video, Document, Sticker]
+
+/// The text with every media tag replaced by its placeholder (`[imagem]`,
+/// `[áudio]`…), and the media referred to, in order.
+pub fn parse(content: String) -> #(String, List(#(Kind, String))) {
+  case string.split_once(content, "\n[") {
+    Error(Nil) -> #(content, [])
+    Ok(#(before, after)) -> {
+      let found =
+        list.find_map(kinds, fn(kind) {
+          let prefix = label(kind) <> ":"
+          case string.starts_with(after, prefix) {
+            False -> Error(Nil)
+            True ->
+              case
+                string.split_once(
+                  string.drop_start(after, string.length(prefix)),
+                  "]",
+                )
+              {
+                Ok(#(id, rest)) ->
+                  case is_id(id) {
+                    True -> Ok(#(kind, id, rest))
+                    False -> Error(Nil)
+                  }
+                Error(Nil) -> Error(Nil)
+              }
+          }
+        })
+      case found {
+        Ok(#(kind, id, rest)) -> {
+          let #(text, refs) = parse(rest)
+          #(before <> "\n[" <> label(kind) <> "]" <> text, [#(kind, id), ..refs])
+        }
+        Error(Nil) -> {
+          let #(text, refs) = parse(after)
+          #(before <> "\n[" <> text, refs)
+        }
+      }
+    }
+  }
+}
+
+/// The media a message refers to.
+pub fn refs(content: String) -> List(#(Kind, String)) {
+  parse(content).1
+}
+
+/// The text with each tag replaced by its placeholder, and the images
+/// (the turn shows images to the model; other kinds are read before it).
+pub fn split(content: String) -> #(String, List(String)) {
+  let #(text, refs) = parse(content)
+  #(
+    text,
+    list.filter_map(refs, fn(ref) {
+      case ref {
+        #(Image, id) -> Ok(id)
+        _ -> Error(Nil)
+      }
+    }),
+  )
 }
 
 fn is_id(id: String) -> Bool {
@@ -107,7 +469,7 @@ fn is_id(id: String) -> Bool {
 
 /// What the history and the journal keep of a message.
 pub fn for_history(content: String) -> String {
-  split(content).0
+  parse(content).0
 }
 
 /// The image as a data URL for the model; the file is deleted.

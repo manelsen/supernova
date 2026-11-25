@@ -23,6 +23,7 @@ import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/inbound_media
+import supernova/channel/media_reading
 import supernova/channel/port
 import supernova/config
 import supernova/core/agent_identity
@@ -39,8 +40,10 @@ import supernova/core/executor
 import supernova/core/introspection/mood
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
+import supernova/core/media_prompts
 import supernova/core/persona/loader as persona_loader
 import supernova/core/persona/types as persona_types
+import supernova/core/preferences
 import supernova/core/prompt_assembly
 import supernova/core/session/server as rich_session
 import supernova/core/session/supervisor as session_supervisor
@@ -524,6 +527,7 @@ fn handle_inbound_message_allowed_for_handler(
                   msg,
                   profile,
                   supervisor,
+                  rich_session,
                 )
               {
                 Some(#(next_state, content)) -> #(
@@ -717,6 +721,7 @@ fn handle_inbound_message_allowed(
                   msg,
                   profile,
                   supervisor,
+                  rich_session,
                 )
               {
                 Some(#(next_state, content)) -> #(
@@ -2104,10 +2109,138 @@ fn maybe_handle_control(
   msg: port.ChannelMessage,
   profile: SessionProfile,
   supervisor: Option(session_supervisor.SessionSupervisor),
+  rich_session: Option(rich_session.Session),
 ) -> Option(#(InteractiveRouterState, String)) {
-  case maybe_handle_agenda(msg, profile) {
-    Some(reply) -> Some(#(state, reply))
-    None -> maybe_handle_forget(state, msg, profile, supervisor)
+  case
+    maybe_forwarded_transcript(msg, rich_session),
+    maybe_handle_preferences(msg, profile)
+  {
+    Some(reply), _ -> Some(#(state, reply))
+    None, Some(reply) -> Some(#(state, reply))
+    None, None ->
+      case maybe_handle_agenda(msg, profile) {
+        Some(reply) -> Some(#(state, reply))
+        None -> maybe_handle_forget(state, msg, profile, supervisor)
+      }
+  }
+}
+
+/// A message that only carried forwarded audio is answered with its
+/// transcription, without the model (PRD-A, D6). The exchange stays in the
+/// history, so the agent can talk about it later.
+fn maybe_forwarded_transcript(
+  msg: port.ChannelMessage,
+  rich_session: Option(rich_session.Session),
+) -> Option(String) {
+  case string.split_once(msg.content, media_reading.forwarded_marker) {
+    Ok(#("", transcript)) -> {
+      case rich_session {
+        Some(session) -> {
+          let _ =
+            rich_session.append_messages(session, [
+              rich_session.ChatMessage(
+                role: "user",
+                content: "[áudio encaminhado]\n" <> transcript,
+              ),
+              rich_session.ChatMessage(
+                role: "assistant",
+                content: "[transcrição devolvida à pessoa]",
+              ),
+            ])
+          Nil
+        }
+        None -> Nil
+      }
+      Some(transcript)
+    }
+    _ -> None
+  }
+}
+
+/// `/transcricao` turns on and off the transcription of the person's own
+/// audio (PRD-A, D6); `/curto`, `/longo` and `/cego` set how much a
+/// description carries (A-09).
+fn maybe_handle_preferences(
+  msg: port.ChannelMessage,
+  profile: SessionProfile,
+) -> Option(String) {
+  let save = fn(cfg: config.Config, next, reply) {
+    case preferences.save(cfg.data_dir, profile.agent_id, next) {
+      Error(_) -> Some("Não consegui guardar essa preferência agora.")
+      Ok(Nil) -> Some(reply)
+    }
+  }
+  case string.trim(msg.content), closed_group_global.get_config() {
+    "/curto", Some(cfg) ->
+      save(
+        cfg,
+        preferences.Preferences(
+          ..preferences.load(cfg.data_dir, profile.agent_id),
+          detail: preferences.Short,
+        ),
+        "Pronto: descrições curtas e objetivas.",
+      )
+    "/longo", Some(cfg) ->
+      save(
+        cfg,
+        preferences.Preferences(
+          ..preferences.load(cfg.data_dir, profile.agent_id),
+          detail: preferences.Long,
+        ),
+        "Pronto: descrições completas e detalhadas.",
+      )
+    "/voz", Some(cfg) -> {
+      let current = preferences.load(cfg.data_dir, profile.agent_id)
+      case current.voice {
+        True ->
+          save(
+            cfg,
+            preferences.Preferences(..current, voice: False),
+            "Pronto: volto a responder por escrito.",
+          )
+        False ->
+          save(
+            cfg,
+            preferences.Preferences(..current, voice: True),
+            "Pronto: a partir de agora respondo com mensagens de voz, no WhatsApp. Mande /voz de novo para voltar ao texto.",
+          )
+      }
+    }
+    "/cego", Some(cfg) -> {
+      let current = preferences.load(cfg.data_dir, profile.agent_id)
+      case current.detail {
+        preferences.Long ->
+          save(
+            cfg,
+            preferences.Preferences(..current, detail: preferences.Normal),
+            "Modo de audiodescrição detalhada desligado.",
+          )
+        _ ->
+          save(
+            cfg,
+            preferences.Preferences(..current, detail: preferences.Long),
+            "Modo de audiodescrição detalhada ligado: imagens, vídeos e documentos com descrição completa, cores, posições e todos os textos.",
+          )
+      }
+    }
+    "/transcricao", Some(cfg) | "/transcrição", Some(cfg) -> {
+      let current = preferences.load(cfg.data_dir, profile.agent_id)
+      let next =
+        preferences.Preferences(
+          ..current,
+          transcription: !current.transcription,
+        )
+      case preferences.save(cfg.data_dir, profile.agent_id, next) {
+        Error(_) -> Some("Não consegui guardar essa preferência agora.")
+        Ok(Nil) ->
+          Some(case next.transcription {
+            True ->
+              "Pronto: quando você me mandar áudio, eu te devolvo a transcrição antes de responder."
+            False -> "Pronto: não devolvo mais a transcrição dos seus áudios."
+          })
+      }
+    }
+    _, _ -> None
   }
 }
 
@@ -2311,7 +2444,10 @@ fn executor_messages_for_turn(
 /// The person's message for this turn. Images they sent (PRD-C, C-05b) go
 /// to the model here, once: the temporary file is deleted as it is read,
 /// and the history keeps `[imagem]`.
-fn current_user_message(content: String) -> provider.ChatMessage {
+fn current_user_message(
+  content: String,
+  profile: SessionProfile,
+) -> provider.ChatMessage {
   let #(text, ids) = inbound_media.split(content)
   let images = case ids, closed_group_global.get_config() {
     [], _ | _, None -> []
@@ -2322,7 +2458,18 @@ fn current_user_message(content: String) -> provider.ChatMessage {
   }
   case images {
     [] -> provider.user_message(text)
-    _ -> provider.user_message_with_images(text, images)
+    // Amélie's audio description rules go with the image, for when the
+    // person asked nothing else (PRD-A, A-08); only in this turn.
+    _ -> {
+      let detail = case closed_group_global.get_config() {
+        Some(cfg) -> preferences.load(cfg.data_dir, profile.agent_id).detail
+        None -> preferences.Normal
+      }
+      provider.user_message_with_images(
+        text <> "\n\n" <> media_prompts.image_guidance(detail),
+        images,
+      )
+    }
   }
 }
 
@@ -2336,9 +2483,9 @@ fn turn_messages(
       list.append(
         rich_session.get_history(session)
           |> provider_messages_from_session_history,
-        [current_user_message(content)],
+        [current_user_message(content, profile)],
       )
-    None -> [current_user_message(content)]
+    None -> [current_user_message(content, profile)]
   }
 
   let workspace_path = workspace_path_for_agent(profile.agent_id)

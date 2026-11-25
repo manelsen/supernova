@@ -30,6 +30,7 @@ import supernova/channel/channel_kit
 import supernova/channel/health as channel_health
 import supernova/channel/inbound_media
 import supernova/channel/inbox
+import supernova/channel/media_boot
 import supernova/channel/port
 import supernova/channel/registry
 import supernova/channel/webhook_server
@@ -309,6 +310,14 @@ fn start_services(
   // what the last stop left waiting is taken now: a message that arrives
   // once channels start is never part of it.
   let left_waiting = start_inbox(cfg.data_dir)
+
+  // Who reads the audio, video and documents people send (PRD-A).
+  case media_boot.publish(cfg) {
+    True ->
+      io.println("✓ Media reader on: " <> cfg.media.reader_model <> " (Gemini)")
+    False ->
+      io.println("Media reader off: audio, video and documents become notes")
+  }
 
   // Images of turns that never ran (PRD-C, C-05).
   let _ = inbound_media.sweep(cfg.data_dir, inbound_media.max_age_ms)

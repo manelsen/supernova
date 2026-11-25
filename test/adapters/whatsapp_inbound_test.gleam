@@ -137,12 +137,14 @@ pub fn account_events_say_why_test() {
   )
   |> should.equal(inbound.AccountDown(
     "a conta foi desconectada (401: logged out from another device)",
+    logged_out: True,
   ))
   inbound.decide(
     "{\"event\":\"device.temporary_ban\",\"device_id\":\"628123456789@s.whatsapp.net\",\"session_id\":\"org_2\",\"timestamp\":\"2026-10-28T09:00:00Z\",\"payload\":{\"code\":101,\"reason\":\"you sent too many messages\",\"expires_in_seconds\":86400,\"expires_at\":\"2026-10-29T09:00:00Z\"}}",
   )
   |> should.equal(inbound.AccountDown(
     "suspensão temporária até 2026-10-29T09:00:00Z (101: you sent too many messages)",
+    logged_out: False,
   ))
 }
 
@@ -151,20 +153,33 @@ pub fn account_events_say_why_test() {
 pub fn an_image_comes_with_its_path_test() {
   let private =
     "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\","
-  let assert inbound.Answer(msg, image: Some(path), ..) =
+  let assert inbound.Answer(
+    msg,
+    attachments: [inbound.Attachment(kind: inbound.Image, path: Some(path), ..)],
+    ..,
+  ) =
     inbound.decide(message(
       private <> "\"image\":\"statics/media/1752404751-ad9e.jpeg\"",
     ))
   path |> should.equal("statics/media/1752404751-ad9e.jpeg")
   msg.content |> should.equal("")
-  let assert inbound.Answer(msg, image: Some(_), ..) =
+  let assert inbound.Answer(
+    msg,
+    attachments: [inbound.Attachment(kind: inbound.Image, ..)],
+    ..,
+  ) =
     inbound.decide(message(
       private
       <> "\"body\":\"olha\",\"image\":{\"path\":\"statics/media/x.jpeg\",\"caption\":\"olha\"}",
     ))
   msg.content |> should.equal("olha")
-  // Not downloaded: only WhatsApp's encrypted URL, so no image.
-  let assert inbound.Answer(msg, image: None, ..) =
+  // Not downloaded: only WhatsApp's encrypted URL. The image is there, with
+  // no path to fetch; it becomes a note, not silence.
+  let assert inbound.Answer(
+    msg,
+    attachments: [inbound.Attachment(kind: inbound.Image, path: None, ..)],
+    ..,
+  ) =
     inbound.decide(message(
       private
       <> "\"image\":{\"url\":\"https://mmg.whatsapp.net/x\",\"caption\":\"veja\"}",
@@ -193,4 +208,149 @@ pub fn groups_are_off_by_default_test() {
     inbound.decide(message(
       "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\",\"body\":\"oi\"",
     ))
+}
+
+// PRD-A, A-01: nothing a person sends disappears. Payload shapes follow
+// GOWA v9.10's docs/webhook-payload.md.
+
+const private_chat =
+  "\"chat_id\":\"628123456789@s.whatsapp.net\",\"from\":\"628123456789@s.whatsapp.net\","
+
+pub fn a_voice_note_is_an_attachment_with_its_length_test() {
+  let assert inbound.Answer(msg, attachments: [audio], forwarded: False, ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"audio\":\"statics/media/1752-voz.ogg\",\"media_info\":{\"mime_type\":\"audio/ogg; codecs=opus\",\"seconds\":42,\"ptt\":true}",
+    ))
+  msg.content |> should.equal("")
+  audio
+  |> should.equal(inbound.Attachment(
+    kind: inbound.Audio,
+    path: Some("statics/media/1752-voz.ogg"),
+    seconds: Some(42),
+    file_name: None,
+    mime: Some("audio/ogg; codecs=opus"),
+    voice_note: True,
+  ))
+}
+
+pub fn a_forwarded_audio_says_so_test() {
+  let assert inbound.Answer(forwarded: True, attachments: [_], ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"forwarded\":true,\"forwarding_score\":1,\"audio\":\"statics/media/a.ogg\"",
+    ))
+}
+
+pub fn video_document_and_stickers_are_attachments_test() {
+  let assert inbound.Answer(msg, attachments: [video], ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"body\":\"Watch this!\",\"video\":{\"path\":\"statics/media/v.mp4\",\"caption\":\"Watch this!\"},\"media_info\":{\"seconds\":70}",
+    ))
+  msg.content |> should.equal("Watch this!")
+  video.kind |> should.equal(inbound.Video)
+  video.seconds |> should.equal(Some(70))
+
+  let assert inbound.Answer(attachments: [note], ..) =
+    inbound.decide(message(
+      private_chat <> "\"video_note\":\"statics/media/n.mp4\"",
+    ))
+  note.kind |> should.equal(inbound.Video)
+
+  let assert inbound.Answer(attachments: [document], ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"document\":{\"path\":\"statics/media/contrato.pdf\"},\"media_info\":{\"mime_type\":\"application/pdf\",\"file_name\":\"contrato.pdf\"}",
+    ))
+  document.kind |> should.equal(inbound.Document)
+  document.file_name |> should.equal(Some("contrato.pdf"))
+
+  let assert inbound.Answer(attachments: [sticker], ..) =
+    inbound.decide(message(
+      private_chat <> "\"sticker\":\"statics/media/s.webp\"",
+    ))
+  sticker.kind |> should.equal(inbound.Sticker)
+  let assert inbound.Answer(attachments: [animated], ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"sticker\":\"statics/media/s.webp\",\"media_info\":{\"is_animated\":true}",
+    ))
+  animated.kind |> should.equal(inbound.AnimatedSticker)
+}
+
+pub fn location_contact_and_poll_become_text_test() {
+  let assert inbound.Answer(msg, attachments: [], ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"location\":{\"degreesLatitude\":-6.2088,\"degreesLongitude\":106.8456,\"name\":\"Jakarta, Indonesia\",\"address\":\"Central Jakarta\"}",
+    ))
+  msg.content
+  |> should.equal(
+    "[localização: Jakarta, Indonesia, Central Jakarta (-6.2088, 106.8456)]",
+  )
+
+  let assert inbound.Answer(msg, ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"live_location\":{\"degreesLatitude\":1.5,\"degreesLongitude\":2.5}",
+    ))
+  msg.content |> should.equal("[localização em tempo real: (1.5, 2.5)]")
+
+  let assert inbound.Answer(msg, ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"contact\":{\"displayName\":\"Ana\",\"vcard\":\"BEGIN:VCARD\\nEND:VCARD\",\"phone_number\":\"5511988887777\"}",
+    ))
+  msg.content |> should.equal("[contato: Ana, 5511988887777]")
+
+  let assert inbound.Answer(msg, ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"contacts_array\":[{\"displayName\":\"Ana\",\"phone_number\":\"1\"},{\"displayName\":\"Bia\",\"phone_number\":\"2\"}]",
+    ))
+  msg.content |> should.equal("[contato: Ana, 1]\n[contato: Bia, 2]")
+
+  let assert inbound.Answer(msg, ..) =
+    inbound.decide(message(
+      private_chat
+      <> "\"poll\":{\"type\":\"creation\",\"question\":\"Pizza ou sushi?\",\"options\":[{\"name\":\"Pizza\"},{\"name\":\"Sushi\"}]}",
+    ))
+  msg.content |> should.equal("[enquete: Pizza ou sushi? (Pizza; Sushi)]")
+}
+
+pub fn notes_name_what_could_not_be_opened_test() {
+  let audio =
+    inbound.Attachment(
+      kind: inbound.Audio,
+      path: Some("statics/media/a.ogg"),
+      seconds: Some(42),
+      file_name: None,
+      mime: None,
+      voice_note: True,
+    )
+  inbound.unopened_note(audio, False)
+  |> should.equal("[uma mensagem de voz de 0:42, que ainda não consigo ouvir]")
+  inbound.unopened_note(inbound.Attachment(..audio, voice_note: False), True)
+  |> should.equal("[um áudio encaminhado de 0:42, que ainda não consigo ouvir]")
+  inbound.unopened_note(
+    inbound.Attachment(..audio, kind: inbound.Video, seconds: Some(3723)),
+    False,
+  )
+  |> should.equal("[um vídeo de 1:02:03, que ainda não consigo ver]")
+  inbound.unopened_note(
+    inbound.Attachment(
+      ..audio,
+      kind: inbound.Document,
+      seconds: None,
+      file_name: Some("contrato.pdf"),
+    ),
+    False,
+  )
+  |> should.equal("[um documento (contrato.pdf), que ainda não consigo ler]")
+  inbound.unopened_note(
+    inbound.Attachment(..audio, kind: inbound.AnimatedSticker),
+    False,
+  )
+  |> should.equal("[uma figurinha animada]")
 }

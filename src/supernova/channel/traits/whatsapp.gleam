@@ -21,7 +21,11 @@ pub fn channel() -> ChannelTraits {
     },
     group_key_prefix: Some("whatsapp:"),
     private_delivery: True,
-    help_commands: traits.basic_help_commands,
+    help_commands: traits.basic_help_commands
+      <> "/voz - Answer with voice notes\n"
+      <> "/transcricao - Send back the transcription of your voice notes\n"
+      <> "/curto, /longo - Short or complete descriptions\n"
+      <> "/cego - Complete audio description on or off\n",
     edit_max_length: max_message_length,
     routes_inbound: True,
     turn_timeout_ms: 30_000,
@@ -32,5 +36,6 @@ pub fn channel() -> ChannelTraits {
       }
     },
     receives_by_webhook: True,
+    sends_voice: True,
   )
 }

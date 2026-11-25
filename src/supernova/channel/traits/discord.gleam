@@ -27,6 +27,7 @@ pub fn channel() -> ChannelTraits {
     // The adapter opens (or reuses) the direct-message channel.
     private_chat_for: fn(user_id) { "open-dm:" <> user_id },
     receives_by_webhook: False,
+    sends_voice: False,
   )
 }
 
