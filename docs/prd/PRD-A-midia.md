@@ -200,8 +200,23 @@ para voz (`channel/voice_text`).
 - **A-05:** transcrição de volta: áudio encaminhado e `/transcricao`.
 - **A-06:** voz: TTS, saneamento, `/voz`, envio como mensagem de voz pelo
   GOWA.
+- **A-08:** audiodescrição de imagem pelo leitor (`image: read`, prompt da
+  Amélie): a descrição estruturada no texto e na memória.
+- **A-09:** preferências de resposta por pessoa: `/curto`, `/longo`,
+  `/cego` (detalhe da audiodescrição), junto de `/transcricao` e `/voz`.
+- **A-10:** figurinha animada: convertida em vídeo e lida pelo leitor.
+- **A-11:** mídia no Telegram (`getFile` da Bot API), no mesmo caminho.
+  Fica por último: o foco é o WhatsApp.
+- **A-12:** WhatsApp caiu: o aviso vai pelo Telegram (nunca pelo canal que
+  caiu) e, quando é logout, já leva o código de pareamento pedido ao GOWA
+  (`/app/login-with-code`); `/parear` para admins gera outro. Suspensão
+  temporária só avisa até quando.
 - **A-07:** documentação: configuração, custos, o que fica na memória,
-  os comandos.
+  os comandos. Fecha a PRD.
+
+A-08 a A-12 entraram em 24/11 para chegar perto da paridade com a Amélie
+no WhatsApp (decisão do mantenedor: foco no WhatsApp; avisos pelo
+Telegram).
 
 ## 8. Critérios de aceite
 
