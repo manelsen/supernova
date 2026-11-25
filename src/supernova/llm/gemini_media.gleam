@@ -18,6 +18,7 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
 import gleam/json
+import gleam/list
 import gleam/result
 import gleam/string
 
@@ -95,6 +96,23 @@ pub fn read(
   }
 }
 
+/// Read images in order (the frames of an animated sticker), in one call.
+pub fn read_frames(
+  client: Client,
+  model: String,
+  instruction: String,
+  paths: List(String),
+) -> Result(Reply, String) {
+  use parts <- result.try(
+    list.try_map(paths, fn(path) {
+      read_file(path)
+      |> result.replace_error("could not read a frame")
+      |> result.map(inline_part("image/png", _))
+    }),
+  )
+  generate_parts(client, model, instruction, parts)
+}
+
 fn base_mime(mime: String) -> String {
   case string.split_once(mime, ";") {
     Ok(#(base, _)) -> string.trim(base)
@@ -132,6 +150,15 @@ fn generate(
   instruction: String,
   medium: json.Json,
 ) -> Result(Reply, String) {
+  generate_parts(client, model, instruction, [medium])
+}
+
+fn generate_parts(
+  client: Client,
+  model: String,
+  instruction: String,
+  media: List(json.Json),
+) -> Result(Reply, String) {
   let body =
     json.object([
       #(
@@ -145,7 +172,7 @@ fn generate(
         json.preprocessed_array([
           json.object([
             #("role", json.string("user")),
-            #("parts", json.preprocessed_array([medium])),
+            #("parts", json.preprocessed_array(media)),
           ]),
         ]),
       ),

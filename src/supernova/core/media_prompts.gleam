@@ -116,6 +116,29 @@ pub fn document_with(detail: Detail) -> String {
   <> "\"."
 }
 
+pub const sticker_start = "Audiodescrição do sticker"
+
+pub const sticker_end = "Fim da audiodescrição"
+
+/// An animated sticker, given as its frames in order (A-10; Amélie's
+/// animated sticker prompt).
+pub fn animated_sticker_with(detail: Detail) -> String {
+  "Faça a audiodescrição deste sticker animado em "
+  <> language
+  <> ". As imagens são quadros da animação, em ordem. REGRAS:"
+  <> "\n- Analise a animação inteira em ordem cronológica, não apenas o primeiro quadro."
+  <> "\n- Transcreva todo texto que apareça em qualquer momento da animação."
+  <> "\n- Descreva movimento, entrada e saída de elementos, expressões, personagens e cenário."
+  <> "\n- Explique o humor, ironia ou referência cultural quando fizer sentido."
+  <> detail_suffix(detail)
+  <> no_intro
+  <> "\nInicie sua resposta exatamente com \""
+  <> sticker_start
+  <> "\" e finalize com \""
+  <> sticker_end
+  <> "\"."
+}
+
 /// The text between the reader's start and end markers, without them.
 pub fn strip_markers(text: String, start: String, end: String) -> String {
   let text = string.trim(text)

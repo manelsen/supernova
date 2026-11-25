@@ -15,7 +15,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/channel/inbound_media.{
-  type Kind, type Media, Audio, Document, Image, Video,
+  type Kind, type Media, Audio, Document, Image, Sticker, Video,
 }
 import supernova/channel/port
 import supernova/core/access/actor as access_actor
@@ -39,10 +39,21 @@ pub type Reader =
 pub type Admit =
   fn(String, Int) -> Result(fn(Int, Int) -> Nil, Nil)
 
+/// Splits an animated sticker into frames on disk (A-10): the frames'
+/// paths, in order.
+pub type Frames =
+  fn(String) -> Result(List(String), String)
+
+/// Reads frames, in order, with an instruction.
+pub type FramesReader =
+  fn(List(String), String) -> Result(Read, String)
+
 pub type Settings {
   Settings(
     data_dir: String,
     reader: Reader,
+    frames: Frames,
+    frames_reader: FramesReader,
     admit: Admit,
     audio: Bool,
     video: Bool,
@@ -147,7 +158,7 @@ fn only_media(content: String) -> Bool {
   let #(text, refs) = inbound_media.parse(content)
   refs != []
   && list.fold(
-    ["[imagem]", "[áudio]", "[vídeo]", "[documento]"],
+    ["[imagem]", "[áudio]", "[vídeo]", "[documento]", "[figurinha]"],
     text,
     fn(t, p) { string.replace(t, p, "") },
   )
@@ -184,6 +195,8 @@ fn read_inbound(
               Settings(
                 data_dir: cfg.data_dir,
                 reader: fn(_, _, _, _) { Error("no reader") },
+                frames: fn(_) { Error("no reader") },
+                frames_reader: fn(_, _) { Error("no reader") },
                 admit: fn(_, _) { Error(Nil) },
                 audio: False,
                 video: False,
@@ -269,7 +282,8 @@ fn read_one(
 ) -> #(String, Option(Reading)) {
   let on = case media.kind {
     Audio -> settings.audio
-    Video -> settings.video
+    // Stickers move like videos: read when videos are.
+    Video | Sticker -> settings.video
     Document -> settings.document
     Image -> False
   }
@@ -288,14 +302,16 @@ fn read_one(
         )
         Ok(settle) -> {
           let #(instruction, start, end) = instruction(media.kind, detail)
-          case
-            settings.reader(
-              inbound_media.file_path(settings.data_dir, media.id),
-              media.mime,
-              media.size,
-              instruction,
-            )
-          {
+          let path = inbound_media.file_path(settings.data_dir, media.id)
+          let reading = case media.kind {
+            Sticker ->
+              case settings.frames(path) {
+                Ok(frames) -> settings.frames_reader(frames, instruction)
+                Error(reason) -> Error(reason)
+              }
+            _ -> settings.reader(path, media.mime, media.size, instruction)
+          }
+          case reading {
             Ok(read) -> {
               settle(read.input_tokens, read.output_tokens)
               let text = media_prompts.strip_markers(read.text, start, end)
@@ -336,6 +352,11 @@ fn instruction(
       media_prompts.video_start,
       media_prompts.video_end,
     )
+    Sticker -> #(
+      media_prompts.animated_sticker_with(detail),
+      media_prompts.sticker_start,
+      media_prompts.sticker_end,
+    )
     _ -> #(
       media_prompts.document_with(detail),
       media_prompts.document_start,
@@ -353,6 +374,8 @@ pub fn estimate_tokens(kind: Kind, seconds: Option(Int), size: Int) -> Int {
   case kind {
     Audio -> 25 * option.unwrap(seconds, size / 2000) + answer
     Video -> 100 * option.unwrap(seconds, size / 250_000) + answer
+    // Up to eight frames, about 1120 tokens each.
+    Sticker -> 8 * 1120 + answer
     _ -> 560 * int.max(1, size / 30_000) + answer
   }
 }
@@ -393,6 +416,8 @@ fn what(media: Media) -> String {
     Audio, False, True -> "áudio encaminhado" <> length(media)
     Video, _, False -> "vídeo" <> length(media)
     Video, _, True -> "vídeo encaminhado" <> length(media)
+    Sticker, _, False -> "figurinha animada"
+    Sticker, _, True -> "figurinha animada encaminhada"
     _, _, False -> "documento" <> named(media)
     _, _, True -> "documento encaminhado" <> named(media)
   }
@@ -400,7 +425,7 @@ fn what(media: Media) -> String {
 
 fn article(media: Media) -> String {
   case media.kind, media.voice_note {
-    Audio, True -> "uma "
+    Audio, True | Sticker, _ -> "uma "
     _, _ -> "um "
   }
 }
@@ -410,6 +435,7 @@ fn heading(media: Media) -> String {
     Audio, True -> "transcrita"
     Audio, False -> "transcrito"
     Video, _ -> "descrito"
+    Sticker, _ -> "descrita"
     _, _ -> "lido"
   }
   "[" <> what(media) <> ", " <> done <> "]"
@@ -418,7 +444,7 @@ fn heading(media: Media) -> String {
 fn verb(media: Media) -> String {
   case media.kind {
     Audio -> "ouvir"
-    Video -> "ver"
+    Video | Sticker -> "ver"
     _ -> "ler"
   }
 }

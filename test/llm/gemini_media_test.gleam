@@ -144,3 +144,27 @@ pub fn replies_without_text_are_errors_test() {
 
 @external(erlang, "supernova_inbound_media_ffi", "write")
 fn write(path: String, bytes: BitArray) -> Result(Nil, String)
+
+/// PRD-A, A-10: frames go in one call, in order (recorded: the real API
+/// told the animation's counter going 0, 1, 2 from eight frames).
+pub fn frames_are_read_in_one_call_test() {
+  let requests = process.new_subject()
+  let base = gemini_fake.start(requests)
+  let dir = test_workspace.create_temp_dir("gemini-frames")
+  let assert Ok(_) = write(dir <> "/q0.png", <<1, 2, 3>>)
+  let assert Ok(_) = write(dir <> "/q1.png", <<4, 5, 6>>)
+  let assert Ok(reply) =
+    gemini_media.read_frames(
+      gemini_media.Client(api_key: "chave", base: base),
+      "gemini-3.5-flash-lite",
+      "Faça a audiodescrição deste sticker animado.",
+      [dir <> "/q0.png", dir <> "/q1.png"],
+    )
+  string.starts_with(reply.text, "Audiodescrição do sticker")
+  |> should.be_true()
+  string.contains(reply.text, "depois muda para 1") |> should.be_true()
+  let assert [call] = drain(requests, [])
+  let sent = gemini_fake.text(call.body)
+  string.split(sent, "\"image/png\"") |> list.length |> should.equal(3)
+  test_workspace.remove_dir_recursive(dir)
+}

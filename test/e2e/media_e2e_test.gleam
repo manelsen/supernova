@@ -387,6 +387,8 @@ pub fn detail_is_a_preference_test() {
             1,
           ))
         },
+        frames: fn(_) { Error("no frames here") },
+        frames_reader: fn(_, _) { Error("no frames here") },
         admit: fn(_, _) { Ok(fn(_, _) { Nil }) },
         audio: True,
         video: True,

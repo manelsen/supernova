@@ -292,6 +292,8 @@ fn open_attachment(
     whatsapp_inbound.Audio -> Ok(inbound_media.Audio)
     whatsapp_inbound.Video -> Ok(inbound_media.Video)
     whatsapp_inbound.Document -> Ok(inbound_media.Document)
+    // Read frame by frame at the start of the turn (A-10).
+    whatsapp_inbound.AnimatedSticker -> Ok(inbound_media.Sticker)
     _ -> Error(Nil)
   }
   case attachment.kind, attachment.path, kind {

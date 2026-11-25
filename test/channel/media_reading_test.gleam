@@ -3,7 +3,9 @@
 //// document's content. Charged to the person; a failure is a note, never
 //// silence.
 
+import gemini_fake
 import gleam/erlang/process
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
@@ -50,6 +52,8 @@ fn settings(dir, reader, admit, modes: #(Bool, Bool, Bool)) {
   media_reading.Settings(
     data_dir: dir,
     reader: reader,
+    frames: fn(_) { Error("no frames here") },
+    frames_reader: fn(_, _) { Error("no frames here") },
     admit: admit,
     audio: modes.0,
     video: modes.1,
@@ -201,3 +205,114 @@ pub fn markers_are_stripped_test() {
   string.contains(media_prompts.document(), "linha digitável")
   |> should.be_true()
 }
+
+const webp = <<"RIFF":utf8, 26, 0, 0, 0, "WEBPVP8X":utf8, 10, 0, 0, 0, 2>>
+
+/// PRD-A, A-10: an animated sticker is split into frames and read in
+/// order, in one call.
+pub fn an_animated_sticker_is_read_frame_by_frame_test() {
+  let dir = test_workspace.create_temp_dir("reading-sticker")
+  let calls = process.new_subject()
+  let assert Ok(sticker) =
+    inbound_media.keep(
+      dir,
+      webp,
+      inbound_media.Declared(
+        kind: inbound_media.Sticker,
+        mime: Some("image/webp"),
+        seconds: None,
+        file_name: None,
+        voice_note: False,
+        forwarded: False,
+      ),
+    )
+  let settings =
+    media_reading.Settings(
+      data_dir: dir,
+      reader: fn(_, _, _, _) { Error("not this one") },
+      frames: fn(path) {
+        process.send(
+          calls,
+          "frames:" <> string.slice(path, string.length(path) - 32, 32),
+        )
+        Ok(["q0.png", "q1.png", "q2.png"])
+      },
+      frames_reader: fn(frames, instruction) {
+        process.send(calls, "read:" <> string.join(frames, ","))
+        string.contains(instruction, "sticker animado") |> should.be_true()
+        Ok(media_reading.Read(
+          "Audiodescrição do sticker\nUm gato acena.\nFim da audiodescrição",
+          3000,
+          40,
+        ))
+      },
+      admit: fn(_, estimate) {
+        estimate |> should.equal(8 * 1120 + 2000)
+        Ok(fn(_, _) { Nil })
+      },
+      audio: True,
+      video: True,
+      document: True,
+    )
+  media_reading.prepare(settings, "telegram:7", inbound_media.tag_for(sticker))
+  |> should.equal("\n[figurinha animada, descrita]\nUm gato acena.")
+  process.receive(calls, 100) |> should.equal(Ok("frames:" <> sticker.id))
+  process.receive(calls, 100) |> should.equal(Ok("read:q0.png,q1.png,q2.png"))
+  test_workspace.remove_dir_recursive(dir)
+}
+
+/// The real splitter (Pillow). Where Pillow is missing, it says so.
+pub fn the_splitter_composes_frames_or_says_pillow_is_missing_test() {
+  let dir = test_workspace.create_temp_dir("splitter")
+  case
+    media_boot.sticker_frames(
+      "test/fixtures/media/animated.webp",
+      dir <> "/q",
+      4,
+    )
+  {
+    Ok(frames) -> {
+      frames |> should.not_equal([])
+      { frames |> list.length <= 4 } |> should.be_true()
+    }
+    Error(reason) ->
+      {
+        reason == "Pillow is not installed"
+        || reason == "python3 is not installed"
+      }
+      |> should.be_true()
+  }
+  test_workspace.remove_dir_recursive(dir)
+}
+
+/// The boot wires the sticker splitter and the frames reader to Gemini.
+pub fn the_boot_wires_frames_to_gemini_test() {
+  let base = config.default_config()
+  let dir = test_workspace.create_temp_dir("boot-frames")
+  let keyed =
+    config.Config(
+      ..base,
+      data_dir: dir,
+      media: config.MediaConfig(..base.media, api_key: Some("chave")),
+    )
+  let gemini = gemini_fake.start(process.new_subject())
+  let assert Some(settings) = media_boot.settings(keyed, gemini)
+  let assert Ok(_) = write(dir <> "/q0.png", <<1, 2, 3>>)
+  let assert Ok(read) =
+    settings.frames_reader([dir <> "/q0.png"], "Descreva o sticker animado.")
+  string.starts_with(read.text, "Audiodescrição do sticker") |> should.be_true()
+  { read.input_tokens > 0 } |> should.be_true()
+  // The splitter answers either frames or why it cannot.
+  case settings.frames("test/fixtures/media/animated.webp") {
+    Ok(frames) -> frames |> should.not_equal([])
+    Error(reason) -> { reason != "" } |> should.be_true()
+  }
+  let assert Ok(audio_read) =
+    settings.reader(dir <> "/q0.png", "audio/ogg", 3, "Transcreva este áudio.")
+  string.starts_with(audio_read.text, "Transcrição do áudio")
+  |> should.be_true()
+  test_workspace.remove_dir_recursive(dir)
+}
+
+@external(erlang, "supernova_inbound_media_ffi", "write")
+fn write(path: String, bytes: BitArray) -> Result(Nil, String)

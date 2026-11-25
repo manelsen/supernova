@@ -64,6 +64,8 @@ pub type Kind {
   Audio
   Video
   Document
+  /// An animated sticker: read frame by frame (A-10).
+  Sticker
 }
 
 /// What the channel says about a medium.
@@ -96,7 +98,7 @@ pub type Media {
 /// video and documents may go through the Gemini Files API (2 GB).
 pub fn max_bytes_for(kind: Kind) -> Int {
   case kind {
-    Image -> 20_000_000
+    Image | Sticker -> 20_000_000
     _ -> 2_000_000_000
   }
 }
@@ -212,7 +214,7 @@ fn sniff(head: BitArray, declared: Declared) -> Result(String, String) {
     <<0x50, 0x4B, 0x03, 0x04, _:bits>> -> Ok(#("zip", [Document]))
     _ ->
       case image_type(head) {
-        Ok(mime) -> Ok(#(mime, [Image]))
+        Ok(mime) -> Ok(#(mime, [Image, Sticker]))
         Error(Nil) ->
           case is_text(head) {
             True -> Ok(#("text", [Document]))
@@ -293,7 +295,12 @@ pub fn load(data_dir: String, id: String) -> Result(Media, Nil) {
 pub fn discard(data_dir: String, id: String) -> Nil {
   delete(path(data_dir, id))
   delete(meta_path(data_dir, id))
+  // The frames an animated sticker was split into (A-10).
+  delete_dir(path(data_dir, id) <> ".frames")
 }
+
+@external(erlang, "supernova_inbound_media_ffi", "delete_dir")
+fn delete_dir(path: String) -> Nil
 
 fn kind_name(kind: Kind) -> String {
   case kind {
@@ -301,6 +308,7 @@ fn kind_name(kind: Kind) -> String {
     Audio -> "audio"
     Video -> "video"
     Document -> "document"
+    Sticker -> "sticker"
   }
 }
 
@@ -385,10 +393,11 @@ fn label(kind: Kind) -> String {
     Audio -> "áudio"
     Video -> "vídeo"
     Document -> "documento"
+    Sticker -> "figurinha"
   }
 }
 
-const kinds = [Image, Audio, Video, Document]
+const kinds = [Image, Audio, Video, Document, Sticker]
 
 /// The text with every media tag replaced by its placeholder (`[imagem]`,
 /// `[áudio]`…), and the media referred to, in order.

@@ -169,12 +169,14 @@ pub fn start(requests: Subject(Recorded)) -> String {
               case
                 string.contains(text, "audio/nao-existe"),
                 string.contains(text, "\"file_data\""),
-                string.contains(text, "responseModalities")
+                string.contains(text, "responseModalities"),
+                string.contains(text, "\"image/png\"")
               {
-                True, _, _ -> serve("read_error")
-                _, True, _ -> serve("read_file")
-                _, _, True -> serve("tts")
-                _, _, _ -> serve("read_inline")
+                True, _, _, _ -> serve("read_error")
+                _, True, _, _ -> serve("read_file")
+                _, _, True, _ -> serve("tts")
+                _, _, _, True -> serve("read_frames")
+                _, _, _, _ -> serve("read_inline")
               }
           }
       }

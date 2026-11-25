@@ -1,6 +1,6 @@
 %% Temporary files of inbound media (PRD-C, C-05).
 -module(supernova_inbound_media_ffi).
--export([write/2, read/1, delete/1, sweep/2, random_id/0, download/2, file_size/1, read_head/1]).
+-export([write/2, read/1, delete/1, sweep/2, random_id/0, download/2, file_size/1, read_head/1, delete_dir/1]).
 
 write(Path, Bytes) ->
     ok = filelib:ensure_dir(Path),
@@ -78,3 +78,7 @@ read_head(Path) ->
             end;
         _ -> {error, nil}
     end.
+
+delete_dir(Path) ->
+    _ = file:del_dir_r(Path),
+    nil.

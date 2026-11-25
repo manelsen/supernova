@@ -53,6 +53,17 @@ pub fn settings(
               )
           }
         },
+        frames: fn(path) { sticker_frames(path, path <> ".frames", 8) },
+        frames_reader: fn(paths, instruction) {
+          gemini_media.read_frames(client, model, instruction, paths)
+          |> result.map(fn(reply) {
+            media_reading.Read(
+              reply.text,
+              reply.usage.input_tokens,
+              reply.usage.output_tokens,
+            )
+          })
+        },
         audio: cfg.media.audio,
         video: cfg.media.video,
         document: cfg.media.document,
@@ -125,6 +136,16 @@ pub fn publish(cfg: config.Config) -> Bool {
     }
   }
 }
+
+/// Split an animated sticker into up to `max` composed frames (PNG), with
+/// `priv/media/sticker_frames.py` (Pillow). The frames' directory is
+/// deleted with the sticker's file.
+@external(erlang, "supernova_sticker_ffi", "frames")
+pub fn sticker_frames(
+  path: String,
+  out_dir: String,
+  max: Int,
+) -> Result(List(String), String)
 
 @external(erlang, "erlang", "unique_integer")
 fn unique_integer() -> Int
