@@ -338,9 +338,83 @@ pub fn transcription_of_own_audio_is_a_preference_test() {
     preferences.load(root, "sim:dora").transcription |> should.be_false()
 
     let assert Ok(_) =
-      preferences.save(root, "sim:dora", preferences.Preferences(True, True))
+      preferences.save(
+        root,
+        "sim:dora",
+        preferences.Preferences(True, True, preferences.Long),
+      )
     let assert Ok(_) = forget.forget(root, "sim:dora", None)
     preferences.load(root, "sim:dora") |> should.equal(preferences.none)
+  })
+}
+
+/// PRD-A, A-09: /curto, /longo and /cego set how much a description
+/// carries; the reading of a video follows it.
+pub fn detail_is_a_preference_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
+  support.with_runtime_root(cfg(), fn(root) {
+    let assert Ok(router) =
+      sim_router.start(provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      ))
+    born(router)
+    say(router, message("/curto", "dora"))
+    |> should.equal("Pronto: descrições curtas e objetivas.")
+    preferences.load(root, "sim:dora").detail |> should.equal(preferences.Short)
+    say(router, message("/cego", "dora"))
+    |> string.starts_with("Modo de audiodescrição detalhada ligado")
+    |> should.be_true()
+    preferences.load(root, "sim:dora").detail |> should.equal(preferences.Long)
+
+    // A video read for Dora now asks for the complete description.
+    let instructions = process.new_subject()
+    let settings =
+      media_reading.Settings(
+        data_dir: root,
+        reader: fn(_, _, _, instruction) {
+          process.send(instructions, instruction)
+          Ok(media_reading.Read(
+            "Audiodescrição do vídeo\nUm gato.\nFim da audiodescrição",
+            1,
+            1,
+          ))
+        },
+        admit: fn(_, _) { Ok(fn(_, _) { Nil }) },
+        audio: True,
+        video: True,
+        document: True,
+      )
+    let assert Ok(video) =
+      inbound_media.keep(
+        root,
+        <<0, 0, 0, 24, "ftypisom":utf8, 0, 0, 2, 0>>,
+        inbound_media.Declared(
+          kind: inbound_media.Video,
+          mime: None,
+          seconds: Some(3),
+          file_name: None,
+          voice_note: False,
+          forwarded: False,
+        ),
+      )
+    media_reading.prepare(settings, "sim:dora", inbound_media.tag_for(video))
+    |> should.equal("\n[vídeo de 0:03, descrito]\nUm gato.")
+    let assert Ok(instruction) = process.receive(instructions, 100)
+    string.contains(instruction, "descrição completa e detalhada")
+    |> should.be_true()
+
+    say(router, message("/cego", "dora"))
+    |> should.equal("Modo de audiodescrição detalhada desligado.")
+    say(router, message("/longo", "dora"))
+    |> should.equal("Pronto: descrições completas e detalhadas.")
   })
 }
 

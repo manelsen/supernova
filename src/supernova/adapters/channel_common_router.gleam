@@ -40,6 +40,7 @@ import supernova/core/executor
 import supernova/core/introspection/mood
 import supernova/core/introspection/relationship
 import supernova/core/introspection/self_state
+import supernova/core/media_prompts
 import supernova/core/persona/loader as persona_loader
 import supernova/core/persona/types as persona_types
 import supernova/core/preferences
@@ -2157,12 +2158,54 @@ fn maybe_forwarded_transcript(
 }
 
 /// `/transcricao` turns on and off the transcription of the person's own
-/// audio (PRD-A, D6).
+/// audio (PRD-A, D6); `/curto`, `/longo` and `/cego` set how much a
+/// description carries (A-09).
 fn maybe_handle_preferences(
   msg: port.ChannelMessage,
   profile: SessionProfile,
 ) -> Option(String) {
+  let save = fn(cfg: config.Config, next, reply) {
+    case preferences.save(cfg.data_dir, profile.agent_id, next) {
+      Error(_) -> Some("Não consegui guardar essa preferência agora.")
+      Ok(Nil) -> Some(reply)
+    }
+  }
   case string.trim(msg.content), closed_group_global.get_config() {
+    "/curto", Some(cfg) ->
+      save(
+        cfg,
+        preferences.Preferences(
+          ..preferences.load(cfg.data_dir, profile.agent_id),
+          detail: preferences.Short,
+        ),
+        "Pronto: descrições curtas e objetivas.",
+      )
+    "/longo", Some(cfg) ->
+      save(
+        cfg,
+        preferences.Preferences(
+          ..preferences.load(cfg.data_dir, profile.agent_id),
+          detail: preferences.Long,
+        ),
+        "Pronto: descrições completas e detalhadas.",
+      )
+    "/cego", Some(cfg) -> {
+      let current = preferences.load(cfg.data_dir, profile.agent_id)
+      case current.detail {
+        preferences.Long ->
+          save(
+            cfg,
+            preferences.Preferences(..current, detail: preferences.Normal),
+            "Modo de audiodescrição detalhada desligado.",
+          )
+        _ ->
+          save(
+            cfg,
+            preferences.Preferences(..current, detail: preferences.Long),
+            "Modo de audiodescrição detalhada ligado: imagens, vídeos e documentos com descrição completa, cores, posições e todos os textos.",
+          )
+      }
+    }
     "/transcricao", Some(cfg) | "/transcrição", Some(cfg) -> {
       let current = preferences.load(cfg.data_dir, profile.agent_id)
       let next =
@@ -2384,7 +2427,10 @@ fn executor_messages_for_turn(
 /// The person's message for this turn. Images they sent (PRD-C, C-05b) go
 /// to the model here, once: the temporary file is deleted as it is read,
 /// and the history keeps `[imagem]`.
-fn current_user_message(content: String) -> provider.ChatMessage {
+fn current_user_message(
+  content: String,
+  profile: SessionProfile,
+) -> provider.ChatMessage {
   let #(text, ids) = inbound_media.split(content)
   let images = case ids, closed_group_global.get_config() {
     [], _ | _, None -> []
@@ -2395,7 +2441,18 @@ fn current_user_message(content: String) -> provider.ChatMessage {
   }
   case images {
     [] -> provider.user_message(text)
-    _ -> provider.user_message_with_images(text, images)
+    // Amélie's audio description rules go with the image, for when the
+    // person asked nothing else (PRD-A, A-08); only in this turn.
+    _ -> {
+      let detail = case closed_group_global.get_config() {
+        Some(cfg) -> preferences.load(cfg.data_dir, profile.agent_id).detail
+        None -> preferences.Normal
+      }
+      provider.user_message_with_images(
+        text <> "\n\n" <> media_prompts.image_guidance(detail),
+        images,
+      )
+    }
   }
 }
 
@@ -2409,9 +2466,9 @@ fn turn_messages(
       list.append(
         rich_session.get_history(session)
           |> provider_messages_from_session_history,
-        [current_user_message(content)],
+        [current_user_message(content, profile)],
       )
-    None -> [current_user_message(content)]
+    None -> [current_user_message(content, profile)]
   }
 
   let workspace_path = workspace_path_for_agent(profile.agent_id)

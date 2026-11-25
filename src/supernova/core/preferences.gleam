@@ -1,6 +1,7 @@
-//// What a person asked their agent about how to answer (PRD-A, D6):
-//// `/transcricao` (their own audios come back transcribed too) and
-//// `/voz` (answers as voice notes). Kept in the person's agent folder;
+//// What a person asked their agent about how to answer (PRD-A):
+//// `/transcricao` (their own audios come back transcribed too), `/voz`
+//// (answers as voice notes) and how much detail a description carries
+//// (`/curto`, `/longo`, `/cego`). Kept in the person's agent folder;
 //// `/esquecer` deletes them.
 
 import gleam/dynamic/decode
@@ -9,10 +10,25 @@ import gleam/result
 import supernova/core/agent_identity
 
 pub type Preferences {
-  Preferences(transcription: Bool, voice: Bool)
+  Preferences(transcription: Bool, voice: Bool, detail: Detail)
 }
 
-pub const none = Preferences(transcription: False, voice: False)
+/// How much a description of an image, a video or a document carries.
+pub type Detail {
+  Short
+  Normal
+  Long
+}
+
+pub const none = Preferences(transcription: False, voice: False, detail: Normal)
+
+fn detail_name(detail: Detail) -> String {
+  case detail {
+    Short -> "curto"
+    Normal -> "normal"
+    Long -> "longo"
+  }
+}
 
 pub fn path(data_dir: String, principal: String) -> String {
   agent_identity.agent_dir(data_dir, principal) <> "/preferences.json"
@@ -39,6 +55,7 @@ pub fn save(
     json.object([
       #("transcription", json.bool(preferences.transcription)),
       #("voice", json.bool(preferences.voice)),
+      #("detail", json.string(detail_name(preferences.detail))),
     ])
       |> json.to_string,
   ))
@@ -52,7 +69,19 @@ fn decoder() -> decode.Decoder(Preferences) {
     decode.bool,
   )
   use voice <- decode.optional_field("voice", False, decode.bool)
-  decode.success(Preferences(transcription, voice))
+  use detail <- decode.optional_field(
+    "detail",
+    Normal,
+    decode.string
+      |> decode.map(fn(name) {
+        case name {
+          "curto" -> Short
+          "longo" -> Long
+          _ -> Normal
+        }
+      }),
+  )
+  decode.success(Preferences(transcription, voice, detail))
 }
 
 @external(erlang, "supernova_file_system_ffi", "read_file")

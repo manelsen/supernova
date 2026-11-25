@@ -6,6 +6,7 @@
 //// and the agent answers.
 
 import gleam/string
+import supernova/core/preferences.{type Detail, Long, Normal, Short}
 
 const language = "português do Brasil"
 
@@ -41,7 +42,39 @@ pub fn audio() -> String {
   <> "\"."
 }
 
+/// Amélie's detail modes, appended to descriptions.
+pub fn detail_suffix(detail: Detail) -> String {
+  case detail {
+    Long ->
+      "\n- Forneça uma descrição completa e detalhada, incluindo todos os elementos visíveis, cores, textos, posições e contexto."
+    Short -> "\n- Seja concisa e objetiva na descrição."
+    Normal -> ""
+  }
+}
+
+/// Sent to the agent's model with an image the person sent (PRD-A, A-08):
+/// Amélie's audio description rules, for when the person asked nothing
+/// else about it. Only in the turn; the history keeps `[imagem]` and the
+/// agent's answer.
+pub fn image_guidance(detail: Detail) -> String {
+  "[Instrução para esta mensagem: a pessoa mandou imagem. Se ela não pediu outra coisa sobre a imagem, faça a audiodescrição em "
+  <> language
+  <> ". REGRAS:"
+  <> "\n- Comece identificando o tipo de imagem (fotografia, ilustração, gráfico, mapa, captura de tela, etc.)."
+  <> "\n- Descreva do geral ao específico: contexto geral primeiro, depois detalhes."
+  <> "\n- Inclua: cores, posições espaciais, textos visíveis (transcreva-os na íntegra), expressões faciais, ações e cenário."
+  <> "\n- Identifique pessoas por nome (se reconhecíveis) ou por atributo físico visível."
+  <> "\n- Seja objetiva: descreva apenas o que é visível, sem interpretar intenções ou estados mentais. Não censure conteúdo."
+  <> "\n- Use tempo presente e voz ativa; sem tabelas nem decorações (a resposta pode ser ouvida por leitor de tela)."
+  <> detail_suffix(detail)
+  <> "\nSe ela perguntou algo sobre a imagem, responda à pergunta.]"
+}
+
 pub fn video() -> String {
+  video_with(Normal)
+}
+
+pub fn video_with(detail: Detail) -> String {
   "Faça a audiodescrição e a transcrição deste vídeo em "
   <> language
   <> ". REGRAS:"
@@ -52,6 +85,7 @@ pub fn video() -> String {
   <> "\n- Identifique pessoas por nome (se reconhecíveis) ou por atributo físico visível."
   <> "\n- Seja objetiva: descreva apenas o observável, sem interpretar intenções ou estados mentais. Não censure conteúdo."
   <> "\n- Use tempo presente, voz ativa e terceira pessoa. Não inclua timestamps."
+  <> detail_suffix(detail)
   <> no_intro
   <> "\nInicie sua resposta exatamente com \""
   <> video_start
@@ -61,6 +95,10 @@ pub fn video() -> String {
 }
 
 pub fn document() -> String {
+  document_with(Normal)
+}
+
+pub fn document_with(detail: Detail) -> String {
   "Leia este documento em "
   <> language
   <> " e devolva o seu conteúdo. REGRAS:"
@@ -69,6 +107,7 @@ pub fn document() -> String {
   <> "\n- Se for contrato ou documento jurídico ou administrativo, destaque primeiro: as partes; o objetivo; prazos, vigência, valores e cláusulas essenciais."
   <> "\n- Depois, transcreva o texto do documento, na ordem, sem resumir; em documentos muito longos, transcreva o que couber e diga onde parou."
   <> "\n- Sem tabelas com barras verticais; prefira texto corrido ou listas simples (a resposta pode ser ouvida por leitor de tela)."
+  <> detail_suffix(detail)
   <> no_intro
   <> "\nInicie sua resposta exatamente com \""
   <> document_start

@@ -247,7 +247,8 @@ pub fn read_all(
       Image, _ -> acc
       _, Error(Nil) -> acc
       _, Ok(media) -> {
-        let #(text, reading) = read_one(settings, principal, media)
+        let detail = preferences.load(settings.data_dir, principal).detail
+        let #(text, reading) = read_one(settings, principal, media, detail)
         #(
           string.replace(content, inbound_media.tag_for(media), "\n" <> text),
           case reading {
@@ -264,6 +265,7 @@ fn read_one(
   settings: Settings,
   principal: String,
   media: Media,
+  detail: preferences.Detail,
 ) -> #(String, Option(Reading)) {
   let on = case media.kind {
     Audio -> settings.audio
@@ -285,7 +287,7 @@ fn read_one(
           None,
         )
         Ok(settle) -> {
-          let #(instruction, start, end) = instruction(media.kind)
+          let #(instruction, start, end) = instruction(media.kind, detail)
           case
             settings.reader(
               inbound_media.file_path(settings.data_dir, media.id),
@@ -319,7 +321,10 @@ fn read_one(
   result
 }
 
-fn instruction(kind: Kind) -> #(String, String, String) {
+fn instruction(
+  kind: Kind,
+  detail: preferences.Detail,
+) -> #(String, String, String) {
   case kind {
     Audio -> #(
       media_prompts.audio(),
@@ -327,12 +332,12 @@ fn instruction(kind: Kind) -> #(String, String, String) {
       media_prompts.audio_end,
     )
     Video -> #(
-      media_prompts.video(),
+      media_prompts.video_with(detail),
       media_prompts.video_start,
       media_prompts.video_end,
     )
     _ -> #(
-      media_prompts.document(),
+      media_prompts.document_with(detail),
       media_prompts.document_start,
       media_prompts.document_end,
     )
