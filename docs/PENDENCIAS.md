@@ -1,6 +1,6 @@
 # Pendências da Supernova
 
-Consolidado em 22/11/2026, a partir de:
+Consolidado em 22/11/2026 e atualizado em 25/11, a partir de:
 
 - os PRDs, hoje em [`docs/prd/`](prd/);
 - os relatórios, em [`docs/relatorios/`](relatorios/);
@@ -15,23 +15,64 @@ Itens sobre Postgres e pgvector foram retirados: o banco saiu na PR #33.
 
 Este documento tem quatro partes:
 
-0. **Decisões e prioridades**: o que o mantenedor decidiu em 22/11 e em que ordem.
+0. **Roadmap**: a ordem de todo o trabalho aberto, e as decisões do mantenedor.
 1. **Feito**: estava listado como pendente e já está no código.
 2. **Incompatível com escolhas posteriores**: precisa ser repensado antes de ser feito.
 3. **Pendências por tema**: cada uma com a decisão que recebeu.
 
 ---
 
-## 0. Decisões e prioridades (22/11)
+## 0. Roadmap
 
-Ordem de trabalho:
+Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aqui quando é proposta, e um item sai quando a PR dele é mergeada: vai para a parte 1 ou fica riscado no tema dele, na parte 3. O detalhe de cada item fica no tema; aqui ficam só a ordem e o próximo passo.
 
-1. **Documentação (nível 1).** Resolvida antes de qualquer outro ponto, incluindo a atualização dos PRDs em disco (3.6).
-2. **Qualidade, no topo** (3.5).
-3. **Observabilidade total**: o que não pode ser medido dificilmente melhora e frequentemente regride (3.4).
-4. Os demais temas, em ordem a combinar: conversa e memória (3.1), Discord (3.2), aprovação e computador fase 2 (3.3), wizard (2.1).
+### 0.1 Fila principal, em ordem
 
-Decisões por tema:
+| # | Item | Situação | Próximo passo |
+|---|---|---|---|
+| 1 | **Discord com paridade do Telegram** ([3.2](#32-canais)) | O Discord só envia: o gateway é um esboço e não abre a conexão (`discord_gateway.gleam`, `connect_to_gateway`). O pipeline do grupo fechado já espera por ele. | Escrever a PRD: gateway WebSocket real, anexos, prontidão no `/health/ready` ([3.4](#34-observabilidade-e-desempenho)), cobertura ([3.5](#35-qualidade)). |
+| 2 | **[PRD-F](prd/PRD-F-ferramentas-atores.md), fase A**: cada ferramenta com prazo, cancelamento e limites | Proposta. Hoje uma ferramenta travada prende o turno por 5 min e deixa processos vivos. | Decisões D1–D7 do mantenedor. |
+| 3 | **[PRD-S](prd/PRD-S-sondas.md)**: sondas | Desenho com as decisões S1 a S11, sem histórias. As PRDs E e C, de que a segunda versão dependia, estão feitas. | Escrever a segunda versão, com as histórias e os servidores MCP conferidos (nome, licença, versão). Executar depois da fase A da F, que dá prazo e cancelamento às tarefas longas das sondas. |
+| 4 | **Aprovação por botões, computador fase 2 e [PRD-F](prd/PRD-F-ferramentas-atores.md) fase B** ([3.3](#33-interação-e-computador)) | Decididos em 22/11, sem PRD. A fase B da F depende da P-03, já feita. | Escrever uma PRD que junte os três: a aprovação é o portão das tarefas em segundo plano e do computador. |
+| 5 | **Wizard com Docker e gVisor** ([2.1](#21-quickstart-nativo-com-curl--systemd-docsprdprd-wizardmd)) | Decidido em 22/11. A PRD em disco é a antiga, com `systemd`. | Reescrever a PRD. |
+
+### 0.2 Esperando algo de fora
+
+| Item | Espera | Depois |
+|---|---|---|
+| **WhatsApp da Belle** ([PRD-C](prd/PRD-C-canais-whatsapp.md), [PRD-A](prd/PRD-A-midia.md)) | Um chip para o número da agente. Nada rodou contra o WhatsApp real. | Parear pelo roteiro em [`operations/WHATSAPP.md`](operations/WHATSAPP.md) e conferir a resposta do `login-with-code`, que segue só o openapi do GOWA. |
+| **Memória no piloto** ([3.1](#31-conversa-e-memória)) | Decisão do mantenedor: chave da Perplexity e `recall.enabled: true`. | Medir a recusa do filtro de segurança e a taxa de correção. |
+| **Tirar `routing.parallel`** ([3.1](#31-conversa-e-memória)) | Uma semana de piloto sem regressão desde a #64 (25/11), ou seja, a partir de 02/12. | PR pequena tirando a chave e o caminho antigo. |
+| **Medir a janela de contexto** ([3.1](#31-conversa-e-memória)) | Uma ou duas semanas de conversas guardadas. | `scripts/janela/medir_janela.py`, e a curva qualidade × custo no harness. |
+| **Cenários do harness com o modelo do piloto** ([3.1](#31-conversa-e-memória)) | Uma rodada com o modelo do piloto. | `nao_inventar` (crítico) e uma bateria maior do pedido natural de esquecer. |
+| **Agenda no canal de origem** ([PRD-C-I](relatorios/PRD-C-I.md)) | Decisão do mantenedor. Hoje a tarefa vai para o privado do canal canônico da pessoa. | Levar a identidade de origem no contexto do turno, se a decisão for essa. |
+
+### 0.3 Pequenos, para encaixar entre os grandes
+
+- **Mudança lenta com uma pessoa só** ([3.1](#31-conversa-e-memória)): a decisão de 22/11 é disparar depois de uma semana de encorajamento; falta recalibrar o limiar ou o desconto.
+- **Memória:** vetorizar em segundo plano, a cada turno, para a primeira consulta não chegar perto dos 15 s ([3.1](#31-conversa-e-memória)).
+- **Índice para a `buscar_conversa`**, que hoje é o teto da vazão ([3.1](#31-conversa-e-memória)).
+- **Código sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` ([3.4](#34-observabilidade-e-desempenho)).
+- **`/voz` no Telegram:** a A-11 abriu a mídia de entrada, mas a resposta em voz pede o `sendVoice`.
+- **Exportação OTLP dos spans** ([3.4](#34-observabilidade-e-desempenho)).
+- **Defeitos de canal:** `retry_after` do Discord abaixo de 1 s, tamanho nas edições do Matrix, fallback do streaming do Slack, `StartHooks` por canal ([3.2](#32-canais)).
+
+### 0.4 Sem data
+
+Estudo ou decisão antes de virar trabalho:
+
+- grupo em que todas as agentes veem o grupo ([3.1](#31-conversa-e-memória));
+- onboarding do modo aberto ([2.2](#22-onboarding-antigo-e-bootstrap-de-agente-por-sessão));
+- Slack e Matrix com paridade, os outros canais e o QQ ([3.2](#32-canais)): esperam o Discord;
+- benchmarks, teste de carga e a verificação final da v1 ([3.4](#34-observabilidade-e-desempenho));
+- Chromium real no CI e failover entre provedores ([3.5](#35-qualidade));
+- riscos aceitos ([3.7](#37-riscos-aceitos-revisitar)).
+
+### 0.5 Decisões de 22/11
+
+A ordem de 22/11 (documentação, qualidade, observabilidade, depois os demais temas) foi cumprida nos três primeiros: documentação e observabilidade estão feitas, e a qualidade segue como gate em toda PR. Depois dela vieram as PRDs E, C, I, A, M, N e P, cada uma com relatório em [`relatorios/`](relatorios/).
+
+As decisões por tema continuam valendo:
 
 | Tema | Decisão |
 |---|---|
@@ -174,8 +215,8 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 ### 3.2 Canais
 
 - ~~**O menu de comandos do Telegram e o `/help` não batem com o que a Supernova faz.**~~ Feito em 23/11 (#51): `core/closed_group/commands` é a lista única; o `/help` responde por papel, e o boot publica o menu (`setMyCommands`) nos escopos default, privados e grupos, sem idioma, em pt e em en, e o de admin no chat de cada admin do `supernova.yaml`. Um admin adicionado depois por `/acesso` vê o menu de membro até o próximo boot.
-- **No Discord os `attachments` chegam sempre vazios.** No Telegram a entrada já abre foto, voz, áudio, vídeo e documento desde a A-11 (#72), e a imagem chega ao modelo desde a C-05 e a C-05b (#71); no WhatsApp a imagem também entra desde a C-05. O caminho de imagem até o modelo existe desde a PR #34.
-- **O grupo fechado só existe em Telegram e Discord.**
+- **O Discord não recebe mensagens.** O gateway é um esboço: `connect_to_gateway` não abre a conexão WebSocket, então nada chega, nem texto nem `attachments`. É o item 1 do roadmap. No Telegram a entrada já abre foto, voz, áudio, vídeo e documento desde a A-11 (#72), e a imagem chega ao modelo desde a C-05 e a C-05b (#71); no WhatsApp a imagem também entra desde a C-05. O caminho de imagem até o modelo existe desde a PR #34.
+- **O grupo fechado só existe em Telegram e Discord** (no Discord, só quando ele receber).
   - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais". O WhatsApp passou a receber (webhook próprio, `C-02` e `C-03`, e pareamento pela API do GOWA, `C-04`, na #71) e continua nesse caminho genérico.
   - Origem: `TODO.md` P1.
 - **Slack e Matrix sem paridade com Telegram e Discord.** Faltam sessão, comandos, interações e testes de ponta a ponta. Origem: `TODO.md`, pós-PRD.
