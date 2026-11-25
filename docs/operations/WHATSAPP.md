@@ -68,19 +68,40 @@ settings:
 
 ## Pairing the number
 
-1. From your computer, open a tunnel to the GOWA UI:
+GOWA offers two ways through its REST API: a code typed on the phone, or a
+QR code. Both are asked for from the server, on GOWA's loopback port, with
+the basic auth from `.env`. Neither GOWA's docs nor its readme say how long
+a code or QR stays valid, so use it right away.
+
+**With a code (simplest, no browser):**
+
+1. On the server:
 
    ```
-   ssh -L 3000:127.0.0.1:3000 <server>
+   curl -u "$SUPERNOVA_WHATSAPP_BASIC_AUTH" \
+     "http://127.0.0.1:3000/app/login-with-code?phone=5511999999999"
    ```
 
-2. Open http://localhost:3000 and log in with the user and password from
-   `SUPERNOVA_WHATSAPP_BASIC_AUTH`.
-3. Choose **Login** and scan the QR code with the agent's phone (WhatsApp →
-   Linked devices). You can also ask for a pairing code.
-4. Send a message to the agent's number from an allowed person. The log
-   shows the turn. If nothing happens, see the troubleshooting section.
-5. Close the tunnel.
+   Use the agent's number with the country code, digits only. The answer
+   carries `results.pair_code`, such as `ABCD-1234`.
+2. On the agent's phone: WhatsApp → Linked devices → Link a device → **Link
+   with phone number instead**, and type the code.
+
+**With a QR code:**
+
+1. On the server:
+
+   ```
+   curl -u "$SUPERNOVA_WHATSAPP_BASIC_AUTH" http://127.0.0.1:3000/app/login
+   ```
+
+   The answer carries `results.qr_link`, a PNG under `/statics/images/qrcode/`.
+2. Open that image through an SSH tunnel (`ssh -L 3000:127.0.0.1:3000
+   <server>`, then the link with `localhost:3000`), and scan it with the
+   agent's phone (WhatsApp → Linked devices → Link a device).
+
+**Then** send a message to the agent's number from an allowed person. The
+log shows the turn. If nothing happens, see the troubleshooting section.
 
 ## People and groups
 
