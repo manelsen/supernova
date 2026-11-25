@@ -641,6 +641,50 @@ pub fn record_stream_for_test(
   )
 }
 
+/// The stream sender of a channel that cannot edit a message (PRD-C, C-04):
+/// it waits for the final reply and sends it once, in parts no longer than
+/// `max_length`. Each wait is at most `wait_ms`; a stream that goes quiet
+/// longer reports "stream timed out", and the kit then waits for the late
+/// final reply.
+pub fn final_only_stream_send(
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  max_length: Int,
+  wait_ms: Int,
+) -> StreamSendFn {
+  fn(base_reply: port.ChannelReply, events) {
+    await_final(base_reply, events, send_fn, max_length, wait_ms)
+  }
+}
+
+fn await_final(
+  base_reply: port.ChannelReply,
+  events: process.Subject(port.ChannelStreamEvent),
+  send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
+  max_length: Int,
+  wait_ms: Int,
+) -> Result(Nil, port.ChannelError) {
+  case process.receive(events, within: wait_ms) {
+    Ok(port.StreamUpdate(_)) ->
+      await_final(base_reply, events, send_fn, max_length, wait_ms)
+    Ok(port.StreamComplete(reply)) ->
+      case string.trim(reply.content) {
+        "" -> Ok(Nil)
+        _ ->
+          port.ChannelReply(
+            ..base_reply,
+            content: reply.content,
+            media: reply.media,
+            edit_message_id: None,
+            typing: False,
+          )
+          |> chunking.split_reply(max_length)
+          |> send_chunked_replies(send_fn)
+      }
+    Ok(port.StreamFailure(error)) -> Error(error)
+    Error(Nil) -> Error(port.SendFailed("stream timed out"))
+  }
+}
+
 pub fn send_chunked_replies(
   replies: List(port.ChannelReply),
   send_one: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),

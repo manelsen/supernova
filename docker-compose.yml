@@ -20,6 +20,13 @@ services:
       # Runtime state: access.json, ledger/ and audit_log/
       SUPERNOVA_DATA_DIR: /data
 
+      # WhatsApp through GOWA (optional; see docs/operations/WHATSAPP.md)
+      SUPERNOVA_WHATSAPP_ENABLED: ${SUPERNOVA_WHATSAPP_ENABLED:-false}
+      SUPERNOVA_WHATSAPP_BRIDGE_URL: http://gowa:3000
+      SUPERNOVA_WHATSAPP_BASIC_AUTH: ${SUPERNOVA_WHATSAPP_BASIC_AUTH:-}
+      SUPERNOVA_WHATSAPP_WEBHOOK_SECRET: ${SUPERNOVA_WHATSAPP_WEBHOOK_SECRET:-}
+      SUPERNOVA_WHATSAPP_DEVICE_ID: ${SUPERNOVA_WHATSAPP_DEVICE_ID:-}
+
       # The agent's computer (optional; see docs/operations/COMPUTADOR.md)
       SUPERNOVA_COMPUTER_URL: ${SUPERNOVA_COMPUTER_URL:-}
       SUPERNOVA_COMPUTER_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
@@ -67,6 +74,41 @@ services:
       # Docker's DNS does not answer inside gVisor on this network.
       - ./computador/resolv.conf:/etc/resolv.conf:ro
     networks: [computador_net]
+
+  # WhatsApp: GOWA (go-whatsapp-web-multidevice, MIT), the bridge to the
+  # WhatsApp account. Off unless the "whatsapp" profile is on
+  # (COMPOSE_PROFILES=whatsapp in .env). Pinned by digest (v9.10.0); update
+  # by hand after reading the changelog. Its web UI is only for pairing:
+  # on the host's loopback, reached through an SSH tunnel. Its media
+  # (/statics) is served without auth: never publish this port elsewhere.
+  # See docs/operations/WHATSAPP.md.
+  gowa:
+    profiles: ["whatsapp"]
+    container_name: supernova-gowa
+    image: aldinokemal2104/go-whatsapp-web-multidevice:v9.10.0@sha256:026f31c4d2e3fb448a7cc1abbb3319a7ddc25d51ed9136f2ea7ae0b03219a53c
+    environment:
+      APP_PORT: "3000"
+      APP_BASIC_AUTH: ${SUPERNOVA_WHATSAPP_BASIC_AUTH:-}
+      APP_ALLOW_UNAUTHENTICATED: "false"
+      # The UI that comes in the image; never fetched from GitHub (D4).
+      APP_UI_AUTO_UPDATE: "false"
+      MCP_ENABLED: "false"
+      # Empty on purpose: GOWA's example answers every message by itself.
+      WHATSAPP_AUTO_REPLY: ""
+      WHATSAPP_AUTO_MARK_READ: "false"
+      WHATSAPP_AUTO_DOWNLOAD_MEDIA: "true"
+      WHATSAPP_WEBHOOK: http://supernova:8790/webhook/whatsapp
+      WHATSAPP_WEBHOOK_SECRET: ${SUPERNOVA_WHATSAPP_WEBHOOK_SECRET:-}
+      WHATSAPP_WEBHOOK_EVENTS: message,device.logged_out,device.temporary_ban
+      WHATSAPP_WEBHOOK_INCLUDE_OUTGOING: "false"
+    mem_limit: 512m
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - gowa_storages:/app/storages
+      - gowa_statics:/app/statics
+    networks: [default]
 
   # Observability: Prometheus keeps the history of Supernova's /metrics and
   # Grafana shows it as a dashboard. Off unless the "observabilidade" profile
@@ -135,6 +177,8 @@ networks:
 
 volumes:
   supernova_data:
+  gowa_storages:
+  gowa_statics:
   computador_home:
   prometheus_data:
   grafana_data:

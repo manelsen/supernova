@@ -11,11 +11,13 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import supernova/channel/catalog
 import supernova/config
 import supernova/core/access/actor as access_actor
 import supernova/core/access/pure as access_pure
 import supernova/core/access/types as access_types
+import supernova/core/agent_identity
 import supernova/core/alerts/group_actor as alerts_actor
 import supernova/core/alerts/group_pure as alerts_pure
 import supernova/core/audit_log/actor as audit_actor
@@ -26,6 +28,8 @@ import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure
 import supernova/core/closed_group/types
 import supernova/core/executor
+import supernova/core/identity/aliases
+import supernova/core/identity/linking
 import supernova/core/instance_budget/actor as instance_budget
 import supernova/core/instance_budget/pure as instance_pure
 import supernova/core/principal
@@ -94,13 +98,21 @@ fn decide(
       types.Ignored("missing sender")
     }
     Ok(speaker) -> {
-      let principal_id = principal.principal_id(speaker)
+      // A linked identity is its person: access, budget and agent follow
+      // the canonical identity (PRD-I).
+      let identity = principal.principal_id(speaker)
+      let principal_id = aliases.resolve(identity)
       let is_private = pure.is_private_chat(channel, chat_id)
       let chat_key = pure.chat_key(channel, chat_id)
 
-      case pure.is_eu_command(content) {
-        True -> types.Reply(pure.eu_reply(principal_id, chat_key, is_private))
-        False -> {
+      case
+        pure.is_eu_command(content),
+        link_command(runtime, identity, principal_id, is_private, content, now)
+      {
+        True, _ ->
+          types.Reply(pure.eu_reply(principal_id, chat_key, is_private))
+        False, Some(reply) -> types.Reply(reply)
+        False, None -> {
           case access_actor.try_check(runtime.access, principal_id) {
             Error(_) -> fail_closed_gate(runtime, principal_id, "access")
             Ok(access_types.Denied) -> {
@@ -192,7 +204,9 @@ pub fn gate_interaction(
   case principal.from_sender(channel, user_id) {
     Error(_) -> types.Ignored("missing sender")
     Ok(speaker) -> {
-      let principal_id = principal.principal_id(speaker)
+      // A linked identity is its person: access, budget and agent follow
+      // the canonical identity (PRD-I).
+      let principal_id = aliases.resolve(principal.principal_id(speaker))
       let is_private = pure.is_private_chat(channel, chat_id)
       let chat_key = pure.chat_key(channel, chat_id)
       case access_actor.try_check(runtime.access, principal_id) {
@@ -1021,6 +1035,21 @@ pub fn fail_closed_alert(runtime: types.Runtime, component: String) -> Nil {
   )
 }
 
+/// Tell the admins a channel is down: its account was logged out or
+/// suspended. One alert per channel and reason within the dedup window.
+pub fn channel_down_alert(
+  runtime: types.Runtime,
+  channel: String,
+  reason: String,
+) -> Nil {
+  dispatch_alert(
+    runtime,
+    alerts_pure.ChannelDown,
+    channel <> ":" <> reason,
+    "O canal " <> channel <> " caiu: " <> reason,
+  )
+}
+
 fn dispatch_alert(
   runtime: types.Runtime,
   kind: alerts_pure.GroupAlertKind,
@@ -1051,6 +1080,173 @@ fn dispatch_alert(
       }
   }
 }
+
+// ============================================================================
+// Linking channels (PRD-I, I-02)
+// ============================================================================
+
+/// The answer to `/vincular` and `/desvincular`. `identity` is the sender
+/// on this channel; `person` its canonical identity. Redeeming a code is the
+/// one command a sender without access may give: it is how access arrives.
+fn link_command(
+  runtime: types.Runtime,
+  identity: String,
+  person: String,
+  is_private: Bool,
+  content: String,
+  now: Int,
+) -> Option(String) {
+  case linking.parse(content) {
+    None -> None
+    Some(linking.Redeem(code)) ->
+      Some(redeem_link(runtime, identity, code, is_private, now))
+    Some(command) ->
+      case access_actor.try_check(runtime.access, person) {
+        Ok(access_types.Allowed(_)) ->
+          Some(case command {
+            linking.Issue -> issue_link(person, is_private, now)
+            linking.Unlink(target) ->
+              unlink(runtime, identity, person, target, now)
+            linking.Redeem(_) -> ""
+          })
+        // Without access the usual gate answers.
+        _ -> None
+      }
+  }
+}
+
+fn issue_link(person: String, is_private: Bool, now: Int) -> String {
+  case is_private {
+    False ->
+      "Mande /vincular no nosso privado: o código não pode aparecer num grupo."
+    True -> {
+      let code = linking.issue(person, now)
+      "Seu código: "
+      <> code
+      <> "\nNo outro app, me mande /vincular "
+      <> code
+      <> " em até 10 minutos, no privado. Depois disso, é a mesma conversa nos dois."
+    }
+  }
+}
+
+fn redeem_link(
+  runtime: types.Runtime,
+  identity: String,
+  code: String,
+  is_private: Bool,
+  now: Int,
+) -> String {
+  let data_dir = runtime.config.data_dir
+  let already_person = aliases.aliases_of(identity) != []
+  let has_agent =
+    file_exists(agent_identity.agent_dir(data_dir, identity))
+    |> result.unwrap(False)
+  case is_private, aliases.resolve(identity) != identity {
+    False, _ -> "Mande o código no nosso privado."
+    True, True -> "Este app já está ligado a você."
+    True, False ->
+      case already_person, has_agent {
+        True, _ ->
+          "Outros apps já estão ligados a este. Gere o código aqui, com /vincular, e use no outro app."
+        False, True ->
+          "Neste app você já tem uma agente sua, e juntar duas agentes ainda não é possível."
+        False, False ->
+          case linking.redeem(identity, code, now) {
+            Error(linking.TooManyTries) ->
+              "Muitas tentativas erradas. Tente de novo daqui a uma hora."
+            Error(linking.InvalidCode) ->
+              "Código inválido ou vencido. Gere outro com /vincular no app em que já conversamos."
+            Ok(person) -> {
+              let channel = channel_of(identity)
+              case aliases.link(data_dir, identity, person, channel, now) {
+                Error(_) ->
+                  "Não consegui ligar os dois apps agora. Tente de novo."
+                Ok(Nil) -> {
+                  audit_action(
+                    runtime,
+                    person,
+                    "identity_link",
+                    identity,
+                    audit_types.AuditSuccess,
+                    "channel=" <> channel,
+                  )
+                  runtime.send_alert(
+                    person,
+                    identity
+                      <> " foi ligado a você agora. Se não foi você, mande /desvincular aqui.",
+                  )
+                  "Pronto: agora é a mesma conversa aqui e no "
+                  <> channel_of(person)
+                  <> "."
+                }
+              }
+            }
+          }
+      }
+  }
+}
+
+fn unlink(
+  runtime: types.Runtime,
+  identity: String,
+  person: String,
+  target: Option(String),
+  now: Int,
+) -> String {
+  let data_dir = runtime.config.data_dir
+  case identity == person, target {
+    // On a linked channel: this channel leaves the person.
+    False, _ -> {
+      let _ = aliases.unlink(data_dir, identity)
+      audit_unlink(runtime, person, identity, now)
+      "Desliguei este app de você. Daqui pra frente, aqui não é mais a mesma conversa."
+    }
+    True, None ->
+      case aliases.aliases_of(person) {
+        [] -> "Nenhum outro app está ligado a você."
+        linked ->
+          "Ligados a você: "
+          <> string.join(linked, ", ")
+          <> ".\nPara desligar um, mande /desvincular seguido dele."
+      }
+    True, Some(alias) ->
+      case list.contains(aliases.aliases_of(person), alias) {
+        False -> "Esse app não está ligado a você."
+        True -> {
+          let _ = aliases.unlink(data_dir, alias)
+          audit_unlink(runtime, person, alias, now)
+          "Desliguei " <> alias <> "."
+        }
+      }
+  }
+}
+
+fn audit_unlink(
+  runtime: types.Runtime,
+  person: String,
+  alias: String,
+  _now: Int,
+) -> Nil {
+  audit_action(
+    runtime,
+    person,
+    "identity_unlink",
+    alias,
+    audit_types.AuditSuccess,
+    "channel=" <> channel_of(alias),
+  )
+}
+
+fn channel_of(identity: String) -> String {
+  case principal.parse(identity) {
+    Ok(parsed) -> parsed.channel
+    Error(Nil) -> identity
+  }
+}
+
+@external(erlang, "supernova_file_system_ffi", "file_exists")
+fn file_exists(path: String) -> Result(Bool, Nil)
 
 fn audit_denied(
   runtime: types.Runtime,

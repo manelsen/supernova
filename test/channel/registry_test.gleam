@@ -177,6 +177,9 @@ fn enabled_whatsapp_config() -> config.Config {
       bridge_url: Some("http://localhost:3000"),
       device_id: Some("device-1"),
       enabled: True,
+      basic_auth: Some("supernova:senha"),
+      webhook_secret: Some("segredo"),
+      allow_groups: False,
     ),
   )
 }
@@ -585,8 +588,7 @@ pub fn start_channels_skips_enabled_channels_with_missing_credentials_test() {
       ),
       wechat_work: config.WechatWorkConfig(webhook_url: None, enabled: True),
       whatsapp: config.WhatsAppConfig(
-        bridge_url: None,
-        device_id: None,
+        ..config.default_whatsapp_config(),
         enabled: True,
       ),
     )
@@ -1208,6 +1210,7 @@ pub fn e2e_discord_help_command_routes_from_adapter_to_reply_test() {
       <> "/help - Show this help\n"
       <> "/start - Start a new session\n"
       <> "/status - Show session status\n"
+      <> "/vincular - Bring another app to the same agent\n"
       <> "/model - Change LLM model\n"
       <> "/project - Start project wizard\n",
     message_id: Some("discord-send-1"),
@@ -1786,6 +1789,7 @@ pub fn e2e_slack_help_command_routes_from_inbound_to_reply_test() {
       <> "/help - Show this help\n"
       <> "/start - Start a new session\n"
       <> "/status - Show session status\n"
+      <> "/vincular - Bring another app to the same agent\n"
       <> "/model - Change LLM model\n",
     message_id: Some("slack-send-1"),
   ))
@@ -1944,6 +1948,7 @@ pub fn e2e_matrix_help_command_routes_from_inbound_to_reply_test() {
       <> "/help - Show this help\n"
       <> "/start - Start a new session\n"
       <> "/status - Show session status\n"
+      <> "/vincular - Bring another app to the same agent\n"
       <> "/model - Change LLM model\n",
     message_id: Some("matrix-send-1"),
   ))

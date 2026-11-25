@@ -22,6 +22,7 @@ import gleam/otp/actor
 import gleam/result
 import gleam/string
 import gleam/uri
+import supernova/channel/base_url
 
 // ============================================================================
 // Constants
@@ -380,29 +381,8 @@ pub fn new_config(token: String) -> Config {
 /// host, plain HTTP only for loopback, so the token never crosses a network
 /// in cleartext.
 pub fn check_base_url(base_url: String) -> Result(Nil, String) {
-  let allowed = case uri.parse(string.trim(base_url)) {
-    Ok(parsed) -> {
-      let scheme = option.map(parsed.scheme, string.lowercase)
-      let host = option.map(parsed.host, string.lowercase)
-      case scheme, host {
-        // The HTTP client cannot reach IPv6 literals: the brackets are lost
-        // on the way to it.
-        _, Some(host) if host == "" -> False
-        Some("https"), Some(host) -> !string.contains(host, ":")
-        Some("http"), Some(host) ->
-          list.contains(["localhost", "127.0.0.1"], host)
-        _, _ -> False
-      }
-    }
-    Error(_) -> False
-  }
-  case allowed {
-    True -> Ok(Nil)
-    False ->
-      Error(
-        "telegram.base_url must be https, or http on localhost or 127.0.0.1 (the bot token travels in the URL); IPv6 literals are not supported, use a host name",
-      )
-  }
+  // The bot token travels in the URL.
+  base_url.check("telegram.base_url", base_url, [])
 }
 
 /// Use another Bot API server, such as a self-hosted one, given as
