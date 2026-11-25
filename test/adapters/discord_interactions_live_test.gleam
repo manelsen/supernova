@@ -137,8 +137,11 @@ pub fn answer_to_a_button_edits_its_message_test() {
     conn,
     discord_fake.dispatch("INTERACTION_CREATE", button_press("m:x", "src-9"), 2),
   )
-  let edit =
-    discord_fake.expect_request(api, "/channels/dm1/messages/src-9", 3000)
+  // The private chat is the person's (`dm:456`): the DM channel is opened
+  // by their id, then the message is edited there.
+  let _ = discord_fake.expect_request(api, "/users/@me/channels", 3000)
+  let edit = discord_fake.expect_request(api, "/channels/dm-", 3000)
+  string.ends_with(edit.path, "/messages/src-9") |> should.be_true
   edit.method |> should.equal("PATCH")
   string.contains(edit.body, "modelo trocado") |> should.be_true
   registry.stop_channels(channel_registry)

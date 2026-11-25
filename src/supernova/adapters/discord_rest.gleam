@@ -233,6 +233,9 @@ pub type RestClientState {
     config: RestClientConfig,
     rate_limits: Dict(String, BucketState),
     global_rate_limit_until: Option(Int),
+    /// DM channel of each person already opened: Discord keeps it, so it
+    /// is asked once per person.
+    dm_channels: Dict(Snowflake, Snowflake),
   )
 }
 
@@ -307,6 +310,7 @@ pub fn start(config: RestClientConfig) -> Result(RestClient, actor.StartError) {
       config: config,
       rate_limits: dict.new(),
       global_rate_limit_until: None,
+      dm_channels: dict.new(),
     )
 
   case
@@ -906,11 +910,31 @@ fn handle_message(
       actor.continue(state)
     }
 
-    OpenDm(reply_to, user_id) -> {
-      let result = do_open_dm(state, user_id)
-      process.send(reply_to, result)
-      actor.continue(state)
-    }
+    OpenDm(reply_to, user_id) ->
+      case dict.get(state.dm_channels, user_id) {
+        Ok(channel_id) -> {
+          process.send(reply_to, Ok(channel_id))
+          actor.continue(state)
+        }
+        Error(Nil) -> {
+          let result = do_open_dm(state, user_id)
+          process.send(reply_to, result)
+          case result {
+            Ok(channel_id) ->
+              actor.continue(
+                RestClientState(
+                  ..state,
+                  dm_channels: dict.insert(
+                    state.dm_channels,
+                    user_id,
+                    channel_id,
+                  ),
+                ),
+              )
+            Error(_) -> actor.continue(state)
+          }
+        }
+      }
 
     EditMessage(reply_to, channel_id, message_id, options) -> {
       let result = do_edit_message(state, channel_id, message_id, options)
@@ -1203,25 +1227,14 @@ fn extract_error_message(body: String) -> String {
   }
 }
 
-fn extract_retry_after(body: String) -> Int {
-  let decoder = {
-    use retry_after <- decode.field("retry_after", decode.int)
-    decode.success(retry_after)
-  }
-  case json.parse(from: body, using: decoder) {
-    Ok(ms) -> ms
-    Error(_) -> {
-      // Try float version
-      let decoder2 = {
-        use retry_after <- decode.field("retry_after", decode.float)
-        decode.success(retry_after)
-      }
-      case json.parse(from: body, using: decoder2) {
-        Ok(secs) -> float.truncate(secs *. 1000.0)
-        Error(_) -> 5000
-        // Default 5 seconds
-      }
-    }
+/// Discord's `retry_after` is in seconds, whole or fractional (`5`,
+/// `0.35`); the result is in milliseconds, rounded up. Without one, 5 s.
+pub fn extract_retry_after(body: String) -> Int {
+  let seconds =
+    decode.one_of(decode.float, or: [decode.map(decode.int, int.to_float)])
+  case json.parse(from: body, using: decode.at(["retry_after"], seconds)) {
+    Ok(secs) -> float.round(float.ceiling(secs *. 1000.0))
+    Error(_) -> 5000
   }
 }
 
@@ -1574,11 +1587,21 @@ fn json_bool(b: Bool) -> String {
 
 fn escape_json_string(s: String) -> String {
   s
-  |> string.replace("\\", "\\\\")
-  |> string.replace("\"", "\\\"")
-  |> string.replace("\n", "\\n")
-  |> string.replace("\r", "\\r")
-  |> string.replace("\t", "\\t")
+  |> string.to_utf_codepoints
+  |> list.map(fn(codepoint) {
+    case string.utf_codepoint_to_int(codepoint) {
+      0x5C -> "\\\\"
+      0x22 -> "\\\""
+      0x0A -> "\\n"
+      0x0D -> "\\r"
+      0x09 -> "\\t"
+      // Any other control character is invalid raw in JSON.
+      code if code < 0x20 ->
+        "\\u00" <> string.pad_start(int.to_base16(code), 2, "0")
+      _ -> string.from_utf_codepoints([codepoint])
+    }
+  })
+  |> string.concat
 }
 
 fn get_base_url(config: RestClientConfig) -> String {

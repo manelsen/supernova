@@ -14,6 +14,7 @@ import gleam/option.{None}
 import gleam/string
 import supernova/agenda/schedule
 import supernova/agenda/store
+import supernova/channel/catalog
 import supernova/channel/port
 import supernova/core/agent_identity
 import supernova/metrics/record
@@ -46,8 +47,9 @@ pub fn wake_message(
       <> ":"
       <> int.to_string(entry.next_run_at),
     channel: channel,
-    // The agenda always answers in the private chat.
-    channel_id: user_id,
+    // The agenda always answers in the private chat, as the channel names
+    // it (Telegram: the user id; Discord: `dm:<user_id>`).
+    channel_id: catalog.get(channel).private_chat_for(user_id),
     user_id: user_id,
     username: "",
     content: wake_text(entry, offset),

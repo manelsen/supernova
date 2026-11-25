@@ -352,6 +352,14 @@ O resto desta seção descreve a primeira versão e fica como registro.
   `private_chat_for` (`open-dm:<user_id>`), que o adaptador já resolve com
   `discord_rest.open_dm`. Conferir com teste que o chat aberto bate com o
   `dm:<channel_id>` que chega depois, senão a conversa se divide em duas.
+- **Desvio na execução (D-06): o chat privado é a pessoa.** O adaptador
+  chamava o privado de `dm:<id do canal de DM>`, e a agenda montava o chat
+  com o id da pessoa, como no Telegram: a conversa se dividiria em duas, e o
+  gate nem a reconheceria como privada. Agora o privado do Discord é
+  `dm:<id da pessoa>`, o mesmo do `private_chat_for`. No envio, o adaptador
+  abre (ou reaproveita, com cache) o canal de DM. A agenda passa a usar o
+  `private_chat_for` do canal, em vez de supor o id da pessoa. Não há o que
+  migrar: o Discord nunca recebeu mensagens.
 - **Comentário errado no trait:** o cabeçalho de `traits/discord.gleam` diz
   `dm:<user_id>`, mas o adaptador usa `dm:<channel_id>`. Corrigir o
   comentário.

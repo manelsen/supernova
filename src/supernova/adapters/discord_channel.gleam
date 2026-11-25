@@ -627,6 +627,8 @@ pub fn autocomplete_request(
       Some(raw_channel_id)
     -> {
       let #(user_id, _, _) = discord_interaction_sender(interaction)
+      let chat_id =
+        discord_chat_id(raw_channel_id, interaction.guild_id, user_id)
       let typed =
         options
         |> list.find(fn(option) { option.focused == Some(True) })
@@ -637,12 +639,7 @@ pub fn autocomplete_request(
           }
         })
         |> result.unwrap("")
-      Some(#(
-        discord_chat_id(raw_channel_id, interaction.guild_id),
-        user_id,
-        name,
-        typed,
-      ))
+      Some(#(chat_id, user_id, name, typed))
     }
     _, _, _ -> None
   }
@@ -747,7 +744,11 @@ fn discord_message_to_port(
   port.ChannelMessage(
     id: message.id,
     channel: "discord",
-    channel_id: discord_chat_id(message.channel_id, message.guild_id),
+    channel_id: discord_chat_id(
+      message.channel_id,
+      message.guild_id,
+      message.author.id,
+    ),
     user_id: message.author.id,
     username: message.author.username,
     content: message.content,
@@ -756,10 +757,18 @@ fn discord_message_to_port(
   )
 }
 
-fn discord_chat_id(channel_id: String, guild_id: Option(String)) -> String {
+/// A server channel is `<channel_id>@guild:<guild_id>`; a private chat is
+/// `dm:<user_id>`, named after the person and not the DM channel, so the
+/// agenda and alerts reach the same conversation (`private_chat_for`). The
+/// DM channel is opened when sending.
+fn discord_chat_id(
+  channel_id: String,
+  guild_id: Option(String),
+  user_id: String,
+) -> String {
   case guild_id {
     Some(guild) -> channel_id <> "@guild:" <> guild
-    None -> "dm:" <> channel_id
+    None -> "dm:" <> user_id
   }
 }
 
@@ -776,8 +785,9 @@ fn discord_interaction_to_inbound(
   use raw_channel_id <- result.try(require_discord_channel_id(
     interaction.channel_id,
   ))
-  let channel_id = discord_chat_id(raw_channel_id, interaction.guild_id)
   let #(user_id, username, is_bot) = discord_interaction_sender(interaction)
+  let channel_id =
+    discord_chat_id(raw_channel_id, interaction.guild_id, user_id)
 
   case interaction.interaction_type, interaction.data {
     discord_events.ApplicationCommand, Some(command_data) ->
@@ -1014,7 +1024,7 @@ fn discord_send_message(
   rest_client: discord_rest.RestClient,
   reply: port.ChannelReply,
 ) -> Result(discord_rest.SentMessage, port.ChannelError) {
-  use target_channel <- result.try(discord_delivery_channel(rest_client, reply))
+  use target_channel <- result.try(discord_target_channel(rest_client, reply))
   let options = discord_options_for_reply(reply)
 
   let typing_result = case reply.typing {
@@ -1038,16 +1048,23 @@ fn discord_send_message(
   }
 }
 
-/// Alert DMs carry `open-dm:<user_id>`; ordinary replies carry a channel id.
-fn discord_delivery_channel(
+/// The Discord channel a reply goes to: its thread, the DM channel of a
+/// person (`dm:<user_id>`, or `open-dm:<user_id>` from older alerts),
+/// opened once and cached, or the server channel.
+fn discord_target_channel(
   rest_client: discord_rest.RestClient,
   reply: port.ChannelReply,
 ) -> Result(String, port.ChannelError) {
-  case string.starts_with(reply.channel_id, "open-dm:") {
-    True ->
-      discord_rest.open_dm(rest_client, string.drop_start(reply.channel_id, 8))
+  case reply.thread_id, reply.channel_id {
+    Some(thread_id), _ -> Ok(thread_id)
+    None, "dm:" <> user_id | None, "open-dm:" <> user_id ->
+      discord_rest.open_dm(rest_client, user_id)
       |> result.map_error(map_discord_send_error)
-    False -> Ok(discord_target_channel(reply))
+    None, channel_id ->
+      case string.split(channel_id, "@guild:") {
+        [target, _guild] -> Ok(target)
+        _ -> Ok(channel_id)
+      }
   }
 }
 
@@ -1057,7 +1074,7 @@ fn discord_edit_message(
   message_id: String,
 ) -> Result(discord_rest.SentMessage, port.ChannelError) {
   let options = discord_options_for_reply(reply)
-  let target_channel = discord_target_channel(reply)
+  use target_channel <- result.try(discord_target_channel(rest_client, reply))
 
   case
     discord_rest.edit_message_with_options(
@@ -1075,14 +1092,22 @@ fn discord_edit_message(
 fn discord_options_for_reply(
   reply: port.ChannelReply,
 ) -> discord_rest.SendMessageOptions {
+  // The agent never pings anyone: no @everyone, @here, role or user,
+  // whatever the model writes (PRD-D, 6.6).
+  let base =
+    discord_rest.new_message_options()
+    |> discord_rest.with_content(reply.content)
+    |> discord_rest.with_allowed_mentions(discord_rest.AllowedMentions(
+      parse: [],
+      users: [],
+      roles: [],
+      replied_user: None,
+    ))
   let options = case reply.reply_to_id {
     Some(message_id) ->
-      discord_rest.new_message_options()
-      |> discord_rest.with_content(reply.content)
+      base
       |> discord_rest.with_message_reference(discord_rest.reply_to(message_id))
-    None ->
-      discord_rest.new_message_options()
-      |> discord_rest.with_content(reply.content)
+    None -> base
   }
 
   case reply.interactive {
@@ -1097,30 +1122,11 @@ fn discord_options_for_reply(
   }
 }
 
-fn discord_target_channel(reply: port.ChannelReply) -> String {
-  case reply.thread_id {
-    Some(thread_id) -> thread_id
-    None -> discord_route_channel(reply.channel_id)
-  }
-}
-
-/// Strip policy-only routing annotations before calling Discord.
-fn discord_route_channel(channel_id: String) -> String {
-  case string.starts_with(channel_id, "dm:") {
-    True -> string.drop_start(channel_id, 3)
-    False ->
-      case string.split(channel_id, "@guild:") {
-        [target, _guild] -> target
-        _ -> channel_id
-      }
-  }
-}
-
 fn discord_trigger_typing(
   rest_client: discord_rest.RestClient,
   reply: port.ChannelReply,
 ) -> Result(Nil, port.ChannelError) {
-  let target_channel = discord_target_channel(reply)
+  use target_channel <- result.try(discord_target_channel(rest_client, reply))
 
   case discord_rest.trigger_typing_indicator(rest_client, target_channel) {
     Ok(_) -> Ok(Nil)
@@ -1302,8 +1308,9 @@ fn map_discord_send_error(
   error: discord_rest.DiscordRestError,
 ) -> port.ChannelError {
   case error {
+    // Rounded up: 350 ms waits 1 s, never 0.
     discord_rest.RateLimited(retry_after_ms) ->
-      port.RateLimited(retry_after_seconds: retry_after_ms / 1000)
+      port.RateLimited(retry_after_seconds: { retry_after_ms + 999 } / 1000)
     discord_rest.BadRequest(message) -> port.SendFailed(message)
     discord_rest.Forbidden(message) -> port.SendFailed(message)
     discord_rest.NotFound(message) -> port.SendFailed(message)
