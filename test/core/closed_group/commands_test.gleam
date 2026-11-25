@@ -3,6 +3,7 @@
 
 import e2e/e2e_support as support
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/option.{Some}
 import gleam/string
@@ -87,4 +88,62 @@ pub fn help_in_the_closed_group_lists_its_commands_test() {
     support.await_content(recorder, "/esquecer confirmo") |> should.equal(True)
     registry.stop_channels(channels)
   })
+}
+
+// ============================================================================
+// Suggestions (PRD-D, D-04)
+// ============================================================================
+
+fn sources() -> commands.Sources {
+  commands.Sources(
+    models: ["deepseek deepseek-chat", "gemini gemini-3.5-flash-lite"],
+    agenda: [#(3, "tomar o remédio das oito"), #(7, "ligar para a irmã")],
+    principals: ["discord:456", "telegram:9"],
+  )
+}
+
+pub fn member_gets_no_admin_suggestions_test() {
+  commands.suggest("acesso", "", False, sources()) |> should.equal([])
+  commands.suggest("uso", "", False, sources()) |> should.equal([])
+  commands.suggest("teto", "", False, sources()) |> should.equal([])
+}
+
+pub fn admin_sees_principals_after_remover_test() {
+  commands.suggest("acesso", "remover d", True, sources())
+  |> should.equal([#("remover discord:456", "remover discord:456")])
+}
+
+pub fn agenda_suggests_the_persons_entries_test() {
+  let assert [#(label, value), _] =
+    commands.suggest("agenda", "rem", False, sources())
+  value |> should.equal("remover 3")
+  label |> should.equal("remover 3 · tomar o remédio das oito")
+}
+
+pub fn suggestions_ignore_case_and_accents_test() {
+  commands.suggest("esquecer", "CONFÍ", False, sources())
+  |> should.equal([#("confirmo", "confirmo")])
+}
+
+pub fn model_suggestions_come_from_the_catalog_test() {
+  commands.suggest("model", "gem", False, sources())
+  |> should.equal([
+    #("gemini gemini-3.5-flash-lite", "gemini gemini-3.5-flash-lite"),
+  ])
+}
+
+pub fn unknown_command_has_no_suggestions_test() {
+  commands.suggest("nada", "", True, sources()) |> should.equal([])
+  commands.suggest("help", "", True, sources()) |> should.equal([])
+}
+
+pub fn suggestions_are_capped_at_25_test() {
+  let many =
+    commands.Sources(
+      ..sources(),
+      agenda: int.range(from: 1, to: 41, with: [], run: fn(acc, n) {
+        [#(n, "tarefa"), ..acc]
+      }),
+    )
+  commands.suggest("agenda", "", False, many) |> list.length |> should.equal(25)
 }

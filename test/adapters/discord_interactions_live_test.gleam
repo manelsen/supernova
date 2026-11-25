@@ -169,7 +169,7 @@ pub fn slash_command_is_echoed_and_reaches_the_core_as_text_test() {
   string.contains(ack.body, "\"type\":4") |> should.be_true
   string.contains(ack.body, "\"parse\":[]") |> should.be_true
   let assert Ok(content) = process.receive(seen, 2000)
-  content |> should.equal("/agenda args:remover 3")
+  content |> should.equal("/agenda remover 3")
   registry.stop_channels(channel_registry)
 }
 

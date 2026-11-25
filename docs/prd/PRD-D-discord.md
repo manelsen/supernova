@@ -143,6 +143,11 @@ atuais de `test/fixtures/discord/` (gravadas em 27/02/2026). As que faltarem
 - **D2. Onde registrar os comandos `/`.**
   - (a) No servidor de `discord.guild_id`: aparecem na hora, só lá.
   - (b) Globais: valem para o privado e todos os servidores.
+  - **Desvio na execução (D-04):** só globais. O Discord mostra duas vezes um
+    comando registrado com o mesmo nome no global e no servidor, e a lista
+    seria a mesma. No servidor de `discord.guild_id` vai uma lista vazia,
+    que limpa cópias antigas. Os globais valem no privado e em todos os
+    servidores.
   - **Decidido:** os dois, porque o privado só vê comandos globais.
     Globais com a lista de membro. No servidor configurado, a mesma lista.
     O menu de admin não existe no Discord: a permissão de comando por

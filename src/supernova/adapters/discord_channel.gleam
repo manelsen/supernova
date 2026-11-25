@@ -15,6 +15,8 @@ import supernova/channel/chunking
 import supernova/channel/health as channel_health
 import supernova/channel/port
 import supernova/config
+import supernova/core/closed_group/commands as closed_group_commands
+import supernova/core/closed_group/suggestions
 import supernova/infra/safe_io
 
 type DiscordBridgeControl {
@@ -119,7 +121,21 @@ pub fn start_discord_channel(
       let acknowledge = case hooks.outbound_records {
         Some(_) -> fn(_interaction) { Nil }
         None -> fn(interaction) {
-          acknowledge_interaction(rest_config, interaction)
+          acknowledge_interaction(
+            rest_config,
+            interaction,
+            suggestions.for_sender,
+          )
+        }
+      }
+      let on_ready = case hooks.outbound_records {
+        Some(_) -> fn(_ready) { Nil }
+        None -> fn(ready: discord_gateway.ReadyData) {
+          register_slash_commands(
+            rest_config,
+            option.unwrap(discord_cfg.app_id, ready.user.id),
+            discord_cfg.guild_id,
+          )
         }
       }
 
@@ -128,6 +144,7 @@ pub fn start_discord_channel(
         send_fn,
         stream_send_fn,
         acknowledge,
+        on_ready,
         hooks.registry_id,
         hooks.turn_hard_timeout_ms,
       ))
@@ -178,6 +195,7 @@ fn start_discord_bridge(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
   acknowledge: fn(discord_events.Interaction) -> Nil,
+  on_ready: fn(discord_gateway.ReadyData) -> Nil,
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Result(DiscordBridge, String) {
@@ -194,6 +212,7 @@ fn start_discord_bridge(
         send_fn,
         stream_send_fn,
         acknowledge,
+        on_ready,
         events,
         control,
         done,
@@ -214,6 +233,7 @@ fn discord_bridge_loop(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
   acknowledge: fn(discord_events.Interaction) -> Nil,
+  on_ready: fn(discord_gateway.ReadyData) -> Nil,
   events: process.Subject(discord_gateway.DiscordEvent),
   control: process.Subject(DiscordBridgeControl),
   done: process.Subject(Nil),
@@ -230,6 +250,7 @@ fn discord_bridge_loop(
             send_fn,
             stream_send_fn,
             acknowledge,
+            on_ready,
             event,
             registry_id,
             turn_hard_timeout_ms,
@@ -239,6 +260,7 @@ fn discord_bridge_loop(
             send_fn,
             stream_send_fn,
             acknowledge,
+            on_ready,
             events,
             control,
             done,
@@ -252,6 +274,7 @@ fn discord_bridge_loop(
             send_fn,
             stream_send_fn,
             acknowledge,
+            on_ready,
             events,
             control,
             done,
@@ -274,11 +297,13 @@ fn dispatch_discord_event(
   send_fn: fn(port.ChannelReply) -> Result(Nil, port.ChannelError),
   stream_send_fn: channel_kit.StreamSendFn,
   acknowledge: fn(discord_events.Interaction) -> Nil,
+  on_ready: fn(discord_gateway.ReadyData) -> Nil,
   event: discord_gateway.DiscordEvent,
   registry_id: String,
   turn_hard_timeout_ms: Int,
 ) -> Nil {
   case event {
+    discord_gateway.Ready(ready) -> on_ready(ready)
     discord_gateway.MessageCreate(data) ->
       case discord_events.parse_event("MESSAGE_CREATE", data) {
         discord_events.EventMessageCreate(message) ->
@@ -321,12 +346,29 @@ fn dispatch_discord_event(
 fn acknowledge_interaction(
   config: discord_rest.RestClientConfig,
   interaction: discord_events.Interaction,
+  suggest: fn(String, String, String, String, String) -> List(#(String, String)),
 ) -> Nil {
-  case interaction_answer(interaction) {
+  let answer = case autocomplete_request(interaction) {
+    Some(#(chat_id, user_id, command, typed)) ->
+      Some(fn() {
+        discord_rest.autocomplete_response(suggest(
+          "discord",
+          chat_id,
+          user_id,
+          command,
+          typed,
+        ))
+      })
+    None ->
+      interaction_answer(interaction)
+      |> option.map(fn(body) { fn() { body } })
+  }
+  case answer {
     None -> Nil
-    Some(body) -> {
+    Some(body_fn) -> {
       let _ =
         process.spawn_unlinked(fn() {
+          let body = body_fn()
           case
             discord_rest.interaction_callback(
               config,
@@ -344,6 +386,109 @@ fn acknowledge_interaction(
         })
       Nil
     }
+  }
+}
+
+/// For an autocomplete interaction: the chat, the person, the command and
+/// what is typed in its focused option.
+pub fn autocomplete_request(
+  interaction: discord_events.Interaction,
+) -> Option(#(String, String, String, String)) {
+  case interaction.interaction_type, interaction.data, interaction.channel_id {
+    discord_events.ApplicationCommandAutocomplete,
+      Some(discord_events.ApplicationCommandData(name:, options:, ..)),
+      Some(raw_channel_id)
+    -> {
+      let #(user_id, _, _) = discord_interaction_sender(interaction)
+      let typed =
+        options
+        |> list.find(fn(option) { option.focused == Some(True) })
+        |> result.map(fn(option) {
+          case option.value {
+            Some(discord_events.StringValue(text)) -> text
+            _ -> ""
+          }
+        })
+        |> result.unwrap("")
+      Some(#(
+        discord_chat_id(raw_channel_id, interaction.guild_id),
+        user_id,
+        name,
+        typed,
+      ))
+    }
+    _, _, _ -> None
+  }
+}
+
+/// Registers the member command list globally (D2): it reaches private
+/// chats and every server. A configured server gets an empty list, which
+/// removes old copies there: a command registered in both places shows
+/// twice in Discord.
+fn register_slash_commands(
+  config: discord_rest.RestClientConfig,
+  application_id: String,
+  guild_id: Option(String),
+) -> Nil {
+  let _ =
+    process.spawn_unlinked(fn() {
+      let #(valid, invalid) =
+        slash_commands()
+        |> list.partition(discord_rest.valid_slash_command)
+      list.each(invalid, fn(command) {
+        safe_io.println("discord: command skipped, invalid: " <> command.name)
+      })
+      report_registration(
+        "global",
+        discord_rest.overwrite_slash_commands(
+          config,
+          application_id,
+          None,
+          discord_rest.slash_commands_body(valid),
+        ),
+      )
+      case guild_id {
+        Some(guild) ->
+          report_registration(
+            "server " <> guild,
+            discord_rest.overwrite_slash_commands(
+              config,
+              application_id,
+              Some(guild),
+              "[]",
+            ),
+          )
+        None -> Nil
+      }
+    })
+  Nil
+}
+
+/// The member commands, from the single list `/help` and Telegram use.
+pub fn slash_commands() -> List(discord_rest.SlashCommand) {
+  closed_group_commands.for_role(False)
+  |> list.map(fn(command) {
+    discord_rest.SlashCommand(
+      name: command.name,
+      description: command.description,
+      takes_arguments: command.takes_arguments,
+    )
+  })
+}
+
+fn report_registration(
+  scope: String,
+  outcome: Result(Nil, discord_rest.DiscordRestError),
+) -> Nil {
+  case outcome {
+    Ok(Nil) -> Nil
+    Error(error) ->
+      safe_io.println(
+        "discord: command registration ("
+        <> scope
+        <> ") failed: "
+        <> string.inspect(error),
+      )
   }
 }
 
@@ -510,10 +655,12 @@ fn discord_command_option_to_text(
   let discord_events.ApplicationCommandOption(name:, value:, options:, ..) =
     option
 
-  case value {
-    Some(option_value) ->
+  case value, name {
+    // The free-text option every command with arguments has (D6).
+    Some(option_value), "args" -> discord_option_value_to_text(option_value)
+    Some(option_value), _ ->
       name <> ":" <> discord_option_value_to_text(option_value)
-    None ->
+    None, _ ->
       case options {
         [] -> name
         _ ->

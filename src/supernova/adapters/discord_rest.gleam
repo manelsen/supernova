@@ -405,6 +405,83 @@ pub fn interaction_callback(
   }
 }
 
+/// A slash command to register: name, description and whether it takes
+/// arguments (one optional `args` text option with autocomplete, D6).
+pub type SlashCommand {
+  SlashCommand(name: String, description: String, takes_arguments: Bool)
+}
+
+/// Whether Discord accepts this command: a lowercase name of 1 to 32
+/// letters, digits, `-` or `_`, and a description of 1 to 100 characters.
+pub fn valid_slash_command(command: SlashCommand) -> Bool {
+  let name_ok =
+    string.length(command.name) >= 1
+    && string.length(command.name) <= 32
+    && string.lowercase(command.name) == command.name
+    && list.all(string.to_graphemes(command.name), fn(char) {
+      char == "-"
+      || char == "_"
+      || string.contains("abcdefghijklmnopqrstuvwxyz0123456789", char)
+    })
+  let description_length = string.length(command.description)
+  name_ok && description_length >= 1 && description_length <= 100
+}
+
+/// The body of a bulk overwrite: the whole list replaces what was there.
+pub fn slash_commands_body(commands: List(SlashCommand)) -> String {
+  json.array(commands, fn(command) {
+    let options = case command.takes_arguments {
+      False -> []
+      True -> [
+        json.object([
+          #("type", json.int(3)),
+          #("name", json.string("args")),
+          #("description", json.string("O que vem depois do comando")),
+          #("required", json.bool(False)),
+          #("autocomplete", json.bool(True)),
+        ]),
+      ]
+    }
+    json.object([
+      #("name", json.string(command.name)),
+      #("description", json.string(command.description)),
+      #("type", json.int(1)),
+      #("options", json.preprocessed_array(options)),
+    ])
+  })
+  |> json.to_string
+}
+
+/// Replace the application's slash commands, globally or in one server.
+/// Runs in the caller's process.
+pub fn overwrite_slash_commands(
+  config: RestClientConfig,
+  application_id: Snowflake,
+  guild_id: Option(Snowflake),
+  body: String,
+) -> Result(Nil, DiscordRestError) {
+  let path = case guild_id {
+    Some(guild) ->
+      "/applications/" <> application_id <> "/guilds/" <> guild <> "/commands"
+    None -> "/applications/" <> application_id <> "/commands"
+  }
+  use req <- result.try(base_request(config, http.Put, path))
+  use resp <- result.try(
+    req
+    |> request.prepend_header("Content-Type", "application/json")
+    |> request.set_body(body)
+    |> execute_request,
+  )
+  case resp.status {
+    200 | 201 | 204 -> Ok(Nil)
+    400 -> Error(BadRequest(extract_error_message(resp.body)))
+    401 -> Error(Unauthorized)
+    403 -> Error(Forbidden(extract_error_message(resp.body)))
+    429 -> Error(RateLimited(extract_retry_after(resp.body)))
+    status -> Error(UnknownError(status, resp.body))
+  }
+}
+
 /// Acknowledge a button or menu without changing anything yet (type 6). The
 /// answer comes later by editing the message that held it.
 pub fn deferred_update_response() -> String {
@@ -429,11 +506,13 @@ pub fn command_echo_response(content: String) -> String {
 
 /// Suggestions while a slash command option is typed (type 8). Discord takes
 /// at most 25, each up to 100 characters.
-pub fn autocomplete_response(choices: List(String)) -> String {
+pub fn autocomplete_response(choices: List(#(String, String))) -> String {
   let choices =
     choices
-    |> list.filter(fn(choice) { choice != "" })
-    |> list.map(fn(choice) { string.slice(choice, 0, 100) })
+    |> list.filter(fn(choice) { choice.1 != "" })
+    |> list.map(fn(choice) {
+      #(string.slice(choice.0, 0, 100), string.slice(choice.1, 0, 100))
+    })
     |> list.take(25)
   json.object([
     #("type", json.int(8)),
@@ -444,8 +523,8 @@ pub fn autocomplete_response(choices: List(String)) -> String {
           "choices",
           json.array(choices, fn(choice) {
             json.object([
-              #("name", json.string(choice)),
-              #("value", json.string(choice)),
+              #("name", json.string(choice.0)),
+              #("value", json.string(choice.1)),
             ])
           }),
         ),
