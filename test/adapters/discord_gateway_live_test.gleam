@@ -3,6 +3,7 @@
 
 import discord_fake
 import gleam/erlang/process
+import gleam/list
 import gleam/option.{Some}
 import gleam/string
 import gleeunit/should
@@ -295,4 +296,78 @@ pub fn fatal_close_codes_test() {
   gateway.fatal_close_reason(4014) |> option.is_some |> should.be_true
   gateway.fatal_close_reason(4000) |> should.equal(option.None)
   gateway.fatal_close_reason(4009) |> should.equal(option.None)
+}
+
+/// Ordinary close codes are not fatal: the session is resumed.
+pub fn ordinary_close_codes_resume_test() {
+  [1000, 1001, 1002, 1003, 1007, 1008, 1009, 1011, 4000]
+  |> list.each(fn(code) {
+    let fake = discord_fake.start()
+    let statuses = process.new_subject()
+    let #(gw, conn) = ready(fake, statuses, 60_000)
+    discord_fake.close(conn, code)
+    let conn = discord_fake.expect_connection(fake, 3000)
+    discord_fake.send_text(conn, discord_fake.hello(60_000))
+    let _ = discord_fake.expect_op(fake, 6, 2000)
+    gateway.stop(gw)
+  })
+}
+
+pub fn every_intent_has_its_bit_test() {
+  [
+    #(gateway.Guilds, 1),
+    #(gateway.GuildMembers, 2),
+    #(gateway.GuildBans, 4),
+    #(gateway.GuildEmojis, 8),
+    #(gateway.GuildIntegrations, 16),
+    #(gateway.GuildWebhooks, 32),
+    #(gateway.GuildInvites, 64),
+    #(gateway.GuildVoiceStates, 128),
+    #(gateway.GuildPresences, 256),
+    #(gateway.GuildMessages, 512),
+    #(gateway.GuildMessageReactions, 1024),
+    #(gateway.GuildMessageTyping, 2048),
+    #(gateway.DirectMessages, 4096),
+    #(gateway.DirectMessageReactions, 8192),
+    #(gateway.DirectMessageTyping, 16_384),
+    #(gateway.MessageContent, 32_768),
+    #(gateway.AutoModerationConfig, 1_048_576),
+    #(gateway.AutoModerationExecution, 2_097_152),
+  ]
+  |> list.each(fn(pair) {
+    gateway.intent_to_value(pair.0) |> should.equal(pair.1)
+  })
+}
+
+pub fn other_dispatches_reach_subscribers_by_name_test() {
+  let fake = discord_fake.start()
+  let statuses = process.new_subject()
+  let #(gw, conn) = ready(fake, statuses, 60_000)
+  let guilds = process.new_subject()
+  let _ = gateway.subscribe_to_event(gw, guilds, "GUILD_CREATE")
+  let all = process.new_subject()
+  let _ = gateway.subscribe(gw, all)
+  [
+    #("GUILD_CREATE", "{\"id\":\"g1\"}"),
+    #("GUILD_DELETE", "{\"id\":\"g1\"}"),
+    #("MESSAGE_UPDATE", "{\"id\":\"m1\",\"channel_id\":\"c1\"}"),
+    #("MESSAGE_DELETE", "{\"id\":\"m1\",\"channel_id\":\"c1\"}"),
+    #("TYPING_START", "{\"channel_id\":\"c1\"}"),
+  ]
+  |> list.index_map(fn(pair, i) {
+    discord_fake.send_text(conn, discord_fake.dispatch(pair.0, pair.1, 10 + i))
+  })
+  let assert Ok(gateway.GuildCreate(_)) = process.receive(guilds, 2000)
+  let assert Ok(gateway.GuildCreate(_)) = process.receive(all, 2000)
+  let assert Ok(gateway.GuildDelete(_)) = process.receive(all, 2000)
+  let assert Ok(gateway.MessageUpdate(_)) = process.receive(all, 2000)
+  let assert Ok(gateway.MessageDelete(_)) = process.receive(all, 2000)
+  let assert Ok(gateway.RawEvent("TYPING_START", _)) =
+    process.receive(all, 2000)
+  // Only GUILD_CREATE went to the filtered subscriber.
+  process.receive(guilds, 100) |> should.equal(Error(Nil))
+  gateway.get_session_info(gw)
+  |> option.map(fn(info) { info.sequence })
+  |> should.equal(Some(14))
+  gateway.stop(gw)
 }
