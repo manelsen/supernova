@@ -76,17 +76,21 @@ fn base_config() -> config.Config {
 
 pub fn sim_rejects_missing_token_at_start_test() {
   let assert Error(_) =
-    sim_adapter.start(sim_config(None, auth_port), fn(_, _) {
-      Error(port.Ignored("no handler"))
-    })
+    sim_adapter.start(
+      sim_config(None, auth_port),
+      fn(_, _) { Error(port.Ignored("no handler")) },
+      "sim-test",
+    )
 }
 
 pub fn sim_requires_bearer_token_test() {
   let _ = ensure_hackney()
   let assert Ok(#(_adapter, sim)) =
-    sim_adapter.start(sim_config(Some("sim-token"), auth_port), fn(_, _) {
-      Error(port.Ignored("no handler"))
-    })
+    sim_adapter.start(
+      sim_config(Some("sim-token"), auth_port),
+      fn(_, _) { Error(port.Ignored("no handler")) },
+      "sim-test",
+    )
 
   send(auth_port, None, "/sim/messages", "{}").0
   |> should.equal(401)
@@ -118,7 +122,11 @@ pub fn sim_member_gets_a_reply_and_non_member_is_denied_once_test() {
   }
   support.with_runtime(base_config(), fn() {
     let assert Ok(#(adapter, sim)) =
-      sim_adapter.start(sim_config(Some("sim-token"), member_port), handler)
+      sim_adapter.start(
+        sim_config(Some("sim-token"), member_port),
+        handler,
+        "sim-test",
+      )
 
     send(
       member_port,
@@ -734,7 +742,11 @@ pub fn sim_tool_cannot_write_self_test() {
   }
   support.with_runtime_root(base_config(), fn(root) {
     let assert Ok(#(_adapter, sim)) =
-      sim_adapter.start(sim_config(Some("sim-token"), tool_port), handler)
+      sim_adapter.start(
+        sim_config(Some("sim-token"), tool_port),
+        handler,
+        "sim-test",
+      )
 
     send(
       tool_port,
@@ -905,7 +917,11 @@ pub fn sim_long_reply_is_chunked_test() {
   }
   support.with_runtime_root(base_config(), fn(_root) {
     let assert Ok(#(_adapter, sim)) =
-      sim_adapter.start(sim_config(Some("sim-token"), chunk_port), handler)
+      sim_adapter.start(
+        sim_config(Some("sim-token"), chunk_port),
+        handler,
+        "sim-test",
+      )
     send(
       chunk_port,
       Some("sim-token"),
@@ -933,7 +949,11 @@ pub fn sim_parallel_chats_do_not_block_test() {
   }
   support.with_runtime_root(base_config(), fn(_root) {
     let assert Ok(#(_adapter, sim)) =
-      sim_adapter.start(sim_config(Some("sim-token"), parallel_port), handler)
+      sim_adapter.start(
+        sim_config(Some("sim-token"), parallel_port),
+        handler,
+        "sim-test",
+      )
     let results = process.new_subject()
     process.spawn_unlinked(fn() {
       process.send(
@@ -986,7 +1006,11 @@ pub fn sim_turn_end_reports_ok_and_denied_test() {
   }
   support.with_runtime(base_config(), fn() {
     let assert Ok(#(_adapter, sim)) =
-      sim_adapter.start(sim_config(Some("sim-token"), turn_end_port), handler)
+      sim_adapter.start(
+        sim_config(Some("sim-token"), turn_end_port),
+        handler,
+        "sim-test",
+      )
     let say = fn(user: String, content: String) {
       send(
         turn_end_port,

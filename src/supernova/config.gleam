@@ -451,6 +451,22 @@ fn recall_key_missing(provider: String) -> String {
   <> " (a paid API key: excerpts of conversations are sent to it)"
 }
 
+/// How messages are routed (PRD-P).
+pub type RoutingConfig {
+  RoutingConfig(
+    /// The pre-LLM phase (gate, session, birth, commands, model) runs in the
+    /// chat's own lane, so chats no longer wait for each other in the
+    /// channel's router. On by default since the PRD-P's P-07; `false`
+    /// brings back the channel's router actor, until the old path is
+    /// removed.
+    parallel: Bool,
+  )
+}
+
+pub fn default_routing_config() -> RoutingConfig {
+  RoutingConfig(parallel: True)
+}
+
 pub type ReflectionConfig {
   ReflectionConfig(
     every_turns: Int,
@@ -550,6 +566,8 @@ pub type Config {
     instance_budget: InstanceBudgetConfig,
     /// Conversation history kept per person and chat
     conversation: ConversationConfig,
+    /// How messages are routed
+    routing: RoutingConfig,
     /// Periodic reflection configuration
     reflection: ReflectionConfig,
     /// Slow trait drift configuration
@@ -620,6 +638,7 @@ pub fn default_config() -> Config {
     pricing: default_pricing_config(),
     instance_budget: default_instance_budget_config(),
     conversation: default_conversation_config(),
+    routing: default_routing_config(),
     reflection: default_reflection_config(),
     drift: default_drift_config(),
     data_dir: "data",
@@ -1387,6 +1406,15 @@ fn decode_recall(conversation: yay.Node) -> RecallConfig {
   }
 }
 
+fn decode_routing(root: yay.Node) -> RoutingConfig {
+  let default = default_routing_config()
+  case yay.select_sugar(root, "routing") {
+    Ok(node) ->
+      RoutingConfig(parallel: get_bool_or(node, "parallel", default.parallel))
+    Error(_) -> default
+  }
+}
+
 fn decode_reflection(root: yay.Node) -> ReflectionConfig {
   let default = default_reflection_config()
   case yay.select_sugar(root, "reflection") {
@@ -1504,6 +1532,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
     pricing: pricing,
     instance_budget: instance_budget,
     conversation: conversation,
+    routing: decode_routing(root),
     reflection: reflection,
     drift: drift,
     data_dir: data_dir,
@@ -1839,6 +1868,7 @@ pub fn apply_env_overrides(config: Config) -> Config {
         ),
       ),
     ),
+    routing: config.routing,
     reflection: config.reflection,
     drift: config.drift,
     data_dir: data_dir,

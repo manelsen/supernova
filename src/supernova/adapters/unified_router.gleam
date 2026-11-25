@@ -64,16 +64,7 @@ fn handle_message(
           make_resolve_session(state.session_resolver),
         )
       actor.send(reply_to, result)
-      actor.continue(
-        RouterState(
-          ..state,
-          interactive_state: channel_common_router.InteractiveRouterState(
-            agent_choices: next_state.agent_choices,
-            session_profiles: next_state.session_profiles,
-            forget_pending: next_state.forget_pending,
-          ),
-        ),
-      )
+      actor.continue(RouterState(..state, interactive_state: next_state))
     }
   }
 }

@@ -14,6 +14,7 @@ import supernova/core/preferences
 import supernova/core/session/history_store
 import supernova/core/session/supervisor as session_supervisor
 import supernova/self/audit
+import supernova/self/desk
 import supernova/self/epoch
 import supernova/self/incidents
 import supernova/self/journal
@@ -84,29 +85,35 @@ pub fn forget(
     True -> 1
     False -> 0
   }
-  use _ <- result.try(delete_file(relationship.relationship_path_in(self_dir)))
+  // In the agent's process: no change of a turn lands between the erasing
+  // and the rewriting, and what the process kept in memory is dropped.
   use _ <- result.try(
-    delete_file(
-      relationship.relationship_path(agent_identity.workspace_dir(
-        data_dir,
-        principal,
-      )),
-    ),
+    desk.reset(data_dir, principal, fn() {
+      use _ <- result.try(
+        delete_file(relationship.relationship_path_in(self_dir)),
+      )
+      use _ <- result.try(
+        delete_file(
+          relationship.relationship_path(agent_identity.workspace_dir(
+            data_dir,
+            principal,
+          )),
+        ),
+      )
+      // How the person asked to be answered (/transcricao, /voz) goes too.
+      use _ <- result.try(delete_file(preferences.path(data_dir, principal)))
+      let state = self_state.from_dir(self_dir)
+      self_state.save_in(
+        self_dir,
+        self_state.SelfState(
+          ..state,
+          concerns: [],
+          open_questions: [],
+          last_reflection: "Sem reflexão registrada.",
+        ),
+      )
+    }),
   )
-
-  let state = self_state.from_dir(self_dir)
-  use _ <- result.try(self_state.save_in(
-    self_dir,
-    self_state.SelfState(
-      ..state,
-      concerns: [],
-      open_questions: [],
-      last_reflection: "Sem reflexão registrada.",
-    ),
-  ))
-
-  // How the person asked to be answered (/transcricao, /voz) goes too.
-  use _ <- result.try(delete_file(preferences.path(data_dir, principal)))
 
   let session_count = clear_sessions(supervisor, principal)
   // Messages still waiting in the durable inbox are what the owner said too;

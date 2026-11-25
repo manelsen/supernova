@@ -1,4 +1,3 @@
-import gleam/dict
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
@@ -74,8 +73,7 @@ fn interaction(
 
 pub fn new_interactive_state_starts_empty_test() {
   let state = router.new_interactive_state()
-  dict.size(state.agent_choices) |> should.equal(0)
-  dict.size(state.session_profiles) |> should.equal(0)
+  router.is_empty_for(state, "telegram:1:1", "telegram:1") |> should.be_true()
 }
 
 pub fn handle_inbound_start_and_status_commands_test() {

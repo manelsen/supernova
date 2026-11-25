@@ -8,7 +8,6 @@
 //// - standardized reply/error mapping
 
 import envoy
-import gleam/dict.{type Dict}
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
@@ -58,6 +57,7 @@ import supernova/memory/metrics as memory_metrics
 import supernova/self/audit as self_audit
 import supernova/self/birth
 import supernova/self/core as self_core
+import supernova/self/desk
 import supernova/self/epoch
 import supernova/self/forget
 import supernova/self/incidents
@@ -76,15 +76,98 @@ pub type ResolveSession =
 pub type ResolveSessionFromParticipant =
   fn(String, String) -> String
 
-/// Interactive router state scoped by session.
-pub type InteractiveRouterState {
-  InteractiveRouterState(
-    /// Provider and model picked with /model, by agent. The state file keeps
-    /// them across restarts; this spares reading it again.
-    agent_choices: Dict(String, provider.ProviderConfig),
-    session_profiles: Dict(String, SessionProfile),
-    forget_pending: Dict(String, Int),
-  )
+/// The router's state: a scope in a public ETS table, not data in the
+/// router's process (PRD-P, P-04). Every router (one per channel) has its
+/// own scope; any process holding it reads and writes the same state, so the
+/// pre-LLM phase can run outside the router's actor (P-05).
+///
+/// In the scope:
+/// - the session profiles, by session;
+/// - the provider and model picked with /model, by agent (the state file
+///   keeps them across restarts; this spares reading it again);
+/// - the /esquecer waiting for confirmation, by agent.
+pub opaque type InteractiveRouterState {
+  InteractiveRouterState(scope: Int)
+}
+
+type RouterTable {
+  SupernovaRouterState
+}
+
+type RouterKey {
+  ProfileKey(scope: Int, session_id: String)
+  ChoiceKey(scope: Int, agent_id: String)
+  ForgetKey(scope: Int, agent_id: String)
+}
+
+@external(erlang, "supernova_table_ffi", "get")
+fn router_get(table: RouterTable, key: RouterKey) -> Result(v, Nil)
+
+@external(erlang, "supernova_table_ffi", "put")
+fn router_put(table: RouterTable, key: RouterKey, value: v) -> Nil
+
+@external(erlang, "supernova_table_ffi", "delete")
+fn router_delete(table: RouterTable, key: RouterKey) -> Nil
+
+@external(erlang, "erlang", "unique_integer")
+fn unique_integer() -> Int
+
+fn get_profile(
+  state: InteractiveRouterState,
+  session_id: String,
+) -> Result(SessionProfile, Nil) {
+  router_get(SupernovaRouterState, ProfileKey(state.scope, session_id))
+}
+
+fn get_choice(
+  state: InteractiveRouterState,
+  agent_id: String,
+) -> Result(provider.ProviderConfig, Nil) {
+  router_get(SupernovaRouterState, ChoiceKey(state.scope, agent_id))
+}
+
+fn put_choice(
+  state: InteractiveRouterState,
+  agent_id: String,
+  config: provider.ProviderConfig,
+) -> InteractiveRouterState {
+  router_put(SupernovaRouterState, ChoiceKey(state.scope, agent_id), config)
+  state
+}
+
+fn get_forget_pending(
+  state: InteractiveRouterState,
+  agent_id: String,
+) -> Result(Int, Nil) {
+  router_get(SupernovaRouterState, ForgetKey(state.scope, agent_id))
+}
+
+fn put_forget_pending(
+  state: InteractiveRouterState,
+  agent_id: String,
+  at: Int,
+) -> InteractiveRouterState {
+  router_put(SupernovaRouterState, ForgetKey(state.scope, agent_id), at)
+  state
+}
+
+fn drop_forget_pending(
+  state: InteractiveRouterState,
+  agent_id: String,
+) -> InteractiveRouterState {
+  router_delete(SupernovaRouterState, ForgetKey(state.scope, agent_id))
+  state
+}
+
+/// Whether the router's scope holds nothing yet for this session and agent.
+pub fn is_empty_for(
+  state: InteractiveRouterState,
+  session_id: String,
+  agent_id: String,
+) -> Bool {
+  get_profile(state, session_id) == Error(Nil)
+  && get_choice(state, agent_id) == Error(Nil)
+  && get_forget_pending(state, agent_id) == Error(Nil)
 }
 
 /// Per-session bootstrap profile used by channel flows.
@@ -104,11 +187,7 @@ pub type SessionProfile {
 
 /// Create a new empty interactive router state.
 pub fn new_interactive_state() -> InteractiveRouterState {
-  InteractiveRouterState(
-    agent_choices: dict.new(),
-    session_profiles: dict.new(),
-    forget_pending: dict.new(),
-  )
+  InteractiveRouterState(scope: unique_integer())
 }
 
 /// Handle inbound messages and interaction callbacks through the shared flow.
@@ -948,7 +1027,7 @@ fn session_profile_for_session(
   session_id: String,
   _user_id: String,
 ) -> SessionProfile {
-  let profile = case dict.get(state.session_profiles, session_id) {
+  let profile = case get_profile(state, session_id) {
     Ok(profile) -> profile
     Error(_) ->
       SessionProfile(
@@ -988,10 +1067,8 @@ fn put_session_profile(
   session_id: String,
   profile: SessionProfile,
 ) -> InteractiveRouterState {
-  InteractiveRouterState(
-    ..state,
-    session_profiles: dict.insert(state.session_profiles, session_id, profile),
-  )
+  router_put(SupernovaRouterState, ProfileKey(state.scope, session_id), profile)
+  state
 }
 
 /// Resolve the base directory used for agent workspaces.
@@ -1026,11 +1103,16 @@ fn workspace_path_for_agent(agent_id: String) -> String {
 }
 
 fn closed_self_dir_for_agent(agent_id: String) -> Option(String) {
+  closed_data_dir()
+  |> option.map(agent_identity.self_dir(_, agent_id))
+}
+
+/// The data dir of the closed group, when it is in force.
+fn closed_data_dir() -> Option(String) {
   case closed_group_global.get_config() {
     Some(cfg) ->
       case cfg.access.mode {
-        config.Allowlist ->
-          Some(agent_identity.self_dir(cfg.data_dir, agent_id))
+        config.Allowlist -> Some(cfg.data_dir)
         config.Open -> None
       }
     None -> None
@@ -1044,27 +1126,40 @@ fn migrate_self_state_for_agent(agent_id: String, self_dir: String) -> Nil {
 }
 
 fn load_self_state_for_agent(agent_id: String) -> self_state.SelfState {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      self_state.from_dir(self_dir)
+  case closed_data_dir() {
+    Some(data_dir) -> {
+      migrate_self_state_for_agent(
+        agent_id,
+        agent_identity.self_dir(data_dir, agent_id),
+      )
+      desk.read_self(data_dir, agent_id)
     }
     None -> self_state.from_workspace(workspace_path_for_agent(agent_id))
   }
 }
 
-fn save_self_state_for_agent(
+/// Change the agent's state: in the closed group, through the agent's
+/// process (one change at a time per agent, so none is lost).
+fn modify_self_state_for_agent(
   agent_id: String,
-  state: self_state.SelfState,
+  change: fn(self_state.SelfState) -> self_state.SelfState,
 ) -> Nil {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      let _ = self_state.save_in(self_dir, state)
+  case closed_data_dir() {
+    Some(data_dir) -> {
+      migrate_self_state_for_agent(
+        agent_id,
+        agent_identity.self_dir(data_dir, agent_id),
+      )
+      let _ = desk.modify_self(data_dir, agent_id, change)
       Nil
     }
     None -> {
-      let _ = self_state.save(workspace_path_for_agent(agent_id), state)
+      let workspace_path = workspace_path_for_agent(agent_id)
+      let _ =
+        self_state.save(
+          workspace_path,
+          change(self_state.from_workspace(workspace_path)),
+        )
       Nil
     }
   }
@@ -1074,28 +1169,38 @@ fn load_relationship_for_agent(
   agent_id: String,
   user_id: String,
 ) -> relationship.RelationshipState {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      relationship.load_in(self_dir, user_id)
+  case closed_data_dir() {
+    Some(data_dir) -> {
+      migrate_self_state_for_agent(
+        agent_id,
+        agent_identity.self_dir(data_dir, agent_id),
+      )
+      desk.read_relationship(data_dir, agent_id, user_id)
     }
     None -> relationship.load(workspace_path_for_agent(agent_id), user_id)
   }
 }
 
-fn save_relationship_for_agent(
+/// Change the agent's relationship with `user_id`; before and after.
+fn modify_relationship_for_agent(
   agent_id: String,
-  state: relationship.RelationshipState,
-) -> Nil {
-  case closed_self_dir_for_agent(agent_id) {
-    Some(self_dir) -> {
-      migrate_self_state_for_agent(agent_id, self_dir)
-      let _ = relationship.save_in(self_dir, state)
-      Nil
+  user_id: String,
+  change: fn(relationship.RelationshipState) -> relationship.RelationshipState,
+) -> #(relationship.RelationshipState, relationship.RelationshipState) {
+  case closed_data_dir() {
+    Some(data_dir) -> {
+      migrate_self_state_for_agent(
+        agent_id,
+        agent_identity.self_dir(data_dir, agent_id),
+      )
+      desk.modify_relationship(data_dir, agent_id, user_id, change)
     }
     None -> {
-      let _ = relationship.save(workspace_path_for_agent(agent_id), state)
-      Nil
+      let workspace_path = workspace_path_for_agent(agent_id)
+      let previous = relationship.load(workspace_path, user_id)
+      let updated = change(previous)
+      let _ = relationship.save(workspace_path, updated)
+      #(previous, updated)
     }
   }
 }
@@ -1267,7 +1372,9 @@ fn maybe_handle_birth(
               Error(_) -> Error("name extraction failed")
             }
           }
-          let step =
+          // One birth per agent, even with first messages from two chats or
+          // channels at once (D3): the second sees the agent born.
+          let run_step = fn() {
             birth.step(
               cfg.data_dir,
               principal_id,
@@ -1276,6 +1383,13 @@ fn maybe_handle_birth(
               generate,
               extract,
             )
+          }
+          // A named agent is the common case and needs no lock (the check is
+          // a cached read); otherwise, inside it, birth.step checks again.
+          let step = case self_core.named(cfg.data_dir, principal_id) {
+            True -> birth.AlreadyBorn
+            False -> desk.exclusive(cfg.data_dir, principal_id, run_step)
+          }
           case step {
             birth.AskName(text) -> Some(port.reply(to: msg, content: text))
             birth.ConfirmName(name) ->
@@ -1443,11 +1557,9 @@ fn maybe_handle_identity_bootstrap(
                     Ok(persona) -> {
                       let display_name =
                         persona_loader.extract_name(persona.identity)
-                      let _ =
-                        save_self_state_for_agent(
-                          profile.agent_id,
-                          self_state.default(),
-                        )
+                      modify_self_state_for_agent(profile.agent_id, fn(_) {
+                        self_state.default()
+                      })
                       let next_profile =
                         SessionProfile(
                           ..profile,
@@ -1708,24 +1820,18 @@ fn handle_allowed_interaction(
 
 /// The provider and model this agent uses: the one picked with /model, when
 /// it is still configured, else the default. The state file is read once per
-/// agent; the answer is kept in `agent_choices` for the next messages. The
+/// agent; the answer is kept in the router's scope for the next messages. The
 /// catalog is built once at boot, so a kept answer cannot go stale.
 fn agent_llm_config(
   state: InteractiveRouterState,
   agent_id: String,
   default_llm_config: provider.ProviderConfig,
 ) -> #(InteractiveRouterState, provider.ProviderConfig) {
-  case dict.get(state.agent_choices, agent_id) {
+  case get_choice(state, agent_id) {
     Ok(config) -> #(state, config)
     Error(_) -> {
       let config = kept_choice(agent_id, catalog.current(default_llm_config))
-      #(
-        InteractiveRouterState(
-          ..state,
-          agent_choices: dict.insert(state.agent_choices, agent_id, config),
-        ),
-        config,
-      )
+      #(put_choice(state, agent_id, config), config)
     }
   }
 }
@@ -1756,15 +1862,10 @@ fn choose_model(
   agent_id: String,
   chosen: provider.ProviderConfig,
 ) -> InteractiveRouterState {
-  let current = load_self_state_for_agent(agent_id)
-  save_self_state_for_agent(
-    agent_id,
-    self_state.set_model_choice(current, chosen.name, chosen.default_model),
-  )
-  InteractiveRouterState(
-    ..state,
-    agent_choices: dict.insert(state.agent_choices, agent_id, chosen),
-  )
+  modify_self_state_for_agent(agent_id, fn(current) {
+    self_state.set_model_choice(current, chosen.name, chosen.default_model)
+  })
+  put_choice(state, agent_id, chosen)
 }
 
 /// /model alone shows what is in use and the choices; /model <modelo> picks.
@@ -1858,8 +1959,18 @@ fn start_streamed_message_reply(
   // the base reply only carries the typing indicator, and the spawned
   // worker emits the final content (or the policy refusal) as an event.
   let base_reply = port.reply(to: msg, content: "") |> port.with_typing(True)
+  // The turn counts among the agent's turns in flight before it runs, so an
+  // /esquecer that comes after waits for it (and one in progress makes it
+  // wait). The router waits for that, so no /esquecer slips in between.
+  let counted = process.new_subject()
   let _ =
     process.spawn_unlinked(fn() {
+      case closed_data_dir() {
+        Some(data_dir) ->
+          desk.turn_started(data_dir, profile.agent_id, process.self())
+        None -> Nil
+      }
+      process.send(counted, Nil)
       case
         exception_guard.run(fn() {
           run_streamed_message_reply(
@@ -1881,6 +1992,7 @@ fn start_streamed_message_reply(
           )
       }
     })
+  let _ = process.receive(counted, within: desk.forget_wait_ms + 30_000)
   port.StreamReply(base_reply: base_reply)
 }
 
@@ -2313,49 +2425,41 @@ fn maybe_handle_forget(
             <> " fica. Para confirmar, envie"
             <> " /esquecer confirmo nos próximos 10 minutos."
           Some(#(
-            InteractiveRouterState(
-              ..state,
-              forget_pending: dict.insert(
-                state.forget_pending,
-                profile.agent_id,
-                closed_group_global.now(),
-              ),
+            put_forget_pending(
+              state,
+              profile.agent_id,
+              closed_group_global.now(),
             ),
             reply,
           ))
         }
         Some(closed_group_pure.ForgetConfirm) -> {
-          case dict.get(state.forget_pending, profile.agent_id) {
+          case get_forget_pending(state, profile.agent_id) {
             Error(_) -> Some(#(state, forgotten_without_pending_reply()))
             Ok(at) -> {
               let now = closed_group_global.now()
               case now - at <= 600_000 {
                 False ->
                   Some(#(
-                    InteractiveRouterState(
-                      ..state,
-                      forget_pending: dict.delete(
-                        state.forget_pending,
-                        profile.agent_id,
-                      ),
-                    ),
+                    drop_forget_pending(state, profile.agent_id),
                     forgotten_without_pending_reply(),
                   ))
                 True -> {
                   let cfg = closed_group_global.get_config()
+                  // After the person's turns in flight end (D2): their replies
+                  // arrive, and what they said is erased too.
                   let result = case cfg {
                     Some(cfg) ->
-                      forget.forget(cfg.data_dir, profile.agent_id, supervisor)
+                      desk.forgetting(cfg.data_dir, profile.agent_id, fn() {
+                        forget.forget(
+                          cfg.data_dir,
+                          profile.agent_id,
+                          supervisor,
+                        )
+                      })
                     None -> Error("runtime unavailable")
                   }
-                  let next_state =
-                    InteractiveRouterState(
-                      ..state,
-                      forget_pending: dict.delete(
-                        state.forget_pending,
-                        profile.agent_id,
-                      ),
-                    )
+                  let next_state = drop_forget_pending(state, profile.agent_id)
                   case result {
                     Ok(_) -> Some(#(next_state, "Esqueci."))
                     Error(_) ->
@@ -2690,12 +2794,26 @@ fn kept_tool_call_decoder() -> decode.Decoder(#(String, String)) {
 }
 
 fn toggle_reasoning_preference(profile: SessionProfile, enabled: Bool) -> Bool {
-  let current = load_self_state_for_agent(profile.agent_id)
-  let toggled = !current.preferences.reasoning_visible
-  let with_reasoning = self_state.set_reasoning_visible(current, toggled)
-  let with_thinking = self_state.set_thinking_enabled(with_reasoning, enabled)
-  save_self_state_for_agent(profile.agent_id, with_thinking)
-  toggled
+  let toggled = fn(current: self_state.SelfState) {
+    !current.preferences.reasoning_visible
+  }
+  // What was written, so the reply matches the state even with another
+  // change in between.
+  let written = case closed_data_dir() {
+    Some(data_dir) ->
+      desk.modify_self(data_dir, profile.agent_id, fn(current) {
+        self_state.set_reasoning_visible(current, toggled(current))
+        |> self_state.set_thinking_enabled(enabled)
+      })
+    None -> {
+      modify_self_state_for_agent(profile.agent_id, fn(current) {
+        self_state.set_reasoning_visible(current, toggled(current))
+        |> self_state.set_thinking_enabled(enabled)
+      })
+      load_self_state_for_agent(profile.agent_id)
+    }
+  }
+  written.preferences.reasoning_visible
 }
 
 /// The person's message, the turn's tool calls (each a "tool_call" with
@@ -2805,15 +2923,14 @@ fn apply_current_success_self_state(
   content: String,
   llm_config: provider.ProviderConfig,
 ) -> Nil {
-  let current = load_self_state_for_agent(profile.agent_id)
   let suggestion = mood.parse_suggestion(content)
   let outcome = case string.length(content) > 280 {
     True -> mood.LongResponseGenerated
     False -> mood.ToolCallSuccess
   }
-  let updated =
+  modify_self_state_for_agent(profile.agent_id, fn(current) {
     self_state.apply_outcome(current, outcome, "turn_success", suggestion)
-  save_self_state_for_agent(profile.agent_id, updated)
+  })
   append_journal_turn(
     profile,
     session_id,
@@ -2891,7 +3008,6 @@ fn apply_current_error_self_state(
   profile: SessionProfile,
   error: executor.ExecutorError,
 ) -> Nil {
-  let current = load_self_state_for_agent(profile.agent_id)
   let #(outcome, cause) = case error {
     executor.ToolError(_, _) -> #(mood.ToolCallError, "tool_error")
     executor.LLMError(_) -> #(mood.LLMFailure, "llm_error")
@@ -2900,8 +3016,9 @@ fn apply_current_error_self_state(
     executor.YieldPaused(_) -> #(mood.LLMFailure, "yield_paused")
     executor.PolicyDenied(_) -> #(mood.LLMFailure, "policy_denied")
   }
-  let updated = self_state.apply_outcome(current, outcome, cause, None)
-  save_self_state_for_agent(profile.agent_id, updated)
+  modify_self_state_for_agent(profile.agent_id, fn(current) {
+    self_state.apply_outcome(current, outcome, cause, None)
+  })
   record_incident(profile, error)
   apply_relationship_event(profile, relationship.UserFrustrated)
   Nil
@@ -2975,9 +3092,10 @@ fn apply_relationship_event(
   event: relationship.RelationshipEvent,
 ) -> Nil {
   let user_id = user_id_for_profile(profile)
-  let previous = load_relationship_for_agent(profile.agent_id, user_id)
-  let updated = relationship.apply_event(previous, event)
-  save_relationship_for_agent(profile.agent_id, updated)
+  let #(previous, updated) =
+    modify_relationship_for_agent(profile.agent_id, user_id, fn(previous) {
+      relationship.apply_event(previous, event)
+    })
 
   case relationship.should_refresh_user_markdown(previous, updated) {
     True -> {

@@ -2,13 +2,13 @@
 -export([read_file/1, write_file/2, current_timestamp/0]).
 
 read_file(Path) ->
-  case file:read_file(Path) of
+  case file:read_file(Path, [raw]) of
     {ok, Binary} -> {ok, Binary};
     {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
   end.
 
 write_file(Path, Content) ->
-  case file:write_file(Path, Content) of
+  case file:write_file(Path, Content, [raw]) of
     ok -> {ok, nil};
     {error, Reason} -> {error, list_to_binary(file:format_error(Reason))}
   end.

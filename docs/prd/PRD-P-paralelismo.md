@@ -107,8 +107,6 @@ pelos outros.
 - O índice em memória da `buscar_conversa`. Ele é independente desta PRD e
   ganha PR própria. A busca continua relendo o histórico; o estresse mede com
   e sem buscas.
-- O *group commit* da fila durável (`inbox`). Ela não aparece como gargalo.
-  Se aparecer em P-06, vira item novo no PENDENCIAS.
 - Streaming real por tokens.
 - Grupos em que todas as agentes leem o grupo, que dependem de decisão
   própria (PENDENCIAS 3.1).
@@ -289,10 +287,10 @@ Escreva os testes de I1 a I7 contra o código atual.
   corrige, e a falha vai registrada no commit.
 
 **Aceite:**
-- [ ] Um teste por invariante.
-- [ ] Os testes de corrida provocam a concorrência com sinais de prontidão,
+- [x] Um teste por invariante.
+- [x] Os testes de corrida provocam a concorrência com sinais de prontidão,
       nunca com `sleep`.
-- [ ] Commit: `test(prd-p): invariantes do caminho da mensagem`.
+- [x] Commit: `test(prd-p): invariantes do caminho da mensagem`.
 
 ### P-02: O processo da agente
 
@@ -302,12 +300,12 @@ ETS e a vitrine de leitura (seção 6.2). Mova para ele as gravações de
 `/reasoning` e `/esquecer` mandam mudanças em vez de gravar.
 
 **Aceite:**
-- [ ] I4 passa.
-- [ ] Um ator da agente morto no meio de uma gravação é recriado, e o
+- [x] I4 passa.
+- [x] Um ator da agente morto no meio de uma gravação é recriado, e o
       arquivo fica coerente (escrita em `.tmp` e depois `rename`, como hoje).
-- [ ] As leituras do `self_state` no caminho da mensagem vêm da vitrine, não
+- [x] As leituras do `self_state` no caminho da mensagem vêm da vitrine, não
       do disco.
-- [ ] Commit: `feat(self): um processo por agente grava o estado dela`.
+- [x] Commit: `feat(self): um processo por agente grava o estado dela`.
 
 ### P-03: Nascimento e esquecimento pela agente
 
@@ -315,51 +313,110 @@ Mova para o processo da agente o `birth.step`, o `forget_pending`, a contagem
 de turnos em andamento e a execução do `/esquecer` com espera (D2).
 
 **Aceite:**
-- [ ] I2 e I3 passam.
-- [ ] O `/esquecer` com um turno da mesma pessoa preso em outro chat espera o
+- [x] I2 e I3 passam.
+- [x] O `/esquecer` com um turno da mesma pessoa preso em outro chat espera o
       turno, apaga depois, e a resposta do turno chega à pessoa.
-- [ ] Um turno que morre sem avisar não trava o `/esquecer`: o monitor
+- [x] Um turno que morre sem avisar não trava o `/esquecer`: o monitor
       desconta o turno.
-- [ ] Commit: `feat(self): nascimento e esquecimento serializados por agente`.
+**Feito.** O `forget_pending` (a confirmação pendente) continua no
+roteador e sai dele na P-04, junto com o resto do estado do roteador:
+enquanto o roteador for um ator, ele já é serializado por canal.
+
+- [x] Commit: `feat(self): nascimento e esquecimento serializados por agente`.
 
 ### P-04: Roteador sem estado
 
 Leve `session_profiles` para ETS e remova `InteractiveRouterState`. Nesta
 história, o roteador **continua** no caminho: só o estado sai de dentro dele.
 
+**Feito.** O `InteractiveRouterState` continua existindo, mas só como um
+escopo (um inteiro) numa tabela ETS (`SupernovaRouterState`): as funções do
+roteador mantêm as assinaturas, e a P-05 pode chamá-las de qualquer
+processo. Uma asserção mudou: a que conferia o estado inicial lendo os
+dicionários internos. A/B (2 rodadas intercaladas, carga 10–11): base
+78,9 e 75,3 turnos/s; nova 66,8 e 84,1 (média −2%).
+
 **Aceite:**
-- [ ] Todos os testes do roteador passam sem mudar asserções, só a forma de
+- [x] Todos os testes do roteador passam sem mudar asserções, só a forma de
       criar o estado inicial.
-- [ ] A/B sem regressão: turnos/s dentro de ±10% da linha de base.
-- [ ] Commit: `refactor(router): o estado sai do ator do roteador`.
+- [x] A/B sem regressão: turnos/s dentro de ±10% da linha de base.
+- [x] Commit: `refactor(router): o estado sai do ator do roteador`.
 
 ### P-05: A fase anterior ao LLM na fila do chat
 
 O handler roda no processo da fila (seção 6.4), atrás de `routing.parallel`
 (D4).
 
+O teste do chat parado usa um `/esquecer` esperando um turno lento da mesma
+pessoa: ele segura a fase anterior ao LLM do chat da Ana por um sinal (o
+processo da agente), sem gate falso.
+
 **Aceite:**
-- [ ] Com `routing.parallel: true`, I1 a I7 passam.
-- [ ] Teste: uma mensagem lenta no chat A (gate segurado por um sinal) não
+- [x] Com `routing.parallel: true`, I1 a I7 passam.
+- [x] Teste: uma mensagem lenta no chat A (gate segurado por um sinal) não
       atrasa a resposta de uma mensagem do chat B.
-- [ ] Com `false`, a suíte inteira passa sem mudança.
+- [x] Com `false`, a suíte inteira passa sem mudança.
 - [ ] A/B com `true` contra a linha de base: **turnos/s ≥ 2×**; o roteador
-      não é mais o processo com a maior fila.
-- [ ] Rodada com caos: zero turnos faltando.
-- [ ] Commit: `perf(router): a fase anterior ao LLM roda na fila do chat`.
+      não é mais o processo com a maior fila. **Parcial:** 1,5× (base 73,1 e
+      107,5; nova 136,6 e 132,2 turnos/s), p95 de 2,8–4,4 s para 1,6–1,9 s.
+      O roteador saiu do topo; quem está lá é a fila durável, sozinha
+      (27–28 amostras). Os 2× ficam para depois da P-06.
+- [x] Rodada com caos: zero turnos faltando (11.530 respondidos, 94,9/s).
+- [x] Commit: `perf(router): a fase anterior ao LLM roda na fila do chat`.
 
-### P-06: O gate, se for o próximo teto
+### P-06: O próximo teto: a fila durável ou o gate
 
-Meça com `routing.parallel: true`. Se o processo com a maior fila for um ator
-do gate, aplique a seção 6.5 só a ele, e meça de novo. Se não for, registre a
-medição e feche a história sem mudança de código.
+A linha de base pelo caminho de produção (P-00b) já mostra a **fila durável**
+como o processo com a maior fila: uma gravação em disco por mensagem, num
+processo único, antes da fila do chat. Meça com `routing.parallel: true` e
+trate o que estiver no topo:
+
+- **Fila durável.** Faça *group commit*: as mensagens que chegam enquanto
+  uma gravação está em andamento vão juntas na próxima, numa única
+  `append_file`. Cada remetente só recebe a confirmação depois que a gravação
+  da sua mensagem terminou, então a garantia de "está no disco antes de
+  entrar na fila" continua igual. Teste: 100 mensagens simultâneas viram bem
+  menos de 100 gravações, e um restart logo depois de todas as confirmações
+  recupera todas.
+- **Ator do gate.** Aplique a seção 6.5 só a ele.
+
+Meça de novo depois de cada correção. Se nenhum dos dois estiver no topo,
+registre a medição e feche a história sem mudança de código.
+
+**Feito.** Dois tetos, um atrás do outro:
+
+1. **Fila durável.** Gravações agrupadas: o que já espera na caixa do ator
+   vai num único `append`, e cada remetente só é confirmado depois dele.
+   Teste: 100 mensagens simultâneas viram **1** gravação, e o restart
+   recupera as 100.
+2. **`file_server`.** Com a fila resolvida, o topo passou a ser o `append`
+   do ledger e da auditoria, e o `file_server_2`: `file:write_file` e
+   `file:read_file` sem `raw` passam por esse processo único da VM e criam
+   um processo de E/S por chamada. A FFI de arquivos (leitura, gravação,
+   escrita atômica, `append`), a da auditoria e a da memória passaram a
+   `raw`.
+
+**Processo com a maior fila** (amostras com fila acima de 20, `--parallel`):
+
+| Momento | Topo | Maior fila |
+|---|---|---|
+| Linha de base (P-00b) | `inbox.write` | 271 |
+| P-05 | `inbox.write`, sozinho | 269 |
+| P-06, só a fila agrupada | ledger `persist_event` e `file_server_2` | 54–149 |
+| P-06, com `raw` | o coletor do cliente de teste (`sim_adapter.collect_stream`) | 149 |
+
+Nenhum processo da plataforma fica mais no topo. A vazão, nos pares
+intercalados, foi de 24 para 103 e de 73 para 131 turnos/s, com a máquina
+(6 núcleos, carga 11–14, outro BEAM ocupando quase 2 núcleos) saturada de
+CPU. O critério de 2× fica para a medição final da P-07, numa janela com a
+máquina mais livre.
 
 **Aceite:**
-- [ ] O relatório de estresse mostra o processo com a maior fila antes e
+- [x] O relatório de estresse mostra o processo com a maior fila antes e
       depois.
-- [ ] I6 continua passando.
-- [ ] Commit: `perf(gate): <ator> lido em paralelo` ou
-      `docs(prd-p): o gate não é o teto`.
+- [x] I6 continua passando.
+- [x] Commit: `perf(inbox): gravações agrupadas`, `perf(gate): <ator> lido
+      em paralelo`, ou `docs(prd-p): nem a fila nem o gate são o teto`.
 
 ### P-07: Ligar por padrão
 
@@ -369,10 +426,16 @@ medição e feche a história sem mudança de código.
 - Atualize `docs/ESTRESSE.md` (números novos), o `PENDENCIAS` e
   `docs/architecture`.
 
+**Feito.** Resultado e critérios em
+[relatorios/PRD-P.md](../relatorios/PRD-P.md): 1,73× sem buscas (meta 2×,
+não atingida, com a máquina compartilhada limitando a CPU), p50 4× menor,
+p95 igual (a cauda é a fila dos grupos, por I1), zero turnos faltando em 16
+rodadas. A remoção da chave fica no PENDENCIAS.
+
 **Aceite:**
-- [ ] Relatório final em `docs/relatorios/PRD-P.md`: tabela da linha de base
+- [x] Relatório final em `docs/relatorios/PRD-P.md`: tabela da linha de base
       contra o final, com as mesmas cargas.
-- [ ] Commit: `feat(router): caminho paralelo por padrão`.
+- [x] Commit: `feat(router): caminho paralelo por padrão`.
 
 ## 9. Critérios de aceite da PRD
 

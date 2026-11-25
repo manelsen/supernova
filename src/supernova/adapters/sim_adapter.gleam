@@ -15,6 +15,7 @@ import gleam/otp/actor
 import gleam/string
 import gleam/uri
 import mist.{type Connection, type ResponseData}
+import supernova/channel/channel_kit
 import supernova/channel/chunking
 import supernova/channel/port
 import supernova/channel/session
@@ -57,9 +58,12 @@ pub type SimChannel {
   SimChannel(store: Subject(StoreMessage), port: Int)
 }
 
+/// `registry_id` names the lanes of this channel, so the registry drains
+/// them when it stops, as it does every real channel's.
 pub fn start(
   cfg: config.SimConfig,
   handler: port.ChannelHandler,
+  registry_id: String,
 ) -> Result(#(port.ChannelAdapter, SimChannel), String) {
   case cfg.enabled {
     False -> Error("sim channel is disabled")
@@ -74,7 +78,7 @@ pub fn start(
           let store = store.data
 
           let serve = fn(req: request.Request(Connection)) {
-            handle_http(req, token, store, handler)
+            handle_http(req, token, store, handler, registry_id)
           }
           case
             serve
@@ -221,6 +225,7 @@ fn handle_http(
   token: String,
   store: Subject(StoreMessage),
   handler: port.ChannelHandler,
+  registry_id: String,
 ) -> response.Response(ResponseData) {
   case authorized(req, token) {
     False ->
@@ -234,7 +239,7 @@ fn handle_http(
           case req.method, path {
             _, ["sim", "messages"] ->
               case bit_array.to_string(req_with_body.body) {
-                Ok(raw) -> handle_post(req, raw, store, handler)
+                Ok(raw) -> handle_post(req, raw, store, handler, registry_id)
                 Error(_) ->
                   json_response(
                     400,
@@ -263,6 +268,7 @@ fn handle_post(
   raw: String,
   store: Subject(StoreMessage),
   handler: port.ChannelHandler,
+  registry_id: String,
 ) -> response.Response(ResponseData) {
   case decode_message(raw) {
     Error(_) ->
@@ -282,18 +288,57 @@ fn handle_post(
           is_bot: False,
           reply_to_id: None,
         )
-      let events = process.new_subject()
       let turn_session = session.sim_session_id(input.chat_id, input.user_id)
-      let result = handler(port.InboundMessage(message), events)
-      let outcome = case result {
-        Ok(port.ImmediateReply(reply)) -> {
-          append_parts(store, reply)
-          reply_outcome(reply.content)
+      // The message takes the path of every real channel: the durable inbox
+      // and the chat's lane, one turn per chat at a time. (It used to call
+      // the handler right here, so tests and the stress test measured a path
+      // production does not take.) This request waits for the turn's end.
+      let waiter = process.new_subject()
+      let watched = fn(inbound, events) {
+        let result = handler(inbound, events)
+        case result {
+          Ok(_) -> Nil
+          Error(port.Ignored(_)) -> process.send(waiter, "denied")
+          Error(_) -> process.send(waiter, "error")
         }
-        Ok(port.StreamReply(base)) -> collect_stream(events, store, base)
-        Error(port.Ignored(_)) -> "denied"
-        Error(port.SendFailed(_)) -> "error"
-        Error(_) -> "error"
+        result
+      }
+      let send_fn = fn(reply: port.ChannelReply) {
+        append_parts(store, reply)
+        process.send(waiter, reply_outcome(reply.content))
+        Ok(Nil)
+      }
+      let stream_send_fn = fn(base: port.ChannelReply, events) {
+        let outcome = collect_stream(events, store, base)
+        process.send(waiter, outcome)
+        case outcome {
+          "error" -> Error(port.SendFailed("sim stream failed"))
+          _ -> Ok(Nil)
+        }
+      }
+      let outcome = case
+        channel_kit.dispatch_inbound_outcome(
+          watched,
+          send_fn,
+          stream_send_fn,
+          port.InboundMessage(message),
+          registry_id,
+          channel_kit.turn_hard_timeout_ms,
+        )
+      {
+        channel_kit.Queued ->
+          case
+            process.receive(
+              waiter,
+              within: channel_kit.turn_hard_timeout_ms + 10_000,
+            )
+          {
+            Ok(outcome) -> outcome
+            Error(Nil) -> "timeout"
+          }
+        channel_kit.Duplicate -> "duplicate"
+        channel_kit.Refused -> "refused"
+        channel_kit.Stopping -> "stopping"
       }
       append_turn_end(store, input.chat_id, turn_session, outcome)
       // The turn is over when the reply is sent: the outcome rides along, so

@@ -258,5 +258,11 @@ conversation:
     gate_timeout_ms: 2000
     recall_timeout_ms: 15000
 
+# How messages are routed. With parallel (the default), each chat's lane runs
+# its own pre-LLM phase (gate, session, birth, commands), so chats never wait
+# for each other. false brings back one router actor per channel (rollback).
+routing:
+  parallel: true
+
 # Writable directory for access.json and the ledger
 data_dir: "data"

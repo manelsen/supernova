@@ -23,6 +23,8 @@ gleam run -m supernova/stress/run -- \
 | `--seconds` | `120` | duração da carga |
 | `--search-every` | `5` | uma em cada N mensagens pede `buscar_conversa` |
 | `--no-chaos` | desligado | sem matar sessões nem reiniciar o runtime |
+| `--parallel` | ligado | `routing.parallel: true`: a fase anterior ao LLM roda na fila de cada chat (PRD-P) |
+| `--router-actor` | desligado | `routing.parallel: false`: o caminho antigo, pelo ator do canal |
 | `--out` | `stress-out` | diretório da execução |
 
 O relatório fica em `<out>/<instante>/report.md`. O `data_dir` da execução fica ao
@@ -76,10 +78,19 @@ cada, e compare médias, não uma rodada contra outra.
 | `list_dir`, `ensure_dir`, `rename`, `delete`, `file_exists` passavam pelo `file_server_2` | um processo para a VM inteira virava fila | `supernova_rawfs`: direto ao disco |
 | O ledger anexava cada evento copiando os de 30 dias; os call ids cresciam para sempre | custo por turno crescendo com o tempo, dentro do ator que todo turno chama | eventos do mais novo para o mais antigo, custo por pessoa e dia em mapa, call ids podados na rotação |
 | Ferramentas da mesma rodada rodavam uma depois da outra | turnos com várias ferramentas esperavam a soma | rodam ao mesmo tempo, cada uma monitorada |
+| O sim chamava o handler direto | o teste não passava pela fila durável nem pela fila do chat | o sim usa o `channel_kit`, como os canais reais |
+| O roteador do canal decidia a fase anterior ao LLM de uma mensagem por vez | todos os chats de um canal esperavam uns pelos outros | a fase roda na fila de cada chat (`routing.parallel`); o estado da agente tem um processo dono (`self/desk`) |
+| A fila durável gravava uma mensagem por vez | toda mensagem de todo canal esperava uma gravação | gravações agrupadas |
+| `read_file`, `write_file` e `append` passavam pelo `file_server_2` | ledger, auditoria e histórico em fila num processo da VM | modo `raw` |
 
 Com tudo isso, 200 agentes × 12 mil mensagens, 150 workers e uma busca a cada
 cinco mensagens: de ~16 turnos/s (antes das correções do supervisor) para
-~40 turnos/s, sem turnos perdidos. O próximo teto é o roteador do canal, que
-ainda decide a fase anterior ao LLM de uma mensagem por vez:
-[PRD-P-paralelismo](prd/PRD-P-paralelismo.md).
+~40 turnos/s, sem turnos perdidos.
+
+Depois da [PRD-P](prd/PRD-P-paralelismo.md), sem buscas: de 97 para 168
+turnos/s (mediana de três pares intercalados), com a mediana de latência de
+~1,3 s para 0,35 s. Nenhum processo da plataforma fica mais no topo das
+filas. Com uma busca a cada cinco mensagens, a vazão fica onde estava (~60
+turnos/s): o teto passa a ser a própria busca, que ainda varre o arquivo.
+Relatório: [PRD-P](relatorios/PRD-P.md).
 

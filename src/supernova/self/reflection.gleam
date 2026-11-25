@@ -27,6 +27,7 @@ import supernova/llm/provider
 import supernova/self/audit
 import supernova/self/constellation
 import supernova/self/core as self_core
+import supernova/self/desk
 import supernova/self/drift
 import supernova/self/epoch
 import supernova/self/journal
@@ -476,12 +477,10 @@ fn reflect_locked(
                 principal,
                 entries,
               ))
-              let state = self_state.from_dir(self_dir(data_dir, principal))
               let _ =
-                self_state.save_in(
-                  self_dir(data_dir, principal),
-                  self_state.SelfState(..state, last_reflection_at: now),
-                )
+                desk.modify_self(data_dir, principal, fn(state) {
+                  self_state.SelfState(..state, last_reflection_at: now)
+                })
               audit.record(
                 principal,
                 "reflection",

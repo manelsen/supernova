@@ -41,6 +41,8 @@ pub type Options {
     seconds: Int,
     search_every: Int,
     chaos: Bool,
+    /// `routing.parallel`: the pre-LLM phase in each chat's lane.
+    parallel: Bool,
     out: String,
   )
 }
@@ -54,6 +56,7 @@ pub fn default_options() -> Options {
     seconds: 120,
     search_every: 5,
     chaos: True,
+    parallel: True,
     out: "stress-out",
   )
 }
@@ -84,6 +87,9 @@ fn parse_loop(args: List(String), o: Options) -> Result(Options, String) {
     ["--search-every", v, ..rest] ->
       number(v, rest, fn(n) { Options(..o, search_every: n) })
     ["--no-chaos", ..rest] -> parse_loop(rest, Options(..o, chaos: False))
+    ["--parallel", ..rest] -> parse_loop(rest, Options(..o, parallel: True))
+    ["--router-actor", ..rest] ->
+      parse_loop(rest, Options(..o, parallel: False))
     ["--out", v, ..rest] -> parse_loop(rest, Options(..o, out: v))
     [unknown, ..] -> Error("unknown argument: " <> unknown)
   }
@@ -239,6 +245,7 @@ fn build_config(
   config.Config(
     ..base,
     environment: "harness",
+    routing: config.RoutingConfig(parallel: o.parallel),
     data_dir: data_dir,
     providers: dict.from_list([
       #(
@@ -859,7 +866,11 @@ fn render(
       <> int.to_string(o.seconds)
       <> " s; uma busca a cada "
       <> int.to_string(o.search_every)
-      <> " mensagens",
+      <> " mensagens; roteamento "
+      <> case o.parallel {
+      True -> "paralelo (na fila do chat)"
+      False -> "no ator do canal"
+    },
     "- boot: " <> int.to_string(boot_ms) <> " ms",
     "",
     "## Turnos",
