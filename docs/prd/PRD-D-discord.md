@@ -1,7 +1,8 @@
 [PRD]
 # PRD D: Discord com paridade do Telegram
 
-> **Situação em 25/11/2026:** proposta. Faltam as decisões D1–D6 da seção 5.
+> **Situação em 25/11/2026:** aprovada pelo mantenedor; D1 a D6 decididas
+> (seção 5). Na D6, o mantenedor pediu autocompletar no lugar do texto livre.
 > Item 1 do roadmap ([PENDENCIAS](../PENDENCIAS.md), seção 0). Depende só do
 > que já está no master: a tabela de canais e os traits (PRD-C), a identidade
 > entre canais (PRD-I) e a mídia (PRD-A).
@@ -123,7 +124,11 @@ atuais de `test/fixtures/discord/` (gravadas em 27/02/2026). As que faltarem
   - Gravar as fixtures que faltam pede o token desse bot e um servidor de
     teste: mensagem de voz, anexo, figurinha, interação de botão, interação
     de comando `/`, `RESUMED`, `INVALID_SESSION`.
-  - **Recomendação:** você cria a aplicação e um servidor de teste só seu e
+  - **Decidido:** seguir com as fixtures de fevereiro. Payloads que elas não
+    têm são montados a partir da documentação e marcados como tal no teste.
+    A gravação nova fica para quando houver o bot (D-07 só documenta o
+    script).
+  - Recomendação original: você cria a aplicação e um servidor de teste só seu e
     põe o token no `.env` (`SUPERNOVA_DISCORD_TOKEN`), sem passar pelo chat.
     O executor grava e anonimiza. Se não houver token, as histórias seguem
     com as fixtures de fevereiro e com payloads montados a partir da
@@ -132,14 +137,14 @@ atuais de `test/fixtures/discord/` (gravadas em 27/02/2026). As que faltarem
 - **D2. Onde registrar os comandos `/`.**
   - (a) No servidor de `discord.guild_id`: aparecem na hora, só lá.
   - (b) Globais: valem para o privado e todos os servidores.
-  - **Recomendação:** os dois, porque o privado só vê comandos globais.
+  - **Decidido:** os dois, porque o privado só vê comandos globais.
     Globais com a lista de membro. No servidor configurado, a mesma lista.
     O menu de admin não existe no Discord: a permissão de comando por
     pessoa exige OAuth do dono do servidor. O admin digita o comando, e o
     gate decide, como hoje.
 - **D3. Servidores e canais.** Hoje um servidor inteiro é autorizado como
   `discord:guild:<id>`, e cada canal ou thread dele vira um chat próprio.
-  - **Recomendação:** manter. A thread conta como chat próprio, autorizada
+  - **Decidido:** manter. A thread conta como chat próprio, autorizada
     pelo servidor. No servidor, a agente vê o que o grupo fechado já define:
     as mensagens da sua pessoa e as que a mencionam.
   - **Não seguir o WhatsApp** (`allow_groups: false`): lá a decisão foi por
@@ -148,7 +153,7 @@ atuais de `test/fixtures/discord/` (gravadas em 27/02/2026). As que faltarem
   anexo OGG/Opus com `flags: 8192`, `duration_secs` e `waveform`. A TTS da
   PRD-A gera WAV, e converter pede um codificador Opus na imagem (ffmpeg ou
   `opusenc`).
-  - **Recomendação:** fora desta PRD. `sends_voice` continua `False`: o
+  - **Decidido:** fora desta PRD. `sends_voice` continua `False`: o
     `/voz` grava a preferência, e a resposta segue em texto, como no Telegram
     hoje. Volta
     junto com o `/voz` do Telegram (`sendVoice`, PENDENCIAS 0.3), que pede o
@@ -159,16 +164,19 @@ atuais de `test/fixtures/discord/` (gravadas em 27/02/2026). As que faltarem
     False`).
   - (b) Editar a mensagem que tinha os botões, como o Telegram
     (`edits_interaction_source: True`).
-  - **Recomendação:** (b). O seletor de modelo e a agenda ficam iguais nos
+  - **Decidido:** (b). O seletor de modelo e a agenda ficam iguais nos
     dois canais, e a conversa não acumula menus velhos. Para isso, a
     confirmação é o tipo 6 (`DEFERRED_UPDATE_MESSAGE`), e a resposta edita a
     mensagem original pelo token da interação, que vale 15 minutos.
 - **D6. Comandos `/` com argumento.** O `/model <provedor> <modelo>` e o
   `/acesso` têm argumentos.
-  - **Recomendação:** cada comando registrado com uma opção de texto livre,
-    opcional (`args`). O `discord_channel` já transforma a interação em texto
-    (`discord_slash_command_text`), e o núcleo trata como no Telegram. Sem
-    autocompletar nesta PRD.
+  - **Decidido: autocompletar.** Cada comando que aceita argumento é
+    registrado com uma opção opcional `args`, de texto, com
+    `autocomplete: true`. Enquanto a pessoa digita, o Discord manda uma
+    interação de autocompletar (tipo 4) e espera até 25 sugestões em 3 s
+    (resposta tipo 8). Ao enviar, a interação vira texto
+    (`discord_slash_command_text`), e o núcleo trata como no Telegram. As
+    sugestões vêm do núcleo, não do adaptador (6.3).
 
 ## 6. Desenho
 
@@ -247,6 +255,29 @@ INTERACTION_CREATE ─► confirmar em até 3 s (callback):
 - **Nomes:** o Discord aceita só letras minúsculas, números, `-` e `_`, até 32
   caracteres, e descrição de 1 a 100. Um comando que não cabe é pulado com
   aviso no log, sem derrubar o registro.
+- **Autocompletar.** `core/closed_group/commands` ganha uma função pura de
+  sugestões, `suggest(command, typed, contexto) -> List(String)`, que não sabe
+  de canal. Ela casa o que foi digitado como prefixo, sem diferenciar
+  maiúsculas nem acentos, e devolve no máximo 25 itens de até 100
+  caracteres:
+
+  | Comando | Sugestões |
+  |---|---|
+  | `/agenda` | `remover <id>` com os itens da agenda da própria pessoa |
+  | `/esquecer` | `confirmo` |
+  | `/model` | Os modelos configurados, como `<provedor> <modelo>` (o mesmo conjunto do seletor) |
+  | `/uso` | `todos`, só para admin |
+  | `/acesso` | `listar`, `adicionar`, `remover`, `chat …`; no `remover`, os principais com acesso |
+  | `/teto` | `liberar` |
+  | `/auditoria` | `20`, `50`, `100` |
+
+  - **Papel antes de dado.** O contexto traz o papel de quem digita, resolvido
+    pelo mesmo gate (aliases incluídos). Quem não tem acesso recebe lista
+    vazia. Quem não é admin nunca recebe sugestão de comando de admin nem
+    lista de principais.
+  - **Rápido e sem efeito.** Só leitura de arquivos locais, sem LLM, sem
+    ledger, sem passar pela fila do chat: a resposta sai do processo do
+    `discord_channel`. Um erro devolve lista vazia.
 - **Falha no registro** não impede o canal de subir: o log avisa, e o texto
   digitado (`/agenda`) continua funcionando, porque o núcleo lê o texto.
 
@@ -315,18 +346,18 @@ INTERACTION_CREATE ─► confirmar em até 3 s (callback):
   pelo token, queda para mensagem nova depois de 15 min (6.2). Trait
   `edits_interaction_source: True` (D5). Teste: seletor de modelo pelo
   Discord falso, do clique à mensagem editada.
-- **D-04: comandos `/`.** Registro global e por servidor a partir de
-  `core/closed_group/commands`, opção `args` (D6), nomes inválidos pulados
-  (6.3).
+- **D-04: comandos `/` e autocompletar.** Registro global e por servidor a
+  partir de `core/closed_group/commands`, opção `args` com autocompletar (D6),
+  nomes inválidos pulados, `suggest` no núcleo com o papel antes do dado
+  (6.3). Teste: membro não vê `/acesso remover` com principais; admin vê.
 - **D-05: mídia na entrada.** Anexos, voz, figurinha, limite de tamanho,
   origem só do CDN (6.4). Teste com cada tipo até a tag no texto, e um de
   ponta a ponta até a leitura de mídia com o Gemini falso.
 - **D-06: agenda, identidade e envio.** `private_delivery`, conferência do
   chat aberto, `/vincular` Telegram ↔ Discord, `retry_after`,
   `allowed_mentions` (6.5, 6.6).
-- **D-07: fixtures e documentação.** Script de gravação em `dev/discord/`
-  (D1), as fixtures novas anonimizadas no lugar dos payloads montados,
-  roteiro em `docs/operations/DISCORD.md`:
+- **D-07: documentação.** Script de gravação em `dev/discord/` (D1),
+  pronto para quando houver o bot, sem rodar; roteiro em `docs/operations/DISCORD.md`:
   - criar a aplicação e ligar a intenção;
   - convidar o bot com as permissões mínimas;
   - pôr o `.env` e autorizar o servidor com `/acesso chat discord:guild:<id>`.
@@ -341,6 +372,7 @@ INTERACTION_CREATE ─► confirmar em até 3 s (callback):
 | Gateway falso | READY marca o canal pronto; queda tira e volta a marcar; 4014 deixa `failed` com o motivo |
 | Ponta a ponta, falso | Privado, canal de servidor autorizado, servidor não autorizado (sem resposta), menção, botão do seletor de modelo, `/agenda` como comando `/`, imagem, voz devolvida como transcrição |
 | Interação | Confirmação enviada antes de 3 s, medido no falso com um turno de 10 s |
+| Autocompletar | Sugestões filtradas pelo papel; nenhuma para quem não tem acesso |
 | Identidade | Mesmo `agent_id` depois de `/vincular` entre Telegram e Discord |
 | Cobertura | `discord_gateway` e `discord_channel` acima da média do projeto |
 | Piloto (manual, pelo mantenedor) | Uma pessoa do grupo fechado fala com a agente pelo Discord, no privado e num canal; o `/health/ready` cai quando o token é revogado |

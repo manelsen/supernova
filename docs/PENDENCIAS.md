@@ -30,7 +30,7 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 
 | # | Item | Situação | Próximo passo |
 |---|---|---|---|
-| 1 | **[PRD-D](prd/PRD-D-discord.md): Discord com paridade do Telegram** ([3.2](#32-canais)) | Proposta. O Discord só envia: o gateway é um esboço e não abre a conexão. As interações nunca são confirmadas, os comandos `/` nunca são registrados e os anexos se perdem. | Decisões D1–D6 do mantenedor. |
+| 1 | **[PRD-D](prd/PRD-D-discord.md): Discord com paridade do Telegram** ([3.2](#32-canais)) | Aprovada em 25/11. O Discord só envia: o gateway é um esboço e não abre a conexão. As interações nunca são confirmadas, os comandos `/` nunca são registrados e os anexos se perdem. | Em execução: D-01 a D-07. |
 | 2 | **[PRD-F](prd/PRD-F-ferramentas-atores.md), fase A**: cada ferramenta com prazo, cancelamento e limites | Proposta. Hoje uma ferramenta travada prende o turno por 5 min e deixa processos vivos. | Decisões D1–D7 do mantenedor. |
 | 3 | **[PRD-S](prd/PRD-S-sondas.md)**: sondas | Desenho com as decisões S1 a S11, sem histórias. As PRDs E e C, de que a segunda versão dependia, estão feitas. | Escrever a segunda versão, com as histórias e os servidores MCP conferidos (nome, licença, versão). Executar depois da fase A da F, que dá prazo e cancelamento às tarefas longas das sondas. |
 | 4 | **Aprovação por botões, computador fase 2 e [PRD-F](prd/PRD-F-ferramentas-atores.md) fase B** ([3.3](#33-interação-e-computador)) | Decididos em 22/11, sem PRD. A fase B da F depende da P-03, já feita. | Escrever uma PRD que junte os três: a aprovação é o portão das tarefas em segundo plano e do computador. |
