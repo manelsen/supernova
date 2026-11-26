@@ -8,13 +8,15 @@
 //
 // Protocol: POST /v1/run with a JSON body {"op": "...", ...}. Every answer is
 // JSON: {"ok": true, ...} or {"ok": false, "error": "..."}. GET /health
-// answers {"ok": true}.
+// answers {"ok": true}. POST /v1/mcp opens, calls and closes the MCP
+// servers of Supernova's probes (see mcp.mjs), behind the same checks.
 
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { mcp, McpUserError, sweepIdle } from './mcp.mjs';
 
 export const LIMITS = {
   bodyBytes: 4 * 1024 * 1024,
@@ -366,7 +368,9 @@ export function fromBrowser(req) {
 export function createServer(token = process.env.COMPUTADOR_TOKEN || '') {
   return http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true });
-    if (req.method !== 'POST' || req.url !== '/v1/run') return send(res, 404, { ok: false, error: 'not found' });
+    const routes = { '/v1/run': run, '/v1/mcp': (body) => mcp(body) };
+    const handler = req.method === 'POST' ? routes[req.url] : undefined;
+    if (!handler) return send(res, 404, { ok: false, error: 'not found' });
     if (fromBrowser(req)) return send(res, 403, { ok: false, error: 'requests from a browser are refused' });
     if (!authorized(req, token)) return send(res, 401, { ok: false, error: 'unauthorized' });
     // Keep raw bytes and decode once, so a UTF-8 character split across
@@ -385,10 +389,11 @@ export function createServer(token = process.env.COMPUTADOR_TOKEN || '') {
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(res, 400, { ok: false, error: 'body must be JSON' }); }
       if (body === null || typeof body !== 'object') return send(res, 400, { ok: false, error: 'body must be a JSON object' });
       try {
-        send(res, 200, { ok: true, ...(await run(body)) });
+        send(res, 200, { ok: true, ...(await handler(body)) });
       } catch (e) {
         const message = String(e && e.message ? e.message : e).split('\n')[0].slice(0, 500);
-        send(res, e instanceof UserError ? 400 : 200, { ok: false, error: message });
+        const userError = e instanceof UserError || e instanceof McpUserError;
+        send(res, userError ? 400 : 200, { ok: false, error: message });
       }
     });
   });
@@ -397,6 +402,8 @@ export function createServer(token = process.env.COMPUTADOR_TOKEN || '') {
 if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) {
   await fs.mkdir(WORK_DIR, { recursive: true });
   const port = Number(process.env.COMPUTADOR_PORT || 7070);
+  // Probe sessions nobody used for five minutes are closed.
+  setInterval(() => { sweepIdle().catch(() => {}); }, 30_000).unref();
   createServer().listen(port, '0.0.0.0', () => {
     console.log(`computador: listening on :${port}, work dir ${WORK_DIR}`);
   });

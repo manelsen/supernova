@@ -64,7 +64,7 @@ services:
       COMPUTADOR_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 2g
+    mem_limit: 3g
     cpus: 2
     pids_limit: 512
     shm_size: 1g

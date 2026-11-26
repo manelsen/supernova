@@ -1,6 +1,6 @@
 # The agent's computer. Run it with the gVisor runtime (runsc): see
 # docs/operations/COMPUTADOR.md. It holds no Supernova secrets.
-FROM mcr.microsoft.com/playwright:v1.48.0-jammy
+FROM mcr.microsoft.com/playwright:v1.65.0-noble
 
 # Everyday tools for the shell the agent gets.
 ARG DEBIAN_FRONTEND=noninteractive
@@ -13,7 +13,10 @@ RUN apt-get update \
 WORKDIR /opt/computador
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
-COPY agent.mjs ./
+# The Playwright MCP needs the alpha Playwright it was built with (PRD-S,
+# S24); that version's headless Chromium is installed next to the base's.
+RUN npx playwright install chromium-headless-shell
+COPY agent.mjs mcp.mjs ./
 COPY test ./test
 
 # pwuser comes with the Playwright image; its home is the persistent volume.
