@@ -10,8 +10,13 @@
 //// let tool = provider.new_tool(name: "get_weather", description: "...", parameters: [...])
 //// ```
 
+import gleam/dict
+import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/string
 
 // ============================================================================
 // Types
@@ -73,6 +78,10 @@ pub type ToolDefinition {
     description: String,
     /// Tool parameters
     parameters: List(ToolParam),
+    /// A full JSON Schema for the arguments, as JSON text, when the flat
+    /// parameters cannot say it (arrays, objects): the tools of an MCP
+    /// server (PRD-S, S-01). Used instead of `parameters` when present.
+    schema: Option(String),
   )
 }
 
@@ -209,7 +218,104 @@ pub fn new_tool(
   description description: String,
   parameters parameters: List(ToolParam),
 ) -> ToolDefinition {
-  ToolDefinition(name: name, description: description, parameters: parameters)
+  ToolDefinition(
+    name: name,
+    description: description,
+    parameters: parameters,
+    schema: None,
+  )
+}
+
+/// A tool whose arguments are described by a full JSON Schema (`schema`
+/// is its JSON text).
+pub fn tool_with_schema(
+  name name: String,
+  description description: String,
+  schema schema: String,
+) -> ToolDefinition {
+  ToolDefinition(
+    name: name,
+    description: description,
+    parameters: [],
+    schema: Some(schema),
+  )
+}
+
+/// The JSON Schema of a tool's arguments, as every provider sends it: the
+/// full schema when the tool has one that parses, else the flat
+/// parameters as an object schema.
+pub fn parameters_schema(tool: ToolDefinition) -> json.Json {
+  let full = case tool.schema {
+    Some(text) ->
+      case json.parse(text, decode.dynamic) {
+        Ok(value) ->
+          case decode.run(value, decode.dict(decode.string, decode.dynamic)) {
+            Ok(_) -> Ok(dynamic_json(value))
+            Error(_) -> Error(Nil)
+          }
+        Error(_) -> Error(Nil)
+      }
+    None -> Error(Nil)
+  }
+  case full {
+    Ok(schema) -> schema
+    Error(Nil) -> {
+      let properties =
+        tool.parameters
+        |> list.map(fn(p) {
+          #(
+            p.name,
+            json.object([
+              #("type", json.string(p.param_type)),
+              #("description", json.string(p.description)),
+            ]),
+          )
+        })
+      let required =
+        tool.parameters
+        |> list.filter(fn(p) { p.required })
+        |> list.map(fn(p) { json.string(p.name) })
+      json.object([
+        #("type", json.string("object")),
+        #("properties", json.object(properties)),
+        #("required", json.array(required, fn(x) { x })),
+      ])
+    }
+  }
+}
+
+/// A decoded JSON value back to JSON.
+pub fn dynamic_json(value: dynamic.Dynamic) -> json.Json {
+  let attempts = [
+    decode.bool |> decode.map(json.bool),
+    decode.int |> decode.map(json.int),
+    decode.float |> decode.map(json.float),
+    decode.string |> decode.map(json.string),
+    decode.list(decode.dynamic)
+      |> decode.map(fn(items) { json.array(items, dynamic_json) }),
+    decode.dict(decode.string, decode.dynamic)
+      |> decode.map(fn(entries) {
+        dict.to_list(entries)
+        |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
+        |> list.map(fn(entry) { #(entry.0, dynamic_json(entry.1)) })
+        |> json.object
+      }),
+  ]
+  first_decoded(value, attempts)
+}
+
+fn first_decoded(
+  value: dynamic.Dynamic,
+  attempts: List(decode.Decoder(json.Json)),
+) -> json.Json {
+  case attempts {
+    [] -> json.null()
+    [attempt, ..rest] ->
+      case decode.run(value, attempt) {
+        Ok(encoded) -> encoded
+        Error(_) -> first_decoded(value, rest)
+      }
+  }
 }
 
 /// Create a string parameter.

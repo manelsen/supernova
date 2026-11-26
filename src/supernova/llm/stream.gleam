@@ -469,7 +469,7 @@ pub fn anthropic_stream_body(
     [] -> with_system
     _ ->
       list.append(with_system, [
-        #("tools", json.array(tools, encode_tool)),
+        #("tools", json.array(tools, encode_anthropic_tool)),
       ])
   }
 
@@ -517,24 +517,16 @@ fn encode_tool_call(tc: provider.ToolCall) -> json.Json {
   ])
 }
 
+/// Anthropic's shape: no `function` wrapper, the schema in `input_schema`.
+fn encode_anthropic_tool(tool: provider.ToolDefinition) -> json.Json {
+  json.object([
+    #("name", json.string(tool.name)),
+    #("description", json.string(tool.description)),
+    #("input_schema", provider.parameters_schema(tool)),
+  ])
+}
+
 fn encode_tool(tool: provider.ToolDefinition) -> json.Json {
-  let properties =
-    tool.parameters
-    |> list.map(fn(p) {
-      #(
-        p.name,
-        json.object([
-          #("type", json.string(p.param_type)),
-          #("description", json.string(p.description)),
-        ]),
-      )
-    })
-
-  let required =
-    tool.parameters
-    |> list.filter(fn(p) { p.required })
-    |> list.map(fn(p) { json.string(p.name) })
-
   json.object([
     #("type", json.string("function")),
     #(
@@ -542,14 +534,7 @@ fn encode_tool(tool: provider.ToolDefinition) -> json.Json {
       json.object([
         #("name", json.string(tool.name)),
         #("description", json.string(tool.description)),
-        #(
-          "parameters",
-          json.object([
-            #("type", json.string("object")),
-            #("properties", json.object(properties)),
-            #("required", json.array(required, fn(x) { x })),
-          ]),
-        ),
+        #("parameters", provider.parameters_schema(tool)),
       ]),
     ),
   ])

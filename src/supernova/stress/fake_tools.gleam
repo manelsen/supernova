@@ -51,16 +51,19 @@ pub fn tools() -> List(provider.ToolDefinition) {
         name: "lenta",
         description: "Test tool: waits `ms` milliseconds and answers.",
         parameters: [provider.integer_param("ms", "How long to wait", True)],
+        schema: None,
       ),
       provider.ToolDefinition(
         name: "trava",
         description: "Test tool: never answers.",
         parameters: [],
+        schema: None,
       ),
       provider.ToolDefinition(
         name: "explode",
         description: "Test tool: crashes.",
         parameters: [],
+        schema: None,
       ),
     ]
   }

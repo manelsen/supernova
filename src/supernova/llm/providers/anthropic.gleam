@@ -167,34 +167,10 @@ fn encode_message(msg: provider.ChatMessage) -> json.Json {
 }
 
 fn encode_tool(tool: provider.ToolDefinition) -> json.Json {
-  let properties =
-    tool.parameters
-    |> list.map(fn(p) {
-      #(
-        p.name,
-        json.object([
-          #("type", json.string(p.param_type)),
-          #("description", json.string(p.description)),
-        ]),
-      )
-    })
-
-  let required =
-    tool.parameters
-    |> list.filter(fn(p) { p.required })
-    |> list.map(fn(p) { json.string(p.name) })
-
   json.object([
     #("name", json.string(tool.name)),
     #("description", json.string(tool.description)),
-    #(
-      "input_schema",
-      json.object([
-        #("type", json.string("object")),
-        #("properties", json.object(properties)),
-        #("required", json.array(required, fn(x) { x })),
-      ]),
-    ),
+    #("input_schema", provider.parameters_schema(tool)),
   ])
 }
 

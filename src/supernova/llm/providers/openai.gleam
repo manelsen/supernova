@@ -207,23 +207,6 @@ fn encode_tool_call(tc: provider.ToolCall) -> json.Json {
 
 /// Encode a ToolDefinition to JSON.
 fn encode_tool(tool: provider.ToolDefinition) -> json.Json {
-  let properties =
-    tool.parameters
-    |> list.map(fn(p) {
-      #(
-        p.name,
-        json.object([
-          #("type", json.string(p.param_type)),
-          #("description", json.string(p.description)),
-        ]),
-      )
-    })
-
-  let required =
-    tool.parameters
-    |> list.filter(fn(p) { p.required })
-    |> list.map(fn(p) { json.string(p.name) })
-
   json.object([
     #("type", json.string("function")),
     #(
@@ -231,14 +214,7 @@ fn encode_tool(tool: provider.ToolDefinition) -> json.Json {
       json.object([
         #("name", json.string(tool.name)),
         #("description", json.string(tool.description)),
-        #(
-          "parameters",
-          json.object([
-            #("type", json.string("object")),
-            #("properties", json.object(properties)),
-            #("required", json.array(required, fn(x) { x })),
-          ]),
-        ),
+        #("parameters", provider.parameters_schema(tool)),
       ]),
     ),
   ])

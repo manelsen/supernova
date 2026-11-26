@@ -695,7 +695,14 @@ fn tool_definition_tokens(tool: provider.ToolDefinition) -> Int {
       + estimate_tokens(parameter.description)
     })
     |> list.fold(0, fn(acc, value) { acc + value })
-  estimate_tokens(tool.name) + estimate_tokens(tool.description) + parameters
+  let schema = case tool.schema {
+    Some(text) -> estimate_tokens(text)
+    None -> 0
+  }
+  estimate_tokens(tool.name)
+  + estimate_tokens(tool.description)
+  + parameters
+  + schema
 }
 
 fn response_token_estimate(response: provider.ChatResponse) -> Int {

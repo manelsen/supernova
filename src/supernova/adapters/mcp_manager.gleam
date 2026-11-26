@@ -19,6 +19,7 @@ import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/order
 import gleam/otp/actor
 import gleam/string
@@ -261,12 +262,21 @@ fn tools_list_decoder(server_name: String) -> decode.Decoder(List(MCPTool)) {
 fn tool_decoder(server_name: String) -> decode.Decoder(MCPTool) {
   use name <- decode.field("name", decode.string)
   use description <- decode.optional_field("description", "", decode.string)
+  // The full argument schema goes to the model (PRD-S, S-01, S-02).
+  use input_schema <- decode.optional_field(
+    "inputSchema",
+    None,
+    decode.dynamic |> decode.map(Some),
+  )
   let qualified_name = server_name <> "/" <> name
   let spec =
     provider.ToolDefinition(
       name: qualified_name,
       description: description,
       parameters: [],
+      schema: option.map(input_schema, fn(value) {
+        json.to_string(provider.dynamic_json(value))
+      }),
     )
   decode.success(MCPTool(
     spec: spec,
