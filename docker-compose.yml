@@ -27,7 +27,9 @@ services:
       SUPERNOVA_WHATSAPP_WEBHOOK_SECRET: ${SUPERNOVA_WHATSAPP_WEBHOOK_SECRET:-}
       SUPERNOVA_WHATSAPP_DEVICE_ID: ${SUPERNOVA_WHATSAPP_DEVICE_ID:-}
 
-      # The agent's computer (optional; see docs/operations/COMPUTADOR.md)
+      # The agent's computer (optional; see docs/operations/COMPUTADOR.md).
+      # Supernova reaches it through the dispatcher (PRD-K, K-03), with the
+      # dispatcher's token; the computer's own token stays in the dispatcher.
       SUPERNOVA_COMPUTER_URL: ${SUPERNOVA_COMPUTER_URL:-}
       SUPERNOVA_COMPUTER_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
       # The probes' web search (PRD-S, S17): SearXNG by default, Tavily as
@@ -48,12 +50,35 @@ services:
     volumes:
       - ./supernova.yaml:/config/supernova.yaml:ro
       - supernova_data:/data
+    # Not on the computers' network (PRD-K, section 3.3): a computer cannot
+    # open a connection to Supernova. The dispatcher carries the calls. And
+    # no Docker socket here, ever (K-I6).
+    networks: [default]
+
+  # The dispatcher (PRD-K, K20): the only container with the Docker socket.
+  # It turns people's computers on and off and deletes them, with the
+  # parameters fixed in its code, and carries Supernova's calls to them. It
+  # sits on both networks but listens only on Supernova's side.
+  despachante:
+    profiles: ["computador"]
+    container_name: supernova-despachante
+    build: ./despachante
+    environment:
+      DESPACHANTE_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
+      COMPUTADOR_TOKEN: ${SUPERNOVA_COMPUTADOR_TOKEN_INTERNO:-}
+      DESPACHANTE_IMAGEM: supernova-computador:latest
+      DESPACHANTE_REDE: supernova_computador
+      DESPACHANTE_RUNTIME: ${SUPERNOVA_COMPUTER_RUNTIME:-runsc}
+      DESPACHANTE_COMPUTADOR_URL: http://computador:7070
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    mem_limit: 128m
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      # Supernova's own traffic (model APIs, channels) must leave through
-      # its own network, not the computer's: the host firewall rules for
-      # br-computador would otherwise apply to Supernova too.
-      default:
-        gw_priority: 1
+      default: {}
       computador_net: {}
 
   # The agent's computer: a Linux machine with a shell and a browser, apart
@@ -64,9 +89,12 @@ services:
     profiles: ["computador"]
     container_name: supernova-computador
     build: ./computador
+    # The dispatcher makes people's computers from this image (K-04).
+    image: supernova-computador:latest
     runtime: ${SUPERNOVA_COMPUTER_RUNTIME:-runsc}
     environment:
-      COMPUTADOR_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
+      # Only the dispatcher knows it; Supernova has the dispatcher's token.
+      COMPUTADOR_TOKEN: ${SUPERNOVA_COMPUTADOR_TOKEN_INTERNO:-}
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 3g
@@ -98,7 +126,12 @@ services:
     restart: unless-stopped
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
-    networks: [computador_net]
+    # Out to the internet through the computers' network (its firewall
+    # rules); Supernova asks it on its own network.
+    networks:
+      computador_net:
+        gw_priority: 1
+      default: {}
 
   # WhatsApp: GOWA (go-whatsapp-web-multidevice, MIT), the bridge to the
   # WhatsApp account. Off unless the "whatsapp" profile is on
@@ -197,6 +230,8 @@ networks:
   # firewall rule can keep the computer away from the host and the local
   # network (docs/operations/COMPUTADOR.md).
   computador_net:
+    # A fixed name: the dispatcher attaches people's computers to it.
+    name: supernova_computador
     driver_opts:
       com.docker.network.bridge.name: br-computador
 

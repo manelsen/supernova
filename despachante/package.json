@@ -1,0 +1,10 @@
+{
+  "name": "supernova-despachante",
+  "private": true,
+  "type": "module",
+  "description": "Turns people's computers on and off and deletes them; the only holder of the Docker socket (PRD-K, K20).",
+  "scripts": {
+    "start": "node despachante.mjs",
+    "test": "node --test"
+  }
+}
