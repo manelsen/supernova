@@ -1,3 +1,4 @@
+import discord_fake
 import gleam/option
 import gleam/string
 import gleeunit/should
@@ -508,4 +509,26 @@ fn sample_plain_text_event() -> String {
 
 fn sample_malformed_mention_event() -> String {
   "{\"type\": \"message\", \"user\": \"U012345678\", \"text\": \"Hello <@broken mention\", \"channel\": \"C0123456789\", \"ts\": \"1234567890.999996\", \"event_ts\": \"1234567890.999996\", \"channel_type\": \"channel\"}"
+}
+
+/// The request goes to the URL it was given. The URL used to go in the host
+/// field (`request.set_host`), as in the Discord client before the PRD-D, so
+/// nothing reached Slack.
+pub fn a_post_reaches_the_api_url_test() {
+  let api = discord_fake.start_api()
+  discord_fake.script(
+    api,
+    "/api/chat.postMessage",
+    200,
+    "{\"ok\":true,\"ts\":\"1.2\"}",
+  )
+  slack_adapter.send_for_ts(
+    "xoxb-teste",
+    api.base_url <> "/api/chat.postMessage",
+    "{\"channel\":\"C1\",\"text\":\"oi\"}",
+  )
+  |> should.equal(Ok("1.2"))
+  let request = discord_fake.expect_request(api, "/api/chat.postMessage", 2000)
+  request.method |> should.equal("POST")
+  request.body |> should.equal("{\"channel\":\"C1\",\"text\":\"oi\"}")
 }
