@@ -78,6 +78,15 @@ Cenário:
 }
 ```
 
+`{"do": "wait_tasks", "timeout_seconds": 600}` espera as tarefas em segundo
+plano ([PRD-F](prd/PRD-F-ferramentas-atores.md)) e as sondas
+([PRD-S](prd/PRD-S-sondas.md)): até nenhuma estar rodando ou por entregar, e
+até a agente responder, no chat de cada uma, ao resultado entregue. O
+transcript ganha um `mark` `tarefa:<id>:<ferramenta>:<estado>` por tarefa e o
+turno da resposta. Uma resposta que abre outra tarefa é esperada também. Uma
+tarefa cancelada não manda nada, e não é esperada. Sem prazo, o padrão é 600 s;
+passado o prazo, o cenário falha.
+
 `"recall": true` liga a memória (porteiro e `lembrar`, [PRD-M](prd/PRD-M-memoria.md))
 no cenário, com a chave de `SUPERNOVA_PERPLEXITY_API_KEY` (o fornecedor padrão); sem a chave, o boot
 recusa. `buscar_antigo_memoria` é o `buscar_antigo` com a memória ligada.

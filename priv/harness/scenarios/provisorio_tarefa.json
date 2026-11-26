@@ -1,0 +1,17 @@
+{
+  "id": "provisorio_tarefa",
+  "critical": false,
+  "long": false,
+  "personas": [{"id": "bia", "user_id": "bia"}],
+  "chats": [{"id": "dm-bia", "is_group": false, "members": ["bia"]}],
+  "steps": [
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "oi"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "bia"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "sim"},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "[mock-tarefa buscar_conversa 300] procura isso pra mim"},
+    {"do": "wait_tasks", "timeout_seconds": 30},
+    {"do": "say", "persona": "bia", "chat": "dm-bia", "content": "valeu"}
+  ],
+  "checks": ["invariants"],
+  "rubric": "provisorio"
+}

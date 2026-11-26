@@ -22,6 +22,7 @@ import supernova/harness/sim_client
 import supernova/harness/transcript
 import supernova/llm/provider
 import supernova/self/reflection
+import supernova/self/tasks
 import supernova/self/template as prompt_template
 
 /// Generate the next persona message from the rendered system prompt and the
@@ -69,6 +70,8 @@ type State {
     step: Int,
     persona_cost: Float,
     sessions: supervisor.SessionSupervisor,
+    /// Tasks a `wait_tasks` step already reported ("agent:id").
+    tasks_seen: List(String),
   )
 }
 
@@ -95,6 +98,7 @@ pub fn run(input: Input, loaded: scenario.Loaded) -> Result(Output, String) {
       step: 0,
       persona_cost: 0.0,
       sessions: runtime.session_supervisor,
+      tasks_seen: [],
     )
   let played = play(input, loaded, port, token, initial)
   clock.stop(clock)
@@ -291,6 +295,8 @@ fn play_step(
       reflection.sweep(input.data_dir, input.agent)
       Ok(state)
     }
+    scenario.WaitTasks(timeout_seconds: seconds) ->
+      wait_tasks(port, token, state, step_index, seconds * 1000)
     scenario.Mark(label: label) ->
       Ok(
         State(
@@ -306,6 +312,143 @@ fn play_step(
       )
   }
 }
+
+/// Poll the tasks until none is open, then wait, chat by chat, for the
+/// agent's answer to each result delivered there (the sim channel marks the
+/// end of an injected turn as of any other). An answer may start new tasks,
+/// so it goes round until a pass finds nothing new. A cancelled task sends
+/// nothing, so it is reported and not waited for.
+fn wait_tasks(
+  port: Int,
+  token: String,
+  state: State,
+  step_index: Int,
+  budget_ms: Int,
+) -> Result(State, String) {
+  use registry <- result.try(
+    tasks.registry()
+    |> option.to_result("wait_tasks: the tasks registry is not running"),
+  )
+  use #(every, left) <- result.try(await_closed(registry, budget_ms))
+  let fresh =
+    every
+    |> list.filter(fn(item) { !list.contains(state.tasks_seen, task_key(item)) })
+    |> list.sort(fn(a, b) { int.compare({ a.1 }.id, { b.1 }.id) })
+  case fresh {
+    [] -> Ok(state)
+    _ -> {
+      let at = clock.now(state.clock)
+      let marks =
+        list.map(fresh, fn(item) {
+          let task = item.1
+          transcript.Mark(
+            label: "tarefa:"
+              <> int.to_string(task.id)
+              <> ":"
+              <> task.tool
+              <> ":"
+              <> tasks.status_name(task.status),
+            at: at,
+            step: step_index,
+          )
+        })
+      let state =
+        State(
+          ..state,
+          events: list.append(state.events, marks),
+          tasks_seen: list.append(state.tasks_seen, list.map(fresh, task_key)),
+        )
+      let answered =
+        fresh
+        |> list.filter(fn(item) { { item.1 }.status != tasks.Cancelled })
+        |> list.map(fn(item) { item.1 })
+      use state <- result.try(
+        list.try_fold(answered, state, fn(current, task) {
+          await_answer(port, token, current, step_index, task, left)
+        }),
+      )
+      wait_tasks(port, token, state, step_index, left)
+    }
+  }
+}
+
+fn task_key(item: #(String, tasks.Task)) -> String {
+  item.0 <> ":" <> int.to_string({ item.1 }.id)
+}
+
+fn await_closed(
+  registry: tasks.Registry,
+  budget_ms: Int,
+) -> Result(#(List(#(String, tasks.Task)), Int), String) {
+  let every = tasks.list_all(registry)
+  let open = list.count(every, fn(item) { tasks.is_open(item.1) })
+  case open, budget_ms <= 0 {
+    0, _ -> Ok(#(every, budget_ms))
+    _, True ->
+      Error(
+        "wait_tasks: "
+        <> int.to_string(open)
+        <> " task(s) still open at the timeout",
+      )
+    _, False -> {
+      sleeper(100)
+      await_closed(registry, budget_ms - 100)
+    }
+  }
+}
+
+/// The agent's answer to one delivered result, as a turn in the task's chat.
+fn await_answer(
+  port: Int,
+  token: String,
+  state: State,
+  step_index: Int,
+  task: tasks.Task,
+  budget_ms: Int,
+) -> Result(State, String) {
+  let chat_id = task.channel_id
+  let after = dict_get(state.seq_by_chat, chat_id)
+  use turn <- result.try(
+    sim_client.await_turn(port, token, chat_id, after, budget_ms)
+    |> result.map_error(fn(reason) {
+      "wait_tasks: no answer to task "
+      <> int.to_string(task.id)
+      <> " in "
+      <> chat_id
+      <> ": "
+      <> reason
+    }),
+  )
+  let at = clock.now(state.clock)
+  let outputs =
+    list.map(turn.events, fn(event) {
+      transcript.Output(
+        chat: chat_id,
+        seq: event.seq,
+        at: at,
+        step: step_index,
+        principal: "sim:" <> task.user_id,
+        content: event.content,
+      )
+    })
+  let turn_end =
+    transcript.TurnEnd(
+      chat: chat_id,
+      session: session.sim_session_id(chat_id, task.user_id),
+      outcome: turn.outcome,
+      at: at,
+    )
+  Ok(
+    State(
+      ..state,
+      events: list.append(state.events, list.append(outputs, [turn_end])),
+      seq_by_chat: dict.insert(state.seq_by_chat, chat_id, turn.last_seq),
+    ),
+  )
+}
+
+@external(erlang, "timer", "sleep")
+fn sleeper(ms: Int) -> Nil
 
 /// Write the seed's messages into the persona's history in `chat`, spread
 /// evenly from `days` before now up to an hour ago, then end the session if

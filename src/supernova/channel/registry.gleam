@@ -34,9 +34,16 @@ pub type ChannelRegistry {
     id: String,
     channels: Dict(String, port.ChannelAdapter),
     streams: Dict(String, channel_kit.StreamSendFn),
+    /// Channels that run an injected inbound their own way (the sim channel
+    /// marks the end of its turn, as it does for its HTTP messages).
+    injectors: Dict(String, Injector),
     health: channel_health.ChannelHealth,
   )
 }
+
+/// Runs an inbound the core produced itself, in the channel's chat lane.
+pub type Injector =
+  fn(port.ChannelInbound) -> Nil
 
 @external(erlang, "erlang", "unique_integer")
 fn unique_integer() -> Int
@@ -80,6 +87,7 @@ pub fn start_channels_with_handler_and_hooks(
   let hooks = channel_kit.StartHooks(..hooks, registry_id: registry_id)
   let channels = dict.new()
   let streams = dict.new()
+  let injectors = dict.new()
   let health = channel_health.start()
   config.incomplete_channels(cfg)
   |> list.each(fn(pair) {
@@ -87,20 +95,26 @@ pub fn start_channels_with_handler_and_hooks(
     channel_health.failed(health, pair.0, pair.1)
   })
 
-  let #(channels, streams) =
+  let #(channels, streams, injectors) =
     starters(cfg, handler, hooks, health)
     |> list.filter(fn(starter) { config.is_channel_enabled(cfg, starter.name) })
-    |> list.fold(#(channels, streams), fn(acc, starter) {
-      let #(channels, streams) = acc
+    |> list.fold(#(channels, streams, injectors), fn(acc, starter) {
+      let #(channels, streams, injectors) = acc
       case starter.start() {
-        Ok(#(adapter, stream_send_fn)) -> {
+        Ok(Started(adapter, stream_send_fn, injector)) -> {
           io.println(starter.name <> ": started")
-          insert_channel(channels, streams, adapter, stream_send_fn)
+          let #(channels, streams) =
+            insert_channel(channels, streams, adapter, stream_send_fn)
+          let injectors = case injector {
+            Some(inject) -> dict.insert(injectors, adapter.name, inject)
+            None -> injectors
+          }
+          #(channels, streams, injectors)
         }
         Error(reason) -> {
           io.println(starter.name <> ": failed to start - " <> reason)
           channel_health.failed(health, starter.name, reason)
-          #(channels, streams)
+          #(channels, streams, injectors)
         }
       }
     })
@@ -124,6 +138,7 @@ pub fn start_channels_with_handler_and_hooks(
     id: registry_id,
     channels: channels,
     streams: streams,
+    injectors: injectors,
     health: health,
   ))
 }
@@ -134,8 +149,15 @@ type Starter {
     name: String,
     /// The adapter reports its own health from the moment it starts.
     reports_health: Bool,
-    start: fn() ->
-      Result(#(port.ChannelAdapter, Option(channel_kit.StreamSendFn)), String),
+    start: fn() -> Result(Started, String),
+  )
+}
+
+type Started {
+  Started(
+    adapter: port.ChannelAdapter,
+    stream: Option(channel_kit.StreamSendFn),
+    injector: Option(Injector),
   )
 }
 
@@ -151,12 +173,12 @@ fn starters(
     result.map(
       started,
       fn(pair: #(port.ChannelAdapter, channel_kit.StreamSendFn)) {
-        #(pair.0, Some(pair.1))
+        Started(pair.0, Some(pair.1), None)
       },
     )
   }
   let plain = fn(started) {
-    result.map(started, fn(adapter) { #(adapter, None) })
+    result.map(started, fn(adapter) { Started(adapter, None, None) })
   }
   [
     Starter("discord", True, fn() {
@@ -178,7 +200,13 @@ fn starters(
     }),
     Starter("sim", False, fn() {
       sim_adapter.start(cfg.sim, handler, hooks.registry_id)
-      |> result.map(fn(pair) { #(pair.0, None) })
+      |> result.map(fn(pair) {
+        Started(
+          pair.0,
+          None,
+          Some(sim_adapter.injector(pair.1, handler, hooks.registry_id)),
+        )
+      })
     }),
     Starter("telegram", True, fn() {
       let started =
@@ -444,24 +472,32 @@ pub fn inject(
   }
   case dict.has_key(registry.channels, channel) {
     False -> Error(port.SendFailed("Channel not registered: " <> channel))
-    True -> {
-      let stream_send_fn = case dict.get(registry.streams, channel) {
-        Ok(send_fn) -> send_fn
-        Error(_) -> fn(base_reply, _events) {
-          send(registry, channel, base_reply)
+    True ->
+      case dict.get(registry.injectors, channel) {
+        Ok(injector) -> {
+          injector(inbound)
+          Ok(Nil)
         }
+        Error(Nil) -> inject_in_lane(registry, handler, inbound, channel)
       }
-      channel_kit.dispatch_inbound(
-        handler,
-        fn(reply) { send(registry, channel, reply) },
-        stream_send_fn,
-        inbound,
-        registry.id,
-        channel_kit.turn_hard_timeout_ms,
-      )
-      Ok(Nil)
-    }
   }
+}
+
+fn inject_in_lane(
+  registry: ChannelRegistry,
+  handler: port.ChannelHandler,
+  inbound: port.ChannelInbound,
+  channel: String,
+) -> Result(Nil, port.ChannelError) {
+  channel_kit.dispatch_inbound(
+    handler,
+    fn(reply) { send(registry, channel, reply) },
+    stream_send_for(registry, channel),
+    inbound,
+    registry.id,
+    channel_kit.turn_hard_timeout_ms,
+  )
+  Ok(Nil)
 }
 
 /// The closed group's commands as the Telegram menu, in the background: the

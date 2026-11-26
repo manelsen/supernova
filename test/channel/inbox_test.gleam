@@ -299,6 +299,7 @@ pub fn boot_answers_what_was_waiting_test() {
       id: "registry:inbox-boot",
       channels: dict.from_list([#("telegram", adapter)]),
       streams: dict.new(),
+      injectors: dict.new(),
       health: channel_health.start(),
     )
   supernova.replay_inbox(registry, handler, inbox.recover(box, now()))

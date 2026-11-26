@@ -361,6 +361,7 @@ fn start_services(
         id: "registry:none",
         channels: dict.new(),
         streams: dict.new(),
+        injectors: dict.new(),
         health: channel_health.start(),
       )
     }
