@@ -23,7 +23,9 @@ import gleam/option.{None, Some}
 import gleam/order
 import gleam/otp/actor
 import gleam/string
+import supernova/adapters/mcp/protocol
 import supernova/adapters/mcp/stdio.{type StdioError, type StdioTransport}
+import supernova/infra/safe_io
 import supernova/llm/provider
 
 // ============================================================================
@@ -142,26 +144,14 @@ fn json_escape(s: String) -> String {
 
 /// Build the initialize request params.
 fn initialize_params() -> String {
-  "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"supernova\",\"version\":\"1.0.0\"}}"
+  json.to_string(protocol.initialize_params())
 }
 
-fn supported_protocol_versions() -> List(String) {
-  ["2024-11-05"]
-}
-
-fn protocol_version_decoder() -> decode.Decoder(String) {
-  use version <- decode.field("protocolVersion", decode.string)
-  decode.success(version)
-}
-
+/// The server may answer with any version Supernova speaks (PRD-S, S-02).
 fn validate_protocol_version(result_json: String) -> Result(Nil, String) {
-  case json.parse(result_json, protocol_version_decoder()) {
-    Ok(version) ->
-      case list.contains(supported_protocol_versions(), version) {
-        True -> Ok(Nil)
-        False -> Error("Unsupported MCP protocol version: " <> version)
-      }
-    Error(_) -> Error("Missing protocolVersion in initialize response")
+  case protocol.check_initialize(result_json) {
+    Ok(_) -> Ok(Nil)
+    Error(reason) -> Error(reason)
   }
 }
 
@@ -245,10 +235,7 @@ fn parse_tools_response(
 ) -> Result(List(MCPTool), String) {
   case json.parse(raw, tools_list_decoder(server_name)) {
     Ok(tools) -> Ok(tools)
-    Error(_) -> {
-      // If parsing fails, try empty tools
-      Ok([])
-    }
+    Error(_) -> Error("tools/list answer has no readable tools")
   }
 }
 
@@ -398,9 +385,19 @@ fn handle_message(
                 Ok(_) -> {
                   // Discover tools
                   let tools_result = send_tools_list(transport, 2, config.name)
+                  // A server whose tools cannot be read stays registered
+                  // with none, and says why in the log (PRD-S, S-02).
                   let tools = case tools_result {
                     Ok(discovered) -> discovered
-                    Error(_) -> []
+                    Error(reason) -> {
+                      safe_io.println(
+                        "error: mcp server "
+                        <> config.name
+                        <> ": tools/list failed: "
+                        <> reason,
+                      )
+                      []
+                    }
                   }
 
                   // Build server connection
