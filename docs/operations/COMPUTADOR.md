@@ -39,9 +39,12 @@ What this first version does **not** do yet:
 
    ```sh
    COMPOSE_PROFILES=computador
-   SUPERNOVA_COMPUTER_URL=http://computador:7070
+   SUPERNOVA_COMPUTER_URL=http://despachante:7071
    SUPERNOVA_COMPUTER_TOKEN=<output of: openssl rand -hex 24>
+   SUPERNOVA_COMPUTADOR_TOKEN_INTERNO=<another output of: openssl rand -hex 24>
    ```
+
+   Supernova talks to the **dispatcher** (`despachante`) with the first token; the dispatcher talks to the computer with the second, which Supernova never sees. See [The dispatcher](#the-dispatcher-despachante).
 
 3. Start it:
 
@@ -59,16 +62,16 @@ Without `SUPERNOVA_COMPUTER_URL` the tool is not offered at all. To use plain Do
 
 Inside its network, the computer can reach the internet. Measured on the pilot host, it can also open connections to every host service that listens on all interfaces (`0.0.0.0`), such as SSH, through the Docker gateway. Services bound to `127.0.0.1` are not reachable.
 
-These two rules close that path. They match only traffic that enters from `br-computador`. Traffic inside that network (Supernova ↔ computer) and replies to established connections are left alone.
+These two rules close that path. They match only traffic that enters from `br-computador`. Traffic inside that network (dispatcher ↔ computer) and replies to established connections are left alone.
 
-**Inside the network, the computer can still open connections to Supernova** (Supernova is attached to `br-computador` to call the computer), and loopback inside the computer is its own service. The rules above do not cover either. Two checks in the computer do:
+**Supernova is not on the computer's network** (PRD-K). The computer cannot open a connection to it: it is on another Docker network, and Docker keeps bridges apart. Supernova's calls go through the dispatcher, which is on both networks but listens only on Supernova's side. Loopback inside the computer is its own service; the rules above do not cover it. Two checks in the computer do:
 
 - **Its browsers reach nothing internal.** Every request of the computer's browser and of the probes' browser contexts goes through `computador/rede.mjs`: loopback (`localhost`, `127.0.0.0/8`, `::1`), `0.0.0.0`, private and link-local ranges (IPv4 and IPv6, including IPv4 written inside IPv6), carrier-grade NAT and multicast are refused, by address or by what a name resolves to. Docker's own names (`supernova`, `searxng`) do not resolve in the computer, which asks public DNS.
 - **The service refuses to start without `COMPUTADOR_TOKEN`**, and an empty token refuses every request.
 
-The shell (`exec`, admins only) can still reach internal addresses directly. PRD-K takes Supernova out of the computers' network and sends their traffic through an egress proxy.
+The shell (`exec`, admins only) can still reach internal addresses on the computer's network (SearXNG). PRD-K sends its traffic through an egress proxy (K-05).
 
-Supernova is attached to both networks, but `docker-compose.yml` gives its own network the gateway (`gw_priority`), so Supernova's outbound traffic never enters through `br-computador` and these rules do not touch it. That setting needs Docker Engine 28 and Compose 2.33.1 or newer. Without it, Docker picks the gateway by network name, and `computador_net` sorts first.
+SearXNG is attached to both networks: it leaves for the internet through `br-computador` (`gw_priority` in `docker-compose.yml`, which needs Docker Engine 28 and Compose 2.33.1 or newer), and Supernova asks it on its own network.
 
 ```sh
 # The computer may not open connections to the host itself.
@@ -96,6 +99,30 @@ curl -sI https://example.com | head -1        # internet still works
 - **DNS:** Docker's embedded DNS (`127.0.0.11`) does not answer inside gVisor on a user-defined network, so `computador/resolv.conf` is mounted over `/etc/resolv.conf`. It points at public resolvers (1.1.1.1, 8.8.8.8); edit it to use your own.
 - **Limits:** 3 GB of RAM (the probes' browser shares it, PRD-S S23), 2 CPUs, 512 processes. Commands run for at most 300 s. Long output is cut at 20,000 characters, page text at 15,000.
 - **Cost:** a 1280×800 screenshot cost about 570 prompt tokens on the pilot's provider. Only the last two screenshots of a turn stay in the conversation.
+
+## The dispatcher (`despachante`)
+
+`despachante/` is a small Node service, and the **only container with the Docker socket**; Supernova never has it (PRD-K, K-I6; a test reads `docker-compose.yml`). It:
+
+- carries Supernova's calls to the computer (`POST /v1/run`, `POST /v1/mcp`), adding the computer's token;
+- turns people's computers on and off and deletes them (`POST /v1/ligar`, `/v1/desligar`, `/v1/apagar` with `{"pessoa": "<32 hex digits>"}`, and `GET /v1/estado`). These are for PRD-K's one computer per person (K-04). The API takes a person's hash and nothing else: image, runtime, memory (1.5 GB), network, volume, capabilities and DNS are fixed in its code. The image is the one the `computador` service builds (`supernova-computador:latest`), pinned to its id when the dispatcher starts; after rebuilding the computer image, restart the dispatcher. It only touches containers it made (label `supernova.despachante`).
+
+It sits on both networks and listens only on its address on Supernova's network, which it asks Docker for at start. A computer finds nothing to connect to. `scripts/teste-rede-despachante.sh` checks this with real Docker (CI runs it):
+
+```
+ok   Supernova reaches the dispatcher
+ok   Supernova reaches the computer through the dispatcher
+ok   Supernova does not reach the computer directly
+ok   the computer does not reach Supernova by name
+ok   the computer does not reach Supernova by address
+ok   the computer does not reach the dispatcher on its network
+ok   the computer does not reach the dispatcher on Supernova's side
+```
+
+**Upgrading from a version without it:** add `SUPERNOVA_COMPUTADOR_TOKEN_INTERNO` to `.env`, change `SUPERNOVA_COMPUTER_URL` to `http://despachante:7071`, and run `docker compose up -d --build`. The computers' network gets a fixed name (`supernova_computador`), so Compose recreates it.
+
+- **Logs:** `docker compose logs despachante`
+- **Tests:** `docker build -t sn-despachante despachante/ && docker run --rm sn-despachante npm test --prefix /opt/despachante` (a fake Docker), then `scripts/teste-rede-despachante.sh`.
 
 ## The probes' servers (`/v1/mcp`)
 

@@ -1,0 +1,28 @@
+name: despachante
+
+# The dispatcher (despachante/, PRD-K, K-03): its tests against a fake
+# Docker, then the network test with real Docker: a computer reaches
+# neither Supernova nor the dispatcher; Supernova reaches the computer only
+# through the dispatcher.
+on:
+  push:
+    branches: [master]
+    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "docker-compose.yml", ".github/workflows/despachante.yml"]
+  pull_request:
+    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "docker-compose.yml", ".github/workflows/despachante.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  despachante:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t sn-despachante despachante/
+      - name: Run tests
+        run: docker run --rm --cap-drop ALL --security-opt no-new-privileges sn-despachante npm test --prefix /opt/despachante
+      - name: Network test
+        run: scripts/teste-rede-despachante.sh

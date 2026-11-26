@@ -315,9 +315,9 @@ Serviço e imagem `despachante/`, API com token, parâmetros fixos, Docker
 falso nos testes; compose com o despachante e sem socket na Supernova.
 
 **Aceite:**
-- [ ] API recusa nome que não é hash de pessoa e qualquer parâmetro extra.
-- [ ] K-I6 testado.
-- [ ] A Supernova não está na rede dos computadores; as chamadas a um
+- [x] API recusa nome que não é hash de pessoa e qualquer parâmetro extra.
+- [x] K-I6 testado.
+- [x] A Supernova não está na rede dos computadores; as chamadas a um
       computador passam pelo despachante (seção 3.3). Teste de rede: um
       computador não alcança a Supernova.
 - [ ] Commit: `feat(despachante): liga, desliga e apaga computadores`.

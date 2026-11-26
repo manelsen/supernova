@@ -390,7 +390,9 @@ pub fn render(
 ) -> Result(String, String) {
   case status, json.parse(body, answer_decoder()) {
     401, _ ->
-      Error("computador refused the token (check SUPERNOVA_COMPUTER_TOKEN)")
+      Error(
+        "computador refused the token (check SUPERNOVA_COMPUTER_TOKEN and SUPERNOVA_COMPUTADOR_TOKEN_INTERNO)",
+      )
     200, Ok(Answer(ok: True, ..)) -> {
       let text = case json.parse(body, exec_decoder()) {
         Ok(exec) -> render_exec(exec)
