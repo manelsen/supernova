@@ -136,7 +136,8 @@ fn encode_lines(messages: List(StoredMessage)) -> String {
   |> string.concat
 }
 
-fn decode_line(line: String) -> Result(StoredMessage, Nil) {
+/// One line of a conversation file, if it holds a message.
+pub fn decode_line(line: String) -> Result(StoredMessage, Nil) {
   let decoder = {
     use role <- decode.field("role", decode.string)
     use content <- decode.field("content", decode.string)

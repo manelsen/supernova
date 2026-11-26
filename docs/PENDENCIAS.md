@@ -51,7 +51,6 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 
 - **Mudança lenta com uma pessoa só** ([3.1](#31-conversa-e-memória)): a decisão de 22/11 é disparar depois de uma semana de encorajamento; falta recalibrar o limiar ou o desconto.
 - **Memória:** vetorizar em segundo plano, a cada turno, para a primeira consulta não chegar perto dos 15 s ([3.1](#31-conversa-e-memória)).
-- **Índice para a `buscar_conversa`**, que hoje é o teto da vazão ([3.1](#31-conversa-e-memória)).
 - **`/voz` no Telegram:** a A-11 abriu a mídia de entrada, mas a resposta em voz pede o `sendVoice`.
 - **Exportação OTLP dos spans** ([3.4](#34-observabilidade-e-desempenho)).
 - **Defeitos de canal:** fallback do streaming do Slack, `StartHooks` por canal ([3.2](#32-canais)).
@@ -189,7 +188,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **Custo.** As métricas de uso nascem em zero para cada modelo oferecido. No boot, um aviso no log aponta modelo oferecido sem preço em `pricing.models`.
   - **Telegram.** Um modelo por linha, e o botão carrega `m:<provedor|modelo>`, que cabe nos 64 bytes com nomes mais longos. Botões antigos continuam funcionando.
 - **Remover `routing.parallel: false`.** A [PRD-P](prd/PRD-P-paralelismo.md) ligou por padrão o caminho paralelo (a fase anterior ao LLM na fila de cada chat). Depois de uma semana no piloto sem regressão, a chave e o caminho pelo ator do canal saem numa PR separada. Até lá, `routing: {parallel: false}` no `supernova.yaml` é o rollback sem deploy.
-- **Índice para a `buscar_conversa`.** Com uma busca a cada cinco mensagens, ela é o teto da vazão (~60 turnos/s, igual antes e depois da PRD-P), e o pico de memória chega a ~1 GB: cada busca lê e decodifica a conversa inteira. Ver [relatório da PRD-P](relatorios/PRD-P.md).
+- ~~**Índice para a `buscar_conversa`.**~~ Feito em 26/11 (decisão do mantenedor: texto pronto ao lado). Ao lado de cada conversa, `<sessão>.busca` guarda o texto de cada mensagem já sem acentos e maiúsculas, com o lugar dela no arquivo; a busca compara ali e só decodifica o que mostra. Encontra o mesmo que antes. Em 20 mil mensagens (5 MB): 1,5 s → 54 ms. O índice segue o arquivo (só indexa o que foi acrescentado), é refeito se o arquivo mudou de outro jeito ou se estiver danificado, e o `/esquecer` o apaga com as conversas. Falta medir a vazão de novo com o teste de carga.
 - **Gravações concorrentes no estado da agente.** Achado em 23/11, ao desenhar a [PRD-P](prd/PRD-P-paralelismo.md). Resolvido nela, pelo processo da agente (P-02, P-03).
   - ~~**`self_state` e `relationship`.**~~ Resolvido na P-02: toda mudança passa pelo processo da agente (`self/desk`), uma de cada vez, e a gravação é atômica. Num teste com 200 mudanças simultâneas, o caminho antigo guardava 1; o processo da agente guarda as 200.
   - ~~**`/esquecer` com turno em andamento em outro chat da mesma pessoa.**~~ Resolvido na P-03 (D2): o `/esquecer` espera os turnos da pessoa em andamento (até 60 s), a resposta chega, e o que foi dito é apagado junto. Turnos que começam durante o `/esquecer` esperam o fim dele.

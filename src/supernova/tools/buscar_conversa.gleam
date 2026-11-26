@@ -21,6 +21,7 @@ import gleam/string
 import supernova/agenda/runtime
 import supernova/agenda/schedule
 import supernova/core/session/history_store
+import supernova/core/session/search_index
 import supernova/llm/provider
 
 /// Most excerpts shown, the most recent; the totals are always given.
@@ -118,10 +119,10 @@ pub type Found {
 }
 
 /// Every message of the person's conversations holding all `terms`, with
-/// its neighbours. A call reads the person's whole history, which is never
-/// pruned: each file is read and decoded once, only message contents are
-/// folded (folding whole lines, JSON and all, was slower), and excerpts are
-/// cut by position, never by scanning. No conversations yet is no match; a
+/// its neighbours. A call matches against each conversation's index
+/// (`search_index`: the folded text of every message, kept next to the
+/// file) and decodes only the messages it shows; excerpts are cut by
+/// position, never by scanning. No conversations yet is no match; a
 /// directory or file that cannot be read is an error, never "not said".
 pub fn search(
   data_dir: String,
@@ -145,7 +146,7 @@ pub fn search(
     files
     |> list.filter(fn(file) { string.ends_with(file, ".jsonl") })
     |> list.try_map(fn(file) {
-      history_store.read_file_strict(dir <> "/" <> file)
+      search_index.load(dir <> "/" <> file)
       |> result.map_error(unreadable)
       |> result.map(file_windows(_, folded))
     }),
@@ -171,25 +172,24 @@ type Window {
   Window(said: Said, start: Int, stop: Int, hits: Set(Int), at: Int)
 }
 
-/// The messages of one conversation (what was said, not the tool calls
-/// kept in between), by position.
-type Said
+/// One conversation's said messages (not the tool calls kept in between),
+/// by position, decoded when shown.
+type Said {
+  Said(indexed: search_index.Indexed, entries: Entries)
+}
+
+type Entries
 
 fn file_windows(
-  messages: List(history_store.StoredMessage),
+  indexed: search_index.Indexed,
   folded_terms: List(String),
 ) -> List(Window) {
-  let said =
-    list.filter(messages, fn(message) {
-      message.role == "user" || message.role == "assistant"
-    })
-  let size = list.length(said)
-  let by_position = to_said(said)
-  said
-  |> list.index_map(fn(message, position) { #(position, message) })
+  let size = list.length(indexed.entries)
+  let by_position = Said(indexed, to_entries(indexed.entries))
+  indexed.entries
+  |> list.index_map(fn(entry, position) { #(position, entry) })
   |> list.filter_map(fn(item) {
-    let content = fold({ item.1 }.content)
-    case list.all(folded_terms, string.contains(content, _)) {
+    case list.all(folded_terms, string.contains({ item.1 }.folded, _)) {
       True -> Ok(item.0)
       False -> Error(Nil)
     }
@@ -238,15 +238,18 @@ fn positions(from: Int, to: Int) -> List(Int) {
 }
 
 @external(erlang, "erlang", "list_to_tuple")
-fn to_said(messages: List(history_store.StoredMessage)) -> Said
+fn to_entries(entries: List(search_index.Entry)) -> Entries
 
-/// 0-based.
+/// 0-based. An entry always decodes: it was made from that same line.
 fn message_at(said: Said, position: Int) -> history_store.StoredMessage {
-  element(position + 1, said)
+  case search_index.message(said.indexed, element(position + 1, said.entries)) {
+    Ok(message) -> message
+    Error(Nil) -> history_store.StoredMessage(role: "user", content: "", at: 0)
+  }
 }
 
 @external(erlang, "erlang", "element")
-fn element(index: Int, said: Said) -> history_store.StoredMessage
+fn element(index: Int, entries: Entries) -> search_index.Entry
 
 fn line_count(excerpts: List(Excerpt)) -> Int {
   excerpts |> list.map(fn(excerpt) { list.length(excerpt.lines) }) |> int.sum
