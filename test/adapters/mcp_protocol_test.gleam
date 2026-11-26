@@ -61,20 +61,29 @@ pub fn unreadable_tools_list_registers_with_none_test() {
   mcp_manager.stop(mgr)
 }
 
-/// The server inherits Supernova's environment, plus the configured `env`.
-pub fn the_server_inherits_the_environment_test() {
+/// The server does not inherit Supernova's environment (its keys): only a
+/// few neutral variables, plus the configured `env`.
+pub fn the_server_gets_a_clean_environment_test() {
   envoy.set("SUPERNOVA_MCP_INHERIT_PROBE", "herdado")
   use <- exception.defer(fn() { envoy.unset("SUPERNOVA_MCP_INHERIT_PROBE") })
+  echo_env("SUPERNOVA_MCP_INHERIT_PROBE", [])
+  |> should.equal("SUPERNOVA_MCP_INHERIT_PROBE=")
+  echo_env("MEU_TOKEN", [#("MEU_TOKEN", "configurado")])
+  |> should.equal("MEU_TOKEN=configurado")
+  let assert Ok(path) = envoy.get("PATH")
+  echo_env("PATH", []) |> should.equal("PATH=" <> path)
+}
+
+fn echo_env(name: String, env: List(#(String, String))) -> String {
   let assert Ok(mgr) = mcp_manager.start()
   let assert Ok(Nil) =
     mcp_manager.register(
       mgr,
-      server("e", [#("MOCK_MCP_ECHO_ENV", "SUPERNOVA_MCP_INHERIT_PROBE")]),
+      server("e", [#("MOCK_MCP_ECHO_ENV", name), ..env]),
     )
   let assert [probe] = mcp_manager.list_tools(mgr)
-  probe.spec.description
-  |> should.equal("SUPERNOVA_MCP_INHERIT_PROBE=herdado")
   mcp_manager.stop(mgr)
+  probe.spec.description
 }
 
 pub fn protocol_reading_test() {

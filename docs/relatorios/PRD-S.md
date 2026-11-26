@@ -40,13 +40,14 @@ não as expõe até alguém as acrescentar.
 ## Correção de uma afirmação da PRD
 
 A seção 2 dizia que o cliente MCP "abre o processo com `env` sem herdar o
-ambiente". **É o contrário:** o `open_port` do Erlang estende o ambiente
-do processo pai com o `env` dado. O teste
-`the_server_inherits_the_environment_test` confirma. Para as sondas isso
+ambiente". **Era o contrário:** o `open_port` do Erlang estende o ambiente
+do processo pai com o `env` dado (o teste
+`the_server_inherits_the_environment_test` confirmou). Para as sondas isso
 não importa (os servidores rodam no computador, com só `PATH` e `HOME`).
-Mas um servidor MCP configurado por stdio **no container da Supernova**
-recebe todas as chaves dela. Hoje nenhum está configurado; se um dia
-estiver, vale decidir se ele deve receber um ambiente limpo.
+Um servidor MCP configurado por stdio **no container da Supernova**
+recebia todas as chaves dela. Corrigido depois (decisão do mantenedor,
+26/11): o servidor só herda `PATH`, `HOME`, `LANG`, `LC_ALL` e `TZ`, mais o
+`env` configurado (`the_server_gets_a_clean_environment_test`).
 
 ## Diferenças do desenho
 
