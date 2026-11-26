@@ -2,8 +2,8 @@
 # PRD S: sondas, os subagentes do par
 
 > **Situação em 25/11/2026:** segunda versão, com histórias. S1 a S13
-> decididas em 24/11. S14 a S22 e S24 decididas em 25/11. **S23 espera o
-> mantenedor** (seção 3.3). Nada é executado antes disso.
+> decididas em 24/11. S14 a S24 decididas em 25/11. A medida da S-00 (navegadores) já
+> foi feita. Pronta para executar, depois da fase B da PRD-F.
 >
 > **Depende de:** fase B da [PRD-F](PRD-F-ferramentas-atores.md) (F-05 a
 > F-07, a `tarefa`), que entra **antes** desta PRD (S14). A fase A da F (prazo,
@@ -149,7 +149,7 @@ grátis por US$ 5 mensais de crédito, com cartão. Daí a S17.
   Supernova; a chave nunca vai para o computador. O Playwright pode ser
   atualizado (autorizado pelo mantenedor).
 
-### 3.3 Recomendações (S18 a S22 e S24 aceitas em 25/11)
+### 3.3 Decididas em 25/11, a partir das recomendações
 
 - **S18. Onde roda o SearXNG.** Recomendação: um container próprio,
   `searxng`, no perfil `computador` do compose, na rede `computador_net`
@@ -185,11 +185,21 @@ grátis por US$ 5 mensais de crédito, com cartão. Daí a S17.
   - **código:** as ações `shell`, `read_file`, `write_file`, `list` do
     computador, com o diretório da sonda como diretório de trabalho; sem
     servidor MCP de git (o shell tem `git`).
-- **S23. Quantos navegadores ao mesmo tempo.** Cada sonda web abre um
-  Chromium; o computador tem 2 GB. Recomendação: no máximo **3 sondas web
-  rodando na instância**; a quarta espera vaga (vagas da fase A da F, com
-  espera longa, não os 10 s das ferramentas), e a espera conta na duração
-  dela. Medido na S-00 antes de fixar.
+- **S23. Navegadores das sondas.** **Decidido em 25/11, depois da medida
+  ([`relatorios/PRD-S-base.md`](../relatorios/PRD-S-base.md)):**
+  - **um Chromium headless shell** para todas as sondas web, com **um
+    contexto por sonda** (cookies, armazenamento e cache separados),
+    fechado no fim dela. O serviço do computador cria a conexão do
+    Playwright MCP no próprio processo (`createConnection(config,
+    contextGetter)`), sem processo nem porta por sonda; o navegador que
+    quebra é reaberto, e as sondas web em andamento terminam com `falhou`;
+  - o computador passa de **2 GB para 3 GB** (`mem_limit`);
+  - no máximo **5 sondas web rodando na instância**; a sexta espera vaga
+    (vagas da fase A da F, com espera longa, não os 10 s das ferramentas), e
+    a espera conta na duração dela;
+  - cada sonda mantém **no máximo 2 abas abertas** e fecha a mais antiga;
+  - WebKit (2,5× a memória) e Edge (mesmo motor, sem a versão enxuta) ficam
+    de fora.
 - **S24. Atualização do Playwright.** Recomendação: a imagem do computador
   passa para a base `mcr.microsoft.com/playwright` da versão estável mais
   nova com pelo menos duas semanas (hoje 1.65.x), e o `@playwright/mcp` é
@@ -235,7 +245,10 @@ fim: resultado ──► entrega da tarefa: "[Sonda web #12] concluída: …" no
   e pelo `tool_runner` (prazo, cancelamento). Cancelar a sonda mata o
   condutor e, com ele, as chamadas (I2 da F) e a sessão MCP no computador.
 - **Sessão MCP:** `POST /v1/mcp` com `{"acao": "abrir", "servidor":
-  "playwright" | "filesystem", "sessao": <id>, "raiz": <pasta>}`, depois
+  "playwright" | "filesystem", "sessao": <id>, "raiz": <pasta>}`. O
+  `playwright` é uma conexão no próprio processo do serviço, sobre um
+  contexto novo do navegador compartilhado (S23); o `filesystem` é um
+  processo por stdio, depois
   `{"acao": "chamar", "sessao", "mensagem": <JSON-RPC>}` e
   `{"acao": "fechar", "sessao"}`. O serviço só abre servidores de uma lista
   fixa na imagem, com argumentos montados por ele (nunca vindos da
@@ -316,13 +329,14 @@ Os I1 a I8 da PRD-F continuam valendo para a sonda como tarefa. Mais:
 
 #### S-00: Linha de base e medida do computador
 
-Confira no código o que a seção 2 afirma. Meça, na imagem atual e na nova
-(S24), a memória de um Chromium do Playwright MCP sob gVisor, para fixar a
-S23. Registre em `docs/relatorios/PRD-S-base.md`.
+A medida dos navegadores já foi feita (25/11,
+`docs/relatorios/PRD-S-base.md`) e fixou a S23. Falta conferir no código o
+que a seção 2 afirma e registrar no mesmo relatório.
 
 **Aceite:**
-- [ ] Relatório com a memória por navegador e o número de sondas web
-      simultâneas que cabe em 2 GB, com folga para o `computador`.
+- [x] Medida dos navegadores sob gVisor (headless shell, WebKit, um
+      navegador por sonda).
+- [ ] Seção 2 conferida contra o master do dia da execução.
 - [ ] Commit: `docs: PRD-S, linha de base`.
 
 #### S-01: Esquema JSON inteiro até o provedor
@@ -350,7 +364,9 @@ de hoje como a primeira implementação.
 #### S-03: O computador nova base e com `/v1/mcp`
 
 Imagem na nova base do Playwright (S24), com o `@playwright/mcp` e o
-`server-filesystem` fixados. `agent.mjs` ganha `POST /v1/mcp` (S16): lista
+`server-filesystem` fixados; `mem_limit` de 3 GB no compose (S23). O
+navegador das sondas é um headless shell compartilhado, com um contexto por
+sessão e no máximo 2 abas por contexto (S23). `agent.mjs` ganha `POST /v1/mcp` (S16): lista
 fixa de servidores, argumentos montados por ele, raiz presa a
 `~/pessoas/<hash>/`, uma sessão por sonda, fechamento por inatividade.
 
@@ -360,6 +376,8 @@ fixa de servidores, argumentos montados por ele, raiz presa a
       `Origin` recusada; sessão parada fecha em 5 min (relógio falso).
 - [ ] S-I4 testado com `..`, caminho absoluto e link simbólico.
 - [ ] Os testes atuais do computador passam na nova base.
+- [ ] Teste: duas sessões não veem os cookies uma da outra; fechar a sessão
+      fecha o contexto; a terceira aba fecha a mais antiga.
 - [ ] Commit: `feat(computador): servidores MCP por sessão atrás da porta autenticada`.
 
 #### S-04: Transporte MCP do computador
@@ -408,6 +426,11 @@ e `cancelar` mostram e param sondas. A entrega usa o texto da S21.
 - [ ] Teste e2e com o mock e o computador falso: disparar, resposta
       imediata, depois `[Sonda web #N] concluída: …` e a resposta da agente.
 - [ ] Teste: membro não vê o tipo `codigo`.
+- [ ] Teste: a sexta sonda web espera vaga (S23).
+- [ ] O prompt da sonda web manda reconhecer página de bloqueio ou desafio
+      (medida da S-00: Mercado Livre e Stack Overflow barraram o navegador
+      sem tela) e dizer isso no resultado; teste com o mock e uma página
+      falsa de desafio.
 - [ ] S-I5: cancelar e esgotar o prazo fecham a sessão MCP no computador
       falso.
 - [ ] Commit: `feat(sondas): a agente dispara sondas`.
@@ -451,5 +474,9 @@ pedir uma pesquisa, uma organização de arquivos e (como admin) um script.
   e pode ser bloqueado. A Tavily é a saída, trocada por configuração.
 - **Playwright MCP em alfa.** Ele sempre depende de um `playwright` alfa.
   Fixar a versão e atualizar à mão, lendo o changelog.
-- **Memória do computador.** Vários Chromiums em 2 GB: a S23 limita, a S-00
-  mede.
+- **Memória do computador.** Um navegador compartilhado em 3 GB, até 5
+  sondas web e 2 abas cada (S23). Uma página pesada (o G1 levou ~575 MB)
+  ainda pode apertar: se o computador ficar sem memória, as sondas web em
+  andamento falham juntas.
+- **Bloqueio de robô.** Sites barram navegador sem tela (medido na S-00). A
+  sonda diz que foi barrada; não contorna captcha (fora de escopo).
