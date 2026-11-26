@@ -52,11 +52,10 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 - **Mudança lenta com uma pessoa só** ([3.1](#31-conversa-e-memória)): a decisão de 22/11 é disparar depois de uma semana de encorajamento; falta recalibrar o limiar ou o desconto.
 - **Memória:** vetorizar em segundo plano, a cada turno, para a primeira consulta não chegar perto dos 15 s ([3.1](#31-conversa-e-memória)).
 - **Índice para a `buscar_conversa`**, que hoje é o teto da vazão ([3.1](#31-conversa-e-memória)).
-- **Código sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` ([3.4](#34-observabilidade-e-desempenho)).
 - **`/voz` no Telegram:** a A-11 abriu a mídia de entrada, mas a resposta em voz pede o `sendVoice`.
 - **Exportação OTLP dos spans** ([3.4](#34-observabilidade-e-desempenho)).
 - **Defeitos de canal:** tamanho nas edições do Matrix, fallback do streaming do Slack, `StartHooks` por canal, a URL no campo de host do Slack ([3.2](#32-canais)).
-- **Discord:** `/voz` (precisa de um codificador Opus, junto com o `/voz` do Telegram); apagar o `discord_webhooks` e a parte não usada do `discord_commands`, que nenhum módulo importa.
+- **Discord:** `/voz` (precisa de um codificador Opus, junto com o `/voz` do Telegram).
 
 ### 0.4 Sem data
 
@@ -249,7 +248,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - **Etapa 3, feita:** Prometheus (90 dias, até 2 GB) e Grafana no compose, no perfil `observabilidade`, só no loopback do host (acesso por túnel SSH), com o painel Supernova provisionado. O Prometheus 3 recusa scrape sem `Content-Type` reconhecido; o do `/metrics` agora tem teste.
   - **Alertas, feitos (23/11):** cinco regras no Grafana (Supernova fora do ar, respostas que não chegaram, falhas do modelo, canal sem conexão, custo do dia), na tela de Alerting sempre e no Telegram quando `SUPERNOVA_ALERT_TELEGRAM_CHAT` está no `.env`.
   - **Próximo:** exportação OTLP dos spans.
-  - **Sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor` não são importados por ninguém fora dos próprios módulos.
+  - ~~**Sem uso:** `core/telemetry`, `core/dashboard` e `core/alerts/actor`.~~ Apagados em 26/11, com o `discord_webhooks` e o `discord_commands` (PRD-D), que também ninguém importava.
 - **Readiness dos outros canais.** O `/health/ready` responde 503 quando um canal não está pronto e acompanha o Telegram a cada poll e o Discord pelo gateway (READY, queda, 120 s sem ACK; PRD-D). Os demais canais só informam que subiram.
 - **Benchmarks** (REQ-9). O código está em `test/bench/`, mas as metas de `BENCHMARKS.md` nunca foram medidas.
 - **Teste de carga** (REQ-8). O código está em `tests/load/` e `run_load_tests.sh`. A meta (100 usuários, p99 < 2 s, erro < 1%) nunca foi verificada.
