@@ -54,7 +54,7 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 - **Índice para a `buscar_conversa`**, que hoje é o teto da vazão ([3.1](#31-conversa-e-memória)).
 - **`/voz` no Telegram:** a A-11 abriu a mídia de entrada, mas a resposta em voz pede o `sendVoice`.
 - **Exportação OTLP dos spans** ([3.4](#34-observabilidade-e-desempenho)).
-- **Defeitos de canal:** fallback do streaming do Slack, `StartHooks` por canal ([3.2](#32-canais)).
+- **Defeitos de canal:** `StartHooks` por canal ([3.2](#32-canais)).
 - **Discord:** `/voz` (precisa de um codificador Opus, junto com o `/voz` do Telegram).
 
 ### 0.4 Sem data
@@ -225,7 +225,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 - **QQ nunca foi feito.** Origem: `IMPLEMENTATION_READY.md` 4.6.
 - ~~**Matrix:** o limite de tamanho não é verificado nas edições.~~ Corrigido em 26/11: as edições param em 4.000 caracteres (um evento tem até 64 KiB e a edição leva o texto quatro vezes), e o fim do stream divide a resposta em partes, como no Telegram e no Discord.
 - ~~**Discord:** um `retry_after` inteiro era lido como milissegundos.~~ Corrigido na [PRD-D](prd/PRD-D-discord.md), D-06.
-- **Slack, streaming nativo:** se o modelo cai no fallback sem streaming depois de já ter mandado texto, a conclusão pode não começar pelo texto já enviado. O `finish_progress` manda a resposta inteira, e a mensagem pode mostrar as duas versões. O caminho normal não é afetado. Corrigir pede uma decisão de desenho: reabrir a mensagem ou substituí-la. Origem: revisão da #40.
+- ~~**Slack, streaming nativo:** se o modelo cai no fallback sem streaming depois de já ter mandado texto, a mensagem pode mostrar as duas versões.~~ Corrigido em 26/11 (decisão do mantenedor: reabrir): quando a resposta final não continua o texto já enviado, o stream fecha sem acrescentar nada e a mesma mensagem é reaberta (`chat.update`) só com a resposta final; no meio do stream, o que não continua o texto não é acrescentado.
 - **`StartHooks` por canal.** Os hooks de teste ainda têm campos de Telegram, Discord, Slack e Matrix, e `config.channel_support` marca Telegram e Discord como suportados pelo nome. Origem: #40.
 
 ### 3.3 Interação e computador

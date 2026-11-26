@@ -104,15 +104,25 @@ fn consume_slack_stream_events(
 ) -> Result(Nil, port.ChannelError) {
   case process.receive(events, within: remaining_ms) {
     Ok(port.StreamUpdate(reply)) -> {
-      let next_content =
-        slack_progress_content_delta(session, reply.content, last_content)
+      let #(next_content, streamed) = case session {
+        slack_adapter.NativeProgressSession(..) ->
+          case native_step(last_content, reply.content) {
+            Append(delta) -> #(delta, reply.content)
+            // Not a continuation: wait for the end, which reopens.
+            Reopen(_) -> #("", last_content)
+          }
+        slack_adapter.MessageUpdateSession(..) -> #(
+          reply.content,
+          reply.content,
+        )
+      }
       case slack_adapter.append_progress(bot_token, session, next_content) {
         Ok(_) ->
           consume_slack_stream_events(
             bot_token,
             session,
             events,
-            reply.content,
+            streamed,
             remaining_ms,
           )
         Error(error) -> {
@@ -127,11 +137,18 @@ fn consume_slack_stream_events(
         }
       }
     }
-    Ok(port.StreamComplete(reply)) -> {
-      let final_content =
-        slack_progress_content_delta(session, reply.content, last_content)
-      slack_adapter.finish_progress(bot_token, session, final_content)
-    }
+    Ok(port.StreamComplete(reply)) ->
+      case session {
+        slack_adapter.NativeProgressSession(..) ->
+          case native_step(last_content, reply.content) {
+            Append(delta) ->
+              slack_adapter.finish_progress(bot_token, session, delta)
+            Reopen(content) ->
+              slack_adapter.reopen_progress(bot_token, session, content)
+          }
+        slack_adapter.MessageUpdateSession(..) ->
+          slack_adapter.finish_progress(bot_token, session, reply.content)
+      }
     Ok(port.StreamFailure(error)) -> {
       let _ =
         slack_adapter.finish_progress(
@@ -197,33 +214,39 @@ fn consume_recorded_slack_native_stream_events(
 ) -> Result(Nil, port.ChannelError) {
   case process.receive(events, within: remaining_ms) {
     Ok(port.StreamUpdate(reply)) -> {
-      process.send(
-        recorder,
-        channel_kit.OutboundRecord(
-          channel: "slack",
-          action: "progress_append",
-          content: slack_progress_content_delta(
-            slack_adapter.NativeProgressSession(channel_id: "", stream_ts: ""),
-            reply.content,
-            last_content,
-          ),
-          message_id: Some(message_id),
-        ),
-      )
+      let streamed = case native_step(last_content, reply.content) {
+        Append(delta) -> {
+          process.send(
+            recorder,
+            channel_kit.OutboundRecord(
+              channel: "slack",
+              action: "progress_append",
+              content: delta,
+              message_id: Some(message_id),
+            ),
+          )
+          reply.content
+        }
+        Reopen(_) -> last_content
+      }
       consume_recorded_slack_native_stream_events(
         recorder,
         events,
         message_id,
-        reply.content,
+        streamed,
         remaining_ms,
       )
     }
     Ok(port.StreamComplete(reply)) -> {
+      let action = case native_step(last_content, reply.content) {
+        Append(_) -> "progress_stop"
+        Reopen(_) -> "progress_reopen"
+      }
       process.send(
         recorder,
         channel_kit.OutboundRecord(
           channel: "slack",
-          action: "progress_stop",
+          action: action,
           content: reply.content,
           message_id: Some(message_id),
         ),
@@ -235,18 +258,18 @@ fn consume_recorded_slack_native_stream_events(
   }
 }
 
-fn slack_progress_content_delta(
-  session: slack_adapter.ProgressSession,
-  content: String,
-  previous_content: String,
-) -> String {
-  case session {
-    slack_adapter.NativeProgressSession(_, _) ->
-      case string.starts_with(content, previous_content) {
-        True -> string.drop_start(content, string.length(previous_content))
-        False -> content
-      }
-    slack_adapter.MessageUpdateSession(_, _) -> content
+/// What a native stream does with the reply so far: append what continues
+/// the text already streamed, or, when it does not continue it, reopen the
+/// message at the end.
+pub type NativeStep {
+  Append(delta: String)
+  Reopen(content: String)
+}
+
+pub fn native_step(streamed: String, content: String) -> NativeStep {
+  case string.starts_with(content, streamed) {
+    True -> Append(string.drop_start(content, string.length(streamed)))
+    False -> Reopen(content)
   }
 }
 
