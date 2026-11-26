@@ -185,6 +185,46 @@ pub fn seed_step_writes_the_history_and_reaches_the_agent_test() {
   })
 }
 
+/// PRD-F/PRD-S: a task started in a turn is waited for; its result comes
+/// back as a turn of its own in the chat, and the transcript keeps both.
+pub fn wait_tasks_step_waits_for_the_result_and_its_answer_test() {
+  test_workspace.with_isolated_workspace("harness-engine-tarefa", fn(root) {
+    let output = run(root, "provisorio_tarefa")
+    let labels =
+      list.filter_map(output.events, fn(event) {
+        case event {
+          transcript.Mark(label: label, ..) -> Ok(label)
+          _ -> Error(Nil)
+        }
+      })
+    list.any(labels, fn(label) {
+      string.starts_with(label, "tarefa:1:buscar_conversa:")
+    })
+    |> should.be_true()
+    // Five said turns and the delivered result's turn.
+    count(output.events, fn(event) {
+      case event {
+        transcript.TurnEnd(outcome: "ok", ..) -> True
+        _ -> False
+      }
+    })
+    |> should.equal(6)
+    // The agent saw the result as a "[Tarefa]" message.
+    list.any(output.prompts, fn(prompt) {
+      string.contains(prompt.content, "[Tarefa")
+    })
+    |> should.be_true()
+  })
+}
+
+/// A wait_tasks step needs a positive timeout.
+pub fn wait_tasks_step_is_validated_test() {
+  let raw =
+    "{\"id\":\"x\",\"personas\":[],\"chats\":[],\"steps\":[{\"do\":\"wait_tasks\"}],\"checks\":[],\"rubric\":\"r\"}"
+  let assert Ok(parsed) = scenario.parse(raw, "x.json")
+  parsed.steps |> should.equal([scenario.WaitTasks(timeout_seconds: 600)])
+}
+
 /// A seed names an existing file and a positive number of days.
 pub fn seed_step_is_validated_test() {
   test_workspace.with_isolated_workspace("harness-seed-validation", fn(root) {

@@ -2735,6 +2735,7 @@ pub fn stop_channels_stops_ingress_before_adapters_test() {
       id: "stop-order-test",
       channels: dict.from_list([#("test", adapter)]),
       streams: dict.new(),
+      injectors: dict.new(),
       health: channel_health.start(),
     )
 

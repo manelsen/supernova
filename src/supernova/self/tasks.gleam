@@ -144,6 +144,7 @@ pub opaque type Message {
     limit_ms: Option(Int),
   )
   Listing(reply: Subject(List(Task)), agent_id: String)
+  ListingAll(reply: Subject(List(#(String, Task))))
   Cancel(reply: Subject(Result(Nil, String)), agent_id: String, id: Int)
   Forget(reply: Subject(Nil), agent_id: String)
   Finished(agent_id: String, id: Int, outcome: tool_runner.Outcome)
@@ -267,6 +268,16 @@ pub fn list_open(registry: Registry, agent_id: String) -> List(Task) {
   actor.call(registry, waiting: 10_000, sending: Listing(_, agent_id))
 }
 
+/// Every task of every agent, with its agent (the harness waits on them).
+pub fn list_all(registry: Registry) -> List(#(String, Task)) {
+  actor.call(registry, waiting: 10_000, sending: ListingAll)
+}
+
+/// Whether the task is still running or its result has not gone out yet.
+pub fn is_open(task: Task) -> Bool {
+  task.status == Running || !task.delivered
+}
+
 pub fn cancel(
   registry: Registry,
   agent_id: String,
@@ -374,13 +385,23 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
     Listing(reply, agent_id) -> {
       let open =
         load(context.data_dir, agent_id)
-        |> result.map(fn(file) {
-          list.filter(file.tasks, fn(task) {
-            task.status == Running || !task.delivered
-          })
-        })
+        |> result.map(fn(file) { list.filter(file.tasks, is_open) })
         |> result.unwrap([])
       actor.send(reply, open)
+      actor.continue(state)
+    }
+
+    ListingAll(reply) -> {
+      let every =
+        owners(context.data_dir)
+        |> list.flat_map(fn(agent_id) {
+          load(context.data_dir, agent_id)
+          |> result.map(fn(file) {
+            list.map(file.tasks, fn(task) { #(agent_id, task) })
+          })
+          |> result.unwrap([])
+        })
+      actor.send(reply, every)
       actor.continue(state)
     }
 

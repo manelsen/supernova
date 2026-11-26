@@ -32,6 +32,10 @@ pub type Step {
   Seed(persona: String, chat: String, file: String, days: Int)
   Sweep
   Mark(label: String)
+  /// Wait until no background task (PRD-F) or probe (PRD-S) is running or
+  /// waiting to be delivered, and until the agent has answered each result
+  /// delivered in its chat. Fails after `timeout_seconds`.
+  WaitTasks(timeout_seconds: Int)
 }
 
 pub type Scenario {
@@ -206,6 +210,14 @@ fn step_decoder() -> decode.Decoder(Step) {
       decode.success(Seed(persona: persona, chat: chat, file: file, days: days))
     }
     "sweep" -> decode.success(Sweep)
+    "wait_tasks" -> {
+      use timeout_seconds <- decode.optional_field(
+        "timeout_seconds",
+        600,
+        decode.int,
+      )
+      decode.success(WaitTasks(timeout_seconds: timeout_seconds))
+    }
     "mark" -> {
       use label <- decode.field("label", decode.string)
       decode.success(Mark(label: label))
@@ -494,6 +506,16 @@ fn validate_steps(
             Error("scenario " <> scenario.id <> ": missing seed file: " <> file)
         }
       }
+      WaitTasks(timeout_seconds: seconds) ->
+        case seconds > 0 {
+          True -> Ok(Nil)
+          False ->
+            Error(
+              "scenario "
+              <> scenario.id
+              <> ": wait_tasks needs a positive timeout_seconds",
+            )
+        }
       Advance(..) | Sweep | Mark(..) -> Ok(Nil)
     }
   })

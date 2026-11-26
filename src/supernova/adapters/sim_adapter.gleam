@@ -288,59 +288,7 @@ fn handle_post(
           is_bot: False,
           reply_to_id: None,
         )
-      let turn_session = session.sim_session_id(input.chat_id, input.user_id)
-      // The message takes the path of every real channel: the durable inbox
-      // and the chat's lane, one turn per chat at a time. (It used to call
-      // the handler right here, so tests and the stress test measured a path
-      // production does not take.) This request waits for the turn's end.
-      let waiter = process.new_subject()
-      let watched = fn(inbound, events) {
-        let result = handler(inbound, events)
-        case result {
-          Ok(_) -> Nil
-          Error(port.Ignored(_)) -> process.send(waiter, "denied")
-          Error(_) -> process.send(waiter, "error")
-        }
-        result
-      }
-      let send_fn = fn(reply: port.ChannelReply) {
-        append_parts(store, reply)
-        process.send(waiter, reply_outcome(reply.content))
-        Ok(Nil)
-      }
-      let stream_send_fn = fn(base: port.ChannelReply, events) {
-        let outcome = collect_stream(events, store, base)
-        process.send(waiter, outcome)
-        case outcome {
-          "error" -> Error(port.SendFailed("sim stream failed"))
-          _ -> Ok(Nil)
-        }
-      }
-      let outcome = case
-        channel_kit.dispatch_inbound_outcome(
-          watched,
-          send_fn,
-          stream_send_fn,
-          port.InboundMessage(message),
-          registry_id,
-          channel_kit.turn_hard_timeout_ms,
-        )
-      {
-        channel_kit.Queued ->
-          case
-            process.receive(
-              waiter,
-              within: channel_kit.turn_hard_timeout_ms + 10_000,
-            )
-          {
-            Ok(outcome) -> outcome
-            Error(Nil) -> "timeout"
-          }
-        channel_kit.Duplicate -> "duplicate"
-        channel_kit.Refused -> "refused"
-        channel_kit.Stopping -> "stopping"
-      }
-      append_turn_end(store, input.chat_id, turn_session, outcome)
+      let outcome = run_turn(store, handler, registry_id, message)
       // The turn is over when the reply is sent: the outcome rides along, so
       // a caller does not have to poll the events to know it.
       json_response(
@@ -350,6 +298,107 @@ fn handle_post(
           #("outcome", json.string(outcome)),
         ]),
       )
+    }
+  }
+}
+
+/// Run one message through the durable inbox and the chat's lane, wait for
+/// its turn to end and mark the end in the chat's events. The HTTP path and
+/// the injected messages (tasks, probes, agenda) take it alike, so a reader
+/// waits for either the same way.
+fn run_turn(
+  store: Subject(StoreMessage),
+  handler: port.ChannelHandler,
+  registry_id: String,
+  message: port.ChannelMessage,
+) -> String {
+  let turn_session = session.sim_session_id(message.channel_id, message.user_id)
+  // The path of every real channel: the durable inbox and the chat's lane,
+  // one turn per chat at a time.
+  let waiter = process.new_subject()
+  let watched = fn(inbound, events) {
+    let result = handler(inbound, events)
+    case result {
+      Ok(_) -> Nil
+      Error(port.Ignored(_)) -> process.send(waiter, "denied")
+      Error(_) -> process.send(waiter, "error")
+    }
+    result
+  }
+  let send_fn = fn(reply: port.ChannelReply) {
+    append_parts(store, reply)
+    process.send(waiter, reply_outcome(reply.content))
+    Ok(Nil)
+  }
+  let stream_send_fn = fn(base: port.ChannelReply, events) {
+    let outcome = collect_stream(events, store, base)
+    process.send(waiter, outcome)
+    case outcome {
+      "error" -> Error(port.SendFailed("sim stream failed"))
+      _ -> Ok(Nil)
+    }
+  }
+  let outcome = case
+    channel_kit.dispatch_inbound_outcome(
+      watched,
+      send_fn,
+      stream_send_fn,
+      port.InboundMessage(message),
+      registry_id,
+      channel_kit.turn_hard_timeout_ms,
+    )
+  {
+    channel_kit.Queued ->
+      case
+        process.receive(
+          waiter,
+          within: channel_kit.turn_hard_timeout_ms + 10_000,
+        )
+      {
+        Ok(outcome) -> outcome
+        Error(Nil) -> "timeout"
+      }
+    channel_kit.Duplicate -> "duplicate"
+    channel_kit.Refused -> "refused"
+    channel_kit.Stopping -> "stopping"
+  }
+  append_turn_end(store, message.channel_id, turn_session, outcome)
+  outcome
+}
+
+/// The injector the channel registry uses for this channel: the turn runs
+/// in its own process (the caller does not wait), and its end is marked as
+/// for a message that came over HTTP. Interactions keep the lane's path.
+pub fn injector(
+  sim: SimChannel,
+  handler: port.ChannelHandler,
+  registry_id: String,
+) -> fn(port.ChannelInbound) -> Nil {
+  fn(inbound) {
+    case inbound {
+      port.InboundMessage(message) -> {
+        process.spawn_unlinked(fn() {
+          run_turn(sim.store, handler, registry_id, message)
+        })
+        Nil
+      }
+      port.InboundInteraction(_) ->
+        channel_kit.dispatch_inbound(
+          handler,
+          fn(reply) {
+            append_parts(sim.store, reply)
+            Ok(Nil)
+          },
+          fn(base, events) {
+            case collect_stream(events, sim.store, base) {
+              "error" -> Error(port.SendFailed("sim stream failed"))
+              _ -> Ok(Nil)
+            }
+          },
+          inbound,
+          registry_id,
+          channel_kit.turn_hard_timeout_ms,
+        )
     }
   }
 }

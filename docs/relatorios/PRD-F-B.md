@@ -63,3 +63,8 @@ e nenhum cenário usa. Além disso, a calibração pede transcripts de exemplo
 `pass` e `fail` que façam sentido para o juiz. Proposta: um passo
 `"do": "wait_tasks"` no harness e o cenário "levantamento demorado",
 numa PR à parte, com a sua revisão da rubrica.
+
+**Atualização (26/11):** o passo `wait_tasks` entrou (decisão do
+mantenedor), com o canal `sim` marcando o fim do turno também das mensagens
+injetadas ([`HARNESS.md`](../HARNESS.md)). O cenário "levantamento demorado",
+com rubrica e calibração, continua para o mantenedor.
