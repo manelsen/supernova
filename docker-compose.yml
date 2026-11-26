@@ -30,6 +30,11 @@ services:
       # The agent's computer (optional; see docs/operations/COMPUTADOR.md)
       SUPERNOVA_COMPUTER_URL: ${SUPERNOVA_COMPUTER_URL:-}
       SUPERNOVA_COMPUTER_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
+      # The probes' web search (PRD-S, S17): SearXNG by default, Tavily as
+      # the second option. The Tavily key stays here, never in the computer.
+      SUPERNOVA_SEARCH_PROVIDER: ${SUPERNOVA_SEARCH_PROVIDER:-searxng}
+      SUPERNOVA_SEARXNG_URL: ${SUPERNOVA_SEARXNG_URL:-http://searxng:8080}
+      SUPERNOVA_TAVILY_API_KEY: ${SUPERNOVA_TAVILY_API_KEY:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health/live || exit 1"]
       interval: 10s
@@ -73,6 +78,26 @@ services:
       - computador_home:/home/pwuser
       # Docker's DNS does not answer inside gVisor on this network.
       - ./computador/resolv.conf:/etc/resolv.conf:ro
+    networks: [computador_net]
+
+  # SearXNG (AGPL-3.0, unmodified): the probes' web search (PRD-S, S17,
+  # S18). On the computer's network, so it reaches the internet but not the
+  # host or the LAN (the firewall rules in COMPUTADOR.md); no port is
+  # published, only Supernova talks to it. Pinned by digest
+  # (2026.11.11-626105eec); update by hand.
+  searxng:
+    profiles: ["computador"]
+    container_name: supernova-searxng
+    image: searxng/searxng:2026.11.11-626105eec@sha256:606fc8852a53f0be4ac05116950ff480f6f56b8ef7d77b366868cc76478036e5
+    environment:
+      SEARXNG_SECRET: ${SUPERNOVA_SEARXNG_SECRET:-}
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    restart: unless-stopped
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     networks: [computador_net]
 
   # WhatsApp: GOWA (go-whatsapp-web-multidevice, MIT), the bridge to the

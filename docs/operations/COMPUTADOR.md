@@ -98,6 +98,23 @@ Supernova's probes (PRD-S) use MCP servers that run here, behind the same token 
 - **`filesystem`**, for disk probes: `@modelcontextprotocol/server-filesystem`, confined to the person's folder `~/pessoas/<hash>/`, started with only `PATH` and `HOME` in its environment.
 - Probe files stay in `~/pessoas/<hash>/sondas/<n>/`. `/esquecer` deletes the person's folder. A session nobody used for five minutes is closed.
 
+### The probes' search (`buscar`)
+
+Web probes search with `buscar`. By default it asks **SearXNG**, a self-hosted metasearch engine (AGPL-3.0, used unmodified) that the `computador` profile starts as the `searxng` container, with `searxng/settings.yml`. It sits on the computer's network: it reaches the internet but not the host or the LAN (the firewall rules above cover it too), and no port is published. Optionally set a secret in `.env`:
+
+```sh
+SUPERNOVA_SEARXNG_SECRET=<output of: openssl rand -hex 24>
+```
+
+SearXNG asks other engines from this one IP, and some of them answer with captchas or refusals (on the first test, DuckDuckGo and Wikidata did); it keeps going with the rest. When results get poor, switch to **Tavily** (about 1,000 free credits a month, no card):
+
+```sh
+SUPERNOVA_SEARCH_PROVIDER=tavily
+SUPERNOVA_TAVILY_API_KEY=tvly-...
+```
+
+The search request leaves from Supernova; the Tavily key never goes to the computer.
+
 Versions are pinned in `computador/package.json`; update them by hand, after reading the changelogs. The Playwright MCP always depends on an alpha Playwright, so the service uses that one for its own browser too.
 
 ## Tests
