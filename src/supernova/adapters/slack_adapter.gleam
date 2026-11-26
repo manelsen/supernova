@@ -662,7 +662,9 @@ fn send_ok_only(
   handle_slack_response(response)
 }
 
-fn send_for_ts(
+/// POST a JSON payload to a Slack Web API `url` and return the message's
+/// `ts`. Public so a test can point it at a local server.
+pub fn send_for_ts(
   bot_token: String,
   url: String,
   payload: String,
@@ -676,16 +678,16 @@ fn send_to_slack(
   url: String,
   payload: String,
 ) -> Result(Response(String), port.ChannelError) {
-  // Build HTTP POST request using pipe operator
-  let req =
-    request.new()
+  use req <- result.try(
+    request.to(url)
+    |> result.replace_error(port.SendFailed("Invalid Slack API URL: " <> url)),
+  )
+  let req_with_body =
+    req
     |> request.set_method(http.Post)
-    |> request.set_header("Authorization", "Bearer " <> bot_token)
-    |> request.set_header("Content-Type", "application/json")
-
-  // Set the URL and body
-  let req_with_url = request.set_host(req, url)
-  let req_with_body = request.set_body(req_with_url, payload)
+    |> request.set_header("authorization", "Bearer " <> bot_token)
+    |> request.set_header("content-type", "application/json")
+    |> request.set_body(payload)
 
   // Send the request
   case hackney.send(req_with_body) {

@@ -54,7 +54,7 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 - **Índice para a `buscar_conversa`**, que hoje é o teto da vazão ([3.1](#31-conversa-e-memória)).
 - **`/voz` no Telegram:** a A-11 abriu a mídia de entrada, mas a resposta em voz pede o `sendVoice`.
 - **Exportação OTLP dos spans** ([3.4](#34-observabilidade-e-desempenho)).
-- **Defeitos de canal:** tamanho nas edições do Matrix, fallback do streaming do Slack, `StartHooks` por canal, a URL no campo de host do Slack ([3.2](#32-canais)).
+- **Defeitos de canal:** tamanho nas edições do Matrix, fallback do streaming do Slack, `StartHooks` por canal ([3.2](#32-canais)).
 - **Discord:** `/voz` (precisa de um codificador Opus, junto com o `/voz` do Telegram).
 
 ### 0.4 Sem data
@@ -219,7 +219,7 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
 - **O grupo fechado só existe em Telegram, Discord e WhatsApp.**
   - Os outros sete canais têm adaptador nativo, mas a orquestração passa pelo `generic_channel_router`, sem o pipeline de acesso e orçamento e sem testes de ponta a ponta. Por isso são "experimentais". O WhatsApp passou a receber (webhook próprio, `C-02` e `C-03`, e pareamento pela API do GOWA, `C-04`, na #71) e continua nesse caminho genérico.
   - Origem: `TODO.md` P1.
-- **O Slack monta a URL no campo de host** (`slack_adapter.gleam`, `request.set_host(req, url)`), o mesmo defeito que impedia o Discord de enviar qualquer coisa (achado na [PRD-D](prd/PRD-D-discord.md)). Provavelmente o Slack também não envia; conferir com um servidor local antes de corrigir.
+- ~~**O Slack monta a URL no campo de host.**~~ Corrigido em 26/11: contra um servidor local, o envio nem saía (`ConnectTimeout`); o Slack não enviava nada. Agora o pedido vai para a URL (`request.to`), com teste.
 - **Slack e Matrix sem paridade com Telegram e Discord.** Faltam sessão, comandos, interações e testes de ponta a ponta. Origem: `TODO.md`, pós-PRD.
 - **Nunca testados com mensagem real:** Slack e Matrix. Origem: `audit/production.md`.
 - **QQ nunca foi feito.** Origem: `IMPLEMENTATION_READY.md` 4.6.
