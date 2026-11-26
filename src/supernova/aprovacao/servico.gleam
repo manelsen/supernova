@@ -24,6 +24,7 @@ import supernova/aprovacao/pedido.{Decide, Explain}
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/port
 import supernova/core/agent_identity
+import supernova/core/exception_guard
 import supernova/core/principal
 import supernova/self/aprovacoes.{type Request, Expire, Remind}
 
@@ -167,9 +168,19 @@ pub fn answer_button(
   case pedido.parse_action(action_id) {
     None -> None
     Some(answer) ->
-      case aprovacoes.pending(context.data_dir, principal) {
-        Ok(pending) -> Some(settle(context, principal, answer, pending))
-        Error(reason) -> Some(failed(reason))
+      case aprovacoes.pending(context.data_dir, principal), answer.number {
+        Ok(pending), Some(id) ->
+          case list.any(pending, fn(r) { r.id == id }) {
+            True -> Some(settle(context, principal, answer, pending))
+            // A button left on an older message: say what became of it.
+            False ->
+              case aprovacoes.request(context.data_dir, principal, id) {
+                Ok(request) -> Some(pedido.decided_text(request))
+                Error(_) -> Some(settle(context, principal, answer, pending))
+              }
+          }
+        Ok(pending), None -> Some(settle(context, principal, answer, pending))
+        Error(reason), _ -> Some(failed(reason))
       }
   }
 }
@@ -285,7 +296,9 @@ pub fn start_clock(context: Context) -> Nil {
 
 fn clock_loop(context: Context) -> Nil {
   process.sleep(tick_every_ms)
-  tick_all(context)
+  // A crash in one round (a channel that raised) must not stop the
+  // reminders and expiries for good.
+  let _ = exception_guard.run(fn() { tick_all(context) })
   clock_loop(context)
 }
 

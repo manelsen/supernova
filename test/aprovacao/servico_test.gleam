@@ -139,10 +139,12 @@ pub fn a_button_decides_test() {
   let assert Some(reply) =
     servico.answer_button(context, "telegram:100", "aprovacao:1:sim")
   string.starts_with(reply, "Aprovado") |> should.be_true
-  // A second press finds nothing pending.
+  // A second press, on the reminder or the first message, says what
+  // became of the request.
   let assert Some(again) =
-    servico.answer_button(context, "telegram:100", "aprovacao:1:sim")
-  string.contains(again, "Não há pedido 1") |> should.be_true
+    servico.answer_button(context, "telegram:100", "aprovacao:1:nao")
+  string.starts_with(again, "Aprovado") |> should.be_true
+  drain(sent) |> list.length |> should.equal(1)
   servico.answer_button(context, "telegram:100", "modelo:x")
   |> should.equal(None)
 }
