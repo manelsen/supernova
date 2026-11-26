@@ -341,9 +341,9 @@ Proxy `saida/`, rede interna sem rota direta, credencial só de `svc`, lista
 de fábrica e lista da pessoa (pedido de site novo vira aprovação, K21).
 
 **Aceite:**
-- [ ] No computador: `curl` do shell a um site fora da lista falha; pip e
+- [x] No computador: `curl` do shell a um site fora da lista falha; pip e
       npm funcionam; site aprovado passa a funcionar só para aquela pessoa.
-- [ ] `sh` não lê a credencial do proxy.
+- [x] `sh` não lê a credencial do proxy.
 - [ ] Commit: `feat(computador): saída do shell pela lista`.
 
 #### K-06: Portão do navegador

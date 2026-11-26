@@ -67,6 +67,10 @@ services:
       COMPUTADOR_TOKEN: ${SUPERNOVA_COMPUTADOR_TOKEN_INTERNO:-}
       DESPACHANTE_IMAGEM: supernova-computador:latest
       DESPACHANTE_RUNTIME: ${SUPERNOVA_COMPUTER_RUNTIME:-runsc}
+      DESPACHANTE_SAIDA: supernova-saida
+      DESPACHANTE_SAIDA_ADMIN: http://saida:7072
+      SAIDA_TOKEN: ${SUPERNOVA_SAIDA_TOKEN:-}
+      SAIDA_CREDENCIAL: ${SUPERNOVA_SAIDA_CREDENCIAL:-}
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true
@@ -80,6 +84,29 @@ services:
     # Each person's computer has a network of its own, which the dispatcher
     # makes and joins (K-I4); it listens only here, on Supernova's network.
     networks: [default]
+
+  # The computers' only way out (PRD-K, K-05). Each computer's network is
+  # internal; the dispatcher puts this proxy on it. The browser passes with
+  # the person's credential; the shell only to a list of sites. It refuses
+  # internal addresses and resolves names itself. No Docker socket.
+  saida:
+    profiles: ["computador"]
+    container_name: supernova-saida
+    build: ./saida
+    environment:
+      SAIDA_TOKEN: ${SUPERNOVA_SAIDA_TOKEN:-}
+      SAIDA_CREDENCIAL: ${SUPERNOVA_SAIDA_CREDENCIAL:-}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    mem_limit: 256m
+    restart: unless-stopped
+    networks:
+      # Out to the internet through a network of its own.
+      saida_net:
+        gw_priority: 1
+      # The dispatcher's door.
+      default: {}
 
   # The image of people's computers: a Linux machine with a shell and a
   # browser, apart from Supernova and holding none of its secrets. Built
@@ -214,6 +241,9 @@ networks:
   # SearXNG's way out. Its bridge has a fixed name so the host firewall
   # rules keep it away from the host and the LAN, like the computers'
   # (`brc-*`, one per person, made by the dispatcher).
+  # The proxy's way out: nothing else on it.
+  saida_net:
+    name: supernova_saida
   computador_net:
     name: supernova_computador
     driver_opts:

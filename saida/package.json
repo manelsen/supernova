@@ -1,0 +1,10 @@
+{
+  "name": "supernova-saida",
+  "private": true,
+  "type": "module",
+  "description": "The computers' only way out (PRD-K, K5): the browser with its credential, the shell only to a list of sites.",
+  "scripts": {
+    "start": "node saida.mjs",
+    "test": "node --test"
+  }
+}

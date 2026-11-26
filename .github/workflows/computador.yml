@@ -23,5 +23,10 @@ jobs:
         run: docker build -t supernova-computador computador/
       - name: Run tests
         run: |
-          docker run --rm --cap-drop ALL --security-opt no-new-privileges \
+          # The service's tests as its user (svc = pwuser); the launcher's as
+          # root with the four capabilities the dispatcher gives it (K-05).
+          docker run --rm --user pwuser --cap-drop ALL --security-opt no-new-privileges \
             --shm-size 1g supernova-computador npm test --prefix /opt/computador
+          docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+            --cap-add KILL --security-opt no-new-privileges \
+            supernova-computador node --test /opt/computador/test/lancador.test.mjs

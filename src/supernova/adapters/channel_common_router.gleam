@@ -483,6 +483,16 @@ fn run_executor_for_context(
                     True -> sonda.execute(origin, arguments, probe_env(invoke))
                     False -> Error("sonda não é permitida para você")
                   }
+                // A site for the shell (PRD-K, K21): a request to the person,
+                // born in this chat; the first sentence is the code's.
+                _ if name == computador_tool.name ->
+                  case computador_tool.site_request(arguments), may_code {
+                    Some(_), False ->
+                      Error("computador não é permitido para você")
+                    Some(asked), True ->
+                      ask_for_site(turn.principal_id, msg, asked)
+                    None, _ -> invoke(name, arguments)
+                  }
                 _ -> invoke(name, arguments)
               }
               process.send(
@@ -521,10 +531,46 @@ fn run_executor_for_context(
   }
 }
 
-/// Messages the core made itself: an agenda entry or a task result.
+/// Messages the core made itself: an agenda entry, a task result, an
+/// approval's outcome.
 fn is_synthetic(message_id: String) -> Bool {
   string.starts_with(message_id, "agenda:")
   || string.starts_with(message_id, "tarefa:")
+  || string.starts_with(message_id, "aprovacao:")
+}
+
+/// `pedir_site`: the person is asked, in private, to let the shell reach a
+/// site (PRD-K, K21). Approving adds it to their list for good.
+fn ask_for_site(
+  principal: String,
+  msg: port.ChannelMessage,
+  asked: Result(computador_tool.SiteRequest, String),
+) -> Result(String, String) {
+  case asked, aprovacao_servico.get() {
+    Error(reason), _ -> Error(reason)
+    Ok(_), None -> Error("aprovações não estão disponíveis agora")
+    Ok(computador_tool.SiteRequest(site, reason)), Some(context) ->
+      aprovacao_servico.pedir(
+        context,
+        principal,
+        aprovacoes.Draft(
+          kind: aprovacoes.ShellSite,
+          target: site,
+          summary: "Liberar o site "
+            <> site
+            <> " para o shell do seu computador baixar arquivos.",
+          explanation: reason,
+          task: None,
+          approve: aprovacoes.Permanent,
+          always: False,
+          origin: aprovacoes.Chat(msg.channel, msg.channel_id, msg.user_id),
+        ),
+        in_group: !closed_group_pure.is_private_chat(
+          msg.channel,
+          msg.channel_id,
+        ),
+      )
+  }
 }
 
 /// A task result arriving as a message is kept in the history as the tool

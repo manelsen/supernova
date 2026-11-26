@@ -13,7 +13,8 @@
 
 import http from 'node:http';
 import os from 'node:os';
-import { timingSafeEqual } from 'node:crypto';
+import net from 'node:net';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { docker as dockerClient } from './docker.mjs';
 
 // The person's hash Supernova uses (PRD-S, S19): 16 hex digits.
@@ -46,6 +47,33 @@ export const networkName = (person) => `computador-${person}`;
 // all with `brc+` (docs/operations/COMPUTADOR.md).
 export const bridgeName = (person) => `brc-${person.slice(0, 11)}`;
 
+/// The browser's proxy credential for a person (the proxy derives the same).
+export function credentialFor(master, person) {
+  return createHmac('sha256', master).update(`saida:${person}`).digest('hex');
+}
+
+const HOST = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/// The sites a person approved for the shell (K21): plain host names.
+export function sitesOf(body) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new UserError('body must be a JSON object');
+  if (Object.keys(body).join(',') !== 'sites' || !Array.isArray(body.sites) || body.sites.length > 200) {
+    throw new UserError('expected {"sites": [...]}');
+  }
+  const sites = body.sites.map((x) => String(x).toLowerCase());
+  if (!sites.every((x) => HOST.test(x) && !net.isIP(x))) throw new UserError('a site is a host name');
+  return sites;
+}
+
+/// The fixed addresses on a person's network: the proxy at .2, the
+/// dispatcher at .3; the computer gets the next free one.
+export function fixedAddresses(subnet) {
+  const [base] = subnet.split('/');
+  const parts = base.split('.').map(Number);
+  const at = (n) => [parts[0], parts[1], parts[2], parts[3] + n].join('.');
+  return { saida: at(2), despachante: at(3) };
+}
+
 export class UserError extends Error {}
 export class NoPlace extends Error {}
 
@@ -56,7 +84,15 @@ const labels = (person) => ({ [LABEL]: '1', 'supernova.pessoa': person });
 export function computerSpec(config, person) {
   return {
     Image: config.image,
-    Env: [`COMPUTADOR_TOKEN=${config.computerToken}`],
+    Env: [
+      `COMPUTADOR_TOKEN=${config.computerToken}`,
+      // The only way out (K-05): the proxy on the person's network. The
+      // launcher gives the credential to the browser's user, never the
+      // shell's.
+      `SAIDA_URL=http://${config.saidaAddress}:3128`,
+      `SAIDA_USUARIO=${person}`,
+      `SAIDA_SENHA=${credentialFor(config.saida.master, person)}`,
+    ],
     Labels: labels(person),
     HostConfig: {
       Runtime: config.runtime,
@@ -66,6 +102,9 @@ export function computerSpec(config, person) {
       PidsLimit: LIMITS.pids,
       ShmSize: LIMITS.shmBytes,
       CapDrop: ['ALL'],
+      // The launcher's, and nothing more: it hands the service to svc and
+      // the shell to sh (K-05, K-07).
+      CapAdd: ['CHOWN', 'SETUID', 'SETGID', 'KILL'],
       SecurityOpt: ['no-new-privileges:true'],
       Mounts: [
         { Type: 'volume', Source: volumeName(person), Target: '/home/pwuser' },
@@ -136,24 +175,67 @@ export function computers(config) {
     throw new Error(`docker ${kind} create: ${made.status} ${made.text}`);
   }
 
-  async function joinNetwork(person) {
-    if (!config.self) return;
-    const joined = await d.request('POST', `/networks/${networkName(person)}/connect`, { Container: config.self });
+  async function connect(person, container, address) {
+    const joined = await d.request('POST', `/networks/${networkName(person)}/connect`, {
+      Container: container,
+      EndpointConfig: { IPAMConfig: { IPv4Address: address } },
+    });
     // 403/409: already connected.
     if (joined.status !== 200 && joined.status !== 403 && joined.status !== 409) {
-      throw new Error(`docker network connect: ${joined.status} ${joined.text}`);
+      throw new Error(`docker network connect ${container}: ${joined.status} ${joined.text}`);
     }
+  }
+
+  /// The person's network with the proxy and the dispatcher on it, at their
+  /// fixed addresses; the proxy told whose address it is and their sites.
+  async function joinNetwork(person) {
+    const found = await d.request('GET', `/networks/${networkName(person)}`);
+    if (found.status !== 200) throw new Error(`docker network inspect: ${found.status} ${found.text}`);
+    const ipam = found.body.IPAM && found.body.IPAM.Config && found.body.IPAM.Config[0];
+    if (!ipam || !ipam.Subnet) throw new Error('the person\'s network has no subnet');
+    const fixed = fixedAddresses(ipam.Subnet);
+    await connect(person, config.saida.container, fixed.saida);
+    if (config.self) await connect(person, config.self, fixed.despachante);
+    await tellSaida(person, fixed.saida);
+    return fixed;
+  }
+
+  const addresses = new Map();
+  const sites = new Map();
+
+  async function tellSaida(person, address) {
+    addresses.set(person, address);
+    const res = await fetch(new URL(`/v1/pessoas/${person}`, config.saida.admin), {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${config.saida.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ endereco: address, sites: sites.get(person) || [] }),
+    });
+    if (!res.ok) throw new Error(`saida: ${res.status}`);
+  }
+
+  async function forgetSaida(person) {
+    addresses.delete(person);
+    sites.delete(person);
+    const res = await fetch(new URL(`/v1/pessoas/${person}`, config.saida.admin), {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${config.saida.token}` },
+    });
+    if (!res.ok) throw new Error(`saida: ${res.status}`);
   }
 
   async function create(person) {
     await ensure('network', '/networks/create', {
       Name: networkName(person),
       Driver: 'bridge',
+      // No route out: everything leaves through the proxy (K-05).
+      Internal: true,
       Labels: labels(person),
       Options: { 'com.docker.network.bridge.name': bridgeName(person) },
     });
     await ensure('volume', '/volumes/create', { Name: volumeName(person), Labels: labels(person) });
-    const made = await d.request('POST', `/containers/create?name=${containerName(person)}`, computerSpec(config, person));
+    const fixed = await joinNetwork(person);
+    const spec = computerSpec({ ...config, saidaAddress: fixed.saida }, person);
+    const made = await d.request('POST', `/containers/create?name=${containerName(person)}`, spec);
     if (made.status !== 201) throw new Error(`docker create: ${made.status} ${made.text}`);
   }
 
@@ -309,6 +391,8 @@ export function computers(config) {
     },
     async apagar(person) {
       live.delete(person);
+      // The proxy keeps only memory; a proxy that is down forgets anyway.
+      await forgetSaida(person).catch(() => {});
       if (await container(person)) {
         const removed = await d.request('DELETE', `/containers/${containerName(person)}?force=true`);
         if (removed.status !== 204 && removed.status !== 404) throw new Error(`docker rm: ${removed.status} ${removed.text}`);
@@ -319,14 +403,22 @@ export function computers(config) {
         if (found.status !== 200) throw new Error(`docker ${kind} inspect: ${found.status} ${found.text}`);
         // One of that name that we did not make is not touched.
         if (!isOurs(found.body.Labels)) throw new Error(`${path.split('/')[2]} exists and is not a computer's`);
-        if (kind === 'network' && config.self) {
-          await d.request('POST', `${path}/disconnect`, { Container: config.self, Force: true });
+        if (kind === 'network') {
+          for (const member of [config.saida.container, config.self].filter(Boolean)) {
+            await d.request('POST', `${path}/disconnect`, { Container: member, Force: true });
+          }
         }
         const removed = await d.request('DELETE', kind === 'volume' ? `${path}?force=true` : path);
         if (removed.status !== 204 && removed.status !== 404) throw new Error(`docker ${kind} rm: ${removed.status} ${removed.text}`);
       }
       wake();
       return { pessoa: person, apagado: true };
+    },
+    /// The person's sites for the shell (K21), from Supernova's approvals.
+    async sites(person, list) {
+      sites.set(person, list);
+      if (addresses.has(person)) await tellSaida(person, addresses.get(person));
+      return { pessoa: person, sites: list };
     },
     async estado() {
       const filters = encodeURIComponent(JSON.stringify({ label: [`${LABEL}=1`] }));
@@ -407,6 +499,7 @@ function forward(config, person, path, body) {
 const CALL = /^\/v1\/pessoas\/([^/]+)\/(run|mcp)$/;
 
 export function createServer(config, pcs = computers(config)) {
+  const SITES = /^\/v1\/pessoas\/([^/]+)\/sites$/;
   const actions = {
     '/v1/ligar': pcs.ligar,
     '/v1/desligar': pcs.desligar,
@@ -415,7 +508,8 @@ export function createServer(config, pcs = computers(config)) {
   return http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true });
     const call = req.url.match(CALL);
-    const known = req.url in actions || req.url === '/v1/estado' || call;
+    const sitesCall = req.url.match(SITES);
+    const known = req.url in actions || req.url === '/v1/estado' || call || sitesCall;
     if (!known) return send(res, 404, { ok: false, error: 'not found' });
     if (req.headers['origin'] !== undefined) return send(res, 403, { ok: false, error: 'requests from a browser are refused' });
     if (!authorized(req, config.token)) return send(res, 401, { ok: false, error: 'unauthorized' });
@@ -434,6 +528,9 @@ export function createServer(config, pcs = computers(config)) {
       }
       let body;
       try { body = JSON.parse(raw.toString('utf8')); } catch { throw new UserError('body must be JSON'); }
+      if (sitesCall) {
+        return send(res, 200, { ok: true, ...(await pcs.sites(checkPerson(sitesCall[1]), sitesOf(body))) });
+      }
       return send(res, 200, { ok: true, ...(await actions[req.url](personOf(body))) });
     } catch (e) {
       const message = String(e && e.message ? e.message : e).split('\n')[0].slice(0, 500);
@@ -493,6 +590,12 @@ export function configFromEnv(env) {
     port: Number(env.DESPACHANTE_PORTA || 7071),
     listen: (env.DESPACHANTE_ESCUTA || '').trim(),
     socket: (env.DOCKER_SOCKET || '/var/run/docker.sock').trim(),
+    saida: {
+      container: (env.DESPACHANTE_SAIDA || 'supernova-saida').trim(),
+      admin: (env.DESPACHANTE_SAIDA_ADMIN || 'http://saida:7072').trim(),
+      token: required('SAIDA_TOKEN'),
+      master: required('SAIDA_CREDENCIAL'),
+    },
     computerUrl: (person) => `http://${containerName(person)}:7070`,
     self: os.hostname(),
   };

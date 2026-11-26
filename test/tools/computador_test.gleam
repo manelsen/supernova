@@ -1,17 +1,20 @@
 import envoy
 import gleam/int
 import gleam/list
-import gleam/option.{Some}
+import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
 import supernova/adapters/mcp/computer
+import supernova/aprovacao/servico as aprovacao_servico
 import supernova/config
 import supernova/config_check
 import supernova/core/executor
 import supernova/core/tool_dispatch
 import supernova/llm/provider
 import supernova/llm/tool_images
+import supernova/self/aprovacoes
 import supernova/tools/computador
+import test_workspace
 
 @external(erlang, "computer_test_ffi", "serve_once")
 fn serve_once(status: Int, body: String) -> Int
@@ -258,4 +261,110 @@ pub fn blank_selector_is_not_sent_with_a_point_test() {
       "{\"action\":\"click\",\"selector\":\" \",\"x\":10,\"y\":20}",
     )
   request.body |> should.equal("{\"op\":\"click\",\"x\":10,\"y\":20}")
+}
+
+// ------------------------------------------------- the shell's sites (K-05)
+
+type Fake
+
+@external(erlang, "mcp_computer_fake_ffi", "start")
+fn start_fake(responder: fn(String) -> #(Int, String)) -> Fake
+
+@external(erlang, "mcp_computer_fake_ffi", "requests")
+fn fake_requests(fake: Fake) -> List(String)
+
+@external(erlang, "mcp_computer_fake_ffi", "stop")
+fn stop_fake(fake: Fake) -> Nil
+
+@external(erlang, "erlang", "element")
+fn fake_port(index: Int, fake: Fake) -> Int
+
+pub fn pedir_site_reads_a_plain_host_test() {
+  computador.site_request(
+    "{\"action\":\"pedir_site\",\"site\":\"https://Docs.Example.com/x\",\"reason\":\"documentação\"}",
+  )
+  |> should.equal(
+    Some(Ok(computador.SiteRequest("docs.example.com", "documentação"))),
+  )
+  computador.site_request("{\"action\":\"exec\",\"command\":\"ls\"}")
+  |> should.equal(None)
+  let assert Some(Error(_)) =
+    computador.site_request("{\"action\":\"pedir_site\",\"site\":\"10.0.0.1\"}")
+  let assert Some(Error(_)) =
+    computador.site_request("{\"action\":\"pedir_site\"}")
+  computador.host_of("exemplo.com.br:8080")
+  |> should.equal(Ok("exemplo.com.br"))
+  computador.host_of("localhost") |> should.equal(Error(Nil))
+  computador.host_of("a..b") |> should.equal(Error(Nil))
+  // Inside a task there is no conversation to ask in.
+  computador.execute(
+    "telegram:1",
+    "{\"action\":\"pedir_site\",\"site\":\"a.com\"}",
+  )
+  |> should.be_error
+}
+
+pub fn the_shell_s_sites_go_before_every_command_test() {
+  let dir = test_workspace.create_temp_dir("computador_sites")
+  let assert Ok(_) =
+    aprovacoes.ask(
+      dir,
+      "telegram:1",
+      0,
+      aprovacoes.Draft(
+        kind: aprovacoes.ShellSite,
+        target: "exemplo.com",
+        summary: "Liberar o site exemplo.com.",
+        explanation: "",
+        task: None,
+        approve: aprovacoes.Permanent,
+        always: False,
+        origin: aprovacoes.Chat("telegram", "1", "1"),
+      ),
+    )
+  let assert Ok(_) =
+    aprovacoes.decide(
+      dir,
+      "telegram:1",
+      0,
+      1,
+      aprovacoes.Approve(aprovacoes.Permanent),
+    )
+  aprovacao_servico.configure(
+    aprovacao_servico.Context(
+      data_dir: dir,
+      clock: fn() { 0 },
+      send_private: fn(_, _, _) { Ok(Nil) },
+      inject: fn(_) { Ok(Nil) },
+    ),
+  )
+  let fake =
+    start_fake(fn(body) {
+      case string.contains(body, "\"sites\"") {
+        True -> #(200, "{\"ok\":true}")
+        False -> #(200, "{\"ok\":true,\"exit_code\":0,\"stdout\":\"oi\"}")
+      }
+    })
+  let assert Ok(_) =
+    with_url("http://127.0.0.1:" <> int.to_string(fake_port(1, fake)), fn() {
+      computador.execute(
+        "telegram:1",
+        "{\"action\":\"exec\",\"command\":\"echo oi\"}",
+      )
+    })
+  let hash = computer.person_hash("telegram:1")
+  let assert [sites, run] = fake_requests(fake)
+  string.starts_with(sites, "POST /v1/pessoas/" <> hash <> "/sites ")
+  |> should.be_true
+  string.contains(sites, "{\"sites\":[\"exemplo.com\"]}") |> should.be_true
+  string.starts_with(run, "POST /v1/pessoas/" <> hash <> "/run ")
+  |> should.be_true
+  // Browser actions do not touch the shell's list.
+  let _ =
+    with_url("http://127.0.0.1:" <> int.to_string(fake_port(1, fake)), fn() {
+      computador.execute("telegram:1", "{\"action\":\"text\"}")
+    })
+  list.length(fake_requests(fake)) |> should.equal(3)
+  stop_fake(fake)
+  aprovacao_servico.clear()
 }

@@ -47,6 +47,8 @@ type MockToolMode {
   MockToolTask(tool: String, ms: Int)
   /// `[mock-sonda tipo instruções]`: send a probe (PRD-S, S-07).
   MockToolProbe(kind: String, instructions: String)
+  /// `[mock-site exemplo.com]`: ask for a site for the shell (PRD-K, K-05).
+  MockToolSite(site: String)
 }
 
 // ============================================================================
@@ -259,6 +261,25 @@ fn mock_chat_default(
             id: "mock_tool_call_1",
             name: name,
             arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolSite(site) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "computador",
+            arguments: json.to_string(
+              json.object([
+                #("action", json.string("pedir_site")),
+                #("site", json.string(site)),
+                #("reason", json.string("Para instalar a biblioteca.")),
+              ]),
+            ),
           ),
         ]),
         reasoning_content: None,
@@ -755,6 +776,17 @@ fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
 }
 
 fn mock_task_mark(content: String) -> Option(MockToolMode) {
+  case string.split_once(content, "[mock-site ") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(site, _)) -> Some(MockToolSite(string.trim(site)))
+        Error(Nil) -> None
+      }
+    Error(Nil) -> mock_probe_mark(content)
+  }
+}
+
+fn mock_probe_mark(content: String) -> Option(MockToolMode) {
   case string.split_once(content, "[mock-sonda ") {
     Ok(#(_, rest)) ->
       case string.split_once(rest, "]") {

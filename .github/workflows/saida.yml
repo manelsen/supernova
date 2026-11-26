@@ -1,0 +1,25 @@
+name: saida
+
+# The computers' way out (saida/, PRD-K, K-05): the proxy's tests, in its
+# image. The full check with real computers is scripts/teste-saida.sh
+# (needs gVisor and internet; run by hand, see docs/operations/COMPUTADOR.md).
+on:
+  push:
+    branches: [master]
+    paths: ["saida/**", ".github/workflows/saida.yml"]
+  pull_request:
+    paths: ["saida/**", ".github/workflows/saida.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  saida:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t sn-saida saida/
+      - name: Run tests
+        run: docker run --rm --cap-drop ALL --security-opt no-new-privileges sn-saida npm test --prefix /opt/saida

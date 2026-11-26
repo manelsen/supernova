@@ -33,7 +33,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { guard } from './rede.mjs';
+import { guard, proxyOption } from './rede.mjs';
 
 export const MCP_LIMITS = {
   idleMs: 5 * 60_000,
@@ -140,6 +140,8 @@ async function browser() {
       const launched = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-dev-shm-usage'],
+        // Out only through the proxy, like the agent's own browser (K-05).
+        ...proxyOption(),
       });
       launched.on('disconnected', () => {
         if (sharedBrowser === launched) sharedBrowser = null;
