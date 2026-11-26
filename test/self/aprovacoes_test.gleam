@@ -17,8 +17,13 @@ fn draft(target: String, task) {
     summary: "Enviar o formulário em " <> target <> ".",
     explanation: "Para marcar a consulta.",
     task: task,
+    approve: Once,
+    always: True,
+    origin: chat,
   )
 }
+
+const chat = aprovacoes.Chat("telegram", "100", "100")
 
 fn setup(name: String) -> String {
   test_workspace.create_temp_dir("aprovacoes_" <> name)
@@ -26,7 +31,7 @@ fn setup(name: String) -> String {
 
 pub fn a_request_waits_reminds_once_and_expires_as_refused_test() {
   let dir = setup("ciclo")
-  let assert Ok(asked) =
+  let assert Ok(#(asked, True)) =
     aprovacoes.ask(dir, "ana", 0, draft("saude.gov.br", None))
   asked.id |> should.equal(1)
   asked.status |> should.equal(Pending)
@@ -56,10 +61,13 @@ pub fn an_answer_after_the_deadline_finds_it_expired_test() {
 
 pub fn asking_again_returns_the_pending_request_test() {
   let dir = setup("repetido")
-  let assert Ok(first) = aprovacoes.ask(dir, "ana", 0, draft("a.com", None))
-  let assert Ok(again) = aprovacoes.ask(dir, "ana", 5, draft("a.com", None))
+  let assert Ok(#(first, True)) =
+    aprovacoes.ask(dir, "ana", 0, draft("a.com", None))
+  let assert Ok(#(again, False)) =
+    aprovacoes.ask(dir, "ana", 5, draft("a.com", None))
   again.id |> should.equal(first.id)
-  let assert Ok(other) = aprovacoes.ask(dir, "ana", 5, draft("b.com", None))
+  let assert Ok(#(other, True)) =
+    aprovacoes.ask(dir, "ana", 5, draft("b.com", None))
   other.id |> should.equal(2)
   let assert Ok(open) = aprovacoes.pending(dir, "ana")
   list.map(open, fn(r) { r.id }) |> should.equal([1, 2])
@@ -68,7 +76,7 @@ pub fn asking_again_returns_the_pending_request_test() {
 pub fn asking_after_the_deadline_opens_a_new_request_test() {
   let dir = setup("vencido")
   let assert Ok(_) = aprovacoes.ask(dir, "ana", 0, draft("a.com", None))
-  let assert Ok(fresh) =
+  let assert Ok(#(fresh, True)) =
     aprovacoes.ask(dir, "ana", 24 * hour, draft("a.com", None))
   fresh.id |> should.equal(2)
   // The old one is still expired and told by the tick.
@@ -221,6 +229,9 @@ pub fn everything_survives_a_restart_test() {
         summary: "Apagar notas.txt.",
         explanation: "",
         task: Some(3),
+        approve: Once,
+        always: False,
+        origin: chat,
       ),
     )
   let assert Ok(_) =
@@ -234,6 +245,9 @@ pub fn everything_survives_a_restart_test() {
         summary: "Gastar até US$ 2,00.",
         explanation: "",
         task: None,
+        approve: Once,
+        always: True,
+        origin: chat,
       ),
     )
   let assert Ok(_) = aprovacoes.decide(dir, "ana", 1, 2, Approve(Permanent))
@@ -242,11 +256,14 @@ pub fn everything_survives_a_restart_test() {
   one.reminded |> should.be_true
   one.task |> should.equal(Some(3))
   one.kind |> should.equal(Overwrite)
+  one.always |> should.be_false
+  one.origin |> should.equal(chat)
   let assert Ok(two) = aprovacoes.request(dir, "ana", 2)
   two.status |> should.equal(Approved)
   two.decided_at |> should.equal(Some(1))
   // Numbering goes on where it stopped.
-  let assert Ok(three) = aprovacoes.ask(dir, "ana", 4, draft("x.com", None))
+  let assert Ok(#(three, _)) =
+    aprovacoes.ask(dir, "ana", 4, draft("x.com", None))
   three.id |> should.equal(3)
 }
 

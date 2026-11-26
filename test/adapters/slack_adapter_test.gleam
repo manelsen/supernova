@@ -1,3 +1,4 @@
+import aprovacao_amostra
 import discord_fake
 import gleam/option
 import gleam/string
@@ -155,6 +156,18 @@ pub fn build_thread_reply_test() {
 
   let result = slack_adapter.build_reply_payload(reply)
   should.be_ok(result)
+}
+
+/// PRD-K, K-02: a request for approval becomes Slack buttons.
+pub fn approval_buttons_become_slack_buttons_test() {
+  let assert Ok(payload) =
+    slack_adapter.build_reply_payload(aprovacao_amostra.reply("C0123456789", 7))
+  string.contains(payload, "\"action_id\":\"aprovacao:7:sim\"")
+  |> should.be_true
+  string.contains(payload, "\"action_id\":\"aprovacao:7:nao\"")
+  |> should.be_true
+  string.contains(payload, "\"action_id\":\"aprovacao:7:sempre\"")
+  |> should.be_true
 }
 
 pub fn build_interactive_reply_payload_test() {

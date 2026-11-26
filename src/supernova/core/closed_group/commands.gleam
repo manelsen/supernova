@@ -51,6 +51,13 @@ pub const all = [
     takes_arguments: False,
   ),
   Command(
+    name: "permissoes",
+    description: "O que a agente pode fazer sem perguntar",
+    usage: "/permissoes — as permissões que você deu para sempre. /permissoes revogar <número> tira uma.",
+    admin_only: False,
+    takes_arguments: True,
+  ),
+  Command(
     name: "esquecer",
     description: "Apagar o que você contou",
     usage: "/esquecer — explica o que é apagado. /esquecer confirmo apaga as conversas, as lembranças, os arquivos e a agenda; o nome e o jeito da agente ficam.",
@@ -168,6 +175,7 @@ fn candidates(
         #(value <> " · " <> string.slice(entry.1, 0, 80), value)
       })
     "esquecer" -> plain(["confirmo"])
+    "permissoes" -> plain(["revogar "])
     "model" -> plain(sources.models)
     "uso" ->
       case is_admin {

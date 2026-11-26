@@ -40,6 +40,7 @@ pub fn known_tool_names() -> List(String) {
     "agenda",
     "buscar_conversa",
     "lembrar",
+    "permissoes",
     "computador",
     "tarefa",
     "sonda",

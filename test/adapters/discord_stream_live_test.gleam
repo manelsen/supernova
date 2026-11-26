@@ -1,6 +1,7 @@
 //// Streaming, buttons and send errors through the REST client, against the
 //// local API fake (PRD-D, D-07: coverage of the live paths).
 
+import aprovacao_amostra
 import discord_fake
 import e2e/e2e_support as support
 import gleam/erlang/process
@@ -122,6 +123,26 @@ pub fn buttons_and_menus_become_components_test() {
   string.contains(sent.body, "\"custom_id\":\"sim\"") |> should.be_true
   string.contains(sent.body, "\"custom_id\":\"modelo\"") |> should.be_true
   string.contains(sent.body, "\"message_id\":\"m0\"") |> should.be_true
+  registry.stop_channels(channel_registry)
+}
+
+/// PRD-K, K-02: a request for approval reaches Discord as three buttons.
+pub fn approval_buttons_reach_discord_test() {
+  let api = discord_fake.start_api()
+  let channel_registry = start(api)
+  let assert Ok(Nil) =
+    registry.send(
+      channel_registry,
+      "discord",
+      aprovacao_amostra.reply("chan1@guild:g1", 7),
+    )
+  let sent = discord_fake.expect_request(api, "/channels/chan1/messages", 3000)
+  string.contains(sent.body, "\"custom_id\":\"aprovacao:7:sim\"")
+  |> should.be_true
+  string.contains(sent.body, "\"custom_id\":\"aprovacao:7:nao\"")
+  |> should.be_true
+  string.contains(sent.body, "\"custom_id\":\"aprovacao:7:sempre\"")
+  |> should.be_true
   registry.stop_channels(channel_registry)
 }
 

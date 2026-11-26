@@ -303,10 +303,10 @@ pendentes, injeção do resultado à agente. Comando `/permissoes` (listar e
 revogar); a agente pode **revogar** a pedido da pessoa, nunca conceder.
 
 **Aceite:**
-- [ ] Testes por canal com botões (Telegram, Discord, Slack) e sem
+- [x] Testes por canal com botões (Telegram, Discord, Slack) e sem
       (WhatsApp, sim): botão, "sim", "sim 2", nota de voz transcrita "sim".
-- [ ] K-I2 e K-I5 testados.
-- [ ] Pedido nascido em grupo vai ao privado; o grupo só lê o aviso.
+- [x] K-I2 e K-I5 testados.
+- [x] Pedido nascido em grupo vai ao privado; o grupo só lê o aviso.
 - [ ] Commit: `feat(aprovacao): pedido acessível no canal`.
 
 #### K-03: O despachante
