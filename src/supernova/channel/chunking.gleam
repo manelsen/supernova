@@ -11,6 +11,11 @@ pub const telegram_max_length = 4096
 
 pub const slack_max_length = 40_000
 
+/// A Matrix event holds at most 65,536 bytes, and an edit carries the text
+/// four times (`body` and `formatted_body`, in the event and in
+/// `m.new_content`). 4,000 characters fit even in four bytes each.
+pub const matrix_max_length = 4000
+
 const continuation_marker = "(continued)\n"
 
 const fence_marker = "```"

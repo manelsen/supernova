@@ -5,6 +5,7 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
 import supernova/adapters/matrix_adapter
+import supernova/channel/catalog
 import supernova/channel/channel_kit
 import supernova/channel/port
 import supernova/config
@@ -97,7 +98,8 @@ fn matrix_stream_send(
   }
 }
 
-fn stream_matrix_reply(
+/// Stream a reply into a placeholder message, editing it as the text grows.
+pub fn stream_matrix_reply(
   homeserver_url: String,
   access_token: String,
   base_reply: port.ChannelReply,
@@ -166,11 +168,17 @@ fn consume_matrix_stream_events(
     Ok(port.StreamComplete(reply)) ->
       case reply.content == last_content && !uncertain {
         True -> Ok(Nil)
-        False -> {
-          let final_reply =
-            port.ChannelReply(..reply, edit_message_id: Some(event_id))
-          matrix_adapter.send_reply(homeserver_url, access_token, final_reply)
-        }
+        // Past the limit, the first part edits the placeholder and the rest
+        // go out as new messages.
+        False ->
+          channel_kit.finish_stream_in_parts(
+            reply,
+            event_id,
+            catalog.get("matrix").edit_max_length,
+            fn(part) {
+              matrix_adapter.send_reply(homeserver_url, access_token, part)
+            },
+          )
       }
     Ok(port.StreamFailure(error)) -> Error(error)
     Error(_) -> Error(port.SendFailed("stream timed out"))
