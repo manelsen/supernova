@@ -46,6 +46,7 @@ import supernova/core/budget_policy/actor as budget_actor
 import supernova/core/closed_group/global as closed_group_global
 import supernova/core/closed_group/pure as closed_group_pure
 import supernova/core/closed_group/runtime as closed_group_runtime
+import supernova/core/exception_guard
 import supernova/core/executor
 import supernova/core/identity/aliases
 import supernova/core/instance_budget/actor as instance_budget
@@ -74,6 +75,7 @@ import supernova/metrics/global as metrics_global
 import supernova/metrics/record
 import supernova/self/aprovacoes
 import supernova/self/desk
+import supernova/self/forget
 import supernova/self/reflection
 import supernova/self/tasks
 import supernova/sondas/sonda
@@ -464,6 +466,7 @@ fn start_services(
   // tasks a restart cut short are told as interrupted (D6), and results
   // not delivered yet are delivered.
   start_approvals(cfg, clock, channel_reg, channel_handler)
+  start_forget_retries(cfg, session_sup)
 
   start_tasks(cfg, clock, fn(message) {
     registry.inject(channel_reg, channel_handler, port.inbound_message(message))
@@ -1125,6 +1128,42 @@ fn print_channel_status(name: String, enabled: Bool) -> Nil {
     True -> io.println("    - " <> name <> ": enabled")
     False -> io.println("    - " <> name <> ": disabled")
   }
+}
+
+/// What /esquecer could not finish (the computer down, the inbox log not
+/// rewritten) is tried again every minute; the person hears when it is all
+/// done (PRD-K, K-I7). Not in the harness, which drives time itself.
+fn start_forget_retries(
+  cfg: config.Config,
+  sessions: supervisor.SessionSupervisor,
+) -> Nil {
+  case cfg.environment == "harness" {
+    True -> Nil
+    False -> {
+      process.spawn_unlinked(fn() { forget_retry_loop(cfg.data_dir, sessions) })
+      Nil
+    }
+  }
+}
+
+fn forget_retry_loop(
+  data_dir: String,
+  sessions: supervisor.SessionSupervisor,
+) -> Nil {
+  process.sleep(60_000)
+  let _ =
+    exception_guard.run(fn() {
+      forget.retry_all(data_dir, Some(sessions), fn(principal) {
+        case aprovacao_servico.get() {
+          Some(context) -> {
+            let _ = context.send_private(principal, forget.done_message, None)
+            Nil
+          }
+          None -> Nil
+        }
+      })
+    })
+  forget_retry_loop(data_dir, sessions)
 }
 
 /// Approvals (PRD-K, K-02): requests go to the person's private chat, with

@@ -131,6 +131,7 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
       workspace_files: 0,
       agenda: 1,
       incidents: 1,
+      pendente: [],
     )) = forget.forget(root, "sim:alice", None)
     incidents.count(root, "sim:alice") |> should.equal(0)
     agenda_store.list(root, "sim:alice") |> should.equal([])
@@ -162,7 +163,7 @@ pub fn forget_removes_owner_content_and_keeps_identity_test() {
           entry.operation == "forget"
           && entry.agent_id == "sim:alice"
           && entry.details
-          == "journal=1,experiences=1,pressures=1,lessons=1,relationship=1,sessions=0,workspace_files=0,agenda=1,incidents=1"
+          == "journal=1,experiences=1,pressures=1,lessons=1,relationship=1,sessions=0,workspace_files=0,agenda=1,incidents=1,pending=0"
         })
         |> should.be_true()
       None -> should.fail()

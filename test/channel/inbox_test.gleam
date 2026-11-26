@@ -424,7 +424,7 @@ pub fn forget_erases_the_persons_messages_test() {
       port.ChannelMessage(..msg("3", "de outra pessoa"), user_id: "8"),
       now(),
     )
-  inbox.forget(box, "telegram:7", now()) |> should.equal(1)
+  inbox.forget(box, "telegram:7", now()) |> should.equal(Ok(1))
   inbox.count(box).0 |> should.equal(1)
   let assert Ok(text) = read_file(dir <> "/inbox.jsonl")
   string.contains(text, "SEGREDO") |> should.equal(False)

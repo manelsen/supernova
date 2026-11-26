@@ -60,7 +60,7 @@ pub opaque type Message {
   Receive(reply_to: Subject(Bool), message: port.ChannelMessage, now: Int)
   Done(key: String, now: Int)
   Recover(reply_to: Subject(List(Pending)), now: Int)
-  Forget(reply_to: Subject(Int), principal: String, now: Int)
+  Forget(reply_to: Subject(Result(Int, String)), principal: String, now: Int)
   Count(reply_to: Subject(#(Int, Int)))
   Writes(reply_to: Subject(Int))
   Stop(reply_to: Subject(Nil))
@@ -127,7 +127,13 @@ pub fn recover(inbox: Inbox, now: Int) -> List(Pending) {
 /// inbox, so a restart does not answer them, and the log is rewritten at
 /// once, without the text of any message whose turn is done. Returns how
 /// many pending messages were dropped.
-pub fn forget(inbox: Inbox, principal: String, now: Int) -> Int {
+/// Drop the person's waiting messages and rewrite the log without them.
+/// An error means the log on disk may still hold them: call again.
+pub fn forget(
+  inbox: Inbox,
+  principal: String,
+  now: Int,
+) -> Result(Int, String) {
   actor.call(inbox, waiting: 5000, sending: Forget(_, principal, now))
 }
 
@@ -204,11 +210,18 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
       let #(gone, kept) =
         dict.to_list(state.pending)
         |> list.partition(fn(pair) { principal_of(pair.1.message) == principal })
-      let state =
-        State(..state, pending: dict.from_list(kept))
-        |> compact(now)
-      actor.send(reply_to, list.length(gone))
-      actor.continue(state)
+      let state = State(..state, pending: dict.from_list(kept))
+      // The person was told they are forgotten only if the disk says so.
+      case try_compact(state, now) {
+        Ok(state) -> {
+          actor.send(reply_to, Ok(list.length(gone)))
+          actor.continue(state)
+        }
+        Error(reason) -> {
+          actor.send(reply_to, Error(reason))
+          actor.continue(state)
+        }
+      }
     }
 
     Count(reply_to) -> {
@@ -315,7 +328,19 @@ fn write(state: State, lines: List(String), now: Int) -> State {
 }
 
 /// Rewrite the log with the pending messages and the keys of the last day.
+/// A failure keeps the old log and is only a warning here: the next
+/// compaction tries again.
 fn compact(state: State, now: Int) -> State {
+  case try_compact(state, now) {
+    Ok(state) -> state
+    Error(reason) -> {
+      safe_io.println("warn: inbox not compacted error=" <> reason)
+      state
+    }
+  }
+}
+
+fn try_compact(state: State, now: Int) -> Result(State, String) {
   let seen = dict.filter(state.seen, fn(_, at) { now - at <= memory_ms })
   let done_lines =
     dict.to_list(seen)
@@ -327,16 +352,10 @@ fn compact(state: State, now: Int) -> State {
   case write_file(tmp, string.concat(lines)) {
     Ok(Nil) ->
       case rename(tmp, state.file) {
-        Ok(Nil) -> State(..state, seen: seen, lines: list.length(lines))
-        Error(reason) -> {
-          safe_io.println("warn: inbox not compacted error=" <> reason)
-          state
-        }
+        Ok(Nil) -> Ok(State(..state, seen: seen, lines: list.length(lines)))
+        Error(reason) -> Error(reason)
       }
-    Error(reason) -> {
-      safe_io.println("warn: inbox not compacted error=" <> reason)
-      state
-    }
+    Error(reason) -> Error(reason)
   }
 }
 
