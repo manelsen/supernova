@@ -1,8 +1,9 @@
 [PRD]
 # PRD F: Ferramentas como atores, e em segundo plano
 
-> **Situação em 25/11/2026:** aprovada; fase A executada (F-00 a F-04, PR #80),
-> F-08 descartada pelo resultado da D7. D3, D4 e D7 decididas pelo
+> **Situação em 26/11/2026:** aprovada; fase A executada (F-00 a F-04, PR #80),
+> F-08 descartada pelo resultado da D7; fase B executada (F-05 a F-07), com o
+> cenário de harness pendente (ver `relatorios/PRD-F-B.md`). D3, D4 e D7 decididas pelo
 > mantenedor; D1, D2, D5 e D6 seguem a recomendação (seção 5).
 > A fase A não depende de outra PRD. A fase B depende da P-03 da
 > [PRD-P](PRD-P-paralelismo.md), o processo da agente.

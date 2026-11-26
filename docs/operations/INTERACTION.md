@@ -22,7 +22,7 @@ The conversation survives a restart: each person's conversation in each chat is 
 | Command | Who | What it does |
 |---|---|---|
 | `/eu` | Everyone, even unauthorized people | Shows your principal id, so an admin can authorize you. |
-| `/esquecer` | Members and admins | Explains what forgetting erases. `/esquecer confirmo` erases everything the person told the agent: conversations, memories, what it learned from them, the files it kept for them, and the agenda. The agent's name and character stay. |
+| `/esquecer` | Members and admins | Explains what forgetting erases. `/esquecer confirmo` erases everything the person told the agent: conversations, memories, what it learned from them, the files it kept for them, the agenda, and the tasks in the background (stopped, their results dropped). The agent's name and character stay. |
 | `/vincular` | Members and admins, in private | Gives a code (six characters, valid for 10 minutes, used once) to bring another channel to the same agent. On the other channel, in private, send `/vincular CÓDIGO`. From then on it is the same agent, memory and agenda on both. You are told on the first channel when a channel is linked. |
 | `/desvincular` | Members and admins | On a linked channel, unlinks it. On your first channel, lists the linked ones; `/desvincular <id>` unlinks one. `/esquecer` keeps the links. |
 | `/voz` | Members and admins, on WhatsApp (Telegram answers in text) | Answers as voice notes; again to go back to text. See [WHATSAPP.md](WHATSAPP.md). |
@@ -44,6 +44,7 @@ The agent decides when to use its tools. Admins can use every tool. For members,
 - **Files and the person's workspace.**
 - **The agenda.** "Me lembra amanhã às 9h", or "todo dia às 3h". At that hour the agent receives an `[Agenda]` message, and whatever it answers is sent to the person.
 - **The web, a browser, GitHub, git inspection.**
+- **Tasks in the background** (`tarefa`). For something that may take long (a page, a search, a command), the agent can start another of its tools in the background, answer at once, and get the result later as a `[Tarefa]` message in the same chat; then it tells the person. At most 7 at once per agent, each up to 30 minutes. The instant tools (`agenda`, `file_system`, `canvas`) do not run in the background. The background call is authorized, charged and audited like any tool call of that person. A result that arrives when the person has no budget waits for their next message. `/esquecer` stops the person's tasks and drops their results. A task running when Supernova restarts is not run again: the agent is told it was interrupted and tells the person. Members get `tarefa` by default; a `supernova.yaml` with its own `capabilities.member.allowed` list must add it.
 - **Its own computer** (`computador`), when enabled: a shell, files and a browser it sees through screenshots. It runs in a separate gVisor container that holds no secrets. See [COMPUTADOR.md](COMPUTADOR.md).
 
 ## Troubleshooting
