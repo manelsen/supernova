@@ -2,9 +2,8 @@
 # PRD S: sondas, os subagentes do par
 
 > **Situação em 25/11/2026:** segunda versão, com histórias. S1 a S13
-> decididas em 24/11. S14 a S17 decididas em 25/11. **S18 a S24 são
-> recomendações à espera do mantenedor** (seção 3.3). Nada é executado
-> antes disso.
+> decididas em 24/11. S14 a S20, S22 e S24 decididas em 25/11. **S21 e S23
+> esperam o mantenedor** (seção 3.3). Nada é executado antes disso.
 >
 > **Depende de:** fase B da [PRD-F](PRD-F-ferramentas-atores.md) (F-05 a
 > F-07, a `tarefa`), que entra **antes** desta PRD (S14). A fase A da F (prazo,
@@ -150,7 +149,7 @@ grátis por US$ 5 mensais de crédito, com cartão. Daí a S17.
   Supernova; a chave nunca vai para o computador. O Playwright pode ser
   atualizado (autorizado pelo mantenedor).
 
-### 3.3 Recomendações à espera do mantenedor
+### 3.3 Recomendações (S18 a S20, S22 e S24 aceitas em 25/11)
 
 - **S18. Onde roda o SearXNG.** Recomendação: um container próprio,
   `searxng`, no perfil `computador` do compose, na rede `computador_net`
