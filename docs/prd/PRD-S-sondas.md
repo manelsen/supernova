@@ -2,8 +2,8 @@
 # PRD S: sondas, os subagentes do par
 
 > **Situação em 25/11/2026:** segunda versão, com histórias. S1 a S13
-> decididas em 24/11. S14 a S20, S22 e S24 decididas em 25/11. **S21 e S23
-> esperam o mantenedor** (seção 3.3). Nada é executado antes disso.
+> decididas em 24/11. S14 a S22 e S24 decididas em 25/11. **S23 espera o
+> mantenedor** (seção 3.3). Nada é executado antes disso.
 >
 > **Depende de:** fase B da [PRD-F](PRD-F-ferramentas-atores.md) (F-05 a
 > F-07, a `tarefa`), que entra **antes** desta PRD (S14). A fase A da F (prazo,
@@ -149,7 +149,7 @@ grátis por US$ 5 mensais de crédito, com cartão. Daí a S17.
   Supernova; a chave nunca vai para o computador. O Playwright pode ser
   atualizado (autorizado pelo mantenedor).
 
-### 3.3 Recomendações (S18 a S20, S22 e S24 aceitas em 25/11)
+### 3.3 Recomendações (S18 a S22 e S24 aceitas em 25/11)
 
 - **S18. Onde roda o SearXNG.** Recomendação: um container próprio,
   `searxng`, no perfil `computador` do compose, na rede `computador_net`
@@ -170,12 +170,14 @@ grátis por US$ 5 mensais de crédito, com cartão. Daí a S17.
   e cancelar são as da `tarefa`, que mostra as sondas junto. Instruções de
   até 2.000 caracteres. Alternativa: só a `tarefa`, com
   `ferramenta: "sonda_web"`, mais difícil para o modelo acertar.
-- **S21. O fim da sonda.** Recomendação: o condutor termina respondendo
-  sem chamar ferramenta; a resposta é o resultado, cortado em 4.000
-  caracteres. Limite de 40 rodadas de modelo por sonda, além da duração e do
-  custo. A mensagem de entrega diz o desfecho (`concluída`,
-  `prazo esgotado`, `custo esgotado`, `falhou`) e, quando houver, a pasta no
-  computador.
+- **S21. O fim da sonda.** **Decidido em 25/11:** o condutor termina
+  respondendo sem chamar ferramenta; a resposta é o resultado. Na mensagem
+  de entrega ele é cortado por tipo, configurável: **web 8.000, disco 4.000,
+  código 8.000 caracteres**. O resultado inteiro fica em `resultado.md`, na
+  pasta da sonda, e a entrega aponta para ele. Limite de 40 rodadas de modelo
+  por sonda, além da duração e do custo. A mensagem diz o desfecho
+  (`concluída`, `prazo esgotado`, `custo esgotado`, `falhou`), a pasta no
+  computador e os arquivos produzidos.
 - **S22. Ferramentas de cada tipo.** Recomendação:
   - **web:** `buscar` (S17) e as tools do Playwright MCP sem `--caps`
     extras (sem `vision`, `pdf`, `devtools`);
