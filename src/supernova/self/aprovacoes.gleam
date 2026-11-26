@@ -137,7 +137,9 @@ pub fn ask(
   update(data_dir, principal, fn(file) {
     let same =
       list.find(file.requests, fn(r) {
+        // A request past its deadline is left for `tick` to expire and tell.
         r.status == Pending
+        && now - r.created_at < expires_after_ms
         && r.kind == draft.kind
         && r.target == draft.target
         && r.task == draft.task

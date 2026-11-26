@@ -65,6 +65,30 @@ pub fn asking_again_returns_the_pending_request_test() {
   list.map(open, fn(r) { r.id }) |> should.equal([1, 2])
 }
 
+pub fn asking_after_the_deadline_opens_a_new_request_test() {
+  let dir = setup("vencido")
+  let assert Ok(_) = aprovacoes.ask(dir, "ana", 0, draft("a.com", None))
+  let assert Ok(fresh) =
+    aprovacoes.ask(dir, "ana", 24 * hour, draft("a.com", None))
+  fresh.id |> should.equal(2)
+  // The old one is still expired and told by the tick.
+  let assert Ok([Expire(old)]) = aprovacoes.tick(dir, "ana", 24 * hour)
+  old.id |> should.equal(1)
+  let assert Ok(_) = aprovacoes.decide(dir, "ana", 24 * hour, 2, Approve(Once))
+}
+
+pub fn a_one_use_grant_bound_to_a_task_stays_with_it_test() {
+  let dir = setup("uso_unico_tarefa")
+  let assert Ok(_) = aprovacoes.ask(dir, "ana", 0, draft("a.com", Some(7)))
+  let assert Ok(_) = aprovacoes.decide(dir, "ana", 0, 1, Approve(Once))
+  aprovacoes.allowed(dir, "ana", 1, Send, "a.com", None)
+  |> should.equal(Ok(False))
+  aprovacoes.allowed(dir, "ana", 1, Send, "a.com", Some(8))
+  |> should.equal(Ok(False))
+  aprovacoes.allowed(dir, "ana", 1, Send, "a.com", Some(7))
+  |> should.equal(Ok(True))
+}
+
 pub fn a_one_use_grant_is_spent_by_its_use_test() {
   let dir = setup("uso_unico")
   let assert Ok(_) = aprovacoes.ask(dir, "ana", 0, draft("a.com", None))
