@@ -31,9 +31,9 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 | # | Item | Situação | Próximo passo |
 |---|---|---|---|
 | 1 | **[PRD-D](prd/PRD-D-discord.md): Discord com paridade do Telegram** ([3.2](#32-canais)) | Executada e mergeada em 25/11 (D-01 a D-07, #79). Verificada contra gateway e API falsos e as capturas de fevereiro; falta o bot real. | Piloto manual: criar o bot ([`operations/DISCORD.md`](operations/DISCORD.md)) e conversar. |
-| 2 | **[PRD-F](prd/PRD-F-ferramentas-atores.md), fase A**: cada ferramenta com prazo, cancelamento e limites | Executada em 25/11 (F-00 a F-04), PR #80. A F-08 (`bwrap`) caiu: no container só funciona desligando seccomp e AppArmor; o isolamento de comandos fica com o computador (item 4). | Merge da #80. |
-| 3 | **[PRD-S](prd/PRD-S-sondas.md)**: sondas | Desenho com as decisões S1 a S11, sem histórias. As PRDs E e C, de que a segunda versão dependia, estão feitas. | Escrever a segunda versão, com as histórias e os servidores MCP conferidos (nome, licença, versão). Executar depois da fase A da F, que dá prazo e cancelamento às tarefas longas das sondas. |
-| 4 | **Aprovação por botões, computador fase 2 e [PRD-F](prd/PRD-F-ferramentas-atores.md) fase B** ([3.3](#33-interação-e-computador)) | Decididos em 22/11, sem PRD. A fase B da F depende da P-03, já feita. | Escrever uma PRD que junte os três: a aprovação é o portão das tarefas em segundo plano e do computador. |
+| 2 | **[PRD-F](prd/PRD-F-ferramentas-atores.md), fase B**: a `tarefa` em segundo plano (F-05 a F-07) | Fase A mergeada em 25/11 (#80); F-08 descartada (D7). A fase B vem antes das sondas (S14). | Executar a fase B, depois da aprovação da PRD-S. |
+| 3 | **[PRD-S](prd/PRD-S-sondas.md)**: sondas web, disco e código | Segunda versão em 25/11, com histórias S-00 a S-09 e S1 a S24 decididas (busca: SearXNG com a Tavily de reserva; um Chromium headless shell com contexto por sonda, computador com 3 GB, até 5 sondas web). | Executar, depois da fase B da PRD-F. |
+| 4 | **Aprovação por botões e computador fase 2 (um por pessoa)** ([3.3](#33-interação-e-computador)) | Decididos em 22/11, sem PRD. Com o computador por pessoa, a sonda código abre para membros (PRD-S, S15). | Escrever uma PRD que junte os dois: a aprovação é o portão do computador. |
 | 5 | **Wizard com Docker e gVisor** ([2.1](#21-quickstart-nativo-com-curl--systemd-docsprdprd-wizardmd)) | Decidido em 22/11. A PRD em disco é a antiga, com `systemd`. | Reescrever a PRD. |
 
 ### 0.2 Esperando algo de fora
