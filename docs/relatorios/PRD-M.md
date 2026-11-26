@@ -110,8 +110,11 @@ reserva quando não houve gasto; sem ledger, nenhuma chamada.
 
 ## O que fica
 
-- **Teste do turno inteiro com o LLM mock:** não foi escrito. O ponto de
-  entrada único e os testes de `prepare_with` cobrem o caminho.
+- ~~**Teste do turno inteiro com o LLM mock.**~~ Escrito em 25/11:
+  `test/e2e/recall_e2e_test.gleam` leva uma mensagem pelo roteador, deixa o
+  porteiro disparar e confere que o que `lembrar` achou chega ao modelo no
+  mesmo turno. O par dele, com a memória desligada, confere que sem memória
+  nada disso aparece no que o modelo vê (I5).
 - **Primeira consulta de uma pessoa:** monta o índice inteiro, ~13 s com 2.600
   mensagens, perto do tempo-limite de 15 s. Se estourar, o que já foi
   vetorizado fica salvo e a consulta seguinte termina. Vetorizar em segundo
