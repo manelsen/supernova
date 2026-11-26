@@ -127,6 +127,11 @@ antes da execução.**
   normalmente, e o pedido continua pendente.
 - **"Sempre":** o botão (ou a resposta `sim sempre`) só aparece quando o
   pedido admite permissão permanente.
+- **Usar um site: a pessoa escolhe quanto tempo** (decisão do mantenedor,
+  26/11, na execução da K-06): 1 hora (o "sim" simples), 24 horas
+  (`sim 24 horas`) ou para sempre (`sim sempre`). "Existe um trade-off
+  entre estrita segurança e acessibilidade que só a pessoa pode decidir com
+  autonomia." Enviar formulário continua pedindo toda vez.
 - **Lembrete:** um só, **3 h** depois do pedido, se ainda pendente.
 - **Senha só por texto.** Uma nota de voz é transcrita por um provedor
   externo (PRD-A); por isso `/senha` recusa áudio e explica. Quem dita pode
@@ -356,10 +361,10 @@ mascaradas). Sai o `evaluate` (K11). As sessões MCP das sondas passam pelo
 mesmo portão e nunca pedem (seção 3.3).
 
 **Aceite:**
-- [ ] Testes no computador com um site local: busca por POST de fundo com
+- [x] Testes no computador com um site local: busca por POST de fundo com
       site autorizado passa; formulário sempre pede; autorização de uso
       único é consumida; sonda barrada não cria pedido.
-- [ ] K-I1 (navegador).
+- [x] K-I1 (navegador).
 - [ ] Commit: `feat(computador): portão do navegador`.
 
 #### K-07: Arquivos da pessoa

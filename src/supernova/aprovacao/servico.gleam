@@ -205,7 +205,7 @@ fn settle(
       {
         Ok(request) -> {
           tell_agent(context, principal, request)
-          pedido.decided_text(request)
+          pedido.decided_with(request, decision)
         }
         Error(reason) -> failed(reason)
       }

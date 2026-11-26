@@ -16,6 +16,7 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import supernova/adapters/mcp/computer
 import supernova/aprovacao/servico as aprovacao_servico
@@ -37,9 +38,11 @@ const shell_actions = ["exec"]
 
 const file_actions = ["read_file", "write_file", "list"]
 
+// No `evaluate`: arbitrary JavaScript in the page could send around the
+// browser gate (PRD-K, K11).
 const browser_actions = [
   "goto", "back", "click", "type", "press", "scroll", "text", "screenshot",
-  "evaluate", "close",
+  "close",
 ]
 
 const default_exec_timeout_s = 60
@@ -77,7 +80,7 @@ pub fn tool() -> provider.ToolDefinition {
     parameters: [
       provider.string_param(
         "action",
-        "One of: exec, read_file, write_file, list, goto, back, click, type, press, scroll, text, screenshot, evaluate, close, pedir_site",
+        "One of: exec, read_file, write_file, list, goto, back, click, type, press, scroll, text, screenshot, close, pedir_site",
         True,
       ),
       provider.string_param("command", "For exec: a bash command line.", False),
@@ -116,11 +119,6 @@ pub fn tool() -> provider.ToolDefinition {
       provider.string_param(
         "key",
         "For press: a key such as Enter, Tab, Escape, PageDown.",
-        False,
-      ),
-      provider.string_param(
-        "script",
-        "For evaluate: a JavaScript expression to run in the page.",
         False,
       ),
       provider.string_param(
@@ -357,7 +355,6 @@ fn require_fields(
     "read_file" | "write_file" -> blank(args.path, "path")
     "goto" -> blank(args.url, "url")
     "press" -> blank(args.key, "key")
-    "evaluate" -> blank(args.script, "script")
     "click" ->
       case blank(args.selector, "selector"), args.x, args.y {
         None, _, _ -> None
@@ -424,13 +421,161 @@ fn execute_on(
           False -> Ok(Nil)
         },
       )
+      // The browser gate hears what the person allowed (K-06).
+      let browsing = list.contains(browser_actions, action_of(request.body))
+      let body = case browsing {
+        True -> with_field(request.body, "liberado", liberado(principal))
+        False -> request.body
+      }
       let target =
         computer.person_endpoint(url, computer.person_hash(principal), "run")
-      case run_ffi(target, token, request.body, request.timeout_ms) {
+      case run_ffi(target, token, body, request.timeout_ms) {
         Error(reason) ->
           Error("computador unreachable: " <> string.slice(reason, 0, 200))
-        Ok(#(status, body, image)) -> render(status, body, image)
+        Ok(#(status, answer, image)) -> {
+          let gate = gate_account(answer)
+          spend(principal, gate.usados)
+          use text <- result_try(render(status, answer, image))
+          Ok(case gate.recusa {
+            Some(refusal) -> text <> "\n" <> gate_line <> refusal
+            None -> text
+          })
+        }
       }
+    }
+  }
+}
+
+/// The line that carries the gate's refusal to the turn, which asks the
+/// person (K-06).
+pub const gate_line = "[portão] "
+
+fn action_of(body: String) -> String {
+  json.parse(body, decode.at(["op"], decode.string))
+  |> result.unwrap("")
+}
+
+/// Add a field to a JSON object's text.
+fn with_field(body: String, key: String, value: json.Json) -> String {
+  string.drop_end(body, 1)
+  <> ",\""
+  <> key
+  <> "\":"
+  <> json.to_string(value)
+  <> "}"
+}
+
+/// What the person allowed the browser now: the sites (level 1) and the
+/// one-use sends (level 2), without spending any.
+pub fn liberado(principal: String) -> json.Json {
+  let grants = case aprovacao_servico.get() {
+    None -> []
+    Some(context) ->
+      aprovacoes.valid_grants(
+        context.data_dir,
+        principal,
+        context.clock(),
+        aprovacoes.Send,
+        None,
+      )
+      |> result.unwrap([])
+  }
+  let with_prefix = fn(prefix) {
+    list.filter_map(grants, fn(g) {
+      case string.split_once(g.target, prefix) {
+        Ok(#("", site)) -> Ok(site)
+        _ -> Error(Nil)
+      }
+    })
+    |> list.unique
+  }
+  json.object([
+    #("sites", json.array(with_prefix("site:"), json.string)),
+    #("envios", json.array(with_prefix("envio:"), json.string)),
+  ])
+}
+
+type GateAccount {
+  GateAccount(recusa: Option(String), usados: List(String))
+}
+
+/// The gate's account in an answer: the first refusal (as JSON text) and
+/// the one-use sends it used.
+fn gate_account(answer: String) -> GateAccount {
+  let decoder = {
+    use recusas <- decode.optional_field(
+      "recusas",
+      [],
+      decode.list(decode.dynamic),
+    )
+    use usados <- decode.optional_field(
+      "usados",
+      [],
+      decode.list(decode.string),
+    )
+    decode.success(#(recusas, usados))
+  }
+  case json.parse(answer, decode.at(["portao"], decoder)) {
+    Ok(#(recusas, usados)) ->
+      GateAccount(
+        recusa: list.first(recusas)
+          |> option.from_result
+          |> option.map(fn(r) { json.to_string(provider.dynamic_json(r)) }),
+        usados: usados,
+      )
+    Error(_) -> GateAccount(recusa: None, usados: [])
+  }
+}
+
+/// A one-use send the gate used is spent (K-06).
+fn spend(principal: String, used: List(String)) -> Nil {
+  case aprovacao_servico.get() {
+    None -> Nil
+    Some(context) ->
+      list.each(used, fn(site) {
+        let _ =
+          aprovacoes.allowed(
+            context.data_dir,
+            principal,
+            context.clock(),
+            aprovacoes.Send,
+            "envio:" <> site,
+            None,
+          )
+        Nil
+      })
+  }
+}
+
+/// A refusal of the gate, as the turn turns it into a request.
+pub type Refusal {
+  Refusal(
+    tipo: String,
+    site: String,
+    metodo: String,
+    campos: String,
+    botao: String,
+  )
+}
+
+/// The gate's refusal in a tool answer, if there is one.
+pub fn gate_refusal(text: String) -> Option(Refusal) {
+  case string.split_once(text, "\n" <> gate_line) {
+    Error(Nil) -> None
+    Ok(#(_, rest)) -> {
+      let line = case string.split_once(rest, "\n") {
+        Ok(#(line, _)) -> line
+        Error(Nil) -> rest
+      }
+      let decoder = {
+        use tipo <- decode.field("tipo", decode.string)
+        use site <- decode.field("site", decode.string)
+        use metodo <- decode.optional_field("metodo", "", decode.string)
+        use campos <- decode.optional_field("campos", "", decode.string)
+        use botao <- decode.optional_field("botao", "", decode.string)
+        decode.success(Refusal(tipo, site, metodo, campos, botao))
+      }
+      json.parse(line, decoder) |> option.from_result
     }
   }
 }

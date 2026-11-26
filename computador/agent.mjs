@@ -19,6 +19,7 @@ import path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { mcp, McpUserError, sweepIdle } from './mcp.mjs';
 import { guard, proxyOption } from './rede.mjs';
+import { newGate, allow, account, decide, beforeClick } from './portao.mjs';
 import { clip, runAs } from './shell.mjs';
 
 export const LIMITS = {
@@ -38,6 +39,9 @@ const HOME = process.env.HOME || os.homedir();
 export const WORK_DIR = process.env.COMPUTADOR_WORK_DIR || path.join(HOME, 'trabalho');
 const PROFILE_DIR = process.env.COMPUTADOR_PROFILE_DIR || path.join(HOME, '.navegador');
 const VIEWPORT = { width: 1280, height: 800 };
+
+// The agent's browser's gate: what Supernova allowed for the current call.
+const agentGate = newGate();
 
 // ---------------------------------------------------------------- helpers
 
@@ -216,7 +220,7 @@ async function page(gen) {
         throw new Error('abandoned launch');
       }
       // Nothing internal: this machine, the Docker networks, the LAN.
-      await guard(launched);
+      await guard(launched, (request) => decide(agentGate, request));
       launched.setDefaultTimeout(LIMITS.browserTimeoutMs);
       launched.on('close', () => { if (browserContext === launched) browserContext = null; });
       browserContext = launched;
@@ -253,10 +257,17 @@ const BROWSER_OPS = {
   },
   async back(p) { await p.goBack({ waitUntil: 'domcontentloaded' }); return {}; },
   async click(p, args) {
-    if (typeof args.selector === 'string' && args.selector !== '') {
+    const bySelector = typeof args.selector === 'string' && args.selector !== '';
+    // A send button needs the person's yes for this send (K-06).
+    const target = bySelector
+      ? await p.$(args.selector)
+      : await p.evaluateHandle(({ x, y }) => document.elementFromPoint(x, y), { x: requireNumber(args, 'x'), y: requireNumber(args, 'y') });
+    const element = target && target.asElement ? target.asElement() : null;
+    if (element && (await beforeClick(agentGate, p, element))) return { clicado: false };
+    if (bySelector) {
       await p.click(args.selector);
     } else {
-      await p.mouse.click(requireNumber(args, 'x'), requireNumber(args, 'y'));
+      await p.mouse.click(args.x, args.y);
     }
     await p.waitForLoadState('domcontentloaded').catch(() => {});
     return {};
@@ -289,13 +300,6 @@ const BROWSER_OPS = {
     const buf = await p.screenshot({ type: 'jpeg', quality: 70 });
     return { image: 'data:image/jpeg;base64,' + buf.toString('base64'), width: VIEWPORT.width, height: VIEWPORT.height };
   },
-  async evaluate(p, args) {
-    const script = requireString(args, 'script');
-    const value = await p.evaluate(script);
-    const asText = value === undefined ? 'undefined' : JSON.stringify(value);
-    const clipped = clip(asText ?? String(value), LIMITS.outputChars);
-    return { value: clipped.text, truncated: clipped.truncated };
-  },
 };
 
 async function browserOp(name, args, gen) {
@@ -307,8 +311,10 @@ async function browserOp(name, args, gen) {
   }
   const op = BROWSER_OPS[name];
   const p = await page(gen);
+  // What Supernova allowed for this call (K-06); the account goes back.
+  allow(agentGate, args.liberado);
   const result = await op(p, args);
-  return { ...(await where(p)), ...result };
+  return { ...(await where(p)), ...result, ...account(agentGate) };
 }
 
 /// For tests: whether a browser is open right now.

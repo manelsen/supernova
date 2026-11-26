@@ -289,3 +289,113 @@ pub fn a_site_for_the_shell_is_asked_and_approved_test() {
     session_supervisor.stop(sessions)
   })
 }
+
+type FakeComputer
+
+@external(erlang, "mcp_computer_fake_ffi", "start")
+fn start_computer(responder: fn(String) -> #(Int, String)) -> FakeComputer
+
+@external(erlang, "mcp_computer_fake_ffi", "requests")
+fn computer_requests(fake: FakeComputer) -> List(String)
+
+@external(erlang, "mcp_computer_fake_ffi", "stop")
+fn stop_computer(fake: FakeComputer) -> Nil
+
+@external(erlang, "erlang", "element")
+fn computer_port(index: Int, fake: FakeComputer) -> Int
+
+/// PRD-K, K-06: the browser gate refuses a send; the person is asked with
+/// what would go; a yes lets the next try through once, and is spent.
+pub fn a_send_the_gate_refused_is_asked_and_spent_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  // The computer: refuses the send unless the call allows it; then uses it.
+  let fake = start_computer(fun_computer)
+  let _ =
+    envoy.set(
+      "SUPERNOVA_COMPUTER_URL",
+      "http://127.0.0.1:" <> string.inspect(computer_port(1, fake)),
+    )
+  use <- exception.defer(fn() {
+    envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
+    envoy.unset("SUPERNOVA_COMPUTER_URL")
+    stop_computer(fake)
+    servico.clear()
+  })
+  let admin_cfg =
+    config.Config(
+      ..support.channel_config(),
+      access: config.AccessConfig(
+        ..support.access_config(["sim:carol"], []),
+        allowed_chats: [],
+      ),
+    )
+  support.with_runtime_root(admin_cfg, fn(root) {
+    let llm =
+      provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      )
+    let private_sent = process.new_subject()
+    let context =
+      servico.Context(
+        data_dir: root,
+        clock: fn() { 1000 },
+        send_private: fn(principal, text, _) {
+          process.send(private_sent, #(principal, text))
+          Ok(Nil)
+        },
+        inject: fn(_) { Ok(Nil) },
+      )
+    servico.configure(context)
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
+    let assert Ok(sessions) = session_supervisor.start_with_history(store)
+    let assert Ok(router) =
+      channel_router.start_with_session_supervisor("sim", sessions, llm)
+    let _ = say(router, "dm-carol", "oi")
+    let _ = say(router, "dm-carol", "Lua")
+    let _ = say(router, "dm-carol", "sim")
+
+    let _ = say(router, "dm-carol", "marca a consulta [mock-clique #enviar]")
+    let assert [#("sim:carol", text)] = drain(private_sent)
+    // The first sentence is the code's, from what the gate saw.
+    string.starts_with(
+      text,
+      "Enviar o formulário em saude.gov.br: nome = Carol; senha = ••••.",
+    )
+    |> should.be_true
+
+    let reply = say(router, "dm-carol", "sim")
+    string.starts_with(reply, "Aprovado") |> should.be_true
+    // The next click carries the yes, the computer uses it, it is spent.
+    let _ = say(router, "dm-carol", "de novo [mock-clique #enviar]")
+    drain(private_sent) |> should.equal([])
+    let clicks =
+      computer_requests(fake)
+      |> list.filter(fn(raw) { string.contains(raw, "\"op\":\"click\"") })
+    let assert [first, second] = clicks
+    string.contains(first, "\"envios\":[]") |> should.be_true
+    string.contains(second, "\"envios\":[\"saude.gov.br\"]") |> should.be_true
+    let assert Ok([]) =
+      aprovacoes.valid_grants(root, "sim:carol", 2000, aprovacoes.Send, None)
+    session_supervisor.stop(sessions)
+  })
+}
+
+fn fun_computer(body: String) -> #(Int, String) {
+  case string.contains(body, "\"envios\":[\"saude.gov.br\"]") {
+    True -> #(
+      200,
+      "{\"ok\":true,\"url\":\"https://saude.gov.br/\",\"title\":\"Marcado\",\"portao\":{\"recusas\":[],\"usados\":[\"saude.gov.br\"]}}",
+    )
+    False -> #(
+      200,
+      "{\"ok\":true,\"url\":\"https://saude.gov.br/\",\"title\":\"Form\",\"clicado\":false,\"portao\":{\"recusas\":[{\"tipo\":\"envio\",\"site\":\"saude.gov.br\",\"metodo\":\"POST\",\"campos\":\"nome = Carol; senha = ••••\",\"botao\":\"Enviar\"}],\"usados\":[]}}",
+    )
+  }
+}

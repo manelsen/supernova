@@ -25,6 +25,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import supernova/core/agent_identity
 import supernova/metrics/record
 
@@ -66,7 +67,14 @@ pub type Scope {
   Once
   ForTask
   Permanent
+  /// For a while, whatever the task: using a site for an hour or a day,
+  /// as the person chose (K-06; the person decides how strict).
+  Window(ms: Int)
 }
+
+pub const one_hour_ms = 3_600_000
+
+pub const one_day_ms = 86_400_000
 
 /// The chat a request was born in: the outcome goes back there, to the
 /// agent (K-02), while the request itself goes to the person's DM (K9).
@@ -353,13 +361,7 @@ pub fn allowed(
     let file = drop_stale(file, now)
     let matching =
       list.filter(file.grants, fn(g) {
-        g.kind == kind
-        && g.target == target
-        && case g.scope {
-          Permanent -> True
-          ForTask -> g.task == task && task != None
-          Once -> g.task == None || g.task == task
-        }
+        g.kind == kind && g.target == target && covers(g, task)
       })
     let lasting = list.find(matching, fn(g) { g.scope != Once })
     case lasting, matching {
@@ -377,13 +379,39 @@ pub fn allowed(
   })
 }
 
+fn covers(g: Grant, task: Option(Int)) -> Bool {
+  case g.scope {
+    Permanent | Window(_) -> True
+    ForTask -> g.task == task && task != None
+    Once -> g.task == None || g.task == task
+  }
+}
+
+fn fresh(g: Grant, now: Int) -> Bool {
+  case g.scope {
+    Once -> now - g.created_at < once_valid_ms
+    Window(ms) -> now - g.created_at < ms
+    _ -> True
+  }
+}
+
 fn drop_stale(file: File, now: Int) -> File {
-  File(
-    ..file,
-    grants: list.filter(file.grants, fn(g) {
-      g.scope != Once || now - g.created_at < once_valid_ms
-    }),
-  )
+  File(..file, grants: list.filter(file.grants, fresh(_, now)))
+}
+
+/// The grants of this kind valid now for this task, without spending any:
+/// what the computer's gate is told it may let through (K-06).
+pub fn valid_grants(
+  data_dir: String,
+  principal: String,
+  now: Int,
+  kind: Kind,
+  task: Option(Int),
+) -> Result(List(Grant), String) {
+  use file <- result.map(load(data_dir, principal))
+  list.filter(file.grants, fn(g) {
+    g.kind == kind && fresh(g, now) && covers(g, task)
+  })
 }
 
 /// The person's permanent permissions (K4), newest first.
@@ -424,7 +452,10 @@ pub fn task_ended(
   update(data_dir, principal, fn(file) {
     let grants =
       list.filter(file.grants, fn(g) {
-        g.scope == Permanent || g.task != Some(task)
+        case g.scope {
+          Permanent | Window(_) -> True
+          _ -> g.task != Some(task)
+        }
       })
     let #(cancelled, requests) =
       list.map_fold(file.requests, [], fn(cancelled, r) {
@@ -494,6 +525,7 @@ fn scope_name(scope: Scope) -> String {
     Once -> "uso_unico"
     ForTask -> "tarefa"
     Permanent -> "permanente"
+    Window(ms) -> "janela:" <> int.to_string(ms)
   }
 }
 
@@ -502,7 +534,15 @@ fn scope_from(name: String) -> Result(Scope, Nil) {
     "uso_unico" -> Ok(Once)
     "tarefa" -> Ok(ForTask)
     "permanente" -> Ok(Permanent)
-    _ -> Error(Nil)
+    _ ->
+      case string.split_once(name, "janela:") {
+        Ok(#("", ms)) ->
+          case int.parse(ms) {
+            Ok(ms) if ms > 0 -> Ok(Window(ms))
+            _ -> Error(Nil)
+          }
+        _ -> Error(Nil)
+      }
   }
 }
 

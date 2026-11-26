@@ -81,6 +81,18 @@ Each computer's network is **internal**: no route out. The only way out is the p
 - **Nothing internal, whatever the credential:** the proxy resolves names itself, once, refuses loopback, private, link-local and similar addresses, and connects to the address it checked.
 - **The credential stays with `svc`.** A launcher starts as root with only `CHOWN`, `SETUID`, `SETGID` and `KILL`, hands the service to `svc` and each shell command to `sh`, which gets no token, no credential, and a scratch folder of its own (`~/rascunho`). `sh` cannot read another user's environment.
 
+## The browser gate (`portao`)
+
+What the browser may **send** is decided in the computer, request by request (PRD-K, K10, K-06; `computador/portao.mjs`), with what the person allowed, which Supernova sends with each call:
+
+- **Reading is free:** `GET`, `HEAD`, `OPTIONS`.
+- **Using a site** (anything else in the background: searches, likes, a cart) needs the site allowed. The person is asked "Usar o site X" and chooses how long: **1 hour** (a plain "sim"), **24 hours** ("sim 24 horas") or **for good** ("sim sempre"). A site is what a person recognises: `consultas.saude.gov.br` is `saude.gov.br`.
+- **Sending a form** (a `POST` navigation, or a click on a send button: a form's submit button, or a button named like *Enviar*, *Confirmar*, *Pagar*) asks **every time**, with what would go: the fields and their values, passwords and similar fields masked. A yes lets one send through and is spent.
+- **The probes** never send anything and never ask.
+- **No `evaluate`:** the agent cannot run JavaScript in the page (K11).
+
+The request's first sentence is written by the code from what the gate saw, at most 140 characters (what a screen reader says first). When the gate refuses inside a background task, no request is made: the agent asks in the conversation.
+
 `scripts/teste-saida.sh` checks all this with real computers on gVisor (internet needed): the shell reaches pip and npm and an approved site, not others; a site Ana approved does not open for Bia; there is no way out around the proxy; the shell finds the credential nowhere; the browser goes out.
 
 SearXNG is attached to two networks: it leaves for the internet through `br-computador` (`gw_priority` in `docker-compose.yml`, which needs Docker Engine 28 and Compose 2.33.1 or newer), and Supernova asks it on its own network. No computer is on either.

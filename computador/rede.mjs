@@ -88,13 +88,15 @@ export function proxyOption(env = process.env) {
 
 /// Route every request of a browser context through the check. Non-network
 /// schemes (data:, blob:, about:) pass; http(s) to an internal host is
-/// aborted.
-export async function guard(context) {
+/// aborted; then `gate` decides (the browser gate).
+export async function guard(context, gate = () => true) {
   await context.route('**/*', async (route) => {
     let url;
     try { url = new URL(route.request().url()); } catch { return route.abort('blockedbyclient'); }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return route.continue();
     if (await hostBlocked(url.hostname)) return route.abort('blockedbyclient');
+    // Then the browser gate (portao.mjs, PRD-K, K-06).
+    if (!gate(route.request())) return route.abort('blockedbyclient');
     return route.continue();
   });
 }

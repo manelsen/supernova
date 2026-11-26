@@ -49,6 +49,8 @@ type MockToolMode {
   MockToolProbe(kind: String, instructions: String)
   /// `[mock-site exemplo.com]`: ask for a site for the shell (PRD-K, K-05).
   MockToolSite(site: String)
+  /// `[mock-clique seletor]`: click in the computer's browser (K-06).
+  MockToolClick(selector: String)
 }
 
 // ============================================================================
@@ -261,6 +263,24 @@ fn mock_chat_default(
             id: "mock_tool_call_1",
             name: name,
             arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolClick(selector) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "computador",
+            arguments: json.to_string(
+              json.object([
+                #("action", json.string("click")),
+                #("selector", json.string(selector)),
+              ]),
+            ),
           ),
         ]),
         reasoning_content: None,
@@ -776,6 +796,17 @@ fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
 }
 
 fn mock_task_mark(content: String) -> Option(MockToolMode) {
+  case string.split_once(content, "[mock-clique ") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(selector, _)) -> Some(MockToolClick(string.trim(selector)))
+        Error(Nil) -> None
+      }
+    Error(Nil) -> mock_site_mark(content)
+  }
+}
+
+fn mock_site_mark(content: String) -> Option(MockToolMode) {
   case string.split_once(content, "[mock-site ") {
     Ok(#(_, rest)) ->
       case string.split_once(rest, "]") {

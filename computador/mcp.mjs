@@ -34,6 +34,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { guard, proxyOption } from './rede.mjs';
+import { newGate, decide } from './portao.mjs';
 
 export const MCP_LIMITS = {
   idleMs: 5 * 60_000,
@@ -207,7 +208,9 @@ async function openPlaywright(person, probe) {
     timezoneId: process.env.TZ || 'America/Sao_Paulo',
   });
   // Nothing internal: this machine, the Docker networks, the LAN.
-  await guard(context);
+  // The probes never send anything, and never ask (PRD-K, section 3.3).
+  const probeGate = newGate({ probe: true });
+  await guard(context, (request) => decide(probeGate, request));
   // At most two tabs: a third closes the oldest.
   context.on('page', () => {
     const pages = context.pages();

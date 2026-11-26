@@ -290,3 +290,32 @@ fn write_file(path: String, content: String) -> Result(Nil, String)
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")
 fn file_exists(path: String) -> Result(Bool, String)
+
+pub fn a_window_lasts_its_time_whatever_the_task_test() {
+  let dir = setup("janela")
+  let assert Ok(_) = aprovacoes.ask(dir, "ana", 0, draft("site:a.com", Some(1)))
+  let assert Ok(_) =
+    aprovacoes.decide(dir, "ana", 0, 1, Approve(aprovacoes.Window(hour)))
+  // Not spent by use, valid for any task, until its time is up.
+  aprovacoes.allowed(dir, "ana", 1, Send, "site:a.com", None)
+  |> should.equal(Ok(True))
+  aprovacoes.allowed(dir, "ana", 2, Send, "site:a.com", Some(9))
+  |> should.equal(Ok(True))
+  let assert Ok([_]) = aprovacoes.valid_grants(dir, "ana", hour - 1, Send, None)
+  // A task ending does not take it.
+  let assert Ok(_) = aprovacoes.task_ended(dir, "ana", 3, 1)
+  aprovacoes.allowed(dir, "ana", 4, Send, "site:a.com", None)
+  |> should.equal(Ok(True))
+  aprovacoes.valid_grants(dir, "ana", hour, Send, None) |> should.equal(Ok([]))
+  aprovacoes.allowed(dir, "ana", hour, Send, "site:a.com", None)
+  |> should.equal(Ok(False))
+}
+
+pub fn a_window_survives_a_restart_test() {
+  let dir = setup("janela_disco")
+  let assert Ok(_) = aprovacoes.ask(dir, "ana", 0, draft("site:a.com", None))
+  let assert Ok(_) =
+    aprovacoes.decide(dir, "ana", 0, 1, Approve(aprovacoes.Window(24 * hour)))
+  let assert Ok([grant]) = aprovacoes.valid_grants(dir, "ana", 1, Send, None)
+  grant.scope |> should.equal(aprovacoes.Window(24 * hour))
+}

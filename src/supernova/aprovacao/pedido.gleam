@@ -15,7 +15,7 @@ import gleam/string
 import supernova/channel/port
 import supernova/self/aprovacoes.{
   type Decision, type Request, Approve, Approved, Cancelled, Expired, Pending,
-  Permanent, Refuse, Refused,
+  Permanent, Refuse, Refused, Window,
 }
 
 pub type Choice {
@@ -26,7 +26,21 @@ pub type Choice {
 
 /// An answer, with the request's number when the person gave one.
 pub type Answer {
-  Answer(choice: Choice, number: Option(Int))
+  Answer(choice: Choice, number: Option(Int), duration: Option(Duration))
+}
+
+/// How long a "yes" lasts, for requests that let the person choose (using
+/// a site, K-06): an hour unless they say a day.
+pub type Duration {
+  Hour
+  Day
+}
+
+fn windowed(request: Request) -> Bool {
+  case request.approve {
+    Window(_) -> True
+    _ -> False
+  }
 }
 
 pub type Resolution {
@@ -54,20 +68,25 @@ pub fn message(request: Request, alone alone: Bool) -> String {
       "; ou sim sempre"
       <> suffix
       <> ", para não perguntar de novo sobre "
-      <> request.target
+      <> target_words(request.target)
     False -> ""
+  }
+  let how = case windowed(request) {
+    True ->
+      ". Responda sim"
+      <> suffix
+      <> " (vale 1 hora), sim"
+      <> suffix
+      <> " 24 horas"
+      <> always
+      <> "; ou não"
+      <> suffix
+    False -> ". Responda sim" <> suffix <> " ou não" <> suffix <> always
   }
   [
     request.summary,
     request.explanation,
-    "Pedido "
-      <> number
-      <> ". Responda sim"
-      <> suffix
-      <> " ou não"
-      <> suffix
-      <> always
-      <> ", por texto ou voz. Espero até 24 horas.",
+    "Pedido " <> number <> how <> ", por texto ou voz. Espero até 24 horas.",
   ]
   |> list.map(string.trim)
   |> list.filter(fn(part) { part != "" })
@@ -77,6 +96,42 @@ pub fn message(request: Request, alone alone: Bool) -> String {
 /// The reminder, three hours in (K6).
 pub fn reminder(request: Request, alone alone: Bool) -> String {
   "Lembrete: ainda espero sua resposta.\n\n" <> message(request, alone: alone)
+}
+
+/// The longest first sentence (PRD-K, quality gates): what a screen reader
+/// says before anything else.
+pub const first_sentence_max = 140
+
+/// A first sentence cut to fit, ending in a period.
+pub fn first_sentence(text: String) -> String {
+  let text = string.trim(text)
+  case string.length(text) <= first_sentence_max {
+    True -> text
+    False -> string.slice(text, 0, first_sentence_max - 2) <> "…."
+  }
+}
+
+/// The target as the person reads it: `site:a.com` is a.com.
+fn target_words(target: String) -> String {
+  case string.split_once(target, ":") {
+    Ok(#(_, rest)) -> rest
+    Error(Nil) -> target
+  }
+}
+
+/// What the person hears back once the code decided, with how long a
+/// yes lasts when they chose it.
+pub fn decided_with(request: Request, decision: Decision) -> String {
+  case request.status, decision {
+    Approved, Approve(Window(ms)) if ms == aprovacoes.one_hour_ms ->
+      "Aprovado por 1 hora: " <> request.summary
+    Approved, Approve(Window(_)) -> "Aprovado por 24 horas: " <> request.summary
+    Approved, Approve(Permanent) ->
+      "Aprovado para sempre: "
+      <> request.summary
+      <> " Para desfazer: /permissoes."
+    _, _ -> decided_text(request)
+  }
 }
 
 /// What the person hears back once the code decided.
@@ -116,29 +171,58 @@ pub fn buttons(request: Request) -> port.ChannelInteractiveReply {
     ]
     False -> []
   }
-  port.ChannelInteractiveReply([
-    port.buttons_block([
+  let yes = case windowed(request) {
+    True -> [
+      port.button(
+        label: "1 hora",
+        action_id: action("hora"),
+        style: port.ButtonSuccess,
+      ),
+      port.button(
+        label: "24 horas",
+        action_id: action("dia"),
+        style: port.ButtonPrimary,
+      ),
+    ]
+    False -> [
       port.button(
         label: "Aprovar",
         action_id: action("sim"),
         style: port.ButtonSuccess,
       ),
-      port.button(
-        label: "Recusar",
-        action_id: action("nao"),
-        style: port.ButtonDanger,
-      ),
-      ..always
-    ]),
+    ]
+  }
+  port.ChannelInteractiveReply([
+    port.buttons_block(
+      list.flatten([
+        yes,
+        always,
+        [
+          port.button(
+            label: "Recusar",
+            action_id: action("nao"),
+            style: port.ButtonDanger,
+          ),
+        ],
+      ]),
+    ),
   ])
 }
 
 /// A pressed button, read back. Anything else is not an approval button.
 pub fn parse_action(action_id: String) -> Option(Answer) {
   case string.split(action_id, ":") {
+    ["aprovacao", number, "hora"] ->
+      int.parse(number)
+      |> option.from_result
+      |> option.map(fn(id) { Answer(Yes, Some(id), Some(Hour)) })
+    ["aprovacao", number, "dia"] ->
+      int.parse(number)
+      |> option.from_result
+      |> option.map(fn(id) { Answer(Yes, Some(id), Some(Day)) })
     ["aprovacao", number, word] ->
       case int.parse(number), choice_of(word) {
-        Ok(id), Some(choice) -> Some(Answer(choice, Some(id)))
+        Ok(id), Some(choice) -> Some(Answer(choice, Some(id), None))
         _, _ -> None
       }
     _ -> None
@@ -210,16 +294,43 @@ pub fn parse(content: String) -> Option(Answer) {
         ["sim", "sempre", ..rest] -> ["sempre", ..rest]
         _ -> words
       }
-      case words {
-        [word] -> option.map(choice_of(word), fn(c) { Answer(c, None) })
+      let #(words, duration) = duration_of(words)
+      let answer = case words {
+        [word] -> option.map(choice_of(word), fn(c) { Answer(c, None, None) })
         [word, number] ->
           case choice_of(word), number_of(number) {
-            Some(choice), Some(n) -> Some(Answer(choice, Some(n)))
+            Some(choice), Some(n) -> Some(Answer(choice, Some(n), None))
             _, _ -> None
           }
         _ -> None
       }
+      // A duration goes only with a yes.
+      case answer, duration {
+        Some(Answer(Yes, n, _)), Some(d) -> Some(Answer(Yes, n, Some(d)))
+        _, Some(_) -> None
+        _, None -> answer
+      }
     }
+  }
+}
+
+/// "1 hora", "uma hora", "24 horas", "vinte e quatro horas", "um dia" at
+/// the end of an answer: taken off, and given back as a duration.
+fn duration_of(words: List(String)) -> #(List(String), Option(Duration)) {
+  case list.reverse(words) {
+    ["dia", "um", ..rest] | ["dia", "1", ..rest] | ["dia", ..rest] -> #(
+      list.reverse(rest),
+      Some(Day),
+    )
+    ["horas", "24", ..rest] | ["horas", "quatro", "e", "vinte", ..rest] -> #(
+      list.reverse(rest),
+      Some(Day),
+    )
+    ["hora", "uma", ..rest]
+    | ["hora", "1", ..rest]
+    | ["hora", "um", ..rest]
+    | ["hora", ..rest] -> #(list.reverse(rest), Some(Hour))
+    _ -> #(words, None)
   }
 }
 
@@ -292,7 +403,7 @@ pub fn resolve(answer: Answer, pending: List(Request)) -> Resolution {
   case answer.number, pending {
     Some(n), _ ->
       case list.find(pending, fn(r) { r.id == n }) {
-        Ok(request) -> decision_for(answer.choice, request, False)
+        Ok(request) -> decision_for(answer, request, False)
         Error(Nil) ->
           Explain(
             "Não há pedido "
@@ -301,7 +412,7 @@ pub fn resolve(answer: Answer, pending: List(Request)) -> Resolution {
             <> listing(pending),
           )
       }
-    None, [request] -> decision_for(answer.choice, request, True)
+    None, [request] -> decision_for(answer, request, True)
     None, _ ->
       Explain(
         "Há mais de um pedido esperando. Diga o número junto, por exemplo: "
@@ -314,9 +425,16 @@ pub fn resolve(answer: Answer, pending: List(Request)) -> Resolution {
   }
 }
 
-fn decision_for(choice: Choice, request: Request, alone: Bool) -> Resolution {
-  case choice {
-    Yes -> Decide(request.id, Approve(request.approve))
+fn decision_for(answer: Answer, request: Request, alone: Bool) -> Resolution {
+  case answer.choice {
+    Yes ->
+      case request.approve, answer.duration {
+        Window(_), Some(Day) ->
+          Decide(request.id, Approve(Window(aprovacoes.one_day_ms)))
+        Window(_), _ ->
+          Decide(request.id, Approve(Window(aprovacoes.one_hour_ms)))
+        scope, _ -> Decide(request.id, Approve(scope))
+      }
     No -> Decide(request.id, Refuse)
     Always ->
       case request.always {
