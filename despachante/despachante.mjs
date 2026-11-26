@@ -226,8 +226,14 @@ export function computers(config) {
       const left = deadline - Date.now();
       if (left <= 0) throw new NoPlace('no free computer place; try again shortly');
       await new Promise((resolve) => {
-        const timer = setTimeout(resolve, Math.min(left, 1000));
-        waiting.push(() => { clearTimeout(timer); resolve(); });
+        const waiter = () => { clearTimeout(timer); resolve(); };
+        const timer = setTimeout(() => {
+          // Leave the queue on our own; nothing stays behind.
+          const at = waiting.indexOf(waiter);
+          if (at >= 0) waiting.splice(at, 1);
+          resolve();
+        }, Math.min(left, 1000));
+        waiting.push(waiter);
       });
     }
   }
@@ -252,8 +258,12 @@ export function computers(config) {
 
   /// Run a call on the person's computer, turning it on first if needed.
   async function use(person, work) {
-    await ligar(person);
-    const state = live.get(person);
+    let state;
+    // Deleted or turned off between turning on and using: turn on again.
+    while (!state) {
+      await ligar(person);
+      state = live.get(person);
+    }
     state.inflight += 1;
     state.lastUsed = clock();
     try {
@@ -273,7 +283,8 @@ export function computers(config) {
     return idle;
   }
 
-  /// At boot: the running computers count as used now.
+  /// At boot: the running computers count as used now, but may give their
+  /// place at once (more than four may be on after a restart).
   async function adopt() {
     const filters = encodeURIComponent(JSON.stringify({ label: [`${LABEL}=1`], status: ['running'] }));
     const listed = await d.request('GET', `/containers/json?filters=${filters}`);
@@ -281,7 +292,7 @@ export function computers(config) {
     for (const c of listed.body) {
       const person = c.Labels['supernova.pessoa'];
       if (PERSON.test(person || '')) {
-        live.set(person, { lastUsed: clock(), inflight: 0, starting: false, ready: Promise.resolve() });
+        live.set(person, { lastUsed: clock() - LIMITS.evictAfterMs, inflight: 0, starting: false, ready: Promise.resolve() });
         await joinNetwork(person);
       }
     }
@@ -336,6 +347,7 @@ export function computers(config) {
       };
     },
     live,
+    waiting,
   };
 }
 

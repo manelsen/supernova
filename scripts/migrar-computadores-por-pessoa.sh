@@ -21,6 +21,10 @@ if [[ -z "$old" ]] || ! docker volume inspect "$old" >/dev/null 2>&1; then
   echo "no old volume (looked for *_computador_home); nothing to migrate" >&2
   exit 0
 fi
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "no image $image; run docker compose up -d --build first" >&2
+  exit 1
+fi
 uid=$(docker run --rm --entrypoint id "$image" -u)
 gid=$(docker run --rm --entrypoint id "$image" -g)
 

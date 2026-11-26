@@ -306,6 +306,8 @@ test('four on: a fifth takes the place of one idle, or waits for a place', async
     while (pcs.calls.length < 8) await new Promise((r) => setTimeout(r, 5));
     const fifth = await api.call('POST', `/v1/pessoas/${people[4]}/run`, {});
     assert.equal(fifth.status, 503);
+    // Who gave up left the queue.
+    assert.equal(machines.waiting.length, 0);
     pcs.releaseCalls();
     await Promise.all(busy);
 
@@ -420,6 +422,12 @@ test('at boot, running computers are adopted and their networks joined', async (
     await after.adopt();
     assert.equal(after.live.has(ANA), true);
     assert.deepEqual([...fake.state.networks.get(`computador-${ANA}`).members], ['eu']);
+    // Not used since the restart: it may give its place at once, so more
+    // than four on after a restart never blocks the queue.
+    for (const p of people.slice(0, 3)) await after.ligar(p);
+    await after.ligar(people[3]);
+    assert.equal(after.live.has(ANA), false);
+    assert.equal(after.live.size, 4);
   } finally { pcs.close(); fake.close(); }
 });
 
