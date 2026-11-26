@@ -1,7 +1,8 @@
 [PRD]
 # PRD W: instalar a Supernova com Docker e gVisor
 
-> **Situação em 26/11/2026:** escrita, aguardando aprovação do mantenedor.
+> **Situação em 26/11/2026:** aprovada pelo mantenedor, com as
+> consequências da seção 3.1.
 > Decisões tomadas com ele em 26/11 (seção 3). Substitui a
 > [`PRD-wizard.md`](PRD-wizard.md) (quickstart com `systemd`), marcada como
 > superada.

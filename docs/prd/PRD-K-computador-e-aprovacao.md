@@ -1,9 +1,9 @@
 [PRD]
 # PRD K: um computador para cada pessoa, e nada sai dele sem ela aprovar
 
-> **Situação em 26/11/2026:** escrita, aguardando aprovação do mantenedor.
-> Todas as decisões de desenho foram tomadas com ele em 26/11 (seção 3);
-> o que resta é execução.
+> **Situação em 26/11/2026:** aprovada pelo mantenedor, com as
+> consequências da seção 3.3. Todas as decisões de desenho foram tomadas
+> com ele em 26/11 (seção 3); o que resta é execução.
 >
 > **Depende de:** PRD-F (tarefas, #80 e #82), PRD-S (sondas, #83), ambiente
 > limpo do MCP (#84) e `wait_tasks` no harness (#85), todos no master.
@@ -250,6 +250,17 @@ Os da [PRD-F](PRD-F-ferramentas-atores.md#4-quality-gates) e da
   do texto do modelo.
 - **K-I6 – A Supernova não tem o socket.** O compose não monta
   `docker.sock` no container da Supernova; um teste lê o compose.
+- **K-I8 – Encerrar é um resultado.** Quando a agente encerra, recusa ou
+  diz que não faz sentido continuar uma tarefa ou sonda, isso volta como
+  resultado. Nenhum laço da Supernova insiste ("continue") nem reabre o
+  trabalho por conta própria; o próximo passo é da pessoa. (Origem: o
+  experimento da rádio da Andon Labs, em que um "continue" automático
+  respondia a cada tentativa de encerrar.)
+- **K-I9 – Efeito externo se conta pelo registro.** O que a pessoa ouve
+  sobre um efeito fora da máquina (enviado, pago, agendado) vem do registro
+  do portão, não do relato do modelo. Se a agente diz que enviou e o portão
+  não registrou envio, a pessoa ouve que não houve envio. (Origem: no mesmo
+  experimento, um modelo anunciou patrocínios que não existiam.)
 - **K-I7 – Nada sobra.** Depois do `/esquecer`, não há volume, container,
   autorização, pedido, cofre nem sessão da pessoa.
 
@@ -401,14 +412,14 @@ aprovação; o que fazer num captcha).
 
 #### K-12: Esquecimento, telemetria, harness e docs
 
-K-I7; métricas (pedidos por tipo e desfecho, tempo até a resposta,
+K-I7, K-I8 e K-I9; métricas (pedidos por tipo e desfecho, tempo até a resposta,
 computadores ligados, vagas); painel; cenário de harness com aprovação
 (sim e não, com `wait_tasks`); `docs/operations/COMPUTADOR.md`,
 `INTERACTION.md` e um guia curto em português para a pessoa ("como
 aprovar"), escrito para leitor de tela.
 
 **Aceite:**
-- [ ] K-I7 testado.
+- [ ] K-I7, K-I8 e K-I9 testados.
 - [ ] Commit: `feat(computador): esquecimento, telemetria e docs`.
 
 #### K-13: Piloto manual
