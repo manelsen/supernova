@@ -374,3 +374,40 @@ pub fn the_shell_s_sites_go_before_every_command_test() {
   stop_fake(fake)
   aprovacao_servico.clear()
 }
+
+pub fn the_screen_actions_test() {
+  computador.screen_request(
+    "{\"action\":\"pedir_tela\",\"reason\":\"captcha\"}",
+  )
+  |> should.equal(Some("captcha"))
+  computador.screen_request("{\"action\":\"text\"}") |> should.equal(None)
+  let fake = start_fake(fn(_) { #(200, "{\"ok\":true,\"aberta\":false}") })
+  let assert Ok(text) =
+    with_url("http://127.0.0.1:" <> int.to_string(fake_port(1, fake)), fn() {
+      computador.execute("telegram:1", "{\"action\":\"devolver_tela\"}")
+    })
+  string.contains(text, "A tela foi fechada") |> should.be_true
+  let assert [closed] = fake_requests(fake)
+  string.starts_with(
+    closed,
+    "POST /v1/pessoas/" <> computer.person_hash("telegram:1") <> "/tela/fechar ",
+  )
+  |> should.be_true
+  stop_fake(fake)
+}
+
+pub fn a_captcha_is_told_test() {
+  let fake =
+    start_fake(fn(_) {
+      #(
+        200,
+        "{\"ok\":true,\"url\":\"https://a.b/\",\"title\":\"x\",\"captcha\":true}",
+      )
+    })
+  let assert Ok(text) =
+    with_url("http://127.0.0.1:" <> int.to_string(fake_port(1, fake)), fn() {
+      computador.execute("telegram:1", "{\"action\":\"text\"}")
+    })
+  string.contains(text, "Não tente resolver: use pedir_tela") |> should.be_true
+  stop_fake(fake)
+}

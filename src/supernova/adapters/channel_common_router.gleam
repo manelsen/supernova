@@ -493,17 +493,23 @@ fn run_executor_for_context(
                   case
                     computador_tool.site_request(arguments),
                     computador_tool.login_request(arguments),
+                    computador_tool.screen_request(arguments),
                     may_code
                   {
-                    Some(_), _, False | _, Some(_), False ->
-                      Error("computador não é permitido para você")
-                    Some(asked), _, True ->
+                    Some(_), _, _, False
+                    | _, Some(_), _, False
+                    | _, _, Some(_), False
+                    -> Error("computador não é permitido para você")
+                    Some(asked), _, _, True ->
                       ask_for_site(turn.principal_id, msg, asked)
-                    None, Some(site), True ->
+                    None, Some(site), _, True ->
                       log_in(turn.principal_id, msg, site)
+                    // The person's screen, by a link in private (K-09).
+                    None, None, Some(reason), True ->
+                      call_person_to_screen(turn.principal_id, reason)
                     // What the browser gate refused becomes a request to the
                     // person (PRD-K, K-06).
-                    None, None, _ ->
+                    None, None, None, _ ->
                       invoke(name, arguments)
                       |> result.map(fn(text) {
                         case computador_tool.gate_refusal(text) {
@@ -559,6 +565,35 @@ fn is_synthetic(message_id: String) -> Bool {
   string.starts_with(message_id, "agenda:")
   || string.starts_with(message_id, "tarefa:")
   || string.starts_with(message_id, "aprovacao:")
+}
+
+/// `pedir_tela` (PRD-K, K15, K16, K-09): the screen opens and the link goes
+/// to the person's private chat; they open it, or forward it to whoever
+/// helps them.
+fn call_person_to_screen(
+  principal: String,
+  reason: String,
+) -> Result(String, String) {
+  case aprovacao_servico.get() {
+    None -> Error("não consigo falar com a sua pessoa agora")
+    Some(context) -> {
+      use url <- result.try(computador_tool.open_screen(principal))
+      let why = case reason {
+        "" -> ""
+        _ -> " " <> reason
+      }
+      let text =
+        "A agente precisa de você no computador."
+        <> why
+        <> "\n\nAbra este link para ver e usar a tela: "
+        <> url
+        <> "\n\nVale por 15 minutos e abre uma vez só. Pode encaminhar a quem for ajudar você. Quando terminar, avise a agente."
+      use _ <- result.try(context.send_private(principal, text, None))
+      Ok(
+        "Mandei à sua pessoa, no privado, o link da tela (vale 15 minutos). Espere ela dizer que terminou; depois use devolver_tela.",
+      )
+    }
+  }
 }
 
 /// `entrar` (PRD-K, K-08): entering an account asks the person (K2), unless

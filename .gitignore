@@ -22,3 +22,6 @@ harness-out/
 .harness-tmp/
 __pycache__/
 stress-out/
+
+# The tunnel's credentials (PRD-K, K-09)
+cloudflared/credentials.json

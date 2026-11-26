@@ -7,9 +7,9 @@ name: despachante
 on:
   push:
     branches: [master]
-    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "computador/resolv.conf", "docker-compose.yml", ".github/workflows/despachante.yml"]
+    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "scripts/teste-tunel.sh", "cloudflared/**", "computador/resolv.conf", "docker-compose.yml", ".github/workflows/despachante.yml"]
   pull_request:
-    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "computador/resolv.conf", "docker-compose.yml", ".github/workflows/despachante.yml"]
+    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "scripts/teste-tunel.sh", "cloudflared/**", "computador/resolv.conf", "docker-compose.yml", ".github/workflows/despachante.yml"]
 
 permissions:
   contents: read
@@ -26,3 +26,5 @@ jobs:
         run: docker run --rm --cap-drop ALL --security-opt no-new-privileges sn-despachante npm test --prefix /opt/despachante
       - name: Network test
         run: scripts/teste-rede-despachante.sh
+      - name: Tunnel test (only /tela/* is published)
+        run: scripts/teste-tunel.sh

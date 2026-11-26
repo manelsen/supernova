@@ -74,6 +74,9 @@ services:
       DESPACHANTE_SAIDA_ADMIN: http://saida:7072
       SAIDA_TOKEN: ${SUPERNOVA_SAIDA_TOKEN:-}
       SAIDA_CREDENCIAL: ${SUPERNOVA_SAIDA_CREDENCIAL:-}
+      # Where the tunnel publishes the screens (K-09), e.g.
+      # https://tela.example.org; empty, no screens.
+      DESPACHANTE_TELA_URL: ${SUPERNOVA_TELA_URL:-}
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true
@@ -110,6 +113,24 @@ services:
         gw_priority: 1
       # The dispatcher's door.
       default: {}
+
+  # The tunnel of the people's screens (PRD-K, K17, K-09): publishes the
+  # dispatcher's /tela/* and nothing else, with HTTPS, without opening a
+  # port. Off unless the "tela" profile is on. Pinned by digest (2025.11.1).
+  cloudflared:
+    profiles: ["tela"]
+    container_name: supernova-cloudflared
+    image: cloudflare/cloudflared:2025.11.1@sha256:89ee50efb1e9cb2ae30281a8a404fed95eb8f02f0a972617526f8c5b417acae2
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    mem_limit: 128m
+    restart: unless-stopped
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    networks: [default]
 
   # The image of people's computers: a Linux machine with a shell and a
   # browser, apart from Supernova and holding none of its secrets. Built

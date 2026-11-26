@@ -21,6 +21,7 @@ import { mcp, McpUserError, sweepIdle } from './mcp.mjs';
 import { guard, proxyOption } from './rede.mjs';
 import { newGate, allow, account, decide, beforeClick, siteOf } from './portao.mjs';
 import { clip, runAs } from './shell.mjs';
+import * as tela from './tela.mjs';
 
 export const LIMITS = {
   bodyBytes: 4 * 1024 * 1024,
@@ -246,7 +247,8 @@ async function page(gen) {
     if (gen !== generation) throw new Error('abandoned operation');
     const attempt = (async () => {
       const launched = await chromium.launchPersistentContext(PROFILE_DIR, {
-        headless: true,
+        // Headless, unless the person's screen is open (K-09).
+        ...tela.launchOptions(),
         viewport: VIEWPORT,
         locale: 'pt-BR',
         timezoneId: process.env.TZ || 'America/Sao_Paulo',
@@ -388,6 +390,26 @@ const BROWSER_OPS = {
   },
 };
 
+/// Open or close the person's screen; the browser moves to or from it,
+/// back on the page it was on.
+async function screen(on, gen) {
+  if (on === tela.isOpen()) return on ? { ...(await tela.open()), aberta: true } : { aberta: false };
+  let url = '';
+  if (browserContext) {
+    const pages = browserContext.pages();
+    if (pages.length) url = pages[pages.length - 1].url();
+    const open = browserContext;
+    browserContext = null;
+    await closeBounded(open);
+  }
+  const opened = on ? await tela.open() : (tela.close(), {});
+  if (/^https?:/.test(url)) {
+    const p = await page(gen);
+    await p.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  }
+  return { ...opened, aberta: on };
+}
+
 async function browserOp(name, args, gen) {
   if (name === 'close') {
     const open = browserContext;
@@ -407,12 +429,14 @@ async function browserOp(name, args, gen) {
   // the tab, which spoils the next operation (measured): go on in a fresh
   // tab, back on the page the person was on.
   const stopped = report.portao && report.portao.recusas.some((r) => r.tipo === 'envio' && !r.botao);
+  // A captcha is the person's (K15): the answer says so.
+  const captcha = await tela.hasCaptcha(p);
   if (stopped) {
     const fresh = await p.context().newPage();
     await p.close().catch(() => {});
     if (/^https?:/.test(before)) await fresh.goto(before, { waitUntil: 'domcontentloaded' }).catch(() => {});
   }
-  return { ...here, ...result, ...report };
+  return { ...here, ...result, ...report, ...(captcha ? { captcha: true } : {}) };
 }
 
 /// For tests: whether a browser is open right now.
@@ -422,7 +446,7 @@ export function browserOpen() {
 
 // ---------------------------------------------------------------- routing
 
-export const OPS = ['exec', 'read_file', 'write_file', 'delete_file', 'list', ...Object.keys(BROWSER_OPS), 'close'];
+export const OPS = ['exec', 'read_file', 'write_file', 'delete_file', 'tela_abrir', 'tela_fechar', 'list', ...Object.keys(BROWSER_OPS), 'close'];
 
 export async function run(body) {
   const op = typeof body.op === 'string' ? body.op : '';
@@ -431,6 +455,9 @@ export async function run(body) {
     case 'read_file': return readFile(body);
     case 'write_file': return writeFile(body);
     case 'delete_file': return deleteFile(body);
+    // The person's screen (K-09): the browser reopens on it, same profile.
+    case 'tela_abrir': return serial((gen) => screen(true, gen));
+    case 'tela_fechar': return serial((gen) => screen(false, gen));
     case 'list': return listDir(body);
     default:
       if (op === 'close' || Object.hasOwn(BROWSER_OPS, op)) return serial((gen) => browserOp(op, body, gen));

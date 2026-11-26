@@ -134,6 +134,8 @@ async function fakeComputers() {
           calls.push({ person, url: req.url, auth: req.headers.authorization, body: Buffer.concat(chunks).toString('utf8') });
           if (hold) await new Promise((r) => release.push(r));
           res.writeHead(200, { 'content-type': 'application/json' });
+          const body = calls[calls.length - 1].body;
+          if (body.includes('tela_abrir')) return res.end(JSON.stringify({ ok: true, senha: 'senha123', aberta: true }));
           res.end(JSON.stringify({ ok: true, pessoa: person }));
         });
       });
@@ -532,4 +534,38 @@ test('configuration: tokens and image are required', () => {
   for (const key of Object.keys(env)) {
     assert.throws(() => configFromEnv({ ...env, [key]: ' ' }), new RegExp(key));
   }
+});
+
+test("a screen: opened in the person's computer, held on while open, closed on request", async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg, advance } = setup(fake, pcs, { screenBase: 'https://tela.exemplo.org/' });
+  const machines = computers(cfg);
+  const api = await serve(cfg, machines);
+  try {
+    const opened = await api.call('POST', `/v1/pessoas/${ANA}/tela`);
+    assert.equal(opened.status, 200);
+    assert.match(opened.body.url, /^https:\/\/tela\.exemplo\.org\/tela\/[A-Za-z0-9_-]{32}\/$/);
+    assert.equal(opened.body.expira_ms, 15 * 60_000);
+    // The password stays in the dispatcher.
+    assert.equal(JSON.stringify(opened.body).includes('senha123'), false);
+    // An open screen keeps the computer on.
+    advance(LIMITS.idleMs * 2);
+    assert.deepEqual(await machines.reap(), []);
+    assert.equal((await api.call('POST', `/v1/pessoas/${ANA}/tela/fechar`)).status, 200);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(pcs.calls.some((c) => c.person === ANA && c.body.includes('tela_fechar')));
+    advance(LIMITS.idleMs);
+    assert.deepEqual(await machines.reap(), [ANA]);
+  } finally { api.close(); pcs.close(); fake.close(); }
+});
+
+test('no public address for screens: no screen', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
+  const api = await serve(cfg);
+  try {
+    assert.equal((await api.call('POST', `/v1/pessoas/${ANA}/tela`)).status, 503);
+  } finally { api.close(); pcs.close(); fake.close(); }
 });

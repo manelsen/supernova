@@ -55,6 +55,8 @@ type MockToolMode {
   MockToolFile(path: String)
   /// `[mock-entrar site]`: log in with the vault (K-08).
   MockToolLogin(site: String)
+  /// `[mock-tela motivo]`: call the person to the screen (K-09).
+  MockToolScreen(reason: String)
 }
 
 // ============================================================================
@@ -267,6 +269,24 @@ fn mock_chat_default(
             id: "mock_tool_call_1",
             name: name,
             arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolScreen(reason) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "computador",
+            arguments: json.to_string(
+              json.object([
+                #("action", json.string("pedir_tela")),
+                #("reason", json.string(reason)),
+              ]),
+            ),
           ),
         ]),
         reasoning_content: None,
@@ -837,6 +857,17 @@ fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
 }
 
 fn mock_task_mark(content: String) -> Option(MockToolMode) {
+  case string.split_once(content, "[mock-tela ") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(reason, _)) -> Some(MockToolScreen(string.trim(reason)))
+        Error(Nil) -> None
+      }
+    Error(Nil) -> mock_login_mark(content)
+  }
+}
+
+fn mock_login_mark(content: String) -> Option(MockToolMode) {
   case string.split_once(content, "[mock-entrar ") {
     Ok(#(_, rest)) ->
       case string.split_once(rest, "]") {
