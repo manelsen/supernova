@@ -19,7 +19,7 @@ import path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { mcp, McpUserError, sweepIdle } from './mcp.mjs';
 import { guard, proxyOption } from './rede.mjs';
-import { newGate, allow, account, decide, beforeClick } from './portao.mjs';
+import { newGate, allow, account, decide, beforeClick, siteOf } from './portao.mjs';
 import { clip, runAs } from './shell.mjs';
 
 export const LIMITS = {
@@ -297,6 +297,49 @@ const BROWSER_OPS = {
       await p.close().catch(() => {});
       throw e;
     }
+  },
+  /// Log in on the page that is open (PRD-K, K-08): fill the user name and
+  /// the password from the vault, and send. Nothing of them comes back,
+  /// not even in an error. The person approved this login, so the send
+  /// goes through the gate.
+  async entrar(p, args) {
+    const site = requireString(args, 'site').toLowerCase();
+    const usuario = requireString(args, 'usuario');
+    const senha = requireString(args, 'senha');
+    const here = siteOf(new URL(p.url()).hostname);
+    if (here !== site) throw new UserError(`the open page is on ${here || 'nothing'}; open ${site}'s login page first`);
+    const password = await p.$('input[type=password]:visible');
+    if (!password) throw new UserError('no password field on this page');
+    const user = await password.evaluateHandle((pw) => {
+      const fields = [...document.querySelectorAll('input')].filter((f) => {
+        const t = (f.type || 'text').toLowerCase();
+        return ['text', 'email', 'tel', ''].includes(t) && f.offsetParent !== null;
+      });
+      const before = fields.filter((f) => f.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const named = fields.find((f) => /user|login|email|cpf|usuario|conta|account/i.test(`${f.name} ${f.id} ${f.autocomplete}`));
+      return named || before[before.length - 1] || null;
+    });
+    const userField = user.asElement();
+    try {
+      if (userField) await userField.fill(usuario);
+      await password.fill(senha);
+      agentGate.armed.add(site);
+      await Promise.all([
+        p.waitForLoadState('domcontentloaded').catch(() => {}),
+        password.press('Enter'),
+      ]);
+      await p.waitForLoadState('domcontentloaded').catch(() => {});
+    } catch {
+      throw new Error('could not fill the login form');
+    }
+    return { preenchido: true, usuario_preenchido: Boolean(userField) };
+  },
+  /// Log out of a site: its cookies go (PRD-K, K14).
+  async sair_do_site(p, args) {
+    const site = requireString(args, 'site').toLowerCase().replace(/^\./, '');
+    const escaped = site.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await p.context().clearCookies({ domain: new RegExp(`(^|\\.)${escaped}$`) });
+    return { saiu: site };
   },
   async back(p) { await p.goBack({ waitUntil: 'domcontentloaded' }); return {}; },
   async click(p, args) {

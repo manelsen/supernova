@@ -23,7 +23,9 @@ import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
 import supernova/aprovacao/pedido
 import supernova/aprovacao/permissoes
+import supernova/aprovacao/senha
 import supernova/aprovacao/servico as aprovacao_servico
+import supernova/channel/apagar_mensagem
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/inbound_media
 import supernova/channel/media_reading
@@ -62,6 +64,7 @@ import supernova/memory/metrics as memory_metrics
 import supernova/self/aprovacoes
 import supernova/self/audit as self_audit
 import supernova/self/birth
+import supernova/self/cofre
 import supernova/self/core as self_core
 import supernova/self/desk
 import supernova/self/epoch
@@ -487,14 +490,20 @@ fn run_executor_for_context(
                 // A site for the shell (PRD-K, K21): a request to the person,
                 // born in this chat; the first sentence is the code's.
                 _ if name == computador_tool.name ->
-                  case computador_tool.site_request(arguments), may_code {
-                    Some(_), False ->
+                  case
+                    computador_tool.site_request(arguments),
+                    computador_tool.login_request(arguments),
+                    may_code
+                  {
+                    Some(_), _, False | _, Some(_), False ->
                       Error("computador não é permitido para você")
-                    Some(asked), True ->
+                    Some(asked), _, True ->
                       ask_for_site(turn.principal_id, msg, asked)
+                    None, Some(site), True ->
+                      log_in(turn.principal_id, msg, site)
                     // What the browser gate refused becomes a request to the
                     // person (PRD-K, K-06).
-                    None, _ ->
+                    None, None, _ ->
                       invoke(name, arguments)
                       |> result.map(fn(text) {
                         case computador_tool.gate_refusal(text) {
@@ -550,6 +559,76 @@ fn is_synthetic(message_id: String) -> Bool {
   string.starts_with(message_id, "agenda:")
   || string.starts_with(message_id, "tarefa:")
   || string.starts_with(message_id, "aprovacao:")
+}
+
+/// `entrar` (PRD-K, K-08): entering an account asks the person (K2), unless
+/// they allowed it for good; the password comes from the vault, for this
+/// call only, and nothing of it reaches the model.
+fn log_in(
+  principal: String,
+  msg: port.ChannelMessage,
+  site: String,
+) -> Result(String, String) {
+  case closed_group_global.get_config(), cofre.key(), aprovacao_servico.get() {
+    None, _, _ | _, Error(Nil), _ ->
+      Error("o cofre de senhas não está ligado nesta instalação")
+    _, _, None -> Error("aprovações não estão disponíveis agora")
+    Some(cfg), Ok(key), Some(context) ->
+      case cofre.credencial(cfg.data_dir, principal, key, site) {
+        Error(_) ->
+          Ok(
+            "Sua pessoa não guardou senha para "
+            <> site
+            <> ". Peça que ela mande, no privado: /senha "
+            <> site
+            <> " usuário senha. Você nunca vê a senha.",
+          )
+        Ok(#(usuario, password)) ->
+          case
+            aprovacoes.allowed(
+              cfg.data_dir,
+              principal,
+              context.clock(),
+              aprovacoes.Login,
+              site,
+              None,
+            )
+          {
+            Ok(True) ->
+              computador_tool.entrar(principal, site, usuario, password)
+            Ok(False) ->
+              aprovacao_servico.pedir(
+                context,
+                principal,
+                aprovacoes.Draft(
+                  kind: aprovacoes.Login,
+                  target: site,
+                  summary: pedido.first_sentence(
+                    "Entrar na sua conta em "
+                    <> site
+                    <> " (usuário "
+                    <> usuario
+                    <> ").",
+                  ),
+                  explanation: "",
+                  task: None,
+                  approve: aprovacoes.Once,
+                  always: True,
+                  origin: aprovacoes.Chat(
+                    msg.channel,
+                    msg.channel_id,
+                    msg.user_id,
+                  ),
+                ),
+                in_group: !closed_group_pure.is_private_chat(
+                  msg.channel,
+                  msg.channel_id,
+                ),
+              )
+            Error(reason) -> Error(reason)
+          }
+      }
+  }
 }
 
 /// The browser gate refused (K-06): the person is asked, in private, with a
@@ -2523,6 +2602,22 @@ fn maybe_handle_control(
   supervisor: Option(session_supervisor.SessionSupervisor),
   rich_session: Option(rich_session.Session),
 ) -> Option(#(InteractiveRouterState, String)) {
+  // A password goes to the vault and nowhere else, before anything else
+  // reads the message (PRD-K, K-08, K-I3).
+  case maybe_handle_senha(msg, profile) {
+    Some(reply) -> Some(#(state, reply))
+    None ->
+      maybe_handle_control_rest(state, msg, profile, supervisor, rich_session)
+  }
+}
+
+fn maybe_handle_control_rest(
+  state: InteractiveRouterState,
+  msg: port.ChannelMessage,
+  profile: SessionProfile,
+  supervisor: Option(session_supervisor.SessionSupervisor),
+  rich_session: Option(rich_session.Session),
+) -> Option(#(InteractiveRouterState, String)) {
   case
     maybe_forwarded_transcript(msg, rich_session),
     maybe_handle_preferences(msg, profile)
@@ -2538,6 +2633,69 @@ fn maybe_handle_control(
             None -> maybe_handle_forget(state, msg, profile, supervisor)
           }
       }
+  }
+}
+
+/// `/senha` (PRD-K, K-08): answered by the code, in private, by text only.
+fn maybe_handle_senha(
+  msg: port.ChannelMessage,
+  profile: SessionProfile,
+) -> Option(String) {
+  case senha.spoken(msg.content), senha.parse(msg.content) {
+    True, _ -> Some(senha.voice_refused)
+    False, None -> None
+    False, Some(command) -> {
+      let private =
+        closed_group_pure.is_private_chat(msg.channel, msg.channel_id)
+      let delete = fn() {
+        apagar_mensagem.apagar(msg.channel, msg.channel_id, msg.id)
+        |> result.is_ok
+      }
+      case private, cofre.key(), closed_group_global.get_config() {
+        False, _, _ -> {
+          let _ = delete()
+          Some(senha.only_private)
+        }
+        True, Error(Nil), _ | True, _, None -> {
+          let _ = case command {
+            senha.Guardar(..) -> delete()
+            _ -> False
+          }
+          Some(senha.no_vault)
+        }
+        True, Ok(key), Some(cfg) ->
+          Some(case command {
+            senha.Uso -> senha.usage
+            senha.Listar ->
+              case cofre.sites(cfg.data_dir, profile.agent_id) {
+                Ok(sites) -> senha.listing(sites)
+                Error(_) -> "Não consegui ler o cofre agora."
+              }
+            senha.Apagar(site) ->
+              case cofre.apagar(cfg.data_dir, profile.agent_id, site) {
+                Ok(found) -> senha.deleted(site, found)
+                Error(_) -> "Não consegui apagar agora. Tente de novo."
+              }
+            senha.Guardar(site, usuario, password) ->
+              case
+                cofre.guardar(
+                  cfg.data_dir,
+                  profile.agent_id,
+                  key,
+                  site,
+                  usuario,
+                  password,
+                )
+              {
+                Ok(Nil) -> senha.kept(site, usuario, delete())
+                Error(_) -> {
+                  let _ = delete()
+                  "Não consegui guardar a senha agora. Apague a mensagem e tente de novo."
+                }
+              }
+          })
+      }
+    }
   }
 }
 

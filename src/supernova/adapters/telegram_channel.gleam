@@ -1154,3 +1154,23 @@ fn telegram_error_to_string(error: telegram.TelegramError) -> String {
     telegram.InvalidParseModeError -> "invalid parse mode"
   }
 }
+
+/// Delete a message in a chat (PRD-K, K-08).
+pub fn delete_message(
+  telegram_cfg: config.TelegramConfig,
+  chat_id: String,
+  message_id: String,
+) -> Result(Nil, String) {
+  case telegram_cfg.token {
+    None -> Error("telegram is not configured")
+    Some(token) -> {
+      let api = case telegram_cfg.base_url {
+        Some(base_url) ->
+          telegram.with_base_url(telegram.new_config(token), base_url)
+        None -> telegram.new_config(token)
+      }
+      telegram.delete_message(api, chat_id, message_id)
+      |> result.map_error(fn(e) { string.inspect(e) })
+    }
+  }
+}

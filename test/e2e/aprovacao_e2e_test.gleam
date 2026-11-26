@@ -11,6 +11,7 @@ import gleam/string
 import gleeunit/should
 import supernova/adapters/channel_router
 import supernova/aprovacao/servico
+import supernova/channel/inbox
 import supernova/channel/port
 import supernova/config
 import supernova/core/session/history_store
@@ -506,4 +507,136 @@ fn file_computer(body: String) -> #(Int, String) {
       "{\"ok\":true,\"path\":\"/home/pwuser/trabalho/nota.txt\",\"gravado\":false,\"portao\":{\"recusas\":[{\"tipo\":\"arquivo\",\"acao\":\"sobrescrever\",\"caminho\":\"/home/pwuser/trabalho/nota.txt\",\"bytes\":8,\"novos\":10}],\"usados\":[]}}",
     )
   }
+}
+
+@external(erlang, "k_i3_ffi", "files_containing")
+fn files_containing(dir: String, needle: String) -> List(String)
+
+@external(erlang, "supernova_mock_ffi", "clear_prompts")
+fn clear_all_prompts() -> Nil
+
+/// PRD-K, K-08 and K-I3: a marked password goes to the vault by /senha,
+/// a login asks the person and fills it; afterwards no prompt and no file
+/// on disk holds it.
+pub fn a_password_never_reaches_the_model_or_the_disk_test() {
+  let marked = "SENHA-MARCADA-K-I3-9d2e"
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  let _ = envoy.set("SUPERNOVA_COFRE_KEY", "chave-de-teste-do-cofre")
+  let fake =
+    start_computer(fn(_) { #(200, "{\"ok\":true,\"preenchido\":true}") })
+  let _ =
+    envoy.set(
+      "SUPERNOVA_COMPUTER_URL",
+      "http://127.0.0.1:" <> string.inspect(computer_port(1, fake)),
+    )
+  use <- exception.defer(fn() {
+    envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
+    envoy.unset("SUPERNOVA_COFRE_KEY")
+    envoy.unset("SUPERNOVA_COMPUTER_URL")
+    stop_computer(fake)
+    servico.clear()
+  })
+  let admin_cfg =
+    config.Config(
+      ..support.channel_config(),
+      access: config.AccessConfig(
+        ..support.access_config(["sim:carol"], []),
+        allowed_chats: ["sim:grupo-1"],
+      ),
+    )
+  support.with_runtime_root(admin_cfg, fn(root) {
+    let assert Ok(box) = inbox.start(root)
+    inbox.set_global(box)
+    let llm =
+      provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      )
+    let private_sent = process.new_subject()
+    servico.configure(
+      servico.Context(
+        data_dir: root,
+        clock: fn() { 1000 },
+        send_private: fn(principal, text, _) {
+          process.send(private_sent, #(principal, text))
+          Ok(Nil)
+        },
+        inject: fn(_) { Ok(Nil) },
+      ),
+    )
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
+    let assert Ok(sessions) = session_supervisor.start_with_history(store)
+    let assert Ok(router) =
+      channel_router.start_with_session_supervisor("sim", sessions, llm)
+    let _ = say(router, "dm-carol", "oi")
+    let _ = say(router, "dm-carol", "Lua")
+    let _ = say(router, "dm-carol", "sim")
+    clear_all_prompts()
+
+    // In a group: refused, nothing kept.
+    say(router, "grupo-1", "/senha saude.gov.br carol " <> marked)
+    |> string.contains("privado")
+    |> should.be_true
+    // By voice: refused.
+    say(
+      router,
+      "dm-carol",
+      "[mensagem de voz, transcrita]\n/senha saude.gov.br carol " <> marked,
+    )
+    |> string.contains("só por texto")
+    |> should.be_true
+    // In private, by text: kept.
+    let message = "/senha saude.gov.br carol " <> marked
+    let _ =
+      inbox.receive(
+        box,
+        port.ChannelMessage(
+          id: "m-senha",
+          channel: "sim",
+          channel_id: "dm-carol",
+          user_id: "carol",
+          username: "carol",
+          content: message,
+          is_bot: False,
+          reply_to_id: None,
+        ),
+        1,
+      )
+    say(router, "dm-carol", message)
+    |> string.starts_with("Guardei a senha de saude.gov.br (usuário carol)")
+    |> should.be_true
+    say(router, "dm-carol", "/senha")
+    |> string.contains("saude.gov.br, usuário carol")
+    |> should.be_true
+
+    // Logging in asks first, then fills.
+    let _ = say(router, "dm-carol", "entra [mock-entrar saude.gov.br]")
+    let assert [#("sim:carol", asked)] = drain(private_sent)
+    string.starts_with(
+      asked,
+      "Entrar na sua conta em saude.gov.br (usuário carol).",
+    )
+    |> should.be_true
+    let _ = say(router, "dm-carol", "sim")
+    let _ = say(router, "dm-carol", "agora [mock-entrar saude.gov.br]")
+    // The computer got it, in that one call.
+    computer_requests(fake)
+    |> list.filter(fn(raw) { string.contains(raw, marked) })
+    |> list.length
+    |> should.equal(1)
+
+    // K-I3: no prompt, no file holds it.
+    prompt_texts()
+    |> list.any(fn(prompt) { string.contains(prompt, marked) })
+    |> should.be_false
+    files_containing(root, marked) |> should.equal([])
+    inbox.stop(box)
+    session_supervisor.stop(sessions)
+  })
 }

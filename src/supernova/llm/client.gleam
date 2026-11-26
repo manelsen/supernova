@@ -53,6 +53,8 @@ type MockToolMode {
   MockToolClick(selector: String)
   /// `[mock-arquivo caminho]`: write a file in the computer (K-07).
   MockToolFile(path: String)
+  /// `[mock-entrar site]`: log in with the vault (K-08).
+  MockToolLogin(site: String)
 }
 
 // ============================================================================
@@ -265,6 +267,24 @@ fn mock_chat_default(
             id: "mock_tool_call_1",
             name: name,
             arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolLogin(site) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "computador",
+            arguments: json.to_string(
+              json.object([
+                #("action", json.string("entrar")),
+                #("site", json.string(site)),
+              ]),
+            ),
           ),
         ]),
         reasoning_content: None,
@@ -817,6 +837,17 @@ fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
 }
 
 fn mock_task_mark(content: String) -> Option(MockToolMode) {
+  case string.split_once(content, "[mock-entrar ") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(site, _)) -> Some(MockToolLogin(string.trim(site)))
+        Error(Nil) -> None
+      }
+    Error(Nil) -> mock_file_mark(content)
+  }
+}
+
+fn mock_file_mark(content: String) -> Option(MockToolMode) {
   case string.split_once(content, "[mock-arquivo ") {
     Ok(#(_, rest)) ->
       case string.split_once(rest, "]") {

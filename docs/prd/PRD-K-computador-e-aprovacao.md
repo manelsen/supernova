@@ -390,8 +390,8 @@ cookies daquele site. `/senha` sem argumentos lista os sites (nunca as
 senhas) e permite apagar.
 
 **Aceite:**
-- [ ] K-I3 testado com senha marcada.
-- [ ] Login num site local, sessão sobrevive a desligar e religar.
+- [x] K-I3 testado com senha marcada.
+- [x] Login num site local, sessão sobrevive a desligar e religar.
 - [ ] Commit: `feat(cofre): senhas fora do modelo`.
 
 #### K-09: A tela (noVNC) e o túnel

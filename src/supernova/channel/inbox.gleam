@@ -31,6 +31,7 @@ import gleam/order
 import gleam/otp/actor
 import gleam/result
 import gleam/string
+import supernova/aprovacao/senha
 import supernova/channel/port
 import supernova/infra/safe_io
 
@@ -456,7 +457,13 @@ fn message_decoder() -> decode.Decoder(port.ChannelMessage) {
 }
 
 fn encode_in(entry: Pending) -> String {
-  let message = entry.message
+  // A password given by /senha never reaches the disk (PRD-K, K-I3); a
+  // replay after a crash finds the command without it, and asks again.
+  let message =
+    port.ChannelMessage(
+      ..entry.message,
+      content: senha.redact(entry.message.content),
+    )
   json.object([
     #("ev", json.string("in")),
     #("key", json.string(entry.key)),
