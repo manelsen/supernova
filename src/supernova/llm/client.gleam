@@ -51,6 +51,8 @@ type MockToolMode {
   MockToolSite(site: String)
   /// `[mock-clique seletor]`: click in the computer's browser (K-06).
   MockToolClick(selector: String)
+  /// `[mock-arquivo caminho]`: write a file in the computer (K-07).
+  MockToolFile(path: String)
 }
 
 // ============================================================================
@@ -263,6 +265,25 @@ fn mock_chat_default(
             id: "mock_tool_call_1",
             name: name,
             arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolFile(path) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "computador",
+            arguments: json.to_string(
+              json.object([
+                #("action", json.string("write_file")),
+                #("path", json.string(path)),
+                #("content", json.string("texto novo")),
+              ]),
+            ),
           ),
         ]),
         reasoning_content: None,
@@ -796,6 +817,17 @@ fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
 }
 
 fn mock_task_mark(content: String) -> Option(MockToolMode) {
+  case string.split_once(content, "[mock-arquivo ") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(path, _)) -> Some(MockToolFile(string.trim(path)))
+        Error(Nil) -> None
+      }
+    Error(Nil) -> mock_click_mark(content)
+  }
+}
+
+fn mock_click_mark(content: String) -> Option(MockToolMode) {
   case string.split_once(content, "[mock-clique ") {
     Ok(#(_, rest)) ->
       case string.split_once(rest, "]") {

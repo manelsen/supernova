@@ -59,7 +59,7 @@ test('reading is free; background posts need the site; a send needs a yes each t
     const context = await browser.newContext();
     const gate = newGate();
     await guard(context, (request) => decide(gate, request));
-    const page = await context.newPage();
+    let page = await context.newPage();
 
     // Nothing allowed: reading works, a background post is refused.
     allow(gate, {});
@@ -96,6 +96,11 @@ test('reading is free; background posts need the site; a send needs a yes each t
     await page.waitForTimeout(500);
     assert.equal(s.posts.length, 1);
     assert.ok(account(gate).portao.recusas.some((r) => r.tipo === 'envio'));
+    // A blocked navigation leaves Chromium's error page in the tab; like the
+    // service (agent.mjs, goto), go on in a fresh tab.
+    const fresh = await context.newPage();
+    await page.close();
+    page = fresh;
 
     // A one-use yes: the send goes once, and is accounted as used.
     allow(gate, { envios: ['127.0.0.1'] });

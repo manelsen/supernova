@@ -95,6 +95,28 @@ test('write, read and list files', async () => {
   assert.deepEqual(listed.entries, ['nota.txt']);
 });
 
+test('creating passes; overwriting and deleting need the person\'s yes, once', async () => {
+  const p = resolvePath('aprovar/nota.txt');
+  await run({ op: 'write_file', path: 'aprovar/nota.txt', content: 'primeira' });
+  // Overwriting without a yes: nothing written, the refusal says what.
+  const refused = await run({ op: 'write_file', path: 'aprovar/nota.txt', content: 'segunda' });
+  assert.equal(refused.gravado, false);
+  assert.deepEqual(refused.portao.recusas[0], { tipo: 'arquivo', acao: 'sobrescrever', caminho: p, bytes: 8, novos: 7 });
+  assert.equal((await run({ op: 'read_file', path: 'aprovar/nota.txt' })).content, 'primeira');
+  // With the yes: written, and accounted as used.
+  const allowed = await run({ op: 'write_file', path: 'aprovar/nota.txt', content: 'segunda', liberado: { arquivos: [p] } });
+  assert.deepEqual(allowed.portao.usados, [p]);
+  assert.equal((await run({ op: 'read_file', path: 'aprovar/nota.txt' })).content, 'segunda');
+  // Deleting: refused, then with the yes.
+  const keep = await run({ op: 'delete_file', path: 'aprovar/nota.txt' });
+  assert.equal(keep.apagado, false);
+  assert.equal(keep.portao.recusas[0].acao, 'apagar');
+  const gone = await run({ op: 'delete_file', path: 'aprovar/nota.txt', liberado: { arquivos: [p] } });
+  assert.equal(gone.apagado, true);
+  await assert.rejects(run({ op: 'read_file', path: 'aprovar/nota.txt' }));
+  await assert.rejects(run({ op: 'delete_file', path: 'aprovar' }), UserError);
+});
+
 test('unknown op is a user error', async () => {
   await assert.rejects(run({ op: 'formatar_disco' }), UserError);
 });

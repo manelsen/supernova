@@ -373,7 +373,7 @@ Pasta da pessoa só leitura para `sh`, `rascunho/` gravável; ferramenta de
 arquivos: criar passa, sobrescrever e apagar pedem (K22).
 
 **Aceite:**
-- [ ] No computador: `rm` pelo shell na pasta da pessoa falha; pela
+- [x] No computador: `rm` pelo shell na pasta da pessoa falha; pela
       ferramenta pede aprovação; arquivo novo passa direto.
 - [ ] Commit: `feat(computador): arquivos da pessoa sob aprovação`.
 

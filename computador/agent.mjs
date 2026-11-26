@@ -112,12 +112,55 @@ async function readFile(args) {
   }
 }
 
+/// The files the person allowed to overwrite or delete in this call
+/// (PRD-K, K22, K-07): one use each.
+function allowedFiles(args) {
+  const list = args.liberado && Array.isArray(args.liberado.arquivos) ? args.liberado.arquivos : [];
+  return new Set(list.map((f) => path.normalize(String(f))));
+}
+
+/// What already exists at a path: a file, something else, or nothing.
+async function existing(p) {
+  try {
+    const st = await fs.lstat(p);
+    return st.isFile() ? { file: true, bytes: st.size } : { file: false };
+  } catch { return null; }
+}
+
+function fileRefusal(p, acao, extra = {}) {
+  return { gravado: false, portao: { recusas: [{ tipo: 'arquivo', acao, caminho: p, ...extra }], usados: [] } };
+}
+
 async function writeFile(args) {
   const p = resolvePath(args.path);
   const content = typeof args.content === 'string' ? args.content : '';
+  // Creating passes; overwriting needs the person's yes (K22).
+  const there = await existing(p);
+  const used = [];
+  if (there) {
+    if (!there.file) throw new UserError(`${p} exists and is not a file`);
+    if (!allowedFiles(args).has(p)) {
+      return { path: p, ...fileRefusal(p, 'sobrescrever', { bytes: there.bytes, novos: Buffer.byteLength(content) }) };
+    }
+    used.push(p);
+  }
   await fs.mkdir(path.dirname(p), { recursive: true });
   await fs.writeFile(p, content, 'utf8');
-  return { path: p, bytes: Buffer.byteLength(content) };
+  return { path: p, bytes: Buffer.byteLength(content), ...(used.length ? { portao: { recusas: [], usados: used } } : {}) };
+}
+
+async function deleteFile(args) {
+  const p = resolvePath(args.path);
+  const there = await existing(p);
+  if (!there) throw new UserError(`${p} does not exist`);
+  if (!there.file) throw new UserError(`${p} is not a file; only files are deleted`);
+  // Deleting always needs the person's yes (K22).
+  if (!allowedFiles(args).has(p)) {
+    const refused = fileRefusal(p, 'apagar', { bytes: there.bytes });
+    return { path: p, apagado: false, portao: refused.portao };
+  }
+  await fs.unlink(p);
+  return { path: p, apagado: true, portao: { recusas: [], usados: [p] } };
 }
 
 async function listDir(args) {
@@ -313,8 +356,20 @@ async function browserOp(name, args, gen) {
   const p = await page(gen);
   // What Supernova allowed for this call (K-06); the account goes back.
   allow(agentGate, args.liberado);
+  const before = p.url();
   const result = await op(p, args);
-  return { ...(await where(p)), ...result, ...account(agentGate) };
+  const here = await where(p);
+  const report = account(agentGate);
+  // A send the gate stopped at the network leaves Chromium's error page in
+  // the tab, which spoils the next operation (measured): go on in a fresh
+  // tab, back on the page the person was on.
+  const stopped = report.portao && report.portao.recusas.some((r) => r.tipo === 'envio' && !r.botao);
+  if (stopped) {
+    const fresh = await p.context().newPage();
+    await p.close().catch(() => {});
+    if (/^https?:/.test(before)) await fresh.goto(before, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  }
+  return { ...here, ...result, ...report };
 }
 
 /// For tests: whether a browser is open right now.
@@ -324,7 +379,7 @@ export function browserOpen() {
 
 // ---------------------------------------------------------------- routing
 
-export const OPS = ['exec', 'read_file', 'write_file', 'list', ...Object.keys(BROWSER_OPS), 'close'];
+export const OPS = ['exec', 'read_file', 'write_file', 'delete_file', 'list', ...Object.keys(BROWSER_OPS), 'close'];
 
 export async function run(body) {
   const op = typeof body.op === 'string' ? body.op : '';
@@ -332,6 +387,7 @@ export async function run(body) {
     case 'exec': return runShell(requireString(body, 'command'), body.timeout_s);
     case 'read_file': return readFile(body);
     case 'write_file': return writeFile(body);
+    case 'delete_file': return deleteFile(body);
     case 'list': return listDir(body);
     default:
       if (op === 'close' || Object.hasOwn(BROWSER_OPS, op)) return serial((gen) => browserOp(op, body, gen));

@@ -56,6 +56,18 @@ test('commands run as sh, which reads no credential', { skip: !root && 'needs ro
     assert.deepEqual(who.stdout.trim().split('\n'), [String(SH.uid), SCRATCH, 'http://172.20.0.2:3128']);
     const leak = await ask(socketPath, `env; cat /proc/${process.pid}/environ; cat ${secretFile}; cat /proc/1/environ; true`);
     assert.equal((leak.stdout + leak.stderr).includes('segredo-do-svc'), false);
+    // The person's folder is svc's: the shell reads it, cannot change it
+    // (K22); it writes in its scratch folder.
+    const folder = path.join(dir, 'trabalho');
+    fs.mkdirSync(folder, { mode: 0o755 });
+    fs.writeFileSync(path.join(folder, 'nota.txt'), 'da pessoa', { mode: 0o644 });
+    fs.chownSync(path.join(folder, 'nota.txt'), 1001, 1001);
+    fs.chownSync(folder, 1001, 1001);
+    const files = await ask(socketPath, `cat ${folder}/nota.txt; rm -f ${folder}/nota.txt; echo x > ${folder}/nota.txt; touch ${folder}/nova.txt; echo ok > rascunho.txt && cat rascunho.txt`);
+    assert.match(files.stdout, /da pessoa/);
+    assert.match(files.stdout, /ok/);
+    assert.equal(fs.readFileSync(path.join(folder, 'nota.txt'), 'utf8'), 'da pessoa');
+    assert.equal(fs.existsSync(path.join(folder, 'nova.txt')), false);
     // Not root, no way back to root.
     const sudo = await ask(socketPath, 'cat /etc/shadow');
     assert.notEqual(sudo.exit_code, 0);

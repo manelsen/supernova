@@ -399,3 +399,111 @@ fn fun_computer(body: String) -> #(Int, String) {
     )
   }
 }
+
+/// PRD-K, K-07 (K22): overwriting a person's file asks; a yes lets it
+/// through once.
+pub fn overwriting_a_file_asks_and_the_yes_is_spent_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  let fake = start_computer(file_computer)
+  let _ =
+    envoy.set(
+      "SUPERNOVA_COMPUTER_URL",
+      "http://127.0.0.1:" <> string.inspect(computer_port(1, fake)),
+    )
+  use <- exception.defer(fn() {
+    envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
+    envoy.unset("SUPERNOVA_COMPUTER_URL")
+    stop_computer(fake)
+    servico.clear()
+  })
+  let admin_cfg =
+    config.Config(
+      ..support.channel_config(),
+      access: config.AccessConfig(
+        ..support.access_config(["sim:carol"], []),
+        allowed_chats: [],
+      ),
+    )
+  support.with_runtime_root(admin_cfg, fn(root) {
+    let llm =
+      provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      )
+    let private_sent = process.new_subject()
+    servico.configure(
+      servico.Context(
+        data_dir: root,
+        clock: fn() { 1000 },
+        send_private: fn(principal, text, _) {
+          process.send(private_sent, #(principal, text))
+          Ok(Nil)
+        },
+        inject: fn(_) { Ok(Nil) },
+      ),
+    )
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
+    let assert Ok(sessions) = session_supervisor.start_with_history(store)
+    let assert Ok(router) =
+      channel_router.start_with_session_supervisor("sim", sessions, llm)
+    let _ = say(router, "dm-carol", "oi")
+    let _ = say(router, "dm-carol", "Lua")
+    let _ = say(router, "dm-carol", "sim")
+
+    let _ =
+      say(
+        router,
+        "dm-carol",
+        "reescreve [mock-arquivo /home/pwuser/trabalho/nota.txt]",
+      )
+    let assert [#("sim:carol", text)] = drain(private_sent)
+    string.starts_with(
+      text,
+      "Sobrescrever o arquivo /home/pwuser/trabalho/nota.txt com um texto novo.",
+    )
+    |> should.be_true
+    let _ = say(router, "dm-carol", "sim")
+    let _ =
+      say(
+        router,
+        "dm-carol",
+        "de novo [mock-arquivo /home/pwuser/trabalho/nota.txt]",
+      )
+    let writes =
+      computer_requests(fake)
+      |> list.filter(fn(raw) { string.contains(raw, "\"op\":\"write_file\"") })
+    let assert [_, second] = writes
+    string.contains(second, "\"arquivos\":[\"/home/pwuser/trabalho/nota.txt\"]")
+    |> should.be_true
+    let assert Ok([]) =
+      aprovacoes.valid_grants(
+        root,
+        "sim:carol",
+        2000,
+        aprovacoes.Overwrite,
+        None,
+      )
+    session_supervisor.stop(sessions)
+  })
+}
+
+fn file_computer(body: String) -> #(Int, String) {
+  case
+    string.contains(body, "\"arquivos\":[\"/home/pwuser/trabalho/nota.txt\"]")
+  {
+    True -> #(
+      200,
+      "{\"ok\":true,\"path\":\"/home/pwuser/trabalho/nota.txt\",\"bytes\":10,\"portao\":{\"recusas\":[],\"usados\":[\"/home/pwuser/trabalho/nota.txt\"]}}",
+    )
+    False -> #(
+      200,
+      "{\"ok\":true,\"path\":\"/home/pwuser/trabalho/nota.txt\",\"gravado\":false,\"portao\":{\"recusas\":[{\"tipo\":\"arquivo\",\"acao\":\"sobrescrever\",\"caminho\":\"/home/pwuser/trabalho/nota.txt\",\"bytes\":8,\"novos\":10}],\"usados\":[]}}",
+    )
+  }
+}
