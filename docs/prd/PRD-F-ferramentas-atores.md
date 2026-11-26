@@ -1,7 +1,8 @@
 [PRD]
 # PRD F: Ferramentas como atores, e em segundo plano
 
-> **Situação em 25/11/2026:** aprovada. D3, D4 e D7 decididas pelo
+> **Situação em 25/11/2026:** aprovada; fase A executada (F-00 a F-04, PR #80),
+> F-08 descartada pelo resultado da D7. D3, D4 e D7 decididas pelo
 > mantenedor; D1, D2, D5 e D6 seguem a recomendação (seção 5).
 > A fase A não depende de outra PRD. A fase B depende da P-03 da
 > [PRD-P](PRD-P-paralelismo.md), o processo da agente.
@@ -159,6 +160,17 @@ recomendação.
   configuração `tools.sandbox: bwrap | none`, com padrão `bwrap` quando o
   executável existir e aviso no log quando não existir. O `computador`
   continua no gVisor.
+
+  **Resultado do teste (25/11): fica `none` no container.** No host o
+  `bwrap` 0.9.0 funciona. Num container Alpine, só funciona desligando o
+  seccomp **e** o AppArmor do container inteiro (e mesmo assim reaproveitando
+  o `/proc` do container em vez de montar um novo); qualquer configuração
+  menor falha (`CAP_SYS_ADMIN` com AppArmor desligado esbarra no
+  `pivot_root`). Desligar as duas proteções do processo que guarda todas as
+  chaves e tokens, para isolar três ferramentas, é a troca errada. O
+  mantenedor decidiu: **sem `bwrap` no container**. A F-08 não é executada;
+  o isolamento de comandos fica com o computador de cada pessoa (gVisor), na
+  fase 2 do computador.
 
 `/esquecer` **cancela** as tarefas em andamento da pessoa e descarta os
 resultados que ainda não foram entregues. Isso não é decisão, é invariante
@@ -353,6 +365,10 @@ telemetria da seção 6.1 e o painel.
 - [ ] Commit: `fix(channel): turno abandonado não fica rodando`.
 
 #### F-08: Isolamento com Bubblewrap (D7)
+
+> **Não executada.** O teste da D7 mostrou que o `bwrap` só funciona no
+> container com o seccomp e o AppArmor desligados; o mantenedor decidiu
+> ficar sem ele (D7, resultado). O texto abaixo fica como referência.
 
 Execute os processos externos de `safe_shell`, `process`, `git_inspect` e
 `github` dentro do `bwrap`, com o perfil da D7. O perfil é montado por uma

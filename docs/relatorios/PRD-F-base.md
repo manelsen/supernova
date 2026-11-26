@@ -43,8 +43,8 @@ natureza da operação, salvo onde está marcado como medido.
 - **`process` mata processos do sistema.** No container, isso é a árvore da
   própria Supernova (o Chromium do `browser`, por exemplo). Dentro do `bwrap`,
   com o próprio namespace de PIDs, ela só veria o que ela mesma iniciou: o
-  `list` e o `kill` perdem o sentido. A F-08 decide se o `process` entra no
-  sandbox ou fica fora dele com a política de workspace.
+  `list` e o `kill` perdem o sentido. Com a F-08 fora (D7: sem `bwrap` no
+  container), o `process` segue com a política de workspace.
 - **Escrita no meio de um corte (risco da seção 10).** A `agenda` já grava
   com `.tmp` e `rename`, sob trava por pessoa. O `file_system` grava direto
   (`file:write_file`). Pelo D3 ele não vai para segundo plano, mas a F-02 pode
@@ -100,3 +100,15 @@ global de 8). B: `1305cb0` (F-02 e F-03: guardião por chamada, vagas).
 Médias: A 37,2 turnos/s, B 41,6. **Sem regressão.** O processo com a maior
 fila, nos dois lados, é o log (`safe_println`), nunca um guardião de
 ferramenta (critério da seção 9).
+
+## F-08: `bwrap` no container (D7)
+
+| Container | `bwrap` |
+|---|---|
+| Docker padrão | falha (sem namespace) |
+| AppArmor desligado | falha |
+| seccomp desligado | falha (`make / slave`) |
+| seccomp e AppArmor desligados | funciona com o `/proc` do container; `--proc` novo falha. Fora do workspace, o arquivo não existe |
+| `CAP_SYS_ADMIN` e AppArmor desligado | falha (`pivot_root` negado) |
+
+Decisão do mantenedor: `none` no container. A F-08 não é executada.
