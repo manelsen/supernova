@@ -61,6 +61,13 @@ Inside its network, the computer can reach the internet. Measured on the pilot h
 
 These two rules close that path. They match only traffic that enters from `br-computador`. Traffic inside that network (Supernova ↔ computer) and replies to established connections are left alone.
 
+**Inside the network, the computer can still open connections to Supernova** (Supernova is attached to `br-computador` to call the computer), and loopback inside the computer is its own service. The rules above do not cover either. Two checks in the computer do:
+
+- **Its browsers reach nothing internal.** Every request of the computer's browser and of the probes' browser contexts goes through `computador/rede.mjs`: loopback (`localhost`, `127.0.0.0/8`, `::1`), `0.0.0.0`, private and link-local ranges (IPv4 and IPv6, including IPv4 written inside IPv6), carrier-grade NAT and multicast are refused, by address or by what a name resolves to. Docker's own names (`supernova`, `searxng`) do not resolve in the computer, which asks public DNS.
+- **The service refuses to start without `COMPUTADOR_TOKEN`**, and an empty token refuses every request.
+
+The shell (`exec`, admins only) can still reach internal addresses directly. PRD-K takes Supernova out of the computers' network and sends their traffic through an egress proxy.
+
 Supernova is attached to both networks, but `docker-compose.yml` gives its own network the gateway (`gw_priority`), so Supernova's outbound traffic never enters through `br-computador` and these rules do not touch it. That setting needs Docker Engine 28 and Compose 2.33.1 or newer. Without it, Docker picks the gateway by network name, and `computador_net` sorts first.
 
 ```sh

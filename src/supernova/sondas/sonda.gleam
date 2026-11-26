@@ -11,6 +11,7 @@ import gleam/float
 import gleam/int
 import gleam/json
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import supernova/adapters/mcp/computer
 import supernova/core/executor
@@ -35,6 +36,10 @@ pub type Env {
     llm_config: provider.ProviderConfig,
     base: executor.RunContext,
     gateway: fn(String, String) -> Result(String, String),
+    /// A probe action through the gateway: authorized as `sonda`, audited,
+    /// not charged to the hourly tool budget.
+    audited: fn(String, fn() -> Result(String, String)) ->
+      Result(String, String),
     may_code: Bool,
     costing: condutor.Costing,
     computer: Option(computer.Computer),
@@ -96,7 +101,7 @@ fn start(
     json.to_string(json.object([#("instrucoes", json.string(instructions))]))
   let work = fn(id) {
     let outcome = {
-      case maos.open(pc, kind, origin.agent_id, id, env.gateway) {
+      case maos.open(pc, kind, origin.agent_id, id, env.gateway, env.audited) {
         Error(reason) -> Error("o computador não abriu a sonda: " <> reason)
         Ok(hands) ->
           condutor.run(
@@ -114,7 +119,7 @@ fn start(
       #("tipo", label),
       #("desfecho", ending_of(outcome)),
     ])
-    outcome
+    result.map(outcome, fn(delivered) { delivered.1 })
   }
   case
     tasks.begin_work(
@@ -147,14 +152,11 @@ fn start(
   }
 }
 
-fn ending_of(outcome: Result(String, String)) -> String {
+fn ending_of(outcome: Result(#(condutor.Ending, String), String)) -> String {
   case outcome {
     Error(_) -> "falhou"
-    Ok(report) ->
-      case string.starts_with(report, "custo esgotado") {
-        True -> "custo_esgotado"
-        False -> "concluida"
-      }
+    Ok(#(condutor.Concluded, _)) -> "concluida"
+    Ok(#(condutor.CostExhausted, _)) -> "custo_esgotado"
   }
 }
 

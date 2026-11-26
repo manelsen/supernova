@@ -47,6 +47,7 @@ import supernova/core/preferences
 import supernova/core/prompt_assembly
 import supernova/core/session/server as rich_session
 import supernova/core/session/supervisor as session_supervisor
+import supernova/core/syscall/actor as syscall_actor
 import supernova/core/ux
 import supernova/infra/safe_io
 import supernova/llm/catalog
@@ -436,6 +437,16 @@ fn run_executor_for_context(
           llm_config: llm_config,
           base: run_context,
           gateway: invoke,
+          audited: fn(action, run) {
+            syscall_actor.invoke_tool_with(
+              runtime.gateway,
+              turn.principal_id,
+              turn.role,
+              sonda.name,
+              action,
+              run,
+            )
+          },
           may_code: may_code,
           costing: sonda_condutor.Costing(
             cost: fn(model, prompt, completion) {

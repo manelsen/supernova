@@ -218,3 +218,66 @@ test('browser: a context per session, two tabs at most, no code, no local pages'
     local.close();
   }
 });
+
+test('two opens of one session at once: one wins, nothing leaks', async () => {
+  const closed = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const slow = async () => {
+    await gate;
+    return { kind: 'filesystem', call: async () => null, close: async () => { closed.push('x'); } };
+  };
+  const opener = { filesystem: slow, playwright: slow };
+  const first = mcp({ acao: 'abrir', sessao: 'dupla', servidor: 'filesystem', pessoa: ANA, sonda: 1 }, opener);
+  await assert.rejects(
+    mcp({ acao: 'abrir', sessao: 'dupla', servidor: 'filesystem', pessoa: ANA, sonda: 1 }, opener),
+    McpUserError,
+  );
+  release();
+  await first;
+  assert.equal(openSessions().filter((id) => id === 'dupla').length, 1);
+  await mcp({ acao: 'fechar', sessao: 'dupla' });
+  assert.deepEqual(closed, ['x']);
+});
+
+test('a session that finishes opening after its person was forgotten is closed', async () => {
+  const closed = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const slow = async () => {
+    await gate;
+    return { kind: 'filesystem', call: async () => null, close: async () => { closed.push('x'); } };
+  };
+  const opening = mcp({ acao: 'abrir', sessao: 'tardia', servidor: 'filesystem', pessoa: BIA, sonda: 3 }, { filesystem: slow, playwright: slow });
+  await mcp({ acao: 'apagar_pessoa', pessoa: BIA });
+  release();
+  await assert.rejects(opening, McpUserError);
+  assert.equal(openSessions().includes('tardia'), false);
+  assert.deepEqual(closed, ['x']);
+});
+
+test('an unanswered call frees its slot, and a repeated id waits for nothing', async () => {
+  const limit = MCP_LIMITS.callMs;
+  MCP_LIMITS.callMs = 50;
+  const forgotten = [];
+  const pending = new Set();
+  const fake = async () => ({
+    kind: 'filesystem',
+    call: (message) => {
+      if (pending.has(message.id)) return Promise.resolve({ jsonrpc: '2.0', id: message.id, error: { message: 'a request with this id is already waiting' } });
+      pending.add(message.id);
+      return new Promise(() => {});
+    },
+    forget: (id) => { forgotten.push(id); pending.delete(id); },
+    close: async () => {},
+  });
+  try {
+    await mcp({ acao: 'abrir', sessao: 'muda', servidor: 'filesystem', pessoa: ANA, sonda: 4 }, { filesystem: fake, playwright: fake });
+    const { resposta } = await mcp({ acao: 'chamar', sessao: 'muda', mensagem: { jsonrpc: '2.0', id: 7, method: 'x' } });
+    assert.match(resposta.error.message, /no answer/);
+    assert.deepEqual(forgotten, [7]);
+  } finally {
+    MCP_LIMITS.callMs = limit;
+    await mcp({ acao: 'fechar', sessao: 'muda' });
+  }
+});

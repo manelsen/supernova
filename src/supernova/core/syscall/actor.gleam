@@ -71,6 +71,10 @@ pub type SyscallMessage {
     role: String,
     tool_name: String,
     args: String,
+    /// Whether the call counts in the hourly tool budget. A probe's own
+    /// actions do not (PRD-S, decided 26/11): they are audited, and the
+    /// probe has its own limits.
+    charged: Bool,
   )
   ClaimTool(
     reply_to: Subject(Result(ToolExecutor, String)),
@@ -120,6 +124,8 @@ type ToolReservation {
     /// Whether the policy authorized a write. A read authorization never
     /// runs a write, whatever arguments the executor receives.
     authorized_write: Bool,
+    /// Whether claiming it is charged to the hourly tool budget.
+    charged: Bool,
   )
 }
 
@@ -519,6 +525,7 @@ fn authorize_tool(
   role: String,
   tool_name: String,
   args: String,
+  charged: Bool,
   timestamp: Int,
 ) -> #(Result(String, String), ActorState) {
   // 1. Capability manifest
@@ -573,7 +580,11 @@ fn authorize_tool(
             active_reservations(actor_state.tool_reservations, timestamp)
           let reserved = reserved_for(reservations, principal_id)
           // 3. Budget (tool calls per hour), counting open reservations.
-          case check_tool_budget(actor_state, principal_id, 1 + reserved) {
+          let budget = case charged {
+            True -> check_tool_budget(actor_state, principal_id, 1 + reserved)
+            False -> Ok(Nil)
+          }
+          case budget {
             Error(reason) -> {
               audit_syscall(
                 actor_state.audit_log,
@@ -599,6 +610,7 @@ fn authorize_tool(
                   expires_at: timestamp + tool_reservation_ttl_ms,
                   authorized_path: authorized_path,
                   authorized_write: tool_touches_write(tool_name, args),
+                  charged: charged,
                 )
               // Execution is charged only when the caller claims the
               // reservation. Unclaimed authorizations expire for free.
@@ -630,7 +642,7 @@ fn handle_message(
   message: SyscallMessage,
 ) -> actor.Next(ActorState, SyscallMessage) {
   case message {
-    AuthorizeTool(reply_to, principal_id, role, tool_name, args) -> {
+    AuthorizeTool(reply_to, principal_id, role, tool_name, args, charged) -> {
       let timestamp = ffi_current_timestamp()
       let #(result, next_state) =
         authorize_tool(
@@ -639,6 +651,7 @@ fn handle_message(
           role,
           tool_name,
           args,
+          charged,
           timestamp,
         )
       actor.send(reply_to, result)
@@ -657,15 +670,16 @@ fn handle_message(
           )
         }
         Ok(reservation) -> {
-          let charge = case actor_state.budget_policy {
-            Some(policy) ->
+          let charge = case actor_state.budget_policy, reservation.charged {
+            _, False -> Ok(Nil)
+            Some(policy), True ->
               budget_actor.try_record_consumption(
                 policy,
                 reservation.principal_id,
                 budget_types.BudgetToolCallsHourly,
                 1,
               )
-            None -> Ok(Nil)
+            None, True -> Ok(Nil)
           }
           case charge {
             Ok(_) -> {
@@ -935,6 +949,36 @@ pub fn invoke_tool(
   tool_name: String,
   args: String,
 ) -> Result(String, String) {
+  invoke_claimed(gw, principal_id, role, tool_name, args, True, fn(execute) {
+    execute(tool_name, args)
+  })
+}
+
+/// Like `invoke_tool`, for a call the kernel does not run itself: a probe's
+/// browser or file action, or its search (PRD-S). The call is authorized as
+/// `tool_name` (the capability the person needs) and audited with `args`,
+/// but not charged to the hourly tool budget; `run` does the work.
+pub fn invoke_tool_with(
+  gw: SyscallGateway,
+  principal_id: String,
+  role: String,
+  tool_name: String,
+  args: String,
+  run: fn() -> Result(String, String),
+) -> Result(String, String) {
+  invoke_claimed(gw, principal_id, role, tool_name, args, False, fn(_) { run() })
+}
+
+fn invoke_claimed(
+  gw: SyscallGateway,
+  principal_id: String,
+  role: String,
+  tool_name: String,
+  args: String,
+  charged: Bool,
+  work: fn(fn(String, String) -> Result(String, String)) ->
+    Result(String, String),
+) -> Result(String, String) {
   case
     safe_call.call(gw, 2000, AuthorizeTool(
       _,
@@ -942,6 +986,7 @@ pub fn invoke_tool(
       role,
       tool_name,
       args,
+      charged,
     ))
   {
     Error(_) -> Error("kernel unavailable; tool call refused")
@@ -951,7 +996,7 @@ pub fn invoke_tool(
         Ok(Ok(execute)) -> {
           let completed =
             watch_claim(gw, reservation_id, principal_id, tool_name)
-          let result = execute(tool_name, args)
+          let result = work(execute)
           process.send(completed, Nil)
           process.send(
             gw,
@@ -1054,6 +1099,7 @@ pub fn authorize_tool_call(
       role,
       tool_name,
       args,
+      True,
     ))
   {
     Ok(result) -> result

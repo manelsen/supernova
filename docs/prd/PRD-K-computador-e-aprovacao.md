@@ -137,6 +137,13 @@ antes da execução.**
 - **Gasto:** o teto de US$ 0,50 vale para o teto declarado da tarefa ou
   sonda (hoje US$ 0,20 por padrão): pedir um teto maior pede aprovação
   antes de começar.
+- **A Supernova sai da rede dos computadores** (revisão de segurança de
+  26/11, aprovada pelo mantenedor). Hoje ela está na rede do computador
+  para chamá-lo, e por isso o computador consegue abrir conexões com ela.
+  Na PRD-K, a rede dos computadores tem só o proxy de saída e o
+  despachante; a Supernova fala com cada computador **através do
+  despachante**, que está nas duas redes e só aceita chamadas do lado da
+  Supernova. Nenhum computador abre conexão com nada interno (K-I4).
 - **Vagas:** sem vaga e sem computador parado há mais de 15 min, a tarefa
   espera na fila de vagas que já existe (`tool_slots`); o mais parado é
   desligado só se estiver parado.
@@ -310,6 +317,9 @@ falso nos testes; compose com o despachante e sem socket na Supernova.
 **Aceite:**
 - [ ] API recusa nome que não é hash de pessoa e qualquer parâmetro extra.
 - [ ] K-I6 testado.
+- [ ] A Supernova não está na rede dos computadores; as chamadas a um
+      computador passam pelo despachante (seção 3.3). Teste de rede: um
+      computador não alcança a Supernova.
 - [ ] Commit: `feat(despachante): liga, desliga e apaga computadores`.
 
 #### K-04: Um computador por pessoa

@@ -33,6 +33,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { guard } from './rede.mjs';
 
 export const MCP_LIMITS = {
   idleMs: 5 * 60_000,
@@ -111,6 +112,10 @@ export function urlsAllowed(args) {
 // --------------------------------------------------------------- sessions
 
 const sessions = new Map();
+// Sessions being opened, by id; and how many times each person was
+// forgotten, so a session that finished opening after that is closed.
+const opening = new Set();
+const forgotten = new Map();
 let now = () => Date.now();
 
 /// For tests: a fake clock.
@@ -179,11 +184,13 @@ function memoryTransport() {
         transport.onmessage(message);
         return Promise.resolve(null);
       }
+      if (waiting.has(message.id)) return Promise.resolve(errorAnswer(message.id, 'a request with this id is already waiting'));
       return new Promise((resolve) => {
         waiting.set(message.id, resolve);
         transport.onmessage(message);
       });
     },
+    forget(id) { waiting.delete(id); },
   };
   return transport;
 }
@@ -197,6 +204,8 @@ async function openPlaywright(person, probe) {
     locale: 'pt-BR',
     timezoneId: process.env.TZ || 'America/Sao_Paulo',
   });
+  // Nothing internal: this machine, the Docker networks, the LAN.
+  await guard(context);
   // At most two tabs: a third closes the oldest.
   context.on('page', () => {
     const pages = context.pages();
@@ -230,6 +239,7 @@ async function openPlaywright(person, probe) {
       }
       return answer;
     },
+    forget(id) { transport.forget(id); },
     async close() {
       await server.close().catch(() => {});
       await context.close().catch(() => {});
@@ -283,20 +293,29 @@ async function openFilesystem(person) {
     kind: 'filesystem',
     call(message) {
       if (dead) return Promise.resolve(errorAnswer(message.id ?? null, 'the file server stopped'));
+      if (message.id !== undefined && waiting.has(message.id)) {
+        return Promise.resolve(errorAnswer(message.id, 'a request with this id is already waiting'));
+      }
       child.stdin.write(JSON.stringify(message) + '\n');
       if (message.id === undefined) return Promise.resolve(null);
       return new Promise((resolve) => waiting.set(message.id, resolve));
     },
+    forget(id) { waiting.delete(id); },
     async close() {
       if (!dead) child.kill('SIGKILL');
     },
   };
 }
 
-function bounded(promise, ms, id) {
+// A call that gets no answer in time gives up, and the server's late answer
+// has nowhere to go: `forget` drops its slot.
+function bounded(promise, ms, id, forget = () => {}) {
   let timer;
   const expired = new Promise((resolve) => {
-    timer = setTimeout(() => resolve(errorAnswer(id ?? null, `no answer within ${ms / 1000} s`)), ms);
+    timer = setTimeout(() => {
+      if (id !== undefined) forget(id);
+      resolve(errorAnswer(id ?? null, `no answer within ${ms / 1000} s`));
+    }, ms);
   });
   return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
 }
@@ -332,15 +351,29 @@ export async function mcp(body, opener = { playwright: openPlaywright, filesyste
       const id = sessionId(body.sessao);
       const server = body.servidor;
       if (!Object.hasOwn(opener, server)) throw new McpUserError('servidor must be playwright or filesystem');
-      if (sessions.has(id)) throw new McpUserError(`session ${id} is already open`);
-      if (sessions.size >= MCP_LIMITS.sessions) throw new McpUserError('too many open sessions');
-      const session = server === 'playwright'
-        ? await opener.playwright(body.pessoa, body.sonda)
-        : await opener.filesystem(body.pessoa, body.sonda);
-      session.lastUsed = now();
-      session.person = body.pessoa;
-      sessions.set(id, session);
-      return {};
+      if (sessions.has(id) || opening.has(id)) throw new McpUserError(`session ${id} is already open`);
+      if (sessions.size + opening.size >= MCP_LIMITS.sessions) throw new McpUserError('too many open sessions');
+      // Reserved before the first await: a second `abrir` with the same id,
+      // or a burst past the limit, is refused instead of racing.
+      opening.add(id);
+      const epoch = forgotten.get(body.pessoa) ?? 0;
+      try {
+        const session = server === 'playwright'
+          ? await opener.playwright(body.pessoa, body.sonda)
+          : await opener.filesystem(body.pessoa, body.sonda);
+        // The person was forgotten while this session opened: nothing of
+        // theirs may stay alive.
+        if ((forgotten.get(body.pessoa) ?? 0) !== epoch) {
+          await session.close().catch(() => {});
+          throw new McpUserError('the person was forgotten while the session opened');
+        }
+        session.lastUsed = now();
+        session.person = body.pessoa;
+        sessions.set(id, session);
+        return {};
+      } finally {
+        opening.delete(id);
+      }
     }
     case 'chamar': {
       const id = sessionId(body.sessao);
@@ -351,7 +384,7 @@ export async function mcp(body, opener = { playwright: openPlaywright, filesyste
         throw new McpUserError('mensagem must be a JSON-RPC request or notification');
       }
       session.lastUsed = now();
-      const answer = await bounded(session.call(message), MCP_LIMITS.callMs, message.id);
+      const answer = await bounded(session.call(message), MCP_LIMITS.callMs, message.id, (id) => session.forget?.(id));
       session.lastUsed = now();
       return answer === null ? {} : { resposta: answer };
     }
@@ -359,6 +392,7 @@ export async function mcp(body, opener = { playwright: openPlaywright, filesyste
       return { fechada: await closeSession(sessionId(body.sessao)) };
     case 'apagar_pessoa': {
       const folder = personDir(body.pessoa);
+      forgotten.set(body.pessoa, (forgotten.get(body.pessoa) ?? 0) + 1);
       for (const [id, session] of [...sessions]) {
         if (session.person === body.pessoa) await closeSession(id);
       }

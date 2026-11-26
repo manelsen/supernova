@@ -202,6 +202,36 @@ pub fn unclaimed_tool_authorization_does_not_charge_test() {
   budget_actor.stop(budget)
 }
 
+/// A probe's own actions (PRD-S, decided 26/11): authorized by capability,
+/// run by the caller, and never charged to the hourly tool budget, even
+/// with that budget spent.
+pub fn probe_actions_are_authorized_and_not_charged_test() {
+  let #(gateway, budget) = claim_gateway(1)
+  // The hour's only credit goes to an ordinary call.
+  actor.invoke_tool(gateway, "agent_1", "admin", "web", "{}")
+  |> should.equal(Ok("ran"))
+  actor.invoke_tool(gateway, "agent_1", "admin", "web", "{}")
+  |> should.be_error()
+  // A probe action still runs, with its own work, and charges nothing.
+  actor.invoke_tool_with(gateway, "agent_1", "admin", "sonda", "{}", fn() {
+    Ok("da sonda")
+  })
+  |> should.equal(Ok("da sonda"))
+  budget_actor.get_consumption(
+    budget,
+    "agent_1",
+    budget_types.BudgetToolCallsHourly,
+  )
+  |> should.equal(1)
+  // Who may not send probes may not run their actions either.
+  actor.invoke_tool_with(gateway, "agent_1", "membro", "sonda", "{}", fn() {
+    Ok("não devia rodar")
+  })
+  |> should.be_error()
+  actor.stop(gateway)
+  budget_actor.stop(budget)
+}
+
 pub fn parallel_authorizations_share_one_credit_test() {
   let #(gateway, budget) = claim_gateway(1)
 
