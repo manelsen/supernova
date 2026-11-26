@@ -21,6 +21,8 @@ import supernova/adapters/model_picker
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
+import supernova/aprovacao/permissoes
+import supernova/aprovacao/servico as aprovacao_servico
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/inbound_media
 import supernova/channel/media_reading
@@ -56,6 +58,7 @@ import supernova/llm/providers/openai_compatible
 import supernova/llm/stream as llm_stream
 import supernova/memory/gate as memory_gate
 import supernova/memory/metrics as memory_metrics
+import supernova/self/aprovacoes
 import supernova/self/audit as self_audit
 import supernova/self/birth
 import supernova/self/core as self_core
@@ -1846,6 +1849,43 @@ fn handle_allowed_interaction(
   let session_id = resolve_session(interaction.channel_id, interaction.user_id)
   let profile =
     session_profile_for_session(state, session_id, interaction.user_id)
+  case approval_button(interaction, profile) {
+    Some(content) -> #(state, Ok(interaction_reply(interaction, content, None)))
+    None ->
+      handle_picker_interaction(
+        expected_channel,
+        interaction,
+        default_llm_config,
+        state,
+        profile,
+      )
+  }
+}
+
+/// An approval button (PRD-K, K-02): the code decides, in the presser's own
+/// requests, so nobody else's press can reach them (K-I2).
+fn approval_button(
+  interaction: port.ChannelInteractionMessage,
+  profile: SessionProfile,
+) -> Option(String) {
+  case aprovacao_servico.get() {
+    None -> None
+    Some(context) ->
+      aprovacao_servico.answer_button(
+        context,
+        profile.agent_id,
+        interaction.event.action_id,
+      )
+  }
+}
+
+fn handle_picker_interaction(
+  expected_channel: String,
+  interaction: port.ChannelInteractionMessage,
+  default_llm_config: provider.ProviderConfig,
+  state: InteractiveRouterState,
+  profile: SessionProfile,
+) -> #(InteractiveRouterState, Result(port.ChannelReply, port.ChannelError)) {
   let cat = catalog.current(default_llm_config)
   let #(state, active) =
     agent_llm_config(state, profile.agent_id, default_llm_config)
@@ -2352,10 +2392,57 @@ fn maybe_handle_control(
     Some(reply), _ -> Some(#(state, reply))
     None, Some(reply) -> Some(#(state, reply))
     None, None ->
-      case maybe_handle_agenda(msg, profile) {
+      case maybe_handle_approvals(msg, profile) {
         Some(reply) -> Some(#(state, reply))
-        None -> maybe_handle_forget(state, msg, profile, supervisor)
+        None ->
+          case maybe_handle_agenda(msg, profile) {
+            Some(reply) -> Some(#(state, reply))
+            None -> maybe_handle_forget(state, msg, profile, supervisor)
+          }
       }
+  }
+}
+
+/// Approvals, answered by the code and never by the model (PRD-K, K1):
+/// `/permissoes`, and a short answer to a pending request. Only in the
+/// person's private chat: a "sim" in a group decides nothing (K-I2).
+fn maybe_handle_approvals(
+  msg: port.ChannelMessage,
+  profile: SessionProfile,
+) -> Option(String) {
+  case aprovacao_servico.get() {
+    None -> None
+    Some(context) -> {
+      let private =
+        closed_group_pure.is_private_chat(msg.channel, msg.channel_id)
+      case permissoes.parse(msg.content), private {
+        Some(_), False -> Some(permissoes.only_private)
+        Some(permissoes.Usage), True -> Some(permissoes.usage)
+        Some(permissoes.Listing), True ->
+          case aprovacoes.permissions(context.data_dir, profile.agent_id) {
+            Ok(grants) -> Some(permissoes.listing(grants))
+            Error(_) -> Some("Não consegui ler suas permissões agora.")
+          }
+        Some(permissoes.Revoke(id)), True ->
+          case aprovacoes.permissions(context.data_dir, profile.agent_id) {
+            Ok(grants) ->
+              case list.find(grants, fn(g) { g.id == id }) {
+                Error(Nil) -> Some(permissoes.not_found(id))
+                Ok(_) ->
+                  case
+                    aprovacoes.revoke(context.data_dir, profile.agent_id, id)
+                  {
+                    Ok(grant) -> Some(permissoes.revoked(grant))
+                    Error(_) -> Some(permissoes.not_found(id))
+                  }
+              }
+            Error(_) -> Some("Não consegui ler suas permissões agora.")
+          }
+        None, True ->
+          aprovacao_servico.answer_text(context, profile.agent_id, msg.content)
+        None, False -> None
+      }
+    }
   }
 }
 

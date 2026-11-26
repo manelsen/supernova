@@ -23,6 +23,7 @@ import supernova/tools/file_system
 import supernova/tools/git_inspect
 import supernova/tools/github
 import supernova/tools/lembrar
+import supernova/tools/permissoes
 import supernova/tools/process as process_tool
 import supernova/tools/safe_shell
 import supernova/tools/tarefa
@@ -60,6 +61,7 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     git_inspect.tool(),
     file_system.tool(),
     agenda.tool(),
+    permissoes.tool(),
     buscar_conversa.tool(),
     ..list.flatten([memory, computer, background, probes, fake_tools.tools()])
   ]
@@ -98,6 +100,7 @@ fn execute_named(name: String, args_json: String) -> Result(String, String) {
     "agenda" -> Error("agenda needs the caller's identity")
     "buscar_conversa" -> Error("buscar_conversa needs the caller's identity")
     "lembrar" -> Error("lembrar needs the caller's identity")
+    "permissoes" -> Error("permissoes needs the caller's identity")
     "computador" -> Error("computador needs the caller's identity")
     // The turn runs it: it needs the chat of origin (PRD-F, F-05).
     "tarefa" -> Error("tarefa needs the caller's turn")

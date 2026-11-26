@@ -26,6 +26,7 @@ import supernova/adapters/mcp_manager
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/sweeper as agenda_sweeper
+import supernova/aprovacao/servico as aprovacao_servico
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/channel_kit
 import supernova/channel/health as channel_health
@@ -462,6 +463,8 @@ fn start_services(
   // messages through the same handler and lane as the agenda. At boot,
   // tasks a restart cut short are told as interrupted (D6), and results
   // not delivered yet are delivered.
+  start_approvals(cfg, clock, channel_reg, channel_handler)
+
   start_tasks(cfg, clock, fn(message) {
     registry.inject(channel_reg, channel_handler, port.inbound_message(message))
     |> result.map_error(string.inspect)
@@ -1121,6 +1124,45 @@ fn print_channel_status(name: String, enabled: Bool) -> Nil {
   case enabled {
     True -> io.println("    - " <> name <> ": enabled")
     False -> io.println("    - " <> name <> ": disabled")
+  }
+}
+
+/// Approvals (PRD-K, K-02): requests go to the person's private chat, with
+/// buttons where the channel has them; outcomes go to the agent through the
+/// chat lane, like a task's result; a clock reminds at 3 h and expires at
+/// 24 h. The harness drives time itself, so its clock is not started.
+fn start_approvals(
+  cfg: config.Config,
+  clock: fn() -> Int,
+  channel_reg: registry.ChannelRegistry,
+  channel_handler: port.ChannelHandler,
+) -> Nil {
+  let context =
+    aprovacao_servico.Context(
+      data_dir: cfg.data_dir,
+      clock: clock,
+      send_private: fn(principal_id, text, buttons) {
+        use #(channel, reply) <- result.try(aprovacao_servico.private_reply(
+          principal_id,
+          text,
+          buttons,
+        ))
+        registry.send(channel_reg, channel, reply)
+        |> result.map_error(string.inspect)
+      },
+      inject: fn(message) {
+        registry.inject(
+          channel_reg,
+          channel_handler,
+          port.inbound_message(message),
+        )
+        |> result.map_error(string.inspect)
+      },
+    )
+  aprovacao_servico.configure(context)
+  case cfg.environment == "harness" {
+    True -> Nil
+    False -> aprovacao_servico.start_clock(context)
   }
 }
 

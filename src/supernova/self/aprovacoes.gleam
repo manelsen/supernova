@@ -68,6 +68,12 @@ pub type Scope {
   Permanent
 }
 
+/// The chat a request was born in: the outcome goes back there, to the
+/// agent (K-02), while the request itself goes to the person's DM (K9).
+pub type Chat {
+  Chat(channel: String, channel_id: String, user_id: String)
+}
+
 /// What the gate asks about, built by the code from the refused action.
 pub type Draft {
   Draft(
@@ -80,6 +86,12 @@ pub type Draft {
     explanation: String,
     /// The task that asked, if any; its grants end with it.
     task: Option(Int),
+    /// What "Aprovar" grants: one use (sending a form, K10) or the task
+    /// (using a site, K10).
+    approve: Scope,
+    /// Whether "Sempre" is offered (K4); never for a form sent (K10).
+    always: Bool,
+    origin: Chat,
   )
 }
 
@@ -91,6 +103,9 @@ pub type Request {
     summary: String,
     explanation: String,
     task: Option(Int),
+    approve: Scope,
+    always: Bool,
+    origin: Chat,
     status: Status,
     created_at: Int,
     reminded: Bool,
@@ -127,13 +142,13 @@ pub type Event {
 // ============================================================================
 
 /// Open a request. Asking again for what is already pending returns that
-/// request instead of a second one.
+/// request instead of a second one; the flag says whether it is new.
 pub fn ask(
   data_dir: String,
   principal: String,
   now: Int,
   draft: Draft,
-) -> Result(Request, String) {
+) -> Result(#(Request, Bool), String) {
   update(data_dir, principal, fn(file) {
     let same =
       list.find(file.requests, fn(r) {
@@ -145,7 +160,7 @@ pub fn ask(
         && r.task == draft.task
       })
     case same {
-      Ok(request) -> Ok(#(file, request))
+      Ok(request) -> Ok(#(file, #(request, False)))
       Error(Nil) -> {
         let request =
           Request(
@@ -155,6 +170,9 @@ pub fn ask(
             summary: draft.summary,
             explanation: draft.explanation,
             task: draft.task,
+            approve: draft.approve,
+            always: draft.always,
+            origin: draft.origin,
             status: Pending,
             created_at: now,
             reminded: False,
@@ -169,7 +187,7 @@ pub fn ask(
             request,
             ..file.requests
           ]),
-          request,
+          #(request, True),
         ))
       }
     }
@@ -603,6 +621,16 @@ fn encode(file: File) -> String {
           #("summary", json.string(r.summary)),
           #("explanation", json.string(r.explanation)),
           #("task", optional_int(r.task)),
+          #("approve", json.string(scope_name(r.approve))),
+          #("always", json.bool(r.always)),
+          #(
+            "origin",
+            json.object([
+              #("channel", json.string(r.origin.channel)),
+              #("channel_id", json.string(r.origin.channel_id)),
+              #("user_id", json.string(r.origin.user_id)),
+            ]),
+          ),
           #("status", json.string(status_name(r.status))),
           #("created_at", json.int(r.created_at)),
           #("reminded", json.bool(r.reminded)),
@@ -644,6 +672,14 @@ fn file_decoder() -> decode.Decoder(File) {
     use summary <- decode.field("summary", decode.string)
     use explanation <- decode.field("explanation", decode.string)
     use task <- decode.field("task", decode.optional(decode.int))
+    use approve <- decode.field("approve", named(scope_from, Once))
+    use always <- decode.field("always", decode.bool)
+    use origin <- decode.field("origin", {
+      use channel <- decode.field("channel", decode.string)
+      use channel_id <- decode.field("channel_id", decode.string)
+      use user_id <- decode.field("user_id", decode.string)
+      decode.success(Chat(channel:, channel_id:, user_id:))
+    })
     use status <- decode.field("status", named(status_from, Pending))
     use created_at <- decode.field("created_at", decode.int)
     use reminded <- decode.field("reminded", decode.bool)
@@ -655,6 +691,9 @@ fn file_decoder() -> decode.Decoder(File) {
       summary:,
       explanation:,
       task:,
+      approve:,
+      always:,
+      origin:,
       status:,
       created_at:,
       reminded:,

@@ -1,6 +1,7 @@
 //// The live Telegram client against a local stand-in for the Bot API: the
 //// path the pilot runs, which the recorder-based tests never reach.
 
+import aprovacao_amostra
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
@@ -285,6 +286,23 @@ pub fn new_buttons_with_the_same_text_still_reach_telegram_test() {
     |> list.filter(fn(sent) { sent.0 == "editMessageText" })
   list.any(edits, fn(sent) { string.contains(sent.1, "confirm:sim") })
   |> should.be_true()
+  registry.stop_channels(channels)
+}
+
+/// PRD-K, K-02: a request for approval reaches Telegram with its three
+/// buttons, each within Telegram's 64-byte callback limit.
+pub fn approval_buttons_reach_telegram_test() {
+  let requests = process.new_subject()
+  let fake = telegram_fake.start(requests)
+  let channels = live_registry(fake)
+  let assert Ok(Nil) =
+    registry.send(channels, "telegram", aprovacao_amostra.reply("42", 123_456))
+  let sent = texts(requests, [])
+  let assert [#("sendMessage", body)] = sent
+  string.contains(body, "aprovacao:123456:sim") |> should.be_true
+  string.contains(body, "aprovacao:123456:nao") |> should.be_true
+  string.contains(body, "aprovacao:123456:sempre") |> should.be_true
+  string.contains(body, "Usar o site consultas.saude.gov.br") |> should.be_true
   registry.stop_channels(channels)
 }
 
