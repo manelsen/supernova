@@ -16,7 +16,9 @@ import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { timingSafeEqual } from 'node:crypto';
 import { mcp, McpUserError, sweepIdle } from './mcp.mjs';
+import { guard } from './rede.mjs';
 
 export const LIMITS = {
   bodyBytes: 4 * 1024 * 1024,
@@ -230,13 +232,17 @@ async function page(gen) {
         locale: 'pt-BR',
         timezoneId: process.env.TZ || 'America/Sao_Paulo',
         args: ['--no-sandbox', '--disable-dev-shm-usage'],
-        timeout: LIMITS.browserOpMs,
+        // Past our own deadline: the deadline must win, so a slow launch is
+        // reported as a restart and closed by the generation check below.
+        timeout: LIMITS.browserOpMs + CLOSE_WAIT_MS,
       });
       if (gen !== generation) {
         // This operation already timed out; do not let its browser linger.
         closing = closeBounded(launched);
         throw new Error('abandoned launch');
       }
+      // Nothing internal: this machine, the Docker networks, the LAN.
+      await guard(launched);
       launched.setDefaultTimeout(LIMITS.browserTimeoutMs);
       launched.on('close', () => { if (browserContext === launched) browserContext = null; });
       browserContext = launched;
@@ -259,8 +265,17 @@ const BROWSER_OPS = {
   async goto(p, args) {
     const url = requireString(args, 'url');
     if (!/^https?:\/\//i.test(url)) throw new UserError('url must start with http:// or https://');
-    const res = await p.goto(url, { waitUntil: 'domcontentloaded' });
-    return { status: res ? res.status() : null };
+    try {
+      const res = await p.goto(url, { waitUntil: 'domcontentloaded' });
+      return { status: res ? res.status() : null };
+    } catch (e) {
+      // A blocked or failed navigation leaves Chromium loading its own error
+      // page in this tab, which cuts the next navigation short (measured).
+      // The next operation gets a fresh tab instead.
+      await p.context().newPage().catch(() => {});
+      await p.close().catch(() => {});
+      throw e;
+    }
   },
   async back(p) { await p.goBack({ waitUntil: 'domcontentloaded' }); return {}; },
   async click(p, args) {
@@ -350,9 +365,13 @@ function send(res, status, payload) {
   res.end(data);
 }
 
+// No token, no service: an empty COMPUTADOR_TOKEN refuses every request
+// (and the service refuses to start without one, below).
 export function authorized(req, token) {
-  if (!token) return true;
-  return req.headers['authorization'] === `Bearer ${token}`;
+  if (!token) return false;
+  const given = Buffer.from(String(req.headers['authorization'] || ''));
+  const wanted = Buffer.from(`Bearer ${token}`);
+  return given.length === wanted.length && timingSafeEqual(given, wanted);
 }
 
 // The computer's own browser can reach this service on 127.0.0.1, so a page
@@ -400,6 +419,10 @@ export function createServer(token = process.env.COMPUTADOR_TOKEN || '') {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) {
+  if (!process.env.COMPUTADOR_TOKEN) {
+    console.error('computador: COMPUTADOR_TOKEN is empty; refusing to start without authentication');
+    process.exit(1);
+  }
   await fs.mkdir(WORK_DIR, { recursive: true });
   const port = Number(process.env.COMPUTADOR_PORT || 7070);
   // Probe sessions nobody used for five minutes are closed.

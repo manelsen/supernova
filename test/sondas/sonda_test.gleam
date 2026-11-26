@@ -92,6 +92,7 @@ fn env(
     ),
     base: executor.empty_run_context(),
     gateway: fn(_, _) { Ok("ok") },
+    audited: fn(_, run) { run() },
     may_code: may_code,
     costing: condutor.Costing(
       cost: fn(_, _, _) { 0.0 },
@@ -208,7 +209,7 @@ pub fn web_probes_share_five_slots_test() {
 pub fn disk_hands_use_the_file_server_test() {
   let fake = start_fake(fake_computer)
   let assert Ok(hands) =
-    maos.open(pc(fake), condutor.Disk, "sim:ana", 2, fn(_, _) { Ok("") })
+    maos.open(pc(fake), condutor.Disk, "sim:ana", 2, fn(_, _) { Ok("") }, pass)
   hands.tools
   |> list.map(fn(tool) { tool.name })
   |> should.equal(["read_text_file"])
@@ -237,6 +238,7 @@ pub fn code_hands_go_through_the_gateway_test() {
         process.send(calls, name)
         Ok("saída")
       },
+      pass,
     )
   hands.tools
   |> list.map(fn(tool) { tool.name })
@@ -247,6 +249,34 @@ pub fn code_hands_go_through_the_gateway_test() {
   process.receive(calls, 0) |> should.be_error
 }
 
+fn pass(_action: String, run: fn() -> Result(String, String)) {
+  run()
+}
+
+/// Every action of a disk probe goes through the gateway (audited, not
+/// charged), with what it was.
+pub fn disk_actions_go_through_the_gateway_test() {
+  let fake = start_fake(fake_computer)
+  let seen = process.new_subject()
+  let assert Ok(hands) =
+    maos.open(
+      pc(fake),
+      condutor.Disk,
+      "sim:ana",
+      6,
+      fn(_, _) { Error("não é para usar") },
+      fn(action, run) {
+        process.send(seen, action)
+        run()
+      },
+    )
+  let _ = hands.invoke("list_directory", "{}")
+  let assert Ok(action) = process.receive(seen, 1000)
+  string.contains(action, "\"acao\":\"list_directory\"") |> should.be_true()
+  string.contains(action, "\"tipo\":\"disco\"") |> should.be_true()
+  hands.close()
+}
+
 /// S-I5: a conductor killed at its limit still closes its session.
 pub fn a_killed_conductor_closes_its_session_test() {
   let fake = start_fake(fake_computer)
@@ -254,7 +284,14 @@ pub fn a_killed_conductor_closes_its_session_test() {
   let conductor =
     process.spawn_unlinked(fn() {
       let assert Ok(_) =
-        maos.open(pc(fake), condutor.Disk, "sim:ana", 5, fn(_, _) { Ok("") })
+        maos.open(
+          pc(fake),
+          condutor.Disk,
+          "sim:ana",
+          5,
+          fn(_, _) { Ok("") },
+          pass,
+        )
       process.send(opened, Nil)
       process.sleep_forever()
     })

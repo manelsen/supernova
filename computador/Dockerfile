@@ -16,7 +16,7 @@ RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 # The Playwright MCP needs the alpha Playwright it was built with (PRD-S,
 # S24); that version's headless Chromium is installed next to the base's.
 RUN npx playwright install chromium-headless-shell
-COPY agent.mjs mcp.mjs ./
+COPY agent.mjs mcp.mjs rede.mjs ./
 COPY test ./test
 
 # pwuser comes with the Playwright image; its home is the persistent volume.

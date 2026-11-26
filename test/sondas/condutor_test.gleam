@@ -56,7 +56,7 @@ fn drain(subject: process.Subject(Seen), acc: List(Seen)) -> List(Seen) {
 
 pub fn a_probe_runs_its_tools_and_reports_test() {
   let seen = process.new_subject()
-  let assert Ok(report) =
+  let assert Ok(#(condutor.Concluded, report)) =
     condutor.run(
       condutor.Web,
       "Procure o que é Gleam.",
@@ -102,12 +102,12 @@ pub fn the_conductor_sees_only_what_the_agent_passed_test() {
 }
 
 /// S-I2: a call that would pass the cap is refused; the probe ends with
-/// "custo esgotado" and keeps what it has.
+/// "custo esgotado" and keeps what it has: what its tools returned so far.
 pub fn the_cost_cap_stops_the_probe_test() {
   let seen = process.new_subject()
   let costing =
     condutor.Costing(cost: fn(_, _, _) { 0.15 }, reserve_output_tokens: 1000)
-  let assert Ok(report) =
+  let assert Ok(#(condutor.CostExhausted, report)) =
     condutor.run(
       condutor.Web,
       "Procure.",
@@ -118,6 +118,8 @@ pub fn the_cost_cap_stops_the_probe_test() {
       costing,
     )
   string.starts_with(report, "custo esgotado:") |> should.be_true
+  string.contains(report, "O que a sonda juntou até parar") |> should.be_true
+  string.contains(report, "### buscar\nresultado da busca") |> should.be_true
   string.contains(report, "Custo: US$ 0.15") |> should.be_true
   drain(seen, []) |> list.contains(Closed) |> should.be_true
 }

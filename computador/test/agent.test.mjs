@@ -8,6 +8,7 @@ import { browserOpen, clip, createServer, LIMITS, resolvePath, run, runShell, WO
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { setInternalAllowed } from '../rede.mjs';
 
 await fs.mkdir(WORK_DIR, { recursive: true });
 
@@ -113,24 +114,35 @@ test('http: token, bad JSON and errors', async () => {
 });
 
 test('http: a browser cannot drive the service', async () => {
-  await withServer('', async (server) => {
-    const page = await post(server, { op: 'exec', command: 'echo pwned' }, { origin: 'http://evil.example' });
+  await withServer('t0k', async (server) => {
+    const auth = { authorization: 'Bearer t0k' };
+    const page = await post(server, { op: 'exec', command: 'echo pwned' }, { ...auth, origin: 'http://evil.example' });
     assert.equal(page.status, 403);
-    const simple = await post(server, { op: 'exec', command: 'echo pwned' }, { 'content-type': 'text/plain' });
+    const simple = await post(server, { op: 'exec', command: 'echo pwned' }, { ...auth, 'content-type': 'text/plain' });
     assert.equal(simple.status, 403);
-    const supernova = await post(server, { op: 'exec', command: 'echo ok' });
+    const supernova = await post(server, { op: 'exec', command: 'echo ok' }, auth);
     assert.equal(supernova.json.stdout, 'ok\n');
   });
 });
 
-test('http: UTF-8 split across request chunks survives', async () => {
+test('http: no token, no service', async () => {
   await withServer('', async (server) => {
+    assert.equal((await post(server, { op: 'exec', command: 'echo pwned' })).status, 401);
+    assert.equal((await post(server, { op: 'exec', command: 'echo pwned' }, { authorization: 'Bearer ' })).status, 401);
+  });
+  await withServer('t0k', async (server) => {
+    assert.equal((await post(server, { op: 'list' }, { authorization: 'Bearer t0x' })).status, 401);
+  });
+});
+
+test('http: UTF-8 split across request chunks survives', async () => {
+  await withServer('t0k', async (server) => {
     const body = Buffer.from(JSON.stringify({ op: 'write_file', path: 'utf8.txt', content: 'á' }));
     const cut = body.indexOf(Buffer.from('á')) + 1;
     const answer = await new Promise((resolve, reject) => {
       const req = http.request({
         host: '127.0.0.1', port: server.address().port, path: '/v1/run', method: 'POST',
-        headers: { 'content-type': 'application/json', 'content-length': body.length },
+        headers: { 'content-type': 'application/json', 'content-length': body.length, authorization: 'Bearer t0k' },
       }, (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(JSON.parse(d))); });
       req.on('error', reject);
       req.write(body.subarray(0, cut));
@@ -151,8 +163,13 @@ test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, a
   });
   pageServer.listen(0, '127.0.0.1');
   await once(pageServer, 'listening');
+  // The test page lives on this machine, which the browser may not reach:
+  // allow 127.0.0.1 here and nothing else.
+  setInternalAllowed((host) => host === '127.0.0.1');
   try {
     const url = `http://127.0.0.1:${pageServer.address().port}/`;
+    // The same page by another name for this machine stays out of reach.
+    await assert.rejects(run({ op: 'goto', url: `http://localhost:${pageServer.address().port}/` }), /BLOCKED|blocked/);
     const opened = await run({ op: 'goto', url });
     assert.equal(opened.title, 'Teste');
     const text = await run({ op: 'text' });
@@ -190,6 +207,7 @@ test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, a
     assert.equal(browserOpen(), false);
   } finally {
     await run({ op: 'close' });
+    setInternalAllowed(() => false);
     pageServer.close();
   }
 });

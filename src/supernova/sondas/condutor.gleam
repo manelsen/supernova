@@ -7,8 +7,10 @@
 //// limit (S21). The time limit is the task's (PRD-F, phase B): the
 //// conductor runs as a task's work, under the task's guard.
 
+import gleam/erlang/process
 import gleam/float
 import gleam/int
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import supernova/core/executor
@@ -88,8 +90,27 @@ pub type Costing {
 
 const cost_exhausted = "custo da sonda esgotado"
 
-/// Run the probe. `Ok` is the report to deliver, starting with how it
-/// ended (S21); `Error` means it failed.
+/// How a probe that delivered a report ended.
+pub type Ending {
+  Concluded
+  CostExhausted
+}
+
+pub fn ending_label(ending: Ending) -> String {
+  case ending {
+    Concluded -> "concluída"
+    CostExhausted -> "custo esgotado"
+  }
+}
+
+/// Most tool results kept for a probe stopped at its cost ceiling, and how
+/// much of each.
+const gathered_kept = 6
+
+const gathered_chars = 1500
+
+/// Run the probe. `Ok` is how it ended and the report to deliver, starting
+/// with how it ended (S21); `Error` means it failed.
 pub fn run(
   kind: Kind,
   instructions: String,
@@ -98,14 +119,26 @@ pub fn run(
   base: executor.RunContext,
   llm_config: provider.ProviderConfig,
   costing: Costing,
-) -> Result(String, String) {
+) -> Result(#(Ending, String), String) {
   ffi_spent_reset()
+  // What the tools returned, kept in case the probe stops at its ceiling:
+  // what it gathered until then is still worth delivering. Owned by this
+  // process; tools may run in others.
+  let gathered = process.new_subject()
+  let invoke = fn(name, args) {
+    let result = hands.invoke(name, args)
+    case result {
+      Ok(text) -> process.send(gathered, #(name, text))
+      Error(_) -> Nil
+    }
+    result
+  }
   let context =
     executor.RunContext(
       ..base,
       purpose: "sonda",
       max_rounds: limits.max_rounds,
-      invoke_tool: Some(hands.invoke),
+      invoke_tool: Some(invoke),
       admit_llm: Some(fn(call_id, provider_name, model, prompt_tokens) {
         let estimate =
           costing.cost(model, prompt_tokens, costing.reserve_output_tokens)
@@ -140,13 +173,14 @@ pub fn run(
     [#("tipo", kind_name(kind))],
   )
   let report = case outcome {
-    Ok(response) -> Ok(#("concluída", response.content))
+    Ok(response) -> Ok(#(Concluded, response.content))
     Error(executor.PolicyDenied(message)) if message == cost_exhausted ->
       Ok(#(
-        "custo esgotado",
+        CostExhausted,
         "A sonda parou ao chegar ao teto de US$ "
           <> money(limits.cost_usd)
-          <> ", antes de terminar.",
+          <> ", antes de terminar."
+          <> gathered_text(drain(gathered, [])),
       ))
     Error(executor.MaxDepthExceeded(_)) ->
       Error(
@@ -164,7 +198,10 @@ pub fn run(
     Ok(#(ending, text)) -> {
       hands.keep(text)
       hands.close()
-      Ok(deliverable(ending, text, limits, hands.folder, spent))
+      Ok(#(
+        ending,
+        deliverable(ending_label(ending), text, limits, hands.folder, spent),
+      ))
     }
   }
 }
@@ -192,6 +229,37 @@ pub fn deliverable(
   <> " (resultado.md)"
   <> "\nCusto: US$ "
   <> money(spent)
+}
+
+fn drain(
+  gathered: process.Subject(#(String, String)),
+  acc: List(#(String, String)),
+) -> List(#(String, String)) {
+  case process.receive(gathered, 0) {
+    Ok(item) -> drain(gathered, [item, ..acc])
+    Error(Nil) -> acc
+  }
+}
+
+/// The last tool results, most recent first, each cut short.
+fn gathered_text(newest_first: List(#(String, String))) -> String {
+  case list.take(newest_first, gathered_kept) {
+    [] -> ""
+    items ->
+      "\n\nO que a sonda juntou até parar (os últimos resultados das ferramentas, do mais recente ao mais antigo):\n"
+      <> {
+        items
+        |> list.map(fn(item) {
+          let #(name, text) = item
+          let cut = case string.length(text) > gathered_chars {
+            True -> string.slice(text, 0, gathered_chars) <> " …"
+            False -> text
+          }
+          "\n### " <> name <> "\n" <> cut
+        })
+        |> string.join("\n")
+      }
+  }
 }
 
 fn money(value: Float) -> String {
