@@ -178,6 +178,45 @@ pub fn append_progress(
   }
 }
 
+/// End a native stream whose final reply does not continue what was
+/// streamed (a model that fell back to a reply without streaming): close the
+/// stream adding nothing, then reopen the message and put the final reply
+/// in its place, so the person never sees both versions.
+pub fn reopen_progress(
+  bot_token: String,
+  session: ProgressSession,
+  content: String,
+) -> Result(Nil, port.ChannelError) {
+  case session {
+    NativeProgressSession(channel_id:, stream_ts:) -> {
+      use _ <- result.try(send_ok_only(
+        bot_token,
+        "https://slack.com/api/chat.stopStream",
+        build_stream_stop_payload(
+          channel_id: channel_id,
+          stream_ts: stream_ts,
+          trailing_text: "",
+        ),
+      ))
+      update_message(
+        bot_token,
+        port.ChannelReply(
+          channel_id: channel_id,
+          content: content,
+          reply_to_id: None,
+          thread_id: None,
+          typing: False,
+          edit_message_id: Some(stream_ts),
+          interactive: None,
+          media: [],
+        ),
+        stream_ts,
+      )
+    }
+    MessageUpdateSession(..) -> finish_progress(bot_token, session, content)
+  }
+}
+
 pub fn finish_progress(
   bot_token: String,
   session: ProgressSession,

@@ -1065,6 +1065,65 @@ pub fn start_channels_streams_slack_dm_reply_with_native_progress_test() {
   registry.stop_channels(channel_registry)
 }
 
+/// A model that falls back to a reply without streaming, after some text
+/// already went out, ends with a text that does not continue it. The
+/// message is reopened and holds only the final reply, never both.
+pub fn slack_native_stream_reopens_when_the_reply_changes_test() {
+  let recorder = process.new_subject()
+  let assert Ok(channel_registry) =
+    registry.start_channels_with_handler_and_hooks(
+      enabled_slack_config(),
+      ignoring_handler(process.new_subject()),
+      test_hooks_with_recorder([], [], recorder),
+    )
+  let events = process.new_subject()
+  let base_reply =
+    port.ChannelReply(
+      channel_id: "D012345678",
+      content: "",
+      reply_to_id: Some("1721609600.123456"),
+      thread_id: None,
+      typing: False,
+      edit_message_id: None,
+      interactive: None,
+      media: [],
+    )
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(
+        events,
+        port.StreamUpdate(port.ChannelReply(..base_reply, content: "Começo ")),
+      )
+      // Not a continuation: it is not appended.
+      process.send(
+        events,
+        port.StreamUpdate(port.ChannelReply(..base_reply, content: "Outra")),
+      )
+      process.send(
+        events,
+        port.StreamComplete(
+          port.ChannelReply(..base_reply, content: "Outra resposta inteira"),
+        ),
+      )
+    })
+  let assert Ok(_) =
+    registry.send_stream(channel_registry, "slack", base_reply, events)
+  let assert Ok(_start) = process.receive(recorder, within: 1000)
+  let assert Ok(append) = process.receive(recorder, within: 1000)
+  let assert Ok(last) = process.receive(recorder, within: 1000)
+  append.action |> should.equal("progress_append")
+  append.content |> should.equal("Começo ")
+  last
+  |> should.equal(channel_kit.OutboundRecord(
+    channel: "slack",
+    action: "progress_reopen",
+    content: "Outra resposta inteira",
+    message_id: Some("slack-stream-1"),
+  ))
+  process.receive(recorder, within: 100) |> should.be_error()
+  registry.stop_channels(channel_registry)
+}
+
 pub fn start_channels_streams_slack_channel_reply_with_fallback_updates_test() {
   let recorder = process.new_subject()
   let assert Ok(channel_registry) =
