@@ -1,3 +1,5 @@
+> **Superada em 26/11/2026** pela [PRD-W](PRD-W-wizard.md) (Docker com gVisor). Fica como histórico.
+
 [PRD]
 # PRD: Quickstart Linux via `curl` + `systemd` com wizard obrigatório
 
