@@ -18,6 +18,7 @@ import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
 import supernova/adapters/sim_router
+import supernova/aprovacao/servico as aprovacao_servico
 import supernova/channel/port
 import supernova/config
 import supernova/core/access/types as access_types
@@ -27,6 +28,7 @@ import supernova/core/session/supervisor as session_supervisor
 import supernova/core/syscall/actor as syscall_actor
 import supernova/core/tool_dispatch
 import supernova/llm/provider
+import supernova/self/aprovacoes
 import supernova/self/tasks
 import test_budget
 
@@ -211,5 +213,117 @@ pub fn a_member_sends_a_web_probe_test() {
     has("\"acao\":\"fechar\"") |> should.be_true
     has("sim:carol") |> should.be_false
     has("procure o que é Gleam") |> should.be_false
+  })
+}
+
+/// PRD-K, K-10 (K8): a probe with a ceiling above US$ 0.50 waits for the
+/// person's yes; within it, it goes at once.
+pub fn a_costly_probe_asks_first_test() {
+  let fake = start_fake(computer)
+  use <- exception.defer(fn() { stop(fake) })
+  envoy.set(
+    "SUPERNOVA_COMPUTER_URL",
+    "http://127.0.0.1:" <> int.to_string(port_of(1, fake)),
+  )
+  envoy.set("SUPERNOVA_SEARXNG_URL", "http://127.0.0.1:1")
+  use <- exception.defer(fn() {
+    envoy.unset("SUPERNOVA_COMPUTER_URL")
+    envoy.unset("SUPERNOVA_SEARXNG_URL")
+    aprovacao_servico.clear()
+  })
+  support.with_runtime_root(cfg(), fn(root) {
+    let assert Ok(gateway) =
+      syscall_actor.start_with_capabilities(
+        None,
+        Some(test_budget.unlimited()),
+        None,
+        dict.from_list([
+          #(
+            "member",
+            cg_pure.manifest_for(cfg().capabilities, access_types.Member),
+          ),
+        ]),
+        tool_dispatch.execute,
+      )
+    closed_group_global.set_gateway(gateway)
+    let private_sent = process.new_subject()
+    aprovacao_servico.configure(
+      aprovacao_servico.Context(
+        data_dir: root,
+        clock: fn() { 1000 },
+        send_private: fn(principal, text, _) {
+          process.send(private_sent, #(principal, text))
+          Ok(Nil)
+        },
+        inject: fn(_) { Ok(Nil) },
+      ),
+    )
+    let deliveries = process.new_subject()
+    let assert Ok(registry) =
+      tasks.start(
+        tasks.Context(
+          data_dir: root,
+          offset_minutes: -180,
+          clock: fn() { 1_795_273_200_000 },
+          limit_ms: 60_000,
+          deliver: fn(delivered) {
+            process.send(deliveries, delivered)
+            Ok(Nil)
+          },
+          can_deliver: fn(_) { True },
+        ),
+      )
+    use <- exception.defer(fn() { tasks.stop(registry) })
+    let assert Ok(sessions) = session_supervisor.start()
+    use <- exception.defer(fn() { session_supervisor.stop(sessions) })
+    let assert Ok(router) =
+      sim_router.start_with_session_supervisor(
+        sessions,
+        provider.ProviderConfig(
+          name: "mock",
+          api_key: None,
+          base_url: None,
+          default_model: "mock-model",
+        ),
+      )
+    let _ = route(router, message("m1", "oi"))
+    let _ = route(router, message("m2", "Lua"))
+    let _ = route(router, message("m3", "sim"))
+
+    // Up to US$ 0.50: no question.
+    let _ =
+      route(router, message("m4", "[mock-sonda-teto 0.50 web procure Gleam]"))
+    let assert Ok(_) = process.receive(deliveries, 10_000)
+    process.receive(private_sent, 0) |> should.be_error
+
+    // Above: asked, and nothing starts.
+    let _ =
+      route(router, message("m5", "[mock-sonda-teto 1,50 web procure Erlang]"))
+    let assert Ok(#("sim:carol", asked)) = process.receive(private_sent, 1000)
+    string.starts_with(
+      asked,
+      "Gastar até US$ 1,50 numa sonda de web: procure Erlang.",
+    )
+    |> should.be_true
+    process.receive(deliveries, 300) |> should.be_error
+
+    // Yes, once: the same probe goes.
+    let assert Ok([request]) = aprovacoes.pending(root, "sim:carol")
+    let assert Ok(_) =
+      aprovacoes.decide(
+        root,
+        "sim:carol",
+        2000,
+        request.id,
+        aprovacoes.Approve(aprovacoes.Once),
+      )
+    let _ =
+      route(router, message("m6", "[mock-sonda-teto 1.50 web procure Erlang]"))
+    let assert Ok(delivered) = process.receive(deliveries, 10_000)
+    string.starts_with(delivered.content, "[Sonda web #") |> should.be_true
+    // Spent: a third one asks again.
+    let _ =
+      route(router, message("m7", "[mock-sonda-teto 1.50 web procure Elixir]"))
+    let assert Ok(_) = process.receive(private_sent, 1000)
   })
 }

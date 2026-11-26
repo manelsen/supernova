@@ -57,6 +57,8 @@ type MockToolMode {
   MockToolLogin(site: String)
   /// `[mock-tela motivo]`: call the person to the screen (K-09).
   MockToolScreen(reason: String)
+  /// `[mock-sonda-teto 1.50 tipo instruções]`: a probe with a ceiling (K-10).
+  MockToolProbeCeiling(ceiling: String, kind: String, instructions: String)
 }
 
 // ============================================================================
@@ -269,6 +271,26 @@ fn mock_chat_default(
             id: "mock_tool_call_1",
             name: name,
             arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolProbeCeiling(ceiling, kind, instructions) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "sonda",
+            arguments: json.to_string(
+              json.object([
+                #("tipo", json.string(kind)),
+                #("instrucoes", json.string(instructions)),
+                #("motivo", json.string("teste")),
+                #("teto_usd", json.string(ceiling)),
+              ]),
+            ),
           ),
         ]),
         reasoning_content: None,
@@ -857,6 +879,22 @@ fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
 }
 
 fn mock_task_mark(content: String) -> Option(MockToolMode) {
+  case string.split_once(content, "[mock-sonda-teto ") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(inside, _)) ->
+          case string.split(string.trim(inside), " ") {
+            [ceiling, kind, ..words] ->
+              Some(MockToolProbeCeiling(ceiling, kind, string.join(words, " ")))
+            _ -> None
+          }
+        Error(Nil) -> None
+      }
+    Error(Nil) -> mock_screen_mark(content)
+  }
+}
+
+fn mock_screen_mark(content: String) -> Option(MockToolMode) {
   case string.split_once(content, "[mock-tela ") {
     Ok(#(_, rest)) ->
       case string.split_once(rest, "]") {

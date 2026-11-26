@@ -101,6 +101,10 @@ The vault is `<data>/agents/<person>/self/cofre.json`, sealed with AES-256-GCM u
 
 To log in, the agent opens the site's login page and calls `entrar` with the site. Entering an account asks the person first, unless they said "sempre" for that site. The password goes to the computer only in that call; the computer fills the form, sends it, and answers without it. Sessions (cookies) stay in the browser profile, in the person's volume, across turns and restarts; `sair_do_site` clears a site's cookies; `/esquecer` deletes the vault and the volume.
 
+## Spending (K-10)
+
+A probe costs at most US$ 0.20 by default. The agent may declare another ceiling (`teto_usd`, up to US$ 5.00); above US$ 0.50 the person is asked first ("Gastar até US$ 1,50 numa sonda de web: …"), and the probe starts only when the agent sends it again after the yes, which is good for one probe. Background tasks (`tarefa`) run a tool, not the model, and have no ceiling of their own.
+
 ## The screen (`pedir_tela`) and the tunnel
 
 When a page shows a captcha (the computer detects the common ones and tells the agent) or needs something only the person can do, the agent calls `pedir_tela` (K15). The computer opens a screen: a virtual display (Xvfb), a VNC server on it (x11vnc, local only, with a random password only the service's user reads) and noVNC; the browser reopens on it with the same profile, on the same page, still behind the gate. The person gets a link in private (K16): **one use, 15 minutes, their computer only**; they may forward it to whoever helps them. The first visit uses it and sets a cookie for that browser; any other visit finds it used. The VNC password goes in the link's fragment (`#…`), never to a server. When the link ends, or the agent calls `devolver_tela`, the screen closes and the browser goes back to headless. An open screen keeps the computer on.

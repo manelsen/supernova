@@ -37,6 +37,11 @@ pub fn tool(may_code: Bool) -> provider.ToolDefinition {
         "In a few words, what it is for; you will see it when the result arrives.",
         False,
       ),
+      provider.string_param(
+        "teto_usd",
+        "Cost ceiling in US$, such as 1.50 (default 0.20, at most 5.00). Above 0.50 your person is asked first, and the probe starts only after they say yes: send it again with the same ceiling.",
+        False,
+      ),
     ],
   )
 }
