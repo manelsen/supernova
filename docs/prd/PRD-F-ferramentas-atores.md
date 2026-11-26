@@ -1,7 +1,9 @@
 [PRD]
 # PRD F: Ferramentas como atores, e em segundo plano
 
-> **Situação em 23/11/2026:** proposta. Faltam as decisões D1–D7 da seção 5.
+> **Situação em 25/11/2026:** aprovada; fase A executada (F-00 a F-04, PR #80),
+> F-08 descartada pelo resultado da D7. D3, D4 e D7 decididas pelo
+> mantenedor; D1, D2, D5 e D6 seguem a recomendação (seção 5).
 > A fase A não depende de outra PRD. A fase B depende da P-03 da
 > [PRD-P](PRD-P-paralelismo.md), o processo da agente.
 
@@ -99,7 +101,10 @@ sem warnings, testes, cobertura que não cai e `git status` limpo. Mais:
 Cada uma tem uma recomendação. Se a decisão não vier, o executor segue a
 recomendação.
 
-- **D1. Prazo padrão de uma ferramenta.** Recomendação: **120 s**. A
+- **D1. Prazo padrão de uma ferramenta.** **Substituída pela PRD-E (D3,
+  24/11), que já está no código:** 60 s por padrão, 300 s para o
+  `computador`, configuráveis em `tools.timeouts` (`core/tool_limits`). A
+  F-02 usa esses prazos. Recomendação original: **120 s**. A
   ferramenta que declara prazo próprio recebe o dela mais 15 s de folga. O
   `computador`, por exemplo, fica em até 315 s.
 - **D2. Limites.** Recomendação:
@@ -112,12 +117,19 @@ recomendação.
 
   Uma chamada sem vaga espera até 10 s. Depois disso, o modelo recebe "a
   ferramenta está ocupada; tente de novo ou siga sem ela".
-- **D3. Quais ferramentas podem rodar em segundo plano.** Recomendação:
+- **D3. Quais ferramentas podem rodar em segundo plano.** **Decidido:** as
+  longas e também as curtas que não são instantâneas. Ficam de fora só as
+  instantâneas, que mexem em arquivos locais em milissegundos (`agenda`,
+  `file_system`, `canvas`). Entram `computador`, `browser`, `web`, `github`,
+  `buscar_conversa`, `lembrar`, `safe_shell`, `process`, `git_inspect` e as
+  que chegarem depois, salvo se a ficha (`ToolSpec`) as declarar
+  instantâneas. A F-00 confere a lista pelo tempo medido.
+  Recomendação original:
   `computador`, `browser`, `web` e `github`. As ferramentas da própria agente
   (`file_system`, `agenda`, `buscar_conversa`, `canvas`) não podem: são
   rápidas, e o resultado só serve dentro do turno.
-- **D4. Tarefas em segundo plano por agente.** Recomendação: **no máximo 3
-  ao mesmo tempo**, cada uma com prazo de até 30 min.
+- **D4. Tarefas em segundo plano por agente.** **Decidido: no máximo 7 ao
+  mesmo tempo**, cada uma com prazo de até 30 min (a recomendação era 3).
 - **D5. Para onde vai o resultado.** Recomendação: **para o chat em que a
   tarefa foi pedida**, porque o que foi pedido num grupo volta ao grupo, e o
   privado, ao privado. A resposta passa pelo gate e conta no orçamento da
@@ -137,10 +149,28 @@ recomendação.
   - `--die-with-parent`, para que matar o processo da chamada (F-02) mate a
     árvore inteira.
 
+  **Decidido: testar.** A F-08 começa pelo teste que decide o resto: o
+  `bwrap` funciona no host (0.9.0, conferido em 25/11), mas a Supernova roda
+  num container, onde ele precisa de user namespaces. Se funcionar no
+  container com um ajuste aceitável (perfil seccomp ou AppArmor documentado),
+  entra como abaixo; se exigir `--privileged`, fica `none` no container e o
+  relatório registra por quê.
+
   Recomendação: entra, como F-08, para essas quatro ferramentas, atrás da
   configuração `tools.sandbox: bwrap | none`, com padrão `bwrap` quando o
   executável existir e aviso no log quando não existir. O `computador`
   continua no gVisor.
+
+  **Resultado do teste (25/11): fica `none` no container.** No host o
+  `bwrap` 0.9.0 funciona. Num container Alpine, só funciona desligando o
+  seccomp **e** o AppArmor do container inteiro (e mesmo assim reaproveitando
+  o `/proc` do container em vez de montar um novo); qualquer configuração
+  menor falha (`CAP_SYS_ADMIN` com AppArmor desligado esbarra no
+  `pivot_root`). Desligar as duas proteções do processo que guarda todas as
+  chaves e tokens, para isolar três ferramentas, é a troca errada. O
+  mantenedor decidiu: **sem `bwrap` no container**. A F-08 não é executada;
+  o isolamento de comandos fica com o computador de cada pessoa (gVisor), na
+  fase 2 do computador.
 
 `/esquecer` **cancela** as tarefas em andamento da pessoa e descarta os
 resultados que ainda não foram entregues. Isso não é decisão, é invariante
@@ -178,6 +208,22 @@ Um módulo novo, `supernova/tools/runner`, com:
   cada ferramenta.
 - **Telemetria:** `tool_running`, `tool_waiting`, `tool_timeouts_total` e
   `tool_cancelled_total` por ferramenta. Entram no painel do Grafana.
+
+**Desvio na execução (F-02): um guardião por chamada, não um supervisor por
+ferramenta.** Cada chamada ganha um processo guardião
+(`core/tool_runner`), iniciado pelo turno. Ele monitora o turno, liga a si o
+processo que executa a ferramenta e faz valer o prazo, que já existia desde a
+PRD-E (`tool_limits`). O efeito é o da seção acima (prazo, cancelamento,
+nada vivo sem dono), sem um processo por ferramenta pelo qual todas as
+chamadas passariam. As vagas da F-03 ficam na ETS, fora de qualquer
+processo, como esta seção já previa.
+
+**Desfecho no audit.** O guardião para o executor com o motivo `timeout` ou
+`cancelled`. O `invoke_tool` do gateway observa o processo que executa a
+chamada: se ele for parado antes de completar, o `ToolCompleted` sai mesmo
+assim, uma vez, com `timeout` ou `cancelado`. Antes, a chamada cortada nunca
+era completada: o audit não a via e a reserva ficava para sempre no estado
+do gateway.
 
 ### 6.2 Fase B: `tarefa`
 
@@ -320,6 +366,10 @@ telemetria da seção 6.1 e o painel.
 
 #### F-08: Isolamento com Bubblewrap (D7)
 
+> **Não executada.** O teste da D7 mostrou que o `bwrap` só funciona no
+> container com o seccomp e o AppArmor desligados; o mantenedor decidiu
+> ficar sem ele (D7, resultado). O texto abaixo fica como referência.
+
 Execute os processos externos de `safe_shell`, `process`, `git_inspect` e
 `github` dentro do `bwrap`, com o perfil da D7. O perfil é montado por uma
 função pura, testável sem executar nada. A fase A já mata o processo da
@@ -349,7 +399,7 @@ registro em `tasks.jsonl`, limite (D4) e ferramentas permitidas (D3).
 **Aceite:**
 - [ ] Iniciar uma `lenta(2000)` em segundo plano devolve na hora, e o turno
       responde sem esperar.
-- [ ] Uma quarta tarefa simultânea é recusada com uma mensagem clara.
+- [ ] Uma oitava tarefa simultânea é recusada com uma mensagem clara (D4).
 - [ ] Uma ferramenta fora da lista do D3 é recusada.
 - [ ] I6 passa.
 - [ ] Commit: `feat(self): tarefas em segundo plano`.
@@ -402,6 +452,6 @@ Orçamento esgotado guarda a entrega para a próxima mensagem da pessoa (D5).
 |---|---|
 | O modelo usa `tarefa` para tudo e a conversa vira um vaivém de mensagens | D3 limita as ferramentas; a descrição diz para usar só no que demora; o cenário de harness mede |
 | O modelo anuncia o resultado antes de ele chegar | o cenário de harness tem critério de "não inventar" (como o `nao_inventar`); a resposta de `iniciar` diz "o resultado chega como mensagem" |
-| Custo: cada entrega é um turno a mais do LLM | conta no orçamento da pessoa (D5), com limite de 3 tarefas (D4) |
+| Custo: cada entrega é um turno a mais do LLM | conta no orçamento da pessoa (D5), com limite de 7 tarefas (D4) |
 | Matar um processo no meio de uma escrita em disco | as ferramentas que escrevem gravam em `.tmp` e depois fazem `rename` (como já fazem as do self); a F-00 levanta as que não fazem, e elas ganham isso antes da F-02 |
 | Supervisor de ferramenta vira gargalo | as vagas são contadas na ETS, sem passar pelo supervisor; ele só inicia e cancela |

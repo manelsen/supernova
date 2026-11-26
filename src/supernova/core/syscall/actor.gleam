@@ -20,6 +20,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/string
 import supernova/core/audit_log/actor as audit_actor
 import supernova/core/audit_log/types as audit_types
 import supernova/core/budget_policy/actor as budget_actor
@@ -33,6 +34,7 @@ import supernova/core/syscall/types.{
   AuditDenied, AuditFailed, AuditOk, ReadFile, RecordAudit, SyscallDenied,
   SyscallFailed, SyscallOk, WriteFile,
 }
+import supernova/core/tool_runner
 import supernova/core/workspace_policy/actor as policy_actor
 import supernova/core/workspace_policy/types as policy_types
 import supernova/tools/agenda
@@ -84,6 +86,8 @@ pub type SyscallMessage {
     result: Result(String, String),
     timestamp: Int,
   )
+  /// How many claimed calls are not completed yet (tests).
+  ClaimedCount(reply_to: Subject(Int))
   /// Register an agent to make syscalls
   RegisterAgent(reply_to: Subject(Nil), agent_id: String)
   /// Unregister an agent
@@ -779,6 +783,11 @@ fn handle_message(
       )
     }
 
+    ClaimedCount(reply_to) -> {
+      actor.send(reply_to, dict.size(actor_state.claimed_tools))
+      actor.continue(actor_state)
+    }
+
     PurgeExpiredReservations(reply_to, now) -> {
       actor.send(reply_to, Nil)
       actor.continue(
@@ -940,7 +949,10 @@ pub fn invoke_tool(
     Ok(Ok(reservation_id)) ->
       case safe_call.call(gw, 2000, ClaimTool(_, reservation_id)) {
         Ok(Ok(execute)) -> {
+          let completed =
+            watch_claim(gw, reservation_id, principal_id, tool_name)
           let result = execute(tool_name, args)
+          process.send(completed, Nil)
           process.send(
             gw,
             ToolCompleted(
@@ -960,6 +972,64 @@ pub fn invoke_tool(
         }
       }
   }
+}
+
+/// Watches the process running a claimed call. If it is stopped before it
+/// completes (its time limit, or its turn died; PRD-F, F-02), the call is
+/// still completed once, with what happened: the audit sees it and the
+/// gateway forgets the claim (I3). Returns the subject that says the call
+/// completed normally.
+fn watch_claim(
+  gw: SyscallGateway,
+  reservation_id: String,
+  principal_id: String,
+  tool_name: String,
+) -> Subject(Nil) {
+  let worker = process.self()
+  let ready = process.new_subject()
+  let _ =
+    process.spawn_unlinked(fn() {
+      let completed = process.new_subject()
+      process.send(ready, completed)
+      let monitor = process.monitor(worker)
+      let outcome =
+        process.new_selector()
+        |> process.select_map(completed, fn(_) { None })
+        |> process.select_specific_monitor(monitor, fn(down) {
+          Some(down.reason)
+        })
+        |> process.selector_receive_forever
+      case outcome {
+        None -> process.demonitor_process(monitor)
+        Some(reason) ->
+          process.send(
+            gw,
+            ToolCompleted(
+              reservation_id,
+              principal_id,
+              tool_name,
+              Error(interrupted(reason)),
+              ffi_current_timestamp(),
+            ),
+          )
+      }
+    })
+  let assert Ok(completed) = process.receive(ready, 5000)
+  completed
+}
+
+/// The audited outcome of a call whose process was stopped.
+fn interrupted(reason: process.ExitReason) -> String {
+  case tool_runner.stop_reason(reason) {
+    Ok("timeout") -> "timeout"
+    Ok(_) -> "cancelado"
+    Error(Nil) -> "interrompida: " <> string.inspect(reason)
+  }
+}
+
+/// How many claimed calls the gateway still holds (tests).
+pub fn claimed_count_for_test(gw: SyscallGateway) -> Int {
+  actor.call(gw, waiting: 2000, sending: ClaimedCount)
 }
 
 /// Expire reservations for deterministic tests.

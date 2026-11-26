@@ -942,6 +942,7 @@ pub fn declare_boot_metrics(
     closed_group_runtime.declare_gate_metrics(channel)
   })
   agenda_sweeper.declare_metrics()
+  executor.declare_tool_metrics()
   list.each(["replayed", "channel_missing"], fn(outcome) {
     record.declare("inbox_recovered_total", [#("outcome", outcome)])
   })

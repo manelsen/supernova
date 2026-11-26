@@ -11,6 +11,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/llm/provider
+import supernova/stress/fake_tools
 import supernova/tools/agenda
 import supernova/tools/browser
 import supernova/tools/buscar_conversa
@@ -46,7 +47,7 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     file_system.tool(),
     agenda.tool(),
     buscar_conversa.tool(),
-    ..list.append(memory, computer)
+    ..list.flatten([memory, computer, fake_tools.tools()])
   ]
 }
 
@@ -60,6 +61,15 @@ pub fn canonical_tool_name(name: String) -> String {
 
 /// Execute one built-in tool by name.
 pub fn execute(name: String, args_json: String) -> Result(String, String) {
+  // The test tools (PRD-F, F-01) answer only when the stress run or a test
+  // turned them on.
+  case fake_tools.execute(name, args_json) {
+    Some(result) -> result
+    None -> execute_named(name, args_json)
+  }
+}
+
+fn execute_named(name: String, args_json: String) -> Result(String, String) {
   case name {
     "safe_shell" -> execute_safe_shell(args_json)
     "browser" -> browser.execute(args_json)

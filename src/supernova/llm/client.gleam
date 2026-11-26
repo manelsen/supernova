@@ -36,6 +36,12 @@ type MockToolMode {
   MockToolLoopSuccess
   MockToolLoopError
   MockToolWriteSelf
+  /// `[mock-lenta N]`, `[mock-trava]`, `[mock-explode]`: call the test tool
+  /// (PRD-F, F-01; on only in stress runs and tests).
+  MockToolFake(name: String, ms: Int)
+  /// `[mock-varias N]`: N calls of `lenta` in one round, the first the
+  /// slowest, so the results come back out of order.
+  MockToolMany(count: Int)
 }
 
 // ============================================================================
@@ -212,10 +218,13 @@ fn mock_chat_default(
   _config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
 ) -> Result(provider.ChatResponse, provider.LLMError) {
+  // Only this turn's tool results count: the history keeps those of past
+  // turns (#59), and they must not stop a new turn from calling its tool.
+  let this_turn = after_last_user(messages)
   let has_tool_result =
-    list.any(messages, fn(message) { message.role == "tool" })
+    list.any(this_turn, fn(message) { message.role == "tool" })
   let has_tool_error =
-    list.any(messages, fn(message) {
+    list.any(this_turn, fn(message) {
       message.role == "tool" && string.starts_with(message.content, "ERROR:")
     })
   let tool_mode = mock_tool_mode(messages)
@@ -234,6 +243,39 @@ fn mock_chat_default(
             ),
           ),
         ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolFake(name, ms) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: name,
+            arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolMany(count) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some(
+          int.range(from: count, to: 0, with: [], run: fn(acc, index) {
+            [index, ..acc]
+          })
+          |> list.map(fn(index) {
+            provider.ToolCall(
+              id: "mock_tool_call_" <> int.to_string(index),
+              name: "lenta",
+              arguments: json.to_string(
+                json.object([#("ms", json.int({ count - index + 1 } * 20))]),
+              ),
+            )
+          }),
+        ),
         reasoning_content: None,
       ))
     _, False, MockToolNone ->
@@ -655,6 +697,39 @@ fn mock_tool_mode(messages: List(provider.ChatMessage)) -> MockToolMode {
 }
 
 fn mock_tool_mode_marks(content: String) -> MockToolMode {
+  case mock_fake_tool_mark(content) {
+    Some(mode) -> mode
+    None -> mock_tool_mode_flags(content)
+  }
+}
+
+fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
+  let number_after = fn(mark) {
+    case string.split_once(content, mark) {
+      Ok(#(_, rest)) ->
+        case string.split_once(rest, "]") {
+          Ok(#(number, _)) ->
+            int.parse(string.trim(number)) |> option.from_result
+          Error(Nil) -> None
+        }
+      Error(Nil) -> None
+    }
+  }
+  case
+    number_after("[mock-lenta "),
+    number_after("[mock-varias "),
+    string.contains(content, "[mock-trava]"),
+    string.contains(content, "[mock-explode]")
+  {
+    Some(ms), _, _, _ -> Some(MockToolFake("lenta", ms))
+    _, Some(count), _, _ -> Some(MockToolMany(count))
+    _, _, True, _ -> Some(MockToolFake("trava", 0))
+    _, _, _, True -> Some(MockToolFake("explode", 0))
+    _, _, _, _ -> None
+  }
+}
+
+fn mock_tool_mode_flags(content: String) -> MockToolMode {
   case
     string.contains(content, "[mock-write-self]"),
     string.contains(content, "[tool-loop-error]"),
@@ -665,6 +740,16 @@ fn mock_tool_mode_marks(content: String) -> MockToolMode {
     _, _, True -> MockToolLoopSuccess
     _, _, _ -> MockToolDefault
   }
+}
+
+/// The messages after the last user message: the current turn's rounds.
+fn after_last_user(
+  messages: List(provider.ChatMessage),
+) -> List(provider.ChatMessage) {
+  messages
+  |> list.reverse
+  |> list.take_while(fn(message) { message.role != "user" })
+  |> list.reverse
 }
 
 fn latest_user_content(messages: List(provider.ChatMessage)) -> Option(String) {

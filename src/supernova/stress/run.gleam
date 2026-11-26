@@ -30,6 +30,7 @@ import supernova/core/session/supervisor
 import supernova/harness/sim_client
 import supernova/self/core as self_core
 import supernova/self/sampler
+import supernova/stress/fake_tools
 import supernova/tools/buscar_conversa
 
 pub type Options {
@@ -43,6 +44,9 @@ pub type Options {
     chaos: Bool,
     /// `routing.parallel`: the pre-LLM phase in each chat's lane.
     parallel: Bool,
+    /// `--tool-mix` (PRD-F, F-01): a share of the messages call the test
+    /// tools (`lenta`, `varias`, `explode`, and rarely `trava`).
+    tool_mix: Bool,
     out: String,
   )
 }
@@ -57,6 +61,7 @@ pub fn default_options() -> Options {
     search_every: 5,
     chaos: True,
     parallel: True,
+    tool_mix: False,
     out: "stress-out",
   )
 }
@@ -87,6 +92,7 @@ fn parse_loop(args: List(String), o: Options) -> Result(Options, String) {
     ["--search-every", v, ..rest] ->
       number(v, rest, fn(n) { Options(..o, search_every: n) })
     ["--no-chaos", ..rest] -> parse_loop(rest, Options(..o, chaos: False))
+    ["--tool-mix", ..rest] -> parse_loop(rest, Options(..o, tool_mix: True))
     ["--parallel", ..rest] -> parse_loop(rest, Options(..o, parallel: True))
     ["--router-actor", ..rest] ->
       parse_loop(rest, Options(..o, parallel: False))
@@ -116,6 +122,27 @@ fn bool_code(ok: Bool) -> Int {
   case ok {
     True -> 0
     False -> 1
+  }
+}
+
+/// A plain message, or with `--tool-mix` one that calls a test tool: of 50
+/// messages, 10 a `lenta` of up to 400 ms, 5 three `lenta` at once, 2 an
+/// `explode` and 1 a `trava` (cut at 2 s, see `stress_config`).
+pub fn plain_or_tool(o: Options, n: Int) -> #(String, String) {
+  let plain = #("plain", "[mock-sem-ferramenta] mensagem " <> int.to_string(n))
+  case o.tool_mix {
+    False -> plain
+    True ->
+      case rand_int(50) {
+        r if r <= 10 -> #(
+          "tool",
+          "[mock-lenta " <> int.to_string(rand_int(400)) <> "] mensagem",
+        )
+        r if r <= 15 -> #("tool", "[mock-varias 3] mensagem")
+        r if r <= 17 -> #("tool", "[mock-explode] mensagem")
+        18 -> #("tool", "[mock-trava] mensagem")
+        _ -> plain
+      }
   }
 }
 
@@ -234,7 +261,7 @@ fn seed_all(o: Options, data_dir: String, now: Int) -> Result(Int, String) {
 // Runtime
 // ============================================================================
 
-fn build_config(
+pub fn build_config(
   o: Options,
   data_dir: String,
   port: Int,
@@ -246,6 +273,30 @@ fn build_config(
     ..base,
     environment: "harness",
     routing: config.RoutingConfig(parallel: o.parallel),
+    // With `--tool-mix`, members may call the test tools, and `trava` is cut
+    // at 2 s so a stuck call costs the lane seconds, not a minute.
+    capabilities: case o.tool_mix {
+      False -> base.capabilities
+      True ->
+        config.CapabilitiesConfig(
+          ..base.capabilities,
+          member: config.RoleCapabilitiesConfig(
+            ..base.capabilities.member,
+            allowed: list.append(
+              base.capabilities.member.allowed,
+              fake_tools.names,
+            ),
+          ),
+        )
+    },
+    tools: case o.tool_mix {
+      False -> base.tools
+      True ->
+        config.ToolsConfig(
+          ..base.tools,
+          timeouts: dict.insert(base.tools.timeouts, "trava", 2),
+        )
+    },
     data_dir: data_dir,
     providers: dict.from_list([
       #(
@@ -395,7 +446,7 @@ fn worker(
             <> int.to_string(rand_int(37) - 1)
             <> "] procura",
         )
-        _ -> #("plain", "[mock-sem-ferramenta] mensagem " <> int.to_string(n))
+        _ -> plain_or_tool(o, n)
       }
       let port = global_get_int(port_key)
       let started = mono_ms()
@@ -483,6 +534,10 @@ fn sampler_loop(
 // ============================================================================
 
 pub fn run(o: Options) -> Result(Bool, String) {
+  case o.tool_mix {
+    True -> fake_tools.enable()
+    False -> Nil
+  }
   let dir = o.out <> "/" <> int.to_string(now_ms())
   let data_dir = dir <> "/data"
   use _ <- result.try(ensure_dir(data_dir))
@@ -903,6 +958,10 @@ fn render(
       latency_line(
         "com busca",
         list.filter(turns, fn(t) { t.kind == "search" }),
+      ),
+      latency_line(
+        "com ferramenta de teste",
+        list.filter(turns, fn(t) { t.kind == "tool" }),
       ),
       latency_line("todos", turns),
       "",

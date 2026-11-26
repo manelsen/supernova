@@ -30,8 +30,8 @@ Atualizado em 25/11/2026. Esta é a única lista em ordem. Uma PRD nova entra aq
 
 | # | Item | Situação | Próximo passo |
 |---|---|---|---|
-| 1 | **[PRD-D](prd/PRD-D-discord.md): Discord com paridade do Telegram** ([3.2](#32-canais)) | Executada em 25/11 (D-01 a D-07), PR #79. Verificada contra gateway e API falsos e as capturas de fevereiro; falta o bot real. | Piloto manual: criar o bot ([`operations/DISCORD.md`](operations/DISCORD.md)) e conversar. |
-| 2 | **[PRD-F](prd/PRD-F-ferramentas-atores.md), fase A**: cada ferramenta com prazo, cancelamento e limites | Proposta. Hoje uma ferramenta travada prende o turno por 5 min e deixa processos vivos. | Decisões D1–D7 do mantenedor. |
+| 1 | **[PRD-D](prd/PRD-D-discord.md): Discord com paridade do Telegram** ([3.2](#32-canais)) | Executada e mergeada em 25/11 (D-01 a D-07, #79). Verificada contra gateway e API falsos e as capturas de fevereiro; falta o bot real. | Piloto manual: criar o bot ([`operations/DISCORD.md`](operations/DISCORD.md)) e conversar. |
+| 2 | **[PRD-F](prd/PRD-F-ferramentas-atores.md), fase A**: cada ferramenta com prazo, cancelamento e limites | Executada em 25/11 (F-00 a F-04), PR #80. A F-08 (`bwrap`) caiu: no container só funciona desligando seccomp e AppArmor; o isolamento de comandos fica com o computador (item 4). | Merge da #80. |
 | 3 | **[PRD-S](prd/PRD-S-sondas.md)**: sondas | Desenho com as decisões S1 a S11, sem histórias. As PRDs E e C, de que a segunda versão dependia, estão feitas. | Escrever a segunda versão, com as histórias e os servidores MCP conferidos (nome, licença, versão). Executar depois da fase A da F, que dá prazo e cancelamento às tarefas longas das sondas. |
 | 4 | **Aprovação por botões, computador fase 2 e [PRD-F](prd/PRD-F-ferramentas-atores.md) fase B** ([3.3](#33-interação-e-computador)) | Decididos em 22/11, sem PRD. A fase B da F depende da P-03, já feita. | Escrever uma PRD que junte os três: a aprovação é o portão das tarefas em segundo plano e do computador. |
 | 5 | **Wizard com Docker e gVisor** ([2.1](#21-quickstart-nativo-com-curl--systemd-docsprdprd-wizardmd)) | Decidido em 22/11. A PRD em disco é a antiga, com `systemd`. | Reescrever a PRD. |
@@ -236,7 +236,9 @@ O `/start` com onboarding e a criação de uma agente por sessão (`TODO.md` P0,
   - um computador por pessoa, apagado no `/esquecer`;
   - uma tela que a pessoa pode assumir (noVNC) para login e captcha;
   - confirmação garantida pelo código antes de qualquer efeito fora da máquina;
-  - tarefas longas assíncronas.
+  - tarefas longas assíncronas;
+  - **objetivo (25/11):** a Belle ter uma agente com computador, o mais cedo que o roadmap permitir. Hoje há um computador por instância (`computador.gleam` ignora a pessoa), só para admins;
+  - a descrição da ferramenta promete "a Linux machine that is yours alone, isolated from … other people": só é verdade com um admin. Corrigir junto com o computador por pessoa.
 - **Yield manual de sessão.** O checkpoint por orçamento e por tempo existe no executor. Uma ferramenta para a agente ceder a vez por conta própria nunca foi exposta. Origem: `IMPLEMENTATION_TODO.md` 2.5.
 
 ### 3.4 Observabilidade e desempenho

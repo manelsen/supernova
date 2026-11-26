@@ -71,6 +71,18 @@ This depends on the inbox working. If it could not be opened at boot, or stops a
 
 The conversation itself survives the restart: see `/data/agents/<person>/conversations/` in [OBSERVABILITY.md](OBSERVABILITY.md).
 
+## Tool isolation
+
+Inside the container, `tools.sandbox` stays `none`: `safe_shell`,
+`git_inspect` and `process` run without Bubblewrap and rely on argument
+validation and the workspace policy. `bwrap` only works in a container with
+both seccomp and AppArmor unconfined (`--security-opt seccomp=unconfined
+--security-opt apparmor=unconfined`), which removes two protections from the
+process that holds every key and token. That trade was rejected (PRD-F, D7).
+Do not add those options to `docker-compose.yml`. Commands that need real
+isolation belong to the per-person computer, which runs under gVisor
+([COMPUTADOR.md](COMPUTADOR.md)).
+
 ## Building a custom image
 
 ```sh
