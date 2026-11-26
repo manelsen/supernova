@@ -42,6 +42,9 @@ type MockToolMode {
   /// `[mock-varias N]`: N calls of `lenta` in one round, the first the
   /// slowest, so the results come back out of order.
   MockToolMany(count: Int)
+  /// `[mock-tarefa ferramenta N]`: start that tool in the background with
+  /// `{"ms": N}` (PRD-F, F-06).
+  MockToolTask(tool: String, ms: Int)
 }
 
 // ============================================================================
@@ -254,6 +257,26 @@ fn mock_chat_default(
             id: "mock_tool_call_1",
             name: name,
             arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolTask(tool, ms) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "tarefa",
+            arguments: json.to_string(
+              json.object([
+                #("acao", json.string("iniciar")),
+                #("ferramenta", json.string(tool)),
+                #("argumentos", json.object([#("ms", json.int(ms))])),
+                #("motivo", json.string("teste")),
+              ]),
+            ),
           ),
         ]),
         reasoning_content: None,
@@ -704,6 +727,32 @@ fn mock_tool_mode_marks(content: String) -> MockToolMode {
 }
 
 fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
+  case mock_task_mark(content) {
+    Some(mode) -> Some(mode)
+    None -> mock_fake_tool_mark_plain(content)
+  }
+}
+
+fn mock_task_mark(content: String) -> Option(MockToolMode) {
+  case string.split_once(content, "[mock-tarefa ") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(inside, _)) ->
+          case string.split(string.trim(inside), " ") {
+            [tool, ms] ->
+              case int.parse(ms) {
+                Ok(ms) -> Some(MockToolTask(tool, ms))
+                Error(Nil) -> None
+              }
+            _ -> None
+          }
+        Error(Nil) -> None
+      }
+    Error(Nil) -> None
+  }
+}
+
+fn mock_fake_tool_mark_plain(content: String) -> Option(MockToolMode) {
   let number_after = fn(mark) {
     case string.split_once(content, mark) {
       Ok(#(_, rest)) ->

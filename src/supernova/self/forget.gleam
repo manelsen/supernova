@@ -19,6 +19,7 @@ import supernova/self/epoch
 import supernova/self/incidents
 import supernova/self/journal
 import supernova/self/memory
+import supernova/self/tasks
 
 pub type Counts {
   Counts(
@@ -43,6 +44,9 @@ pub fn forget(
   // Bump first: turns and reflections already in flight check the epoch
   // before writing, so they stop as early as possible.
   use _ <- result.try(epoch.bump(data_dir, principal))
+  // Tasks in the background stop, and nothing of them is delivered (I8).
+  tasks.forget(principal)
+  use _ <- result.try(delete_file(tasks.path(data_dir, principal)))
 
   let #(journal_kept, journal_count) =
     journal.without_origin(data_dir, principal, principal)

@@ -671,7 +671,7 @@ pub fn default_capabilities_config() -> CapabilitiesConfig {
     member: RoleCapabilitiesConfig(
       allowed: [
         "web", "web_fetch", "file_system", "canvas", "github", "agenda",
-        "buscar_conversa", "lembrar",
+        "buscar_conversa", "lembrar", "tarefa",
       ],
       denied: ["safe_shell", "process", "browser", "computador"],
     ),

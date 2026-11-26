@@ -65,8 +65,10 @@ import supernova/self/journal
 import supernova/self/memory
 import supernova/self/reflection
 import supernova/self/state_store
+import supernova/self/tasks
 import supernova/self/template as prompt_template
 import supernova/tools/agenda as agenda_tool
+import supernova/tools/tarefa
 
 /// Function to resolve/create a session id for an incoming message.
 pub type ResolveSession =
@@ -388,6 +390,8 @@ fn run_executor_for_context(
   llm_config: provider.ProviderConfig,
   tools: List(provider.ToolDefinition),
   context: Option(closed_group_types.PrincipalContext),
+  msg: port.ChannelMessage,
+  agent_id: String,
 ) -> #(Result(provider.ChatResponse, executor.ExecutorError), List(ToolRound)) {
   case context, closed_group_global.get_runtime() {
     Some(turn), Some(runtime) -> {
@@ -399,12 +403,31 @@ fn run_executor_for_context(
           ..closed_group_runtime.run_context(runtime, turn),
           purpose: "turn",
         )
+      // `tarefa` needs the chat of origin, which only the turn knows; the
+      // task's own tool call goes through the gateway like any other
+      // (PRD-F, F-05).
+      let origin =
+        tasks.Origin(
+          agent_id: agent_id,
+          principal: turn.principal_id,
+          role: turn.role,
+          channel: msg.channel,
+          channel_id: msg.channel_id,
+          user_id: msg.user_id,
+        )
+      let may_start_tasks =
+        closed_group_runtime.tools_for(runtime, turn.role, [tarefa.tool()])
+        != []
       let recorded =
         executor.RunContext(
           ..run_context,
           invoke_tool: option.map(run_context.invoke_tool, fn(invoke) {
             fn(name, arguments) {
-              let result = invoke(name, arguments)
+              let result = case name == tarefa.name, may_start_tasks {
+                True, True -> tarefa.execute(origin, arguments, invoke)
+                True, False -> Error("tarefa não é permitida para você")
+                False, _ -> invoke(name, arguments)
+              }
               process.send(
                 rounds,
                 ToolRound(
@@ -420,6 +443,11 @@ fn run_executor_for_context(
             }
           }),
         )
+      // The person wrote: results that waited for budget go now (D5).
+      case is_synthetic(msg.id) {
+        True -> Nil
+        False -> tasks.person_active(agent_id)
+      }
       let result =
         executor.run_with_context(
           messages,
@@ -427,9 +455,34 @@ fn run_executor_for_context(
           closed_group_runtime.tools_for(runtime, turn.role, tools),
           recorded,
         )
-      #(result, drain_rounds(rounds, []))
+      #(result, list.append(task_rounds(msg.id), drain_rounds(rounds, [])))
     }
     _, _ -> #(ungoverned_run(messages, llm_config, tools), [])
+  }
+}
+
+/// Messages the core made itself: an agenda entry or a task result.
+fn is_synthetic(message_id: String) -> Bool {
+  string.starts_with(message_id, "agenda:")
+  || string.starts_with(message_id, "tarefa:")
+}
+
+/// A task result arriving as a message is kept in the history as the tool
+/// call it was, like the calls of a turn (#59, PRD-F F-06).
+fn task_rounds(message_id: String) -> List(ToolRound) {
+  case closed_group_global.get_config() {
+    None -> []
+    Some(cfg) ->
+      case tasks.result_for_message(cfg.data_dir, message_id) {
+        Some(task) -> [
+          ToolRound(
+            name: task.tool,
+            arguments: task.arguments,
+            result: task.result,
+          ),
+        ]
+        None -> []
+      }
   }
 }
 
@@ -853,6 +906,8 @@ fn handle_inbound_message_allowed(
                                   llm_config,
                                   executor.builtin_tools(),
                                   context,
+                                  msg,
+                                  profile.agent_id,
                                 )
                               case turn_result {
                                 Ok(chat_response) -> {
@@ -2164,7 +2219,14 @@ fn fallback_to_non_streaming_reply(
   context: Option(closed_group_types.PrincipalContext),
 ) -> Nil {
   let #(turn_result, rounds) =
-    run_executor_for_context(messages, llm_config, tools, context)
+    run_executor_for_context(
+      messages,
+      llm_config,
+      tools,
+      context,
+      msg,
+      profile.agent_id,
+    )
   case turn_result {
     Ok(chat_response) -> {
       let final_content =

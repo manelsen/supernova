@@ -73,6 +73,7 @@ import supernova/metrics/global as metrics_global
 import supernova/metrics/record
 import supernova/self/desk
 import supernova/self/reflection
+import supernova/self/tasks
 import supernova/tools/browser
 import supernova/tracing/actor as tracing_actor
 import supernova/tracing/global as tracing_global
@@ -453,6 +454,15 @@ fn start_services(
       }
     }
   }
+
+  // Tasks in the background (PRD-F, phase B): results come back as
+  // messages through the same handler and lane as the agenda. At boot,
+  // tasks a restart cut short are told as interrupted (D6), and results
+  // not delivered yet are delivered.
+  start_tasks(cfg, clock, fn(message) {
+    registry.inject(channel_reg, channel_handler, port.inbound_message(message))
+    |> result.map_error(string.inspect)
+  })
 
   // Start the hourly reflection sweeper outside the router. A controllable
   // clock (harness mode) means the harness triggers sweeps explicitly.
@@ -942,6 +952,7 @@ pub fn declare_boot_metrics(
     closed_group_runtime.declare_gate_metrics(channel)
   })
   agenda_sweeper.declare_metrics()
+  tasks.declare_metrics()
   executor.declare_tool_metrics()
   list.each(["replayed", "channel_missing"], fn(outcome) {
     record.declare("inbox_recovered_total", [#("outcome", outcome)])
@@ -1105,5 +1116,47 @@ fn print_channel_status(name: String, enabled: Bool) -> Nil {
   case enabled {
     True -> io.println("    - " <> name <> ": enabled")
     False -> io.println("    - " <> name <> ": disabled")
+  }
+}
+
+fn start_tasks(
+  cfg: config.Config,
+  clock: fn() -> Int,
+  deliver: fn(port.ChannelMessage) -> Result(Nil, String),
+) -> Nil {
+  let context =
+    tasks.Context(
+      data_dir: cfg.data_dir,
+      offset_minutes: result.unwrap(
+        agenda_schedule.timezone_offset(cfg.instance_budget.timezone),
+        0,
+      ),
+      clock: clock,
+      limit_ms: tasks.default_limit_ms,
+      deliver: deliver,
+      can_deliver: fn(principal) {
+        case closed_group_global.get_runtime() {
+          Some(runtime) ->
+            closed_group_runtime.precheck(runtime, principal, clock())
+            |> result.is_ok
+          None -> True
+        }
+      },
+    )
+  case tasks.start(context) {
+    Ok(started) -> {
+      let interrupted = tasks.recover(started)
+      case interrupted > 0 {
+        True ->
+          io.println(
+            "tasks: "
+            <> int.to_string(interrupted)
+            <> " interrupted by the restart",
+          )
+        False -> Nil
+      }
+    }
+    Error(error) ->
+      io.println_error("error: tasks did not start: " <> string.inspect(error))
   }
 }

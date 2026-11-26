@@ -11,6 +11,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/llm/provider
+import supernova/self/tasks
 import supernova/stress/fake_tools
 import supernova/tools/agenda
 import supernova/tools/browser
@@ -23,6 +24,7 @@ import supernova/tools/github
 import supernova/tools/lembrar
 import supernova/tools/process as process_tool
 import supernova/tools/safe_shell
+import supernova/tools/tarefa
 import supernova/tools/web
 
 /// Built-in tool definitions exposed to the LLM. The computer is offered
@@ -36,6 +38,11 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     True -> [lembrar.tool()]
     False -> []
   }
+  // Tasks in the background, when the registry runs (PRD-F, F-05).
+  let background = case tasks.registry() {
+    Some(_) -> [tarefa.tool()]
+    None -> []
+  }
   [
     safe_shell.tool(),
     browser.tool(),
@@ -47,7 +54,7 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     file_system.tool(),
     agenda.tool(),
     buscar_conversa.tool(),
-    ..list.flatten([memory, computer, fake_tools.tools()])
+    ..list.flatten([memory, computer, background, fake_tools.tools()])
   ]
 }
 
@@ -85,6 +92,8 @@ fn execute_named(name: String, args_json: String) -> Result(String, String) {
     "buscar_conversa" -> Error("buscar_conversa needs the caller's identity")
     "lembrar" -> Error("lembrar needs the caller's identity")
     "computador" -> Error("computador needs the caller's identity")
+    // The turn runs it: it needs the chat of origin (PRD-F, F-05).
+    "tarefa" -> Error("tarefa needs the caller's turn")
     _ -> Error("Tool '" <> name <> "' is not wired in executor")
   }
 }
