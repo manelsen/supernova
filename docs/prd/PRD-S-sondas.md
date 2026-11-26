@@ -1,9 +1,9 @@
 [PRD]
 # PRD S: sondas, os subagentes do par
 
-> **Situação em 25/11/2026:** segunda versão, com histórias. S1 a S13
-> decididas em 24/11. S14 a S24 decididas em 25/11. A medida da S-00 (navegadores) já
-> foi feita. Pronta para executar, depois da fase B da PRD-F.
+> **Situação em 26/11/2026:** executada (S-00 a S-08), empilhada sobre a
+> fase B da PRD-F; falta o piloto manual (S-09) e o cenário de harness.
+> Relatório: [`relatorios/PRD-S.md`](../relatorios/PRD-S.md).
 >
 > **Depende de:** fase B da [PRD-F](PRD-F-ferramentas-atores.md) (F-05 a
 > F-07, a `tarefa`), que entra **antes** desta PRD (S14). A fase A da F (prazo,

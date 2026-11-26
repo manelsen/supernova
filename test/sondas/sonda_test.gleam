@@ -1,6 +1,8 @@
 //// PRD-S, S-07: the `sonda` tool's checks, the probe's delivery text, the
 //// web probes' slots, and the hands of the disk and code probes.
 
+import envoy
+import exception
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
@@ -13,6 +15,7 @@ import supernova/adapters/mcp/computer
 import supernova/core/executor
 import supernova/core/tool_slots
 import supernova/llm/provider
+import supernova/self/forget
 import supernova/self/tasks
 import supernova/sondas/condutor
 import supernova/sondas/maos
@@ -277,4 +280,26 @@ fn wait_within(condition: fn() -> Bool, left: Int) -> Nil {
       wait_within(condition, left - 20)
     }
   }
+}
+
+/// /esquecer deletes the person's folder in the computer (S19).
+pub fn esquecer_deletes_the_folder_in_the_computer_test() {
+  let fake = start_fake(fake_computer)
+  envoy.set(
+    "SUPERNOVA_COMPUTER_URL",
+    "http://127.0.0.1:" <> int.to_string(port_of(1, fake)),
+  )
+  use <- exception.defer(fn() {
+    envoy.unset("SUPERNOVA_COMPUTER_URL")
+    stop(fake)
+  })
+  let dir = test_workspace.create_temp_dir("sonda-forget")
+  use <- exception.defer(fn() { test_workspace.remove_dir_recursive(dir) })
+  let assert Ok(_) = forget.forget(dir, "sim:ana", None)
+  requests(fake)
+  |> list.any(fn(raw) {
+    string.contains(raw, "\"acao\":\"apagar_pessoa\"")
+    && string.contains(raw, computer.person_hash("sim:ana"))
+  })
+  |> should.be_true
 }
