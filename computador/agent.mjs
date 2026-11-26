@@ -232,7 +232,9 @@ async function page(gen) {
         locale: 'pt-BR',
         timezoneId: process.env.TZ || 'America/Sao_Paulo',
         args: ['--no-sandbox', '--disable-dev-shm-usage'],
-        timeout: LIMITS.browserOpMs,
+        // Past our own deadline: the deadline must win, so a slow launch is
+        // reported as a restart and closed by the generation check below.
+        timeout: LIMITS.browserOpMs + CLOSE_WAIT_MS,
       });
       if (gen !== generation) {
         // This operation already timed out; do not let its browser linger.
