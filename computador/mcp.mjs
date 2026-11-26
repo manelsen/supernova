@@ -19,6 +19,8 @@
 //      → {"resposta": <JSON-RPC answer>} (none for a notification)
 //   {"acao": "fechar", "sessao": "<id>"}
 //   {"acao": "apagar_pessoa", "pessoa": "<hex>"}   (for /esquecer)
+//   {"acao": "guardar_resultado", "pessoa": "<hex>", "sonda": <n>,
+//    "texto": "..."}   (the probe's whole result, in resultado.md)
 //
 // What the browser may do is narrower than what the Playwright MCP offers:
 // no running code in this process (`browser_run_code_unsafe`), no sending
@@ -363,7 +365,14 @@ export async function mcp(body, opener = { playwright: openPlaywright, filesyste
       await fs.rm(folder, { recursive: true, force: true });
       return {};
     }
+    case 'guardar_resultado': {
+      const folder = probeDir(body.pessoa, body.sonda);
+      if (typeof body.texto !== 'string') throw new McpUserError('texto must be a string');
+      await fs.mkdir(folder, { recursive: true });
+      await fs.writeFile(path.join(folder, 'resultado.md'), body.texto, 'utf8');
+      return {};
+    }
     default:
-      throw new McpUserError('acao must be abrir, chamar, fechar or apagar_pessoa');
+      throw new McpUserError('acao must be abrir, chamar, fechar, apagar_pessoa or guardar_resultado');
   }
 }

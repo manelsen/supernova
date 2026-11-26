@@ -153,6 +153,33 @@ pub fn forget_person(
   |> result.replace(Nil)
 }
 
+/// Keep the probe's whole result in its folder (`resultado.md`, S21).
+pub fn keep_result(
+  computer: Computer,
+  agent_id: String,
+  probe: Int,
+  text: String,
+) -> Result(Nil, String) {
+  post(
+    computer,
+    json.object([
+      #("acao", json.string("guardar_resultado")),
+      #("pessoa", json.string(person_hash(agent_id))),
+      #("sonda", json.int(probe)),
+      #("texto", json.string(text)),
+    ]),
+  )
+  |> result.replace(Nil)
+}
+
+/// The probe's folder, as the computer names it.
+pub fn probe_folder(agent_id: String, probe: Int) -> String {
+  "/home/pwuser/pessoas/"
+  <> person_hash(agent_id)
+  <> "/sondas/"
+  <> int.to_string(probe)
+}
+
 /// One JSON-RPC request through the session; the `result` as JSON text.
 fn request(
   session: Session,

@@ -141,6 +141,13 @@ test('the file server does not see the service token', { timeout: 60_000 }, asyn
   }
 });
 
+test('the whole result of a probe is kept in its folder', async () => {
+  await mcp({ acao: 'guardar_resultado', pessoa: ANA, sonda: 9, texto: '# Resultado\ntudo' });
+  assert.equal(await fs.readFile(path.join(probeDir(ANA, 9), 'resultado.md'), 'utf8'), '# Resultado\ntudo');
+  await assert.rejects(mcp({ acao: 'guardar_resultado', pessoa: '../x', sonda: 9, texto: 'x' }), McpUserError);
+  await assert.rejects(mcp({ acao: 'guardar_resultado', pessoa: ANA, sonda: 9 }), McpUserError);
+});
+
 test('idle sessions close after five minutes', async () => {
   let clock = 1_000_000;
   setClock(() => clock);

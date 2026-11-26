@@ -13,6 +13,7 @@ import gleam/option.{None, Some}
 import gleam/string
 import supernova/core/executor
 import supernova/llm/provider
+import supernova/metrics/record
 
 pub type Kind {
   Web
@@ -133,6 +134,11 @@ pub fn run(
   let outcome =
     executor.run_with_context(messages, llm_config, hands.tools, context)
   let spent = ffi_spent()
+  record.count_by(
+    "sondas_custo_microusd_total",
+    float.round(spent *. 1_000_000.0),
+    [#("tipo", kind_name(kind))],
+  )
   let report = case outcome {
     Ok(response) -> Ok(#("concluída", response.content))
     Error(executor.PolicyDenied(message)) if message == cost_exhausted ->

@@ -3,6 +3,7 @@
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import supernova/adapters/mcp/computer
 import supernova/agenda/store as agenda_store
 import supernova/channel/inbox
 import supernova/core/agent_identity
@@ -47,6 +48,14 @@ pub fn forget(
   // Tasks in the background stop, and nothing of them is delivered (I8).
   tasks.forget(principal)
   use _ <- result.try(delete_file(tasks.path(data_dir, principal)))
+  // The probes' files in the computer are the person's too (PRD-S, S19).
+  case computer.from_env() {
+    Some(pc) -> {
+      let _ = computer.forget_person(pc, principal)
+      Nil
+    }
+    None -> Nil
+  }
 
   let #(journal_kept, journal_count) =
     journal.without_origin(data_dir, principal, principal)

@@ -4,6 +4,7 @@
 //// |---|---|---|
 //// | `computador` | 2 | 8 |
 //// | `browser`, `web` | 4 | 32 |
+//// | `sonda_web` (a web probe's browser, PRD-S S23) | 7 | 5 |
 //// | every other | 8 | 64 |
 ////
 //// The counters live in ETS and change with `update_counter`: taking a slot
@@ -24,6 +25,8 @@ pub const busy_message =
 pub fn limits_for(tool: String) -> Limits {
   case tool {
     "computador" -> Limits(per_agent: 2, instance: 8)
+    // One shared browser in a 3 GB computer: five web probes at once.
+    "sonda_web" -> Limits(per_agent: 7, instance: 5)
     "browser" | "web" | "web_fetch" -> Limits(per_agent: 4, instance: 32)
     _ -> Limits(per_agent: 8, instance: 64)
   }

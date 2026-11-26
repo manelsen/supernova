@@ -45,6 +45,8 @@ type MockToolMode {
   /// `[mock-tarefa ferramenta N]`: start that tool in the background with
   /// `{"ms": N}` (PRD-F, F-06).
   MockToolTask(tool: String, ms: Int)
+  /// `[mock-sonda tipo instruções]`: send a probe (PRD-S, S-07).
+  MockToolProbe(kind: String, instructions: String)
 }
 
 // ============================================================================
@@ -257,6 +259,25 @@ fn mock_chat_default(
             id: "mock_tool_call_1",
             name: name,
             arguments: json.to_string(json.object([#("ms", json.int(ms))])),
+          ),
+        ]),
+        reasoning_content: None,
+      ))
+    _, False, MockToolProbe(kind, instructions) ->
+      Ok(provider.ChatResponse(
+        role: "assistant",
+        content: "",
+        tool_calls: Some([
+          provider.ToolCall(
+            id: "mock_tool_call_1",
+            name: "sonda",
+            arguments: json.to_string(
+              json.object([
+                #("tipo", json.string(kind)),
+                #("instrucoes", json.string(instructions)),
+                #("motivo", json.string("teste")),
+              ]),
+            ),
           ),
         ]),
         reasoning_content: None,
@@ -734,6 +755,22 @@ fn mock_fake_tool_mark(content: String) -> Option(MockToolMode) {
 }
 
 fn mock_task_mark(content: String) -> Option(MockToolMode) {
+  case string.split_once(content, "[mock-sonda ") {
+    Ok(#(_, rest)) ->
+      case string.split_once(rest, "]") {
+        Ok(#(inside, _)) ->
+          case string.split_once(string.trim(inside), " ") {
+            Ok(#(kind, instructions)) ->
+              Some(MockToolProbe(kind, string.trim(instructions)))
+            Error(Nil) -> None
+          }
+        Error(Nil) -> None
+      }
+    Error(Nil) -> mock_plain_task_mark(content)
+  }
+}
+
+fn mock_plain_task_mark(content: String) -> Option(MockToolMode) {
   case string.split_once(content, "[mock-tarefa ") {
     Ok(#(_, rest)) ->
       case string.split_once(rest, "]") {
