@@ -3,6 +3,7 @@
 import gleam/list
 import gleam/option.{Some}
 import gleam/string
+import supernova/channel/chunking
 import supernova/channel/traits.{type ChannelTraits, ChannelTraits}
 import supernova/channel/traits/discord
 import supernova/channel/traits/sim
@@ -15,7 +16,11 @@ pub fn all() -> List(ChannelTraits) {
     telegram.channel(),
     discord.channel(),
     sim.channel(),
-    ChannelTraits(..traits.generic("matrix"), routes_inbound: True),
+    ChannelTraits(
+      ..traits.generic("matrix"),
+      routes_inbound: True,
+      edit_max_length: chunking.matrix_max_length,
+    ),
     traits.generic("lark"),
     traits.generic("google_chat"),
     ChannelTraits(
