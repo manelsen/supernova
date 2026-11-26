@@ -48,7 +48,7 @@ fn current_timestamp() -> Int
 // Constants
 // ============================================================================
 
-const max_recursion_depth = 25
+pub const max_recursion_depth = 25
 
 const default_retry_config =
   retry.RetryConfig(
@@ -222,6 +222,9 @@ pub type RunContext {
     on_llm_failure: Option(fn(String) -> Nil),
     invoke_tool: Option(fn(String, String) -> Result(String, String)),
     on_tool_result: Option(fn(String, Bool) -> Nil),
+    /// The most model rounds of one run: 25 for a turn, more for a probe
+    /// (PRD-S, S21).
+    max_rounds: Int,
   )
 }
 
@@ -242,6 +245,7 @@ pub fn empty_run_context() -> RunContext {
     on_llm_failure: None,
     invoke_tool: None,
     on_tool_result: None,
+    max_rounds: max_recursion_depth,
   )
 }
 
@@ -334,7 +338,7 @@ fn run_loop(
   context: RunContext,
 ) -> Result(provider.ChatResponse, ExecutorError) {
   // Check recursion depth
-  case depth > max_recursion_depth {
+  case depth > context.max_rounds {
     True -> Error(MaxDepthExceeded(depth: depth))
     False -> {
       let decision =
