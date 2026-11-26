@@ -153,5 +153,4 @@ The rules live in `monitoring/grafana/alerting/rules.yml` and the Telegram deliv
 
 - **Readiness only probes Telegram.** The other channels count as ready once they start.
 - **No OTLP export.** Spans only go to stdout; there is no collector and no trace viewer.
-- **Modules that nothing uses.** `core/telemetry`, `core/dashboard` and `core/alerts/actor` are not used outside their own modules.
 - **Performance never measured.** The benchmarks in `test/bench/` and the load test in `tests/load/` (`run_load_tests.sh`) exist. The targets from `docs/prd/production-ready-v1.md` (100 concurrent users, p99 under 2 s, under 1% errors) have never been checked.

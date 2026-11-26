@@ -200,9 +200,14 @@ type ApiState {
   ApiState(scripts: List(#(String, Int, BitArray)), next_id: Int)
 }
 
+@external(erlang, "test_hackney_ffi", "ensure_started")
+fn ensure_hackney_started() -> Nil
+
 /// Start the API fake. Every request is sent to `requests`, owned by the
-/// calling process.
+/// calling process. The client under test speaks to it through hackney,
+/// which no test may count on another test having started.
 pub fn start_api() -> Api {
+  ensure_hackney_started()
   let requests = process.new_subject()
   let assert Ok(started) =
     actor.new(ApiState([], 1000))
