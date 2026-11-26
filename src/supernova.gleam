@@ -71,6 +71,7 @@ import supernova/memory/boot as memory_boot
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
 import supernova/metrics/record
+import supernova/self/aprovacoes
 import supernova/self/desk
 import supernova/self/reflection
 import supernova/self/tasks
@@ -955,6 +956,7 @@ pub fn declare_boot_metrics(
   })
   agenda_sweeper.declare_metrics()
   tasks.declare_metrics()
+  aprovacoes.declare_metrics()
   sonda.declare_metrics()
   executor.declare_tool_metrics()
   list.each(["replayed", "channel_missing"], fn(outcome) {

@@ -14,6 +14,7 @@ import supernova/core/introspection/self_state
 import supernova/core/preferences
 import supernova/core/session/history_store
 import supernova/core/session/supervisor as session_supervisor
+import supernova/self/aprovacoes
 import supernova/self/audit
 import supernova/self/desk
 import supernova/self/epoch
@@ -48,6 +49,8 @@ pub fn forget(
   // Tasks in the background stop, and nothing of them is delivered (I8).
   tasks.forget(principal)
   use _ <- result.try(delete_file(tasks.path(data_dir, principal)))
+  // Pending requests, grants and permissions go with the person (PRD-K).
+  use _ <- result.try(delete_file(aprovacoes.path(data_dir, principal)))
   // The probes' files in the computer are the person's too (PRD-S, S19).
   case computer.from_env() {
     Some(pc) -> {
