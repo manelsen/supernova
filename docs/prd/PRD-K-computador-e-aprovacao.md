@@ -290,9 +290,9 @@ permanentes por pessoa; 24 h; um lembrete às 3 h; persistência em
 `agents/<pessoa>/self/aprovacoes.json`; métricas.
 
 **Aceite:**
-- [ ] Testes do ciclo inteiro com relógio de teste (expira, lembra, consome
+- [x] Testes do ciclo inteiro com relógio de teste (expira, lembra, consome
       uso único, tarefa acaba e leva as autorizações dela).
-- [ ] Sobrevive a reinício.
+- [x] Sobrevive a reinício.
 - [ ] Commit: `feat(aprovacao): pedidos e autorizações no núcleo`.
 
 #### K-02: O pedido no canal
