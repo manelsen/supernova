@@ -41,6 +41,7 @@ pub fn known_tool_names() -> List(String) {
     "buscar_conversa",
     "lembrar",
     "computador",
+    "tarefa",
   ]
 }
 
