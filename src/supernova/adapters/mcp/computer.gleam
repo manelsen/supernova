@@ -1,10 +1,10 @@
-//// The MCP servers inside the computer, reached through its authenticated
-//// door (`POST /v1/mcp`, PRD-S, S-04). The servers and their arguments are
+//// The MCP servers inside the person's computer, reached through the
+//// dispatcher (`POST /v1/pessoas/<hash>/mcp`, PRD-S, S-04; PRD-K, K-04). The servers and their arguments are
 //// chosen by the computer's service; Supernova names a server, a person
 //// and a probe, and then speaks MCP through the session.
 ////
 //// Nothing secret goes in a request: the person is a hash of the agent id,
-//// and the only credential is the computer's own token, in the header.
+//// and the only credential is the dispatcher's token, in the header.
 
 import envoy
 import gleam/dynamic/decode
@@ -23,7 +23,7 @@ pub type Computer {
 
 /// An open MCP session in the computer.
 pub type Session {
-  Session(computer: Computer, id: String)
+  Session(computer: Computer, id: String, person: String)
 }
 
 pub type Server {
@@ -68,8 +68,10 @@ pub fn open(
   agent_id: String,
   probe: Int,
 ) -> Result(Session, String) {
+  let person = person_hash(agent_id)
   use _ <- result.try(post(
     computer,
+    person,
     json.object([
       #("acao", json.string("abrir")),
       #("sessao", json.string(session_id)),
@@ -78,7 +80,7 @@ pub fn open(
       #("sonda", json.int(probe)),
     ]),
   ))
-  let session = Session(computer: computer, id: session_id)
+  let session = Session(computer: computer, id: session_id, person: person)
   let greeted = {
     use answer <- result.try(request(
       session,
@@ -130,6 +132,7 @@ pub fn close(session: Session) -> Nil {
   let _ =
     post(
       session.computer,
+      session.person,
       json.object([
         #("acao", json.string("fechar")),
         #("sessao", json.string(session.id)),
@@ -138,17 +141,16 @@ pub fn close(session: Session) -> Nil {
   Nil
 }
 
-/// /esquecer: close the person's sessions and delete their folder.
+/// /esquecer: the dispatcher deletes the person's computer, with its
+/// volume (files, browser sessions) and its network (PRD-K, 4.3).
 pub fn forget_person(
   computer: Computer,
   agent_id: String,
 ) -> Result(Nil, String) {
-  post(
+  send(
     computer,
-    json.object([
-      #("acao", json.string("apagar_pessoa")),
-      #("pessoa", json.string(person_hash(agent_id))),
-    ]),
+    join(computer.url, "v1/apagar"),
+    json.object([#("pessoa", json.string(person_hash(agent_id)))]),
   )
   |> result.replace(Nil)
 }
@@ -162,6 +164,7 @@ pub fn keep_result(
 ) -> Result(Nil, String) {
   post(
     computer,
+    person_hash(agent_id),
     json.object([
       #("acao", json.string("guardar_resultado")),
       #("pessoa", json.string(person_hash(agent_id))),
@@ -189,6 +192,7 @@ fn request(
   let id = ffi_unique_id()
   use answer <- result.try(post(
     session.computer,
+    session.person,
     json.object([
       #("acao", json.string("chamar")),
       #("sessao", json.string(session.id)),
@@ -210,6 +214,7 @@ fn request(
 fn notify(session: Session, method: String) -> Result(Nil, String) {
   post(
     session.computer,
+    session.person,
     json.object([
       #("acao", json.string("chamar")),
       #("sessao", json.string(session.id)),
@@ -225,17 +230,36 @@ fn notify(session: Session, method: String) -> Result(Nil, String) {
   |> result.replace(Nil)
 }
 
-/// POST to /v1/mcp. The service answers {"ok": true, ...} or
-/// {"ok": false, "error": "..."}; anything else is a broken computer.
-fn post(computer: Computer, body: json.Json) -> Result(String, String) {
-  case
-    ffi_run(
-      endpoint(computer.url),
-      computer.token,
-      json.to_string(body),
-      computer.timeout_ms,
-    )
-  {
+/// POST to the person's computer, `/v1/pessoas/<hash>/mcp` at the
+/// dispatcher.
+fn post(
+  computer: Computer,
+  person: String,
+  body: json.Json,
+) -> Result(String, String) {
+  send(computer, person_endpoint(computer.url, person, "mcp"), body)
+}
+
+/// The person's computer, at the dispatcher: `/v1/pessoas/<hash>/<door>`.
+pub fn person_endpoint(base: String, person: String, door: String) -> String {
+  join(base, "v1/pessoas/" <> person <> "/" <> door)
+}
+
+fn join(base: String, path: String) -> String {
+  case string.ends_with(base, "/") {
+    True -> base <> path
+    False -> base <> "/" <> path
+  }
+}
+
+/// The service answers {"ok": true, ...} or {"ok": false, "error": "..."};
+/// anything else is a broken computer.
+fn send(
+  computer: Computer,
+  url: String,
+  body: json.Json,
+) -> Result(String, String) {
+  case ffi_run(url, computer.token, json.to_string(body), computer.timeout_ms) {
     Error(reason) ->
       Error("computador unreachable: " <> string.slice(reason, 0, 200))
     Ok(#(status, text, _image)) -> {
@@ -256,13 +280,6 @@ fn post(computer: Computer, body: json.Json) -> Result(String, String) {
           )
       }
     }
-  }
-}
-
-fn endpoint(base: String) -> String {
-  case string.ends_with(base, "/") {
-    True -> base <> "v1/mcp"
-    False -> base <> "/v1/mcp"
   }
 }
 

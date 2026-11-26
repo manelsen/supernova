@@ -4,6 +4,7 @@ import gleam/list
 import gleam/option.{Some}
 import gleam/string
 import gleeunit/should
+import supernova/adapters/mcp/computer
 import supernova/config
 import supernova/config_check
 import supernova/core/executor
@@ -160,7 +161,12 @@ pub fn execute_posts_to_the_service_and_splits_the_image_test() {
   envoy.unset("SUPERNOVA_COMPUTER_TOKEN")
 
   let request = last_request()
-  request |> string.starts_with("POST /v1/run ") |> should.be_true
+  // The person's computer, through the dispatcher (PRD-K, K-04).
+  request
+  |> string.starts_with(
+    "POST /v1/pessoas/" <> computer.person_hash("telegram:1") <> "/run ",
+  )
+  |> should.be_true
   request
   |> string.lowercase
   |> string.contains("authorization: bearer t0k")

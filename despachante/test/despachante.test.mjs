@@ -6,20 +6,23 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import {
-  createServer, computerSpec, personOf, listenAddresses, pinImage, configFromEnv,
-  UserError, LIMITS, LABEL,
+  createServer, computers, computerSpec, personOf, listenAddresses, pinImage,
+  configFromEnv, bridgeName, resolvConfSource, UserError, LIMITS, LABEL,
 } from '../despachante.mjs';
 import { docker } from '../docker.mjs';
 
-const ANA = 'a'.repeat(32);
-const BIA = 'b'.repeat(32);
+const ANA = 'a'.repeat(16);
+const BIA = 'b'.repeat(16);
+const people = ['1', '2', '3', '4', '5'].map((c) => c.repeat(16));
 
-// A fake Docker Engine on a Unix socket: containers and volumes in memory,
-// every request recorded.
+// A fake Docker Engine on a Unix socket: containers, volumes and networks
+// in memory, every request recorded.
 async function fakeDocker() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'docker-'));
   const socketPath = path.join(dir, 'docker.sock');
-  const state = { containers: new Map(), volumes: new Map(), requests: [] };
+  const state = {
+    containers: new Map(), volumes: new Map(), networks: new Map(), requests: [],
+  };
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -28,9 +31,8 @@ async function fakeDocker() {
       const body = text ? JSON.parse(text) : null;
       state.requests.push({ method: req.method, url: req.url, body });
       const reply = (status, json) => {
-        const out = json === undefined ? '' : JSON.stringify(json);
         res.writeHead(status, { 'content-type': 'application/json' });
-        res.end(out);
+        res.end(json === undefined ? '' : JSON.stringify(json));
       };
       const url = new URL(req.url, 'http://docker');
       let m;
@@ -38,20 +40,38 @@ async function fakeDocker() {
         const name = url.searchParams.get('name');
         if (state.containers.has(name)) return reply(409, { message: 'conflict' });
         state.containers.set(name, { spec: body, running: false });
-        // Docker makes a missing volume on its own, without labels.
-        for (const mount of body.HostConfig.Mounts) {
-          if (!state.volumes.has(mount.Source)) state.volumes.set(mount.Source, {});
-        }
         return reply(201, { Id: name });
       }
-      if (req.method === 'POST' && url.pathname === '/volumes/create') {
-        if (!state.volumes.has(body.Name)) state.volumes.set(body.Name, body.Labels || {});
+      if (req.method === 'POST' && (url.pathname === '/volumes/create' || url.pathname === '/networks/create')) {
+        const store = url.pathname.startsWith('/volumes') ? state.volumes : state.networks;
+        if (store.has(body.Name)) {
+          return url.pathname.startsWith('/networks') ? reply(409, {}) : reply(201, { Name: body.Name });
+        }
+        store.set(body.Name, { Labels: body.Labels || {}, Options: body.Options || {}, members: new Set() });
         return reply(201, { Name: body.Name });
+      }
+      if ((m = url.pathname.match(/^\/networks\/([^/]+)\/(connect|disconnect)$/))) {
+        const n = state.networks.get(m[1]);
+        if (!n) return reply(404, {});
+        if (m[2] === 'connect') {
+          if (n.members.has(body.Container)) return reply(403, {});
+          n.members.add(body.Container);
+        } else n.members.delete(body.Container);
+        return reply(200);
+      }
+      if ((m = url.pathname.match(/^\/(volumes|networks)\/([^/]+)$/))) {
+        const store = m[1] === 'volumes' ? state.volumes : state.networks;
+        if (req.method === 'GET') {
+          if (!store.has(m[2])) return reply(404, {});
+          return reply(200, { Name: m[2], Labels: store.get(m[2]).Labels });
+        }
+        if (req.method === 'DELETE') return reply(store.delete(m[2]) ? 204 : 404, {});
       }
       if ((m = url.pathname.match(/^\/containers\/([^/]+)\/json$/))) {
         if (m[1] === 'eu') {
-          return reply(200, { NetworkSettings: { Networks: {
-            supernova_computador: { IPAddress: '172.30.0.2' },
+          return reply(200, { Mounts: [{ Destination: '/etc/computador/resolv.conf', Source: '/srv/supernova/computador/resolv.conf' }], NetworkSettings: { Networks: {
+            [`computador-${ANA}`]: { IPAddress: '172.30.0.2' },
+            supernova_computador: { IPAddress: '172.29.0.2' },
             supernova_default: { IPAddress: '172.18.0.5' },
           } } });
         }
@@ -59,33 +79,22 @@ async function fakeDocker() {
         if (!c) return reply(404, { message: 'no such container' });
         return reply(200, { Config: { Labels: c.spec.Labels }, State: { Running: c.running } });
       }
-      if ((m = url.pathname.match(/^\/containers\/([^/]+)\/start$/))) {
+      if ((m = url.pathname.match(/^\/containers\/([^/]+)\/(start|stop)$/))) {
         const c = state.containers.get(m[1]);
         if (!c) return reply(404, {});
-        if (c.running) return reply(304);
-        c.running = true;
-        return reply(204);
-      }
-      if ((m = url.pathname.match(/^\/containers\/([^/]+)\/stop$/))) {
-        const c = state.containers.get(m[1]);
-        if (!c) return reply(404, {});
-        if (!c.running) return reply(304);
-        c.running = false;
+        const on = m[2] === 'start';
+        if (c.running === on) return reply(304);
+        c.running = on;
         return reply(204);
       }
       if (req.method === 'DELETE' && (m = url.pathname.match(/^\/containers\/([^/]+)$/))) {
         return reply(state.containers.delete(m[1]) ? 204 : 404, {});
       }
-      if (req.method === 'GET' && (m = url.pathname.match(/^\/volumes\/([^/]+)$/))) {
-        if (!state.volumes.has(m[1])) return reply(404, {});
-        return reply(200, { Name: m[1], Labels: state.volumes.get(m[1]) });
-      }
-      if (req.method === 'DELETE' && (m = url.pathname.match(/^\/volumes\/([^/]+)$/))) {
-        return reply(state.volumes.delete(m[1]) ? 204 : 404, {});
-      }
       if (url.pathname === '/containers/json') {
+        const filters = JSON.parse(url.searchParams.get('filters') || '{}');
         const list = [...state.containers.entries()]
           .filter(([, c]) => c.spec.Labels && c.spec.Labels[LABEL] === '1')
+          .filter(([, c]) => !(filters.status || []).includes('running') || c.running)
           .map(([name, c]) => ({ Names: [`/${name}`], Labels: c.spec.Labels, State: c.running ? 'running' : 'exited' }));
         return reply(200, list);
       }
@@ -101,21 +110,62 @@ async function fakeDocker() {
   return { socketPath, state, close: () => server.close() };
 }
 
-function config(fake, extra = {}) {
+// Fake computers: one HTTP service per person, answering /health and
+// echoing calls.
+async function fakeComputers() {
+  const servers = new Map();
+  const calls = [];
+  const release = [];
+  let hold = false;
+  async function urlFor(person) {
+    if (!servers.has(person)) {
+      const server = http.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', (c) => chunks.push(c));
+        req.on('end', async () => {
+          if (req.url === '/health') { res.end('{"ok":true}'); return; }
+          calls.push({ person, url: req.url, auth: req.headers.authorization, body: Buffer.concat(chunks).toString('utf8') });
+          if (hold) await new Promise((r) => release.push(r));
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, pessoa: person }));
+        });
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      servers.set(person, server);
+    }
+    return `http://127.0.0.1:${servers.get(person).address().port}`;
+  }
+  for (const p of [ANA, BIA, ...people]) await urlFor(p);
   return {
-    token: 'segredo',
-    computerToken: 'do-computador',
-    image: 'sha256:abc',
-    network: 'supernova_computador',
-    runtime: 'runsc',
-    computerUrl: '',
-    docker: docker(fake.socketPath),
-    ...extra,
+    url: (person) => `http://127.0.0.1:${servers.get(person).address().port}`,
+    calls,
+    holdCalls: () => { hold = true; },
+    releaseCalls: () => { hold = false; release.splice(0).forEach((r) => r()); },
+    close: () => servers.forEach((s) => s.close()),
   };
 }
 
-async function serve(cfg) {
-  const server = createServer(cfg);
+function setup(fake, pcs, extra = {}) {
+  let now = 1_000_000;
+  const cfg = {
+    token: 'segredo',
+    computerToken: 'do-computador',
+    image: 'sha256:abc',
+    runtime: 'runsc',
+    docker: docker(fake.socketPath),
+    computerUrl: pcs.url,
+    self: 'eu',
+    clock: () => now,
+    pollMs: 5,
+    waitMs: 300,
+    ...extra,
+  };
+  return { cfg, advance: (ms) => { now += ms; } };
+}
+
+async function serve(cfg, machines) {
+  const server = createServer(cfg, machines);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -134,144 +184,257 @@ test('a person hash and nothing else', () => {
   assert.equal(personOf({ pessoa: ANA }), ANA);
   for (const bad of [
     {}, { pessoa: 'ana' }, { pessoa: ANA.toUpperCase() }, { pessoa: ANA + 'a' },
-    { pessoa: '../etc/passwd'.padEnd(32, 'a') }, { pessoa: ANA, imagem: 'alpine' },
+    { pessoa: '../etc/passwd/xx' }, { pessoa: ANA, imagem: 'alpine' },
     { pessoa: ANA, runtime: 'runc' }, [ANA], null, { pessoa: 7 },
   ]) {
     assert.throws(() => personOf(bad), UserError, JSON.stringify(bad));
   }
 });
 
-test('a computer is made with the fixed parameters only', () => {
-  const spec = computerSpec({ image: 'sha256:abc', computerToken: 't', network: 'rede', runtime: 'runsc' }, ANA);
+test('a computer is made with the fixed parameters only, on its own network', () => {
+  const spec = computerSpec({ image: 'sha256:abc', computerToken: 't', runtime: 'runsc', resolvConf: '/srv/r.conf' }, ANA);
   assert.equal(spec.Image, 'sha256:abc');
   assert.equal(spec.HostConfig.Runtime, 'runsc');
   assert.equal(spec.HostConfig.Memory, 1536 * 1024 * 1024);
   assert.deepEqual(spec.HostConfig.CapDrop, ['ALL']);
   assert.deepEqual(spec.HostConfig.SecurityOpt, ['no-new-privileges:true']);
-  assert.equal(spec.HostConfig.NetworkMode, 'rede');
-  assert.deepEqual(spec.HostConfig.Mounts, [{ Type: 'volume', Source: `computador-${ANA}`, Target: '/home/pwuser' }]);
-  // Nothing of the host: no bind mounts, no privileges, no host network.
+  assert.equal(spec.HostConfig.NetworkMode, `computador-${ANA}`);
+  // The person's volume, and the resolver list, read-only. Nothing else of
+  // the host.
+  assert.deepEqual(spec.HostConfig.Mounts, [
+    { Type: 'volume', Source: `computador-${ANA}`, Target: '/home/pwuser' },
+    { Type: 'bind', Source: '/srv/r.conf', Target: '/etc/resolv.conf', ReadOnly: true },
+  ]);
   assert.equal(spec.HostConfig.Binds, undefined);
   assert.equal(spec.HostConfig.Privileged, undefined);
   assert.equal(spec.Labels[LABEL], '1');
+  assert.ok(bridgeName(ANA).length <= 15);
+  assert.ok(bridgeName(ANA).startsWith('brc-'));
 });
 
-test('on, on again, off, delete: one container and one volume per person', async () => {
+test('two people, two computers, two volumes, two networks (K-I4)', async () => {
   const fake = await fakeDocker();
-  const api = await serve(config(fake));
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
+  const api = await serve(cfg);
   try {
-    assert.deepEqual((await api.call('POST', '/v1/ligar', { pessoa: ANA })).body, { ok: true, pessoa: ANA, ligado: true });
-    assert.equal((await api.call('POST', '/v1/ligar', { pessoa: ANA })).status, 200);
-    await api.call('POST', '/v1/ligar', { pessoa: BIA });
-    assert.equal(fake.state.containers.size, 2);
-    const creates = fake.state.requests.filter((r) => r.url.startsWith('/containers/create'));
-    assert.equal(creates.length, 2);
-    // Two people, two volumes: neither computer sees the other's (K-I4).
+    assert.deepEqual((await api.call('POST', `/v1/pessoas/${ANA}/run`, { op: 'exec' })).body, { ok: true, pessoa: ANA });
+    assert.deepEqual((await api.call('POST', `/v1/pessoas/${BIA}/mcp`, { acao: 'abrir' })).body, { ok: true, pessoa: BIA });
+    assert.deepEqual(pcs.calls.map((c) => [c.person, c.url]), [[ANA, '/v1/run'], [BIA, '/v1/mcp']]);
+    // The computer's token, which Supernova does not have.
+    assert.ok(pcs.calls.every((c) => c.auth === 'Bearer do-computador'));
     assert.deepEqual([...fake.state.volumes.keys()].sort(), [`computador-${ANA}`, `computador-${BIA}`]);
-    assert.equal(fake.state.volumes.get(`computador-${ANA}`)[LABEL], '1');
+    assert.deepEqual([...fake.state.networks.keys()].sort(), [`computador-${ANA}`, `computador-${BIA}`]);
+    for (const [name, n] of fake.state.networks) {
+      // Each network holds its computer and the dispatcher, nothing else.
+      assert.deepEqual([...n.members], ['eu']);
+      assert.equal(n.Labels[LABEL], '1');
+      assert.ok(n.Options['com.docker.network.bridge.name'].startsWith('brc-'), name);
+      const owner = name.slice('computador-'.length);
+      assert.equal(fake.state.containers.get(`computador-${owner}`).spec.HostConfig.NetworkMode, name);
+    }
+    // A second call does not make anything new.
+    await api.call('POST', `/v1/pessoas/${ANA}/run`, { op: 'exec' });
+    assert.equal(fake.state.requests.filter((r) => r.url.startsWith('/containers/create')).length, 2);
+  } finally { api.close(); pcs.close(); fake.close(); }
+});
 
-    await api.call('POST', '/v1/desligar', { pessoa: ANA });
-    const estado = (await api.call('GET', '/v1/estado')).body.computadores;
-    assert.deepEqual(estado.sort((a, b) => a.pessoa.localeCompare(b.pessoa)), [
-      { pessoa: ANA, ligado: false }, { pessoa: BIA, ligado: true },
-    ]);
+test('calls at once for one person start one computer', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
+  const api = await serve(cfg);
+  try {
+    const answers = await Promise.all([1, 2, 3].map(() => api.call('POST', `/v1/pessoas/${ANA}/run`, {})));
+    assert.ok(answers.every((a) => a.status === 200));
+    assert.equal(fake.state.requests.filter((r) => r.url.startsWith('/containers/create')).length, 1);
+    assert.equal(fake.state.requests.filter((r) => r.url.endsWith('/start')).length, 1);
+  } finally { api.close(); pcs.close(); fake.close(); }
+});
 
+test('idle 15 minutes, turned off; the next call turns it on again with its files', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg, advance } = setup(fake, pcs);
+  const machines = computers(cfg);
+  const api = await serve(cfg, machines);
+  try {
+    await api.call('POST', `/v1/pessoas/${ANA}/run`, {});
+    advance(LIMITS.idleMs - 1000);
+    assert.deepEqual(await machines.reap(), []);
+    advance(1000);
+    assert.deepEqual(await machines.reap(), [ANA]);
+    assert.equal(fake.state.containers.get(`computador-${ANA}`).running, false);
+    // Same container, same volume: the files are where they were.
+    await api.call('POST', `/v1/pessoas/${ANA}/run`, {});
+    assert.equal(fake.state.containers.get(`computador-${ANA}`).running, true);
+    assert.equal(fake.state.requests.filter((r) => r.url.startsWith('/containers/create')).length, 1);
+    assert.ok(fake.state.volumes.has(`computador-${ANA}`));
+  } finally { api.close(); pcs.close(); fake.close(); }
+});
+
+test('a computer with a call in flight is never turned off', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg, advance } = setup(fake, pcs);
+  const machines = computers(cfg);
+  const api = await serve(cfg, machines);
+  try {
+    pcs.holdCalls();
+    const pending = api.call('POST', `/v1/pessoas/${ANA}/run`, {});
+    while (pcs.calls.length === 0) await new Promise((r) => setTimeout(r, 5));
+    advance(LIMITS.idleMs * 2);
+    assert.deepEqual(await machines.reap(), []);
+    pcs.releaseCalls();
+    assert.equal((await pending).status, 200);
+  } finally { api.close(); pcs.close(); fake.close(); }
+});
+
+test('four on: a fifth takes the place of one idle, or waits for a place', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg, advance } = setup(fake, pcs);
+  const machines = computers(cfg);
+  const api = await serve(cfg, machines);
+  try {
+    for (const p of people.slice(0, 4)) await api.call('POST', `/v1/pessoas/${p}/run`, {});
+    assert.equal(machines.live.size, 4);
+
+    // All four busy: the fifth waits, then gives up (503).
+    pcs.holdCalls();
+    const busy = people.slice(0, 4).map((p) => api.call('POST', `/v1/pessoas/${p}/run`, {}));
+    while (pcs.calls.length < 8) await new Promise((r) => setTimeout(r, 5));
+    const fifth = await api.call('POST', `/v1/pessoas/${people[4]}/run`, {});
+    assert.equal(fifth.status, 503);
+    pcs.releaseCalls();
+    await Promise.all(busy);
+
+    // Recently used: still no place (a minute of grace).
+    assert.equal((await api.call('POST', `/v1/pessoas/${people[4]}/run`, {})).status, 503);
+
+    // One idle a while: the fifth takes its place; that one is off.
+    advance(LIMITS.evictAfterMs);
+    await api.call('POST', `/v1/pessoas/${people[1]}/run`, {});
+    const answer = await api.call('POST', `/v1/pessoas/${people[4]}/run`, {});
+    assert.equal(answer.status, 200);
+    assert.equal(machines.live.size, 4);
+    assert.equal(machines.live.has(people[4]), true);
+    assert.equal(machines.live.has(people[1]), true);
+    const off = people.slice(0, 4).filter((p) => !machines.live.has(p));
+    assert.equal(off.length, 1);
+    assert.equal(fake.state.containers.get(`computador-${off[0]}`).running, false);
+  } finally { api.close(); pcs.close(); fake.close(); }
+});
+
+test('a fifth waiting gets the place as soon as one is turned off', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs, { waitMs: 5000 });
+  const machines = computers(cfg);
+  const api = await serve(cfg, machines);
+  try {
+    for (const p of people.slice(0, 4)) await api.call('POST', `/v1/pessoas/${p}/run`, {});
+    const fifth = api.call('POST', `/v1/pessoas/${people[4]}/run`, {});
+    await new Promise((r) => setTimeout(r, 50));
+    await api.call('POST', '/v1/desligar', { pessoa: people[0] });
+    assert.equal((await fifth).status, 200);
+  } finally { api.close(); pcs.close(); fake.close(); }
+});
+
+test('delete: container, volume and network go; the others stay', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
+  const api = await serve(cfg);
+  try {
+    await api.call('POST', `/v1/pessoas/${ANA}/run`, {});
+    await api.call('POST', `/v1/pessoas/${BIA}/run`, {});
     assert.deepEqual((await api.call('POST', '/v1/apagar', { pessoa: ANA })).body, { ok: true, pessoa: ANA, apagado: true });
     assert.equal(fake.state.containers.has(`computador-${ANA}`), false);
     assert.equal(fake.state.volumes.has(`computador-${ANA}`), false);
+    assert.equal(fake.state.networks.has(`computador-${ANA}`), false);
     assert.equal(fake.state.containers.has(`computador-${BIA}`), true);
-    // Deleting what is gone is fine; turning off what is gone too.
     assert.equal((await api.call('POST', '/v1/apagar', { pessoa: ANA })).status, 200);
-    assert.equal((await api.call('POST', '/v1/desligar', { pessoa: ANA })).status, 200);
-  } finally { api.close(); fake.close(); }
+    const estado = (await api.call('GET', '/v1/estado')).body;
+    assert.deepEqual(estado.computadores.map((c) => c.pessoa), [BIA]);
+    assert.equal(estado.vagas, 3);
+  } finally { api.close(); pcs.close(); fake.close(); }
 });
 
 test('the API refuses extra parameters, bad names, no token and browsers', async () => {
   const fake = await fakeDocker();
-  const api = await serve(config(fake));
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
+  const api = await serve(cfg);
   try {
     assert.equal((await api.call('POST', '/v1/ligar', { pessoa: ANA, imagem: 'alpine' })).status, 400);
     assert.equal((await api.call('POST', '/v1/ligar', { pessoa: 'ana' })).status, 400);
     assert.equal((await api.call('POST', '/v1/ligar', 'not json')).status, 400);
-    assert.equal((await api.call('POST', '/v1/ligar', { pessoa: ANA }, { authorization: 'Bearer errado' })).status, 401);
+    assert.equal((await api.call('POST', '/v1/pessoas/ana/run', {})).status, 400);
+    assert.equal((await api.call('POST', `/v1/pessoas/${ANA}/../../x`, {})).status, 404);
+    assert.equal((await api.call('POST', `/v1/pessoas/${ANA}/run`, {}, { authorization: 'Bearer do-computador' })).status, 401);
     assert.equal((await api.call('POST', '/v1/ligar', { pessoa: ANA }, { origin: 'https://evil.example' })).status, 403);
-    assert.equal((await api.call('POST', '/v1/qualquer', { pessoa: ANA })).status, 404);
+    assert.equal((await api.call('POST', '/v1/run', {})).status, 404);
     assert.equal((await api.call('GET', '/v1/ligar')).status, 405);
     assert.equal(fake.state.requests.length, 0);
-  } finally { api.close(); fake.close(); }
+    assert.equal(pcs.calls.length, 0);
+  } finally { api.close(); pcs.close(); fake.close(); }
 });
 
 test('an empty token refuses everything', async () => {
   const fake = await fakeDocker();
-  const api = await serve(config(fake, { token: '' }));
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs, { token: '' });
+  const api = await serve(cfg);
   try {
     assert.equal((await api.call('GET', '/v1/estado', undefined, { authorization: 'Bearer ' })).status, 401);
-  } finally { api.close(); fake.close(); }
+  } finally { api.close(); pcs.close(); fake.close(); }
 });
 
-test('a container of that name that is not a computer is never touched', async () => {
+test('what has the name but is not ours is never touched', async () => {
   const fake = await fakeDocker();
-  fake.state.containers.set(`computador-${ANA}`, { spec: { Labels: {}, HostConfig: { Mounts: [] } }, running: true });
-  const api = await serve(config(fake));
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
+  const api = await serve(cfg);
   try {
+    fake.state.containers.set(`computador-${ANA}`, { spec: { Labels: {} }, running: true });
     assert.equal((await api.call('POST', '/v1/apagar', { pessoa: ANA })).status, 502);
+    assert.equal((await api.call('POST', `/v1/pessoas/${ANA}/run`, {})).status, 502);
     assert.equal(fake.state.containers.has(`computador-${ANA}`), true);
+    fake.state.volumes.set(`computador-${BIA}`, { Labels: {}, members: new Set() });
+    assert.equal((await api.call('POST', '/v1/apagar', { pessoa: BIA })).status, 502);
+    assert.equal(fake.state.volumes.has(`computador-${BIA}`), true);
     assert.equal(fake.state.requests.some((r) => r.method === 'DELETE'), false);
-  } finally { api.close(); fake.close(); }
+  } finally { api.close(); pcs.close(); fake.close(); }
 });
 
-test('a volume of that name that is not a computer\'s is never touched', async () => {
+test('at boot, running computers are adopted and their networks joined', async () => {
   const fake = await fakeDocker();
-  fake.state.volumes.set(`computador-${ANA}`, {});
-  const api = await serve(config(fake));
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
   try {
-    assert.equal((await api.call('POST', '/v1/apagar', { pessoa: ANA })).status, 502);
-    assert.equal(fake.state.volumes.has(`computador-${ANA}`), true);
-    assert.equal(fake.state.requests.some((r) => r.method === 'DELETE'), false);
-  } finally { api.close(); fake.close(); }
+    const first = computers(cfg);
+    await first.ligar(ANA);
+    fake.state.networks.get(`computador-${ANA}`).members.clear();
+    const after = computers(cfg);
+    await after.adopt();
+    assert.equal(after.live.has(ANA), true);
+    assert.deepEqual([...fake.state.networks.get(`computador-${ANA}`).members], ['eu']);
+  } finally { pcs.close(); fake.close(); }
 });
 
-test('calls to the computer carry its token, which Supernova does not have', async () => {
+test('it listens only off the computers\' networks', async () => {
   const fake = await fakeDocker();
-  let seen;
-  const computer = http.createServer((req, res) => {
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
-      seen = { url: req.url, auth: req.headers.authorization, body: Buffer.concat(chunks).toString('utf8') };
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, out: 'Olá' }));
-    });
-  });
-  computer.listen(0, '127.0.0.1');
-  await once(computer, 'listening');
-  const api = await serve(config(fake, { computerUrl: `http://127.0.0.1:${computer.address().port}` }));
   try {
-    const answer = await api.call('POST', '/v1/run', { op: 'exec', cmd: 'echo ção' });
-    assert.deepEqual(answer.body, { ok: true, out: 'Olá' });
-    assert.equal(seen.url, '/v1/run');
-    assert.equal(seen.auth, 'Bearer do-computador');
-    assert.equal(JSON.parse(seen.body).cmd, 'echo ção');
-    await api.call('POST', '/v1/mcp', { op: 'listar' });
-    assert.equal(seen.url, '/v1/mcp');
-    // Without the dispatcher's token, nothing reaches the computer.
-    seen = undefined;
-    assert.equal((await api.call('POST', '/v1/run', {}, { authorization: 'Bearer do-computador' })).status, 401);
-    assert.equal(seen, undefined);
-  } finally { api.close(); computer.close(); fake.close(); }
+    assert.deepEqual(await listenAddresses({ docker: docker(fake.socketPath), self: 'eu' }), ['172.18.0.5']);
+  } finally { fake.close(); }
 });
 
-test('it listens only off the computers\' network', async () => {
+test('the computers\' resolv.conf is found where compose mounts it', async () => {
   const fake = await fakeDocker();
-  const original = os.hostname;
   try {
-    const cfg = { ...config(fake), listen: '' };
-    // os.hostname() is the container id; the fake answers for "eu".
-    os.hostname = () => 'eu';
-    assert.deepEqual(await listenAddresses(cfg), ['172.18.0.5']);
-    // Not finding the computers' network by its name is no guess: it stops.
-    await assert.rejects(listenAddresses({ ...cfg, network: 'computador_net' }), /refusing/);
-  } finally { os.hostname = original; fake.close(); }
+    assert.equal(await resolvConfSource({ docker: docker(fake.socketPath), self: 'eu' }), '/srv/supernova/computador/resolv.conf');
+  } finally { fake.close(); }
 });
 
 test('the image is pinned by id at boot', async () => {
@@ -282,11 +445,12 @@ test('the image is pinned by id at boot', async () => {
   } finally { fake.close(); }
 });
 
-test('configuration: tokens, image and network are required', () => {
-  const env = { DESPACHANTE_TOKEN: 'a', COMPUTADOR_TOKEN: 'b', DESPACHANTE_IMAGEM: 'img', DESPACHANTE_REDE: 'rede' };
-  assert.equal(configFromEnv(env).runtime, 'runsc');
+test('configuration: tokens and image are required', () => {
+  const env = { DESPACHANTE_TOKEN: 'a', COMPUTADOR_TOKEN: 'b', DESPACHANTE_IMAGEM: 'img' };
+  const cfg = configFromEnv(env);
+  assert.equal(cfg.runtime, 'runsc');
+  assert.equal(cfg.computerUrl(ANA), `http://computador-${ANA}:7070`);
   for (const key of Object.keys(env)) {
     assert.throws(() => configFromEnv({ ...env, [key]: ' ' }), new RegExp(key));
   }
-  assert.ok(LIMITS.memoryBytes === 1536 * 1024 * 1024);
 });

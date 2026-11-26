@@ -1,12 +1,14 @@
 # The agent's computer (`computador`)
 
-The `computador` tool gives the agent a Linux machine of its own. It has:
+The `computador` tool gives the agent a Linux machine for its person: **each person has a computer of their own** (PRD-K, K-04). It has:
 
 - a real shell: bash, pipes, Python, `pip install`;
 - its own files, kept in a volume;
 - a persistent Chromium that it drives by selector or by clicking on a screenshot, and sees through screenshots.
 
-The machine is a separate container, `computador/`. It runs on **gVisor** (`runsc`) by default and holds **no Supernova secrets**: no API keys, no channel tokens, no data from anyone. Supernova sends it requests over HTTP and shows the answers to the model, marked as data rather than instructions.
+Each machine is a container made from the `computador/` image by the dispatcher (`despachante/`), with its own volume and its own network. It runs on **gVisor** (`runsc`) and holds **no Supernova secrets**: no API keys, no channel tokens, nobody else's data. Supernova sends it requests through the dispatcher and shows the answers to the model, marked as data rather than instructions.
+
+A person's computer turns on at their first action (1.5 to 4 s) and off after 15 minutes idle; files and browser sessions stay in the volume. At most 4 are on at once: a fifth person waits up to a minute for a place, or takes the place of the computer idle longest (idle at least a minute, with nothing running).
 
 ## Why the security lives where it does
 
@@ -18,12 +20,11 @@ The shell and the browser inside the computer are deliberately not restricted. T
 | gVisor (`runsc`) | Code inside the computer talks to a user-space kernel, not to the host kernel. |
 | The service refuses requests that come from a browser (an `Origin` header, or a body that is not JSON) | The computer's own browser can reach the service on `127.0.0.1`, so a malicious page cannot use it to run commands. |
 | Capabilities config | Members are denied `computador` by default; admins (`"*"`) get it. |
-| A separate network (`br-computador`) plus the host firewall rules below | The computer reaches the internet, but not the host or your LAN. |
+| A network per computer (bridges `brc-*`) plus the host firewall rules below | The computer reaches the internet, but not the host, your LAN, Supernova or anyone else's computer. |
 | Tool description and answer header | Content from the computer is data. The agent asks before acting outside it. |
 
 What this first version does **not** do yet:
 
-- There is one computer per instance, not one per person. That is fine while only admins have it.
 - Logins and captchas cannot be handed over to a person: there is no screen to watch (noVNC).
 - Confirmation before outside effects is asked for in the agent's instructions, but not enforced by code.
 
@@ -62,29 +63,33 @@ Without `SUPERNOVA_COMPUTER_URL` the tool is not offered at all. To use plain Do
 
 Inside its network, the computer can reach the internet. Measured on the pilot host, it can also open connections to every host service that listens on all interfaces (`0.0.0.0`), such as SSH, through the Docker gateway. Services bound to `127.0.0.1` are not reachable.
 
-These two rules close that path. They match only traffic that enters from `br-computador`. Traffic inside that network (dispatcher ↔ computer) and replies to established connections are left alone.
+These two rules close that path. They match only traffic that enters from a computer's bridge (`brc-*`, one per person) or SearXNG's (`br-computador`). Replies to established connections are left alone.
 
-**Supernova is not on the computer's network** (PRD-K). The computer cannot open a connection to it: it is on another Docker network, and Docker keeps bridges apart. Supernova's calls go through the dispatcher, which is on both networks but listens only on Supernova's side. Loopback inside the computer is its own service; the rules above do not cover it. Two checks in the computer do:
+**Supernova is on no computer's network** (PRD-K), and **computers do not see each other** (K-I4): each has a network of its own, and Docker keeps bridges apart. Supernova's calls go through the dispatcher, which joins each computer's network but listens only on Supernova's side. Loopback inside the computer is its own service; the rules do not cover it. Two checks in the computer do:
 
 - **Its browsers reach nothing internal.** Every request of the computer's browser and of the probes' browser contexts goes through `computador/rede.mjs`: loopback (`localhost`, `127.0.0.0/8`, `::1`), `0.0.0.0`, private and link-local ranges (IPv4 and IPv6, including IPv4 written inside IPv6), carrier-grade NAT and multicast are refused, by address or by what a name resolves to. Docker's own names (`supernova`, `searxng`) do not resolve in the computer, which asks public DNS.
 - **The service refuses to start without `COMPUTADOR_TOKEN`**, and an empty token refuses every request.
 
-The shell (`exec`, admins only) can still reach internal addresses on the computer's network (SearXNG). PRD-K sends its traffic through an egress proxy (K-05).
+The shell (`exec`, admins only) goes straight to the internet for now; PRD-K sends its traffic through an egress proxy (K-05).
 
-SearXNG is attached to both networks: it leaves for the internet through `br-computador` (`gw_priority` in `docker-compose.yml`, which needs Docker Engine 28 and Compose 2.33.1 or newer), and Supernova asks it on its own network.
+SearXNG is attached to two networks: it leaves for the internet through `br-computador` (`gw_priority` in `docker-compose.yml`, which needs Docker Engine 28 and Compose 2.33.1 or newer), and Supernova asks it on its own network. No computer is on either.
 
 ```sh
-# The computer may not open connections to the host itself.
-sudo iptables -I INPUT -i br-computador -m conntrack --ctstate NEW -j DROP
-# Nor to private and link-local networks (LAN, other Docker networks, cloud metadata).
-sudo iptables -I DOCKER-USER -i br-computador ! -o br-computador \
-  -d 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16 \
-  -m conntrack --ctstate NEW -j DROP
+for bridge in 'brc+' br-computador; do
+  # No new connections to the host itself.
+  sudo iptables -I INPUT -i "$bridge" -m conntrack --ctstate NEW -j DROP
+  # Nor to private and link-local networks (LAN, other Docker networks, cloud metadata).
+  sudo iptables -I DOCKER-USER -i "$bridge" ! -o "$bridge" \
+    -d 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16 \
+    -m conntrack --ctstate NEW -j DROP
+done
 ```
+
+`brc+` matches every bridge whose name starts with `brc`: the dispatcher names each computer's bridge `brc-` and 11 characters of the person's hash. If the `br-computador` rules from the shared computer are already in place, run the loop for `brc+` only.
 
 > These rules were written for this setup but not yet applied on a host. After applying them, run the checks below. To undo them, run the same commands with `-D` instead of `-I`. To keep them across reboots, use your distribution's tool, for example `iptables-persistent`.
 
-Run these checks from inside the computer (ask the agent, or use `docker compose exec computador bash`):
+Run these checks from inside a computer (ask the agent, or `docker exec -it computador-<hash> bash`):
 
 ```sh
 timeout 2 bash -c '</dev/tcp/172.17.0.1/22' && echo "host still reachable"
@@ -93,33 +98,50 @@ curl -sI https://example.com | head -1        # internet still works
 
 ## Operating it
 
-- **Logs:** `docker compose logs computador`
-- **Files and browser profile:** volume `<project>_computador_home`, mounted at `/home/pwuser`. Relative paths used by the agent live in `~/trabalho`.
-- **Start over:** `docker compose rm -sf computador && docker volume rm <project>_computador_home`
-- **DNS:** Docker's embedded DNS (`127.0.0.11`) does not answer inside gVisor on a user-defined network, so `computador/resolv.conf` is mounted over `/etc/resolv.conf`. It points at public resolvers (1.1.1.1, 8.8.8.8); edit it to use your own.
-- **Limits:** 3 GB of RAM (the probes' browser shares it, PRD-S S23), 2 CPUs, 512 processes. Commands run for at most 300 s. Long output is cut at 20,000 characters, page text at 15,000.
+- **Which are on:** `docker ps --filter label=supernova.despachante=1`. Each is `computador-<hash>`, where `<hash>` is the first 16 hex digits of the SHA-256 of the person's id.
+- **Logs:** `docker compose logs despachante`; one computer's: `docker logs computador-<hash>`.
+- **Files and browser profile:** volume `computador-<hash>`, mounted at `/home/pwuser`. Relative paths used by the agent live in `~/trabalho`; the probes' files in `~/pessoas/<hash>/`.
+- **Start one person over:** `/esquecer` does it (container, volume and network go). By hand: `POST /v1/apagar` to the dispatcher.
+- **DNS:** Docker's embedded DNS (`127.0.0.11`) does not answer inside gVisor on a user-defined network, so the dispatcher mounts `computador/resolv.conf` over each computer's `/etc/resolv.conf`, read-only. It points at public resolvers (1.1.1.1, 8.8.8.8); edit it to use your own, then restart the computers.
+- **Limits:** 1.5 GB of RAM per computer (the probes' browser shares it, PRD-S S23), 2 CPUs, 512 processes, 4 computers on at once. Commands run for at most 300 s. Long output is cut at 20,000 characters, page text at 15,000.
 - **Cost:** a 1280×800 screenshot cost about 570 prompt tokens on the pilot's provider. Only the last two screenshots of a turn stay in the conversation.
 
 ## The dispatcher (`despachante`)
 
 `despachante/` is a small Node service, and the **only container with the Docker socket**; Supernova never has it (PRD-K, K-I6; a test reads `docker-compose.yml`). It:
 
-- carries Supernova's calls to the computer (`POST /v1/run`, `POST /v1/mcp`), adding the computer's token;
-- turns people's computers on and off and deletes them (`POST /v1/ligar`, `/v1/desligar`, `/v1/apagar` with `{"pessoa": "<32 hex digits>"}`, and `GET /v1/estado`). These are for PRD-K's one computer per person (K-04). The API takes a person's hash and nothing else: image, runtime, memory (1.5 GB), network, volume, capabilities and DNS are fixed in its code. The image is the one the `computador` service builds (`supernova-computador:latest`), pinned to its id when the dispatcher starts; after rebuilding the computer image, restart the dispatcher. It only touches containers it made (label `supernova.despachante`).
+- carries Supernova's calls to a person's computer (`POST /v1/pessoas/<hash>/run`, `POST /v1/pessoas/<hash>/mcp`), turning it on first if needed and adding the computer's token;
+- turns computers off after 15 minutes idle, keeps at most 4 on, and deletes a person's computer with its volume and network (`POST /v1/apagar`, which `/esquecer` calls). Also `POST /v1/ligar`, `/v1/desligar` with `{"pessoa": "<16 hex digits>"}`, and `GET /v1/estado`.
 
-It sits on both networks and listens only on its address on Supernova's network, which it asks Docker for at start. A computer finds nothing to connect to. `scripts/teste-rede-despachante.sh` checks this with real Docker (CI runs it):
+The API takes a person's hash and nothing else: image, runtime, memory (1.5 GB), network, volume, capabilities and DNS are fixed in its code. The image is the one the `computador` service builds and never runs (`supernova-computador:latest`), pinned to its id when the dispatcher starts; after rebuilding the computer image, restart the dispatcher. It only touches containers, volumes and networks it made (label `supernova.despachante`).
+
+Each computer gets a network of its own (`computador-<hash>`, bridge `brc-…`), which the dispatcher joins; it listens only on its address on Supernova's network, which it asks Docker for at start. A computer finds nothing to connect to. `scripts/teste-rede-despachante.sh` checks this with real Docker (CI runs it on runc; here it also passed on gVisor):
 
 ```
-ok   Supernova reaches the dispatcher
-ok   Supernova reaches the computer through the dispatcher
-ok   Supernova does not reach the computer directly
-ok   the computer does not reach Supernova by name
-ok   the computer does not reach Supernova by address
-ok   the computer does not reach the dispatcher on its network
-ok   the computer does not reach the dispatcher on Supernova's side
+ok   Supernova reaches Ana's computer through the dispatcher
+ok   Supernova reaches Bia's computer through the dispatcher
+ok   Ana's computer reaches the internet (public DNS)
+ok   Supernova does not reach Ana's computer directly
+ok   Ana's computer does not reach Bia's computer
+ok   Ana's computer does not reach Bia's computer by name
+ok   Ana's computer does not reach Supernova by name
+ok   Ana's computer does not reach Supernova by address
+ok   Ana's computer does not reach the dispatcher on its network
+ok   Ana's computer does not reach the dispatcher on Supernova's side
+ok   forgetting Ana deletes her computer
+ok   no container of Ana's left
+ok   no volume of Ana's left
+ok   no network of Ana's left
+ok   Bia's computer is still there
 ```
 
-**Upgrading from a version without it:** add `SUPERNOVA_COMPUTADOR_TOKEN_INTERNO` to `.env`, change `SUPERNOVA_COMPUTER_URL` to `http://despachante:7071`, and run `docker compose up -d --build`. The computers' network gets a fixed name (`supernova_computador`), so Compose recreates it.
+**Upgrading from the shared computer:**
+
+1. Add `SUPERNOVA_COMPUTADOR_TOKEN_INTERNO` to `.env` and change `SUPERNOVA_COMPUTER_URL` to `http://despachante:7071`.
+2. `docker compose up -d --build --remove-orphans`. The old shared container goes; its volume stays.
+3. Move each person's files to their own volume: `scripts/migrar-computadores-por-pessoa.sh`. It copies `~/pessoas/<hash>/` from the old volume (`<project>_computador_home`) to `computador-<hash>`. The shared `~/trabalho` and browser profile are not moved.
+4. Apply the firewall rules above (`brc+`).
+5. When satisfied, `docker volume rm <project>_computador_home`.
 
 - **Logs:** `docker compose logs despachante`
 - **Tests:** `docker build -t sn-despachante despachante/ && docker run --rm sn-despachante npm test --prefix /opt/despachante` (a fake Docker), then `scripts/teste-rede-despachante.sh`.
@@ -128,9 +150,9 @@ ok   the computer does not reach the dispatcher on Supernova's side
 
 Supernova's probes (PRD-S) use MCP servers that run here, behind the same token and browser check as `/v1/run`; no port is added.
 
-- **`playwright`**, for web probes: one headless Chromium shared by all of them, a separate browser context (cookies, storage, cache) per probe, closed when it ends, at most two tabs each. The tools that would run code in this service or send this machine's files to a site (`browser_run_code_unsafe`, `browser_file_upload`, `browser_drop`) are not offered, URLs must be `http(s)`, and the browser cannot open pages on `localhost`.
+- **`playwright`**, for web probes: one headless Chromium in the person's computer, a separate browser context (cookies, storage, cache) per probe, closed when it ends, at most two tabs each. The tools that would run code in this service or send this machine's files to a site (`browser_run_code_unsafe`, `browser_file_upload`, `browser_drop`) are not offered, URLs must be `http(s)`, and the browser cannot open pages on `localhost`.
 - **`filesystem`**, for disk probes: `@modelcontextprotocol/server-filesystem`, confined to the person's folder `~/pessoas/<hash>/`, started with only `PATH` and `HOME` in its environment.
-- Probe files stay in `~/pessoas/<hash>/sondas/<n>/`. `/esquecer` deletes the person's folder. A session nobody used for five minutes is closed.
+- Probe files stay in `~/pessoas/<hash>/sondas/<n>/`. `/esquecer` deletes the person's whole computer. A session nobody used for five minutes is closed.
 
 ### The probes' search (`buscar`)
 

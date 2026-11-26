@@ -330,8 +330,8 @@ ligados (K18, K19, seção 3.3). Migração: as pastas atuais em
 `/home/pwuser/pessoas/<hash>` vão para o volume de cada pessoa.
 
 **Aceite:**
-- [ ] Duas pessoas, dois computadores, K-I4 testado.
-- [ ] Quinto pedido espera vaga; computador parado é desligado e religa
+- [x] Duas pessoas, dois computadores, K-I4 testado.
+- [x] Quinto pedido espera vaga; computador parado é desligado e religa
       com os arquivos.
 - [ ] Commit: `feat(computador): um computador por pessoa`.
 
