@@ -1,0 +1,21 @@
+# SearXNG for the probes' search (PRD-S, S17, S18). Only Supernova reaches
+# it, inside the computer's network; no port is published.
+use_default_settings: true
+
+server:
+  # Set by SEARXNG_SECRET (docker-compose.yml, from SUPERNOVA_SEARXNG_SECRET).
+  secret_key: "ultrasecretkey"
+  # One client (Supernova); the bot limiter is for public instances.
+  limiter: false
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 0
+  # Supernova reads JSON.
+  formats:
+    - html
+    - json
+
+ui:
+  query_in_title: false

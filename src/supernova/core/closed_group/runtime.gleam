@@ -690,7 +690,27 @@ pub fn run_context(
         )
       Nil
     }),
+    max_rounds: executor.max_recursion_depth,
   )
+}
+
+/// What a model call costs at this instance's prices, in US$.
+pub fn llm_cost_usd(
+  runtime: types.Runtime,
+  model: String,
+  prompt_tokens: Int,
+  completion_tokens: Int,
+) -> Float {
+  pricing.cost_usd(
+    model_price(runtime, model),
+    prompt_tokens,
+    completion_tokens,
+  )
+}
+
+/// The output tokens reserved when admitting a call.
+pub fn reserve_output_tokens(runtime: types.Runtime) -> Int {
+  runtime.config.instance_budget.reserve_output_tokens
 }
 
 fn model_price(runtime: types.Runtime, model: String) -> pricing.Price {

@@ -125,6 +125,10 @@ pub type Context {
 pub type Invoke =
   fn(String, String) -> Result(String, String)
 
+/// The work of a task, given its id (a probe names its folder with it).
+pub type Work =
+  fn(Int) -> Result(String, String)
+
 // ============================================================================
 // The registry
 // ============================================================================
@@ -136,7 +140,8 @@ pub opaque type Message {
     tool: String,
     arguments: String,
     reason: String,
-    invoke: Invoke,
+    work: Work,
+    limit_ms: Option(Int),
   )
   Listing(reply: Subject(List(Task)), agent_id: String)
   Cancel(reply: Subject(Result(Nil, String)), agent_id: String, id: Int)
@@ -228,7 +233,31 @@ pub fn begin(
     tool,
     arguments,
     reason,
-    invoke,
+    fn(_id) { invoke(tool, arguments) },
+    None,
+  ))
+}
+
+/// Start `work` in the background for `origin`, as a task named `tool`,
+/// with its own time limit (a probe's, PRD-S S7). Its slot wait counts in
+/// that limit.
+pub fn begin_work(
+  registry: Registry,
+  origin: Origin,
+  tool: String,
+  arguments: String,
+  reason: String,
+  limit_ms: Int,
+  work: Work,
+) -> Result(Int, String) {
+  actor.call(registry, waiting: 10_000, sending: Begin(
+    _,
+    origin,
+    tool,
+    arguments,
+    reason,
+    work,
+    Some(limit_ms),
   ))
 }
 
@@ -272,7 +301,7 @@ pub fn recover(registry: Registry) -> Int {
 fn handle(state: State, message: Message) -> actor.Next(State, Message) {
   let context = state.context
   case message {
-    Begin(reply, origin, tool, arguments, reason, invoke) -> {
+    Begin(reply, origin, tool, arguments, reason, work, own_limit) -> {
       let outcome =
         update(context.data_dir, origin.agent_id, fn(file) {
           let running =
@@ -320,8 +349,13 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
           actor.continue(state)
         }
         Ok(task) -> {
+          let limit = option.unwrap(own_limit, context.limit_ms)
+          let slot_wait = case own_limit {
+            Some(limit) -> limit
+            None -> slot_wait_ms
+          }
           let runner =
-            spawn_runner(state.me, origin, task, invoke, context.limit_ms)
+            spawn_runner(state.me, origin, task, work, limit, slot_wait)
           record.count("tasks_total", [#("outcome", "started")])
           actor.send(reply, Ok(task.id))
           actor.continue(
@@ -507,8 +541,9 @@ fn spawn_runner(
   registry: Subject(Message),
   origin: Origin,
   task: Task,
-  invoke: Invoke,
+  work: Work,
   limit_ms: Int,
+  slot_wait: Int,
 ) -> Pid {
   let pid =
     process.spawn_unlinked(fn() {
@@ -518,9 +553,9 @@ fn spawn_runner(
           Some(tool_runner.SlotRequest(
             tool: task.tool,
             agent: origin.agent_id,
-            wait_ms: slot_wait_ms,
+            wait_ms: slot_wait,
           )),
-          fn() { invoke(task.tool, task.arguments) },
+          fn() { work(task.id) },
         )
         |> tool_runner.await
       process.send(registry, Finished(origin.agent_id, task.id, outcome))
@@ -618,6 +653,28 @@ pub fn message_id(agent_id: String, id: Int) -> String {
 }
 
 pub fn delivery_text(task: Task, offset: Int) -> String {
+  case string.split_once(task.tool, "sonda_") {
+    Ok(#("", kind)) -> probe_text(task, kind)
+    _ -> task_text(task, offset)
+  }
+}
+
+/// A probe's result (PRD-S, S21): the conductor's report already says how
+/// it ended, where its files are and what it cost.
+fn probe_text(task: Task, kind: String) -> String {
+  let head = "[Sonda " <> kind <> " #" <> int.to_string(task.id) <> "] "
+  let tail = "\nSua pessoa não escreveu agora. Conte a ela o resultado."
+  case task.status {
+    Interrupted ->
+      head
+      <> "interrompida pelo reinício do serviço; não é refeita sozinha.\nSua pessoa não escreveu agora. Avise a ela."
+    Failed -> head <> "falhou: " <> cut(task.result) <> tail
+    TimedOut -> head <> "prazo esgotado (" <> task.result <> ")." <> tail
+    _ -> head <> task.result <> tail
+  }
+}
+
+fn task_text(task: Task, offset: Int) -> String {
   let head =
     "[Tarefa] A tarefa "
     <> int.to_string(task.id)

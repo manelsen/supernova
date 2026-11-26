@@ -74,6 +74,7 @@ import supernova/metrics/record
 import supernova/self/desk
 import supernova/self/reflection
 import supernova/self/tasks
+import supernova/sondas/sonda
 import supernova/tools/browser
 import supernova/tracing/actor as tracing_actor
 import supernova/tracing/global as tracing_global
@@ -953,6 +954,7 @@ pub fn declare_boot_metrics(
   })
   agenda_sweeper.declare_metrics()
   tasks.declare_metrics()
+  sonda.declare_metrics()
   executor.declare_tool_metrics()
   list.each(["replayed", "channel_missing"], fn(outcome) {
     record.declare("inbox_recovered_total", [#("outcome", outcome)])

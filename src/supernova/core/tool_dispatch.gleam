@@ -12,6 +12,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import supernova/llm/provider
 import supernova/self/tasks
+import supernova/sondas/ferramenta as sonda_ferramenta
 import supernova/stress/fake_tools
 import supernova/tools/agenda
 import supernova/tools/browser
@@ -43,6 +44,12 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     Some(_) -> [tarefa.tool()]
     None -> []
   }
+  // Probes need the tasks and the computer (PRD-S); the turn narrows the
+  // kinds to the person's role.
+  let probes = case tasks.registry(), computador.configured() {
+    Some(_), True -> [sonda_ferramenta.tool(True)]
+    _, _ -> []
+  }
   [
     safe_shell.tool(),
     browser.tool(),
@@ -54,7 +61,7 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
     file_system.tool(),
     agenda.tool(),
     buscar_conversa.tool(),
-    ..list.flatten([memory, computer, background, fake_tools.tools()])
+    ..list.flatten([memory, computer, background, probes, fake_tools.tools()])
   ]
 }
 
@@ -94,6 +101,7 @@ fn execute_named(name: String, args_json: String) -> Result(String, String) {
     "computador" -> Error("computador needs the caller's identity")
     // The turn runs it: it needs the chat of origin (PRD-F, F-05).
     "tarefa" -> Error("tarefa needs the caller's turn")
+    "sonda" -> Error("sonda needs the caller's turn")
     _ -> Error("Tool '" <> name <> "' is not wired in executor")
   }
 }

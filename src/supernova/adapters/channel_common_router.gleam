@@ -16,6 +16,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import supernova/adapters/mcp/computer as mcp_computer
 import supernova/adapters/model_picker
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
@@ -67,7 +68,10 @@ import supernova/self/reflection
 import supernova/self/state_store
 import supernova/self/tasks
 import supernova/self/template as prompt_template
+import supernova/sondas/condutor as sonda_condutor
+import supernova/sondas/sonda
 import supernova/tools/agenda as agenda_tool
+import supernova/tools/computador as computador_tool
 import supernova/tools/tarefa
 
 /// Function to resolve/create a session id for an incoming message.
@@ -418,15 +422,54 @@ fn run_executor_for_context(
       let may_start_tasks =
         closed_group_runtime.tools_for(runtime, turn.role, [tarefa.tool()])
         != []
+      // Probes (PRD-S): the code probe only for who has the computer (S15).
+      let may_probe =
+        closed_group_runtime.tools_for(runtime, turn.role, [sonda.tool(False)])
+        != []
+      let may_code =
+        closed_group_runtime.tools_for(runtime, turn.role, [
+          computador_tool.tool(),
+        ])
+        != []
+      let probe_env = fn(invoke) {
+        sonda.Env(
+          llm_config: llm_config,
+          base: run_context,
+          gateway: invoke,
+          may_code: may_code,
+          costing: sonda_condutor.Costing(
+            cost: fn(model, prompt, completion) {
+              closed_group_runtime.llm_cost_usd(
+                runtime,
+                model,
+                prompt,
+                completion,
+              )
+            },
+            reserve_output_tokens: closed_group_runtime.reserve_output_tokens(
+              runtime,
+            ),
+          ),
+          computer: mcp_computer.from_env(),
+        )
+      }
       let recorded =
         executor.RunContext(
           ..run_context,
           invoke_tool: option.map(run_context.invoke_tool, fn(invoke) {
             fn(name, arguments) {
-              let result = case name == tarefa.name, may_start_tasks {
-                True, True -> tarefa.execute(origin, arguments, invoke)
-                True, False -> Error("tarefa não é permitida para você")
-                False, _ -> invoke(name, arguments)
+              let result = case name {
+                _ if name == tarefa.name ->
+                  case may_start_tasks {
+                    True -> tarefa.execute(origin, arguments, invoke)
+                    False -> Error("tarefa não é permitida para você")
+                  }
+                _ if name == sonda.name ->
+                  case may_probe {
+                    True -> sonda.execute(origin, arguments, probe_env(invoke))
+                    False -> Error("sonda não é permitida para você")
+                  }
+                _ -> invoke(name, arguments)
               }
               process.send(
                 rounds,
@@ -448,13 +491,16 @@ fn run_executor_for_context(
         True -> Nil
         False -> tasks.person_active(agent_id)
       }
+      let offered =
+        closed_group_runtime.tools_for(runtime, turn.role, tools)
+        |> list.map(fn(tool) {
+          case tool.name == sonda.name {
+            True -> sonda.tool(may_code)
+            False -> tool
+          }
+        })
       let result =
-        executor.run_with_context(
-          messages,
-          llm_config,
-          closed_group_runtime.tools_for(runtime, turn.role, tools),
-          recorded,
-        )
+        executor.run_with_context(messages, llm_config, offered, recorded)
       #(result, list.append(task_rounds(msg.id), drain_rounds(rounds, [])))
     }
     _, _ -> #(ungoverned_run(messages, llm_config, tools), [])

@@ -12,6 +12,7 @@ Usage:
 """
 
 import json
+import os
 import sys
 
 
@@ -26,7 +27,8 @@ def handle_request(request):
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
-                "protocolVersion": "2024-11-05",
+                # MOCK_MCP_VERSION: the version to answer with (PRD-S, S-02).
+                "protocolVersion": os.environ.get("MOCK_MCP_VERSION", "2024-11-05"),
                 "capabilities": {"tools": {}},
                 "serverInfo": {
                     "name": "mock-mcp-server",
@@ -40,6 +42,26 @@ def handle_request(request):
         return None
 
     elif method == "tools/list":
+        # MOCK_MCP_BROKEN_TOOLS: answer tools/list with something unreadable.
+        if os.environ.get("MOCK_MCP_BROKEN_TOOLS"):
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": "nada"}}
+        # MOCK_MCP_ECHO_ENV: name a variable; its value goes in the first
+        # tool's description, to show what the server inherits.
+        probe = os.environ.get("MOCK_MCP_ECHO_ENV")
+        if probe:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "tools": [
+                        {
+                            "name": "probe",
+                            "description": probe + "=" + os.environ.get(probe, ""),
+                            "inputSchema": {"type": "object", "properties": {}},
+                        }
+                    ]
+                },
+            }
         return {
             "jsonrpc": "2.0",
             "id": req_id,

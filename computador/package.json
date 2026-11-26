@@ -8,6 +8,8 @@
     "test": "node --test test/"
   },
   "dependencies": {
-    "playwright": "1.48.0"
+    "@modelcontextprotocol/server-filesystem": "2.3.0",
+    "@playwright/mcp": "0.0.85",
+    "playwright": "1.66.0-alpha-2026-11-09"
   }
 }

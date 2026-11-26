@@ -49,7 +49,7 @@ What this first version does **not** do yet:
    docker compose up -d --build
    ```
 
-   The first build pulls the Playwright image, about 2 GB.
+   The first build pulls the Playwright image (`v1.65.0-noble`), about 2 GB, and installs the headless Chromium of the alpha Playwright the Playwright MCP needs.
 
 4. Confirm that the agent sees the tool. Ask it, in a chat as admin: "roda `uname -a` no seu computador". The answer should mention `gvisor`.
 
@@ -87,8 +87,35 @@ curl -sI https://example.com | head -1        # internet still works
 - **Files and browser profile:** volume `<project>_computador_home`, mounted at `/home/pwuser`. Relative paths used by the agent live in `~/trabalho`.
 - **Start over:** `docker compose rm -sf computador && docker volume rm <project>_computador_home`
 - **DNS:** Docker's embedded DNS (`127.0.0.11`) does not answer inside gVisor on a user-defined network, so `computador/resolv.conf` is mounted over `/etc/resolv.conf`. It points at public resolvers (1.1.1.1, 8.8.8.8); edit it to use your own.
-- **Limits:** 2 GB of RAM, 2 CPUs, 512 processes. Commands run for at most 300 s. Long output is cut at 20,000 characters, page text at 15,000.
+- **Limits:** 3 GB of RAM (the probes' browser shares it, PRD-S S23), 2 CPUs, 512 processes. Commands run for at most 300 s. Long output is cut at 20,000 characters, page text at 15,000.
 - **Cost:** a 1280×800 screenshot cost about 570 prompt tokens on the pilot's provider. Only the last two screenshots of a turn stay in the conversation.
+
+## The probes' servers (`/v1/mcp`)
+
+Supernova's probes (PRD-S) use MCP servers that run here, behind the same token and browser check as `/v1/run`; no port is added.
+
+- **`playwright`**, for web probes: one headless Chromium shared by all of them, a separate browser context (cookies, storage, cache) per probe, closed when it ends, at most two tabs each. The tools that would run code in this service or send this machine's files to a site (`browser_run_code_unsafe`, `browser_file_upload`, `browser_drop`) are not offered, URLs must be `http(s)`, and the browser cannot open pages on `localhost`.
+- **`filesystem`**, for disk probes: `@modelcontextprotocol/server-filesystem`, confined to the person's folder `~/pessoas/<hash>/`, started with only `PATH` and `HOME` in its environment.
+- Probe files stay in `~/pessoas/<hash>/sondas/<n>/`. `/esquecer` deletes the person's folder. A session nobody used for five minutes is closed.
+
+### The probes' search (`buscar`)
+
+Web probes search with `buscar`. By default it asks **SearXNG**, a self-hosted metasearch engine (AGPL-3.0, used unmodified) that the `computador` profile starts as the `searxng` container, with `searxng/settings.yml`. It sits on the computer's network: it reaches the internet but not the host or the LAN (the firewall rules above cover it too), and no port is published. Optionally set a secret in `.env`:
+
+```sh
+SUPERNOVA_SEARXNG_SECRET=<output of: openssl rand -hex 24>
+```
+
+SearXNG asks other engines from this one IP, and some of them answer with captchas or refusals (on the first test, DuckDuckGo and Wikidata did); it keeps going with the rest. When results get poor, switch to **Tavily** (about 1,000 free credits a month, no card):
+
+```sh
+SUPERNOVA_SEARCH_PROVIDER=tavily
+SUPERNOVA_TAVILY_API_KEY=tvly-...
+```
+
+The search request leaves from Supernova; the Tavily key never goes to the computer.
+
+Versions are pinned in `computador/package.json`; update them by hand, after reading the changelogs. The Playwright MCP always depends on an alpha Playwright, so the service uses that one for its own browser too.
 
 ## Tests
 
