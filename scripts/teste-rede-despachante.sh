@@ -52,7 +52,15 @@ probe() { # container url -> prints the answer or FAIL
       .then(r=>r.text()).then(t=>console.log(t)).catch(()=>console.log('FAIL'))"
 }
 
-sleep 2
+# Wait until the dispatcher answers Supernova and the computer is up (at
+# most 30 s), instead of a fixed pause.
+for _ in $(seq 1 30); do
+  if [[ "$(probe "${tag}-sn" "http://despachante:7071/health" GET)" == *'"ok":true'* ]] \
+    && docker exec "${tag}-pc" node -e "fetch('http://127.0.0.1:7070/').then(()=>process.exit(0)).catch(()=>process.exit(1))" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
 fail=0
 check() { # description expected actual
   if [[ "$3" == *"$2"* ]]; then echo "ok   $1"; else echo "FAIL $1: got $3"; fail=1; fi

@@ -19,7 +19,7 @@ const BIA = 'b'.repeat(32);
 async function fakeDocker() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'docker-'));
   const socketPath = path.join(dir, 'docker.sock');
-  const state = { containers: new Map(), volumes: new Set(), requests: [] };
+  const state = { containers: new Map(), volumes: new Map(), requests: [] };
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -38,8 +38,15 @@ async function fakeDocker() {
         const name = url.searchParams.get('name');
         if (state.containers.has(name)) return reply(409, { message: 'conflict' });
         state.containers.set(name, { spec: body, running: false });
-        for (const mount of body.HostConfig.Mounts) state.volumes.add(mount.Source);
+        // Docker makes a missing volume on its own, without labels.
+        for (const mount of body.HostConfig.Mounts) {
+          if (!state.volumes.has(mount.Source)) state.volumes.set(mount.Source, {});
+        }
         return reply(201, { Id: name });
+      }
+      if (req.method === 'POST' && url.pathname === '/volumes/create') {
+        if (!state.volumes.has(body.Name)) state.volumes.set(body.Name, body.Labels || {});
+        return reply(201, { Name: body.Name });
       }
       if ((m = url.pathname.match(/^\/containers\/([^/]+)\/json$/))) {
         if (m[1] === 'eu') {
@@ -68,6 +75,10 @@ async function fakeDocker() {
       }
       if (req.method === 'DELETE' && (m = url.pathname.match(/^\/containers\/([^/]+)$/))) {
         return reply(state.containers.delete(m[1]) ? 204 : 404, {});
+      }
+      if (req.method === 'GET' && (m = url.pathname.match(/^\/volumes\/([^/]+)$/))) {
+        if (!state.volumes.has(m[1])) return reply(404, {});
+        return reply(200, { Name: m[1], Labels: state.volumes.get(m[1]) });
       }
       if (req.method === 'DELETE' && (m = url.pathname.match(/^\/volumes\/([^/]+)$/))) {
         return reply(state.volumes.delete(m[1]) ? 204 : 404, {});
@@ -156,7 +167,8 @@ test('on, on again, off, delete: one container and one volume per person', async
     const creates = fake.state.requests.filter((r) => r.url.startsWith('/containers/create'));
     assert.equal(creates.length, 2);
     // Two people, two volumes: neither computer sees the other's (K-I4).
-    assert.deepEqual([...fake.state.volumes].sort(), [`computador-${ANA}`, `computador-${BIA}`]);
+    assert.deepEqual([...fake.state.volumes.keys()].sort(), [`computador-${ANA}`, `computador-${BIA}`]);
+    assert.equal(fake.state.volumes.get(`computador-${ANA}`)[LABEL], '1');
 
     await api.call('POST', '/v1/desligar', { pessoa: ANA });
     const estado = (await api.call('GET', '/v1/estado')).body.computadores;
@@ -208,6 +220,17 @@ test('a container of that name that is not a computer is never touched', async (
   } finally { api.close(); fake.close(); }
 });
 
+test('a volume of that name that is not a computer\'s is never touched', async () => {
+  const fake = await fakeDocker();
+  fake.state.volumes.set(`computador-${ANA}`, {});
+  const api = await serve(config(fake));
+  try {
+    assert.equal((await api.call('POST', '/v1/apagar', { pessoa: ANA })).status, 502);
+    assert.equal(fake.state.volumes.has(`computador-${ANA}`), true);
+    assert.equal(fake.state.requests.some((r) => r.method === 'DELETE'), false);
+  } finally { api.close(); fake.close(); }
+});
+
 test('calls to the computer carry its token, which Supernova does not have', async () => {
   const fake = await fakeDocker();
   let seen;
@@ -246,6 +269,8 @@ test('it listens only off the computers\' network', async () => {
     // os.hostname() is the container id; the fake answers for "eu".
     os.hostname = () => 'eu';
     assert.deepEqual(await listenAddresses(cfg), ['172.18.0.5']);
+    // Not finding the computers' network by its name is no guess: it stops.
+    await assert.rejects(listenAddresses({ ...cfg, network: 'computador_net' }), /refusing/);
   } finally { os.hostname = original; fake.close(); }
 });
 

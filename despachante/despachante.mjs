@@ -91,6 +91,13 @@ export function computers(config) {
     async ligar(person) {
       let existing = await ours(person);
       if (!existing) {
+        // The volume is made first, with our label, so deleting it later
+        // can check it is ours.
+        const volume = await d.request('POST', '/volumes/create', {
+          Name: volumeName(person),
+          Labels: { [LABEL]: '1', 'supernova.pessoa': person },
+        });
+        if (volume.status !== 201) throw new Error(`docker volume create: ${volume.status} ${volume.text}`);
         const made = await d.request('POST', `/containers/create?name=${containerName(person)}`, computerSpec(config, person));
         if (made.status !== 201) throw new Error(`docker create: ${made.status} ${made.text}`);
       }
@@ -109,8 +116,17 @@ export function computers(config) {
         const removed = await d.request('DELETE', `/containers/${containerName(person)}?force=true`);
         if (removed.status !== 204 && removed.status !== 404) throw new Error(`docker rm: ${removed.status} ${removed.text}`);
       }
-      const volume = await d.request('DELETE', `/volumes/${volumeName(person)}?force=true`);
-      if (volume.status !== 204 && volume.status !== 404) throw new Error(`docker volume rm: ${volume.status} ${volume.text}`);
+      const found = await d.request('GET', `/volumes/${volumeName(person)}`);
+      if (found.status === 200) {
+        // A volume of that name that we did not make is not touched.
+        if (!found.body.Labels || found.body.Labels[LABEL] !== '1') {
+          throw new Error(`${volumeName(person)} exists and is not a computer's`);
+        }
+        const volume = await d.request('DELETE', `/volumes/${volumeName(person)}?force=true`);
+        if (volume.status !== 204 && volume.status !== 404) throw new Error(`docker volume rm: ${volume.status} ${volume.text}`);
+      } else if (found.status !== 404) {
+        throw new Error(`docker volume inspect: ${found.status} ${found.text}`);
+      }
       return { pessoa: person, apagado: true };
     },
     async estado() {
@@ -158,7 +174,10 @@ function readBody(req) {
 /// does not have.
 function forward(config, path, body) {
   return new Promise((resolve, reject) => {
-    const target = new URL(path, config.computerUrl);
+    const base = new URL(config.computerUrl);
+    const target = new URL(path, base);
+    // The computer's token goes to the computer and nowhere else.
+    if (target.origin !== base.origin) return reject(new Error('not the computer'));
     const req = http.request(target, {
       method: 'POST',
       headers: {
@@ -221,6 +240,11 @@ export async function listenAddresses(config) {
   const self = await config.docker.request('GET', `/containers/${os.hostname()}/json`);
   if (self.status !== 200) throw new Error(`cannot inspect myself: ${self.status}`);
   const networks = self.body.NetworkSettings && self.body.NetworkSettings.Networks || {};
+  // If the computers' network is not found by its name, the filter below
+  // would keep it: refuse to start instead.
+  if (!(config.network in networks)) {
+    throw new Error(`not on the computers' network ${config.network}; refusing to guess which side is which`);
+  }
   const addresses = Object.entries(networks)
     .filter(([name]) => name !== config.network)
     .map(([, net]) => net.IPAddress)
@@ -267,7 +291,12 @@ async function main() {
   config.image = await pinImage(config.docker, config.imageName);
   const addresses = await listenAddresses(config);
   for (const address of addresses) {
-    createServer(config).listen(config.port, address, () => {
+    const server = createServer(config);
+    server.on('error', (e) => {
+      console.error(`despachante: cannot listen on ${address}:${config.port}: ${e.message}`);
+      process.exit(1);
+    });
+    server.listen(config.port, address, () => {
       console.log(`despachante: listening on ${address}:${config.port}, computers run ${config.image}`);
     });
   }
