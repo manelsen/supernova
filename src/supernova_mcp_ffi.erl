@@ -13,11 +13,16 @@
 
 %% Open an OS process and return {ok, Port} or {error, Reason}.
 %% Uses Erlang port with {line, 1024} for line-buffered STDIO communication.
+%%
+%% The server does not inherit Supernova's environment, which holds its keys:
+%% an Erlang port extends the parent's environment, so every inherited
+%% variable is unset except a few neutral ones, and the configured `env`
+%% comes on top.
 open_port(Command, Args, Env) ->
   try
     CommandStr = binary_to_list(Command),
     ArgsStrs = [binary_to_list(A) || A <- Args],
-    EnvStrs = [{binary_to_list(K), binary_to_list(V)} || {K, V} <- Env],
+    EnvStrs = clean_env([{binary_to_list(K), binary_to_list(V)} || {K, V} <- Env]),
     case resolve_command(CommandStr) of
       {ok, Executable} ->
         Port = erlang:open_port(
@@ -42,6 +47,19 @@ open_port(Command, Args, Env) ->
     _:CatchReason ->
       {error, list_to_binary(io_lib:format("Failed to open port: ~p", [CatchReason]))}
   end.
+
+%% Variables a server keeps from Supernova's environment.
+kept_vars() -> ["PATH", "HOME", "LANG", "LC_ALL", "TZ"].
+
+clean_env(Configured) ->
+  Names = [Name || {Name, _} <- Configured],
+  Unset = [{Name, false}
+           || Var <- os:getenv(),
+              [Name | _] <- [string:split(Var, "=")],
+              Name =/= "",
+              not lists:member(Name, kept_vars()),
+              not lists:member(Name, Names)],
+  Unset ++ Configured.
 
 %% Resolve command names from PATH when a bare executable name is provided.
 resolve_command(CommandStr) ->
