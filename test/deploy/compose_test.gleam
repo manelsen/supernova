@@ -142,3 +142,19 @@ pub fn the_image_leaves_the_secrets_out_test() {
 
 @external(erlang, "supernova_file_system_ffi", "read_file")
 fn read(path: String) -> Result(String, String)
+
+// Qwen 4, B6: no two services take the same port of the host, so every
+// profile can run together (GOWA and Grafana both wanted 3000).
+pub fn no_two_services_share_a_host_port_test() {
+  let host_ports =
+    services()
+    |> list.flat_map(fn(service) { strings(service.1, "ports") })
+    |> list.map(fn(port) {
+      case string.split(port, ":") {
+        [address, host, _] -> address <> ":" <> host
+        [host, _] -> host
+        _ -> port
+      }
+    })
+  list.length(host_ports) |> should.equal(list.length(list.unique(host_ports)))
+}

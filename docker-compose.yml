@@ -159,6 +159,13 @@ services:
     image: searxng/searxng:2026.11.11-626105eec@sha256:606fc8852a53f0be4ac05116950ff480f6f56b8ef7d77b366868cc76478036e5
     environment:
       SEARXNG_SECRET: ${SUPERNOVA_SEARXNG_SECRET:-}
+    # An empty SEARXNG_SECRET is taken as the secret itself (Qwen 4, B2):
+    # without one in .env, a random one is drawn at each start. It signs
+    # nothing that must outlive a restart here (no limiter, no image proxy).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - '[ -n "$$SEARXNG_SECRET" ] || export SEARXNG_SECRET=$$(head -c 32 /dev/urandom | od -An -tx1 | tr -d " \n"); exec /usr/local/searxng/entrypoint.sh'
     cap_drop: [ALL]
     cap_add: [CHOWN, SETGID, SETUID]
     security_opt: ["no-new-privileges:true"]
@@ -255,8 +262,10 @@ services:
       SUPERNOVA_ALERT_DAILY_USD: ${SUPERNOVA_ALERT_DAILY_USD:-4}
     mem_limit: 512m
     restart: unless-stopped
+    # 3001 on the host: GOWA holds 3000, and both profiles run together
+    # (Qwen 4, B6).
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3000"
     volumes:
       - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro

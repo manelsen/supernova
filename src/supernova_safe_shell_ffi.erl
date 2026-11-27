@@ -1,6 +1,9 @@
 -module(supernova_safe_shell_ffi).
 -export([run_command/1]).
 
+-define(MAX_BYTES, 65536).
+-define(TIMEOUT_MS, 10000).
+
 %% Run an argv list directly, never through a shell.
 %%
 %% `open_port({spawn, Command})` hands the string to /bin/sh, so any shell
@@ -17,22 +20,42 @@ run_command([Cmd | Args]) ->
         Port = open_port({spawn_executable, Path},
                          [{args, Args}, exit_status, stderr_to_stdout, binary,
                           use_stdio, hide]),
-        collect_output(Port, <<>>)
+        Deadline = erlang:monotonic_time(millisecond) + ?TIMEOUT_MS,
+        collect_output(Port, <<>>, Deadline)
       catch
         _:Reason ->
           {error, <<"Command failed: ", (list_to_binary(io_lib:format("~p", [Reason])))/binary>>}
       end
   end.
 
-collect_output(Port, Acc) ->
+%% The output is kept up to ?MAX_BYTES and the rest is drained and dropped
+%% (Qwen 4, B5): a `cat` of a big file must not grow the BEAM's memory. The
+%% time limit counts from the start, not from the last chunk, so a command
+%% that trickles output still stops.
+collect_output(Port, Acc, Deadline) ->
+  Left = max(0, Deadline - erlang:monotonic_time(millisecond)),
   receive
     {Port, {data, Data}} ->
-      collect_output(Port, <<Acc/binary, Data/binary>>);
+      collect_output(Port, keep(Acc, Data), Deadline);
     {Port, {exit_status, 0}} ->
-      {ok, string:trim(Acc, trailing, "\n")};
+      {ok, string:trim(mark_cut(Acc), trailing, "\n")};
     {Port, {exit_status, Status}} ->
-      {error, <<"Exit status ", (integer_to_binary(Status))/binary, ": ", Acc/binary>>}
-  after 10000 ->
-    port_close(Port),
+      {error, <<"Exit status ", (integer_to_binary(Status))/binary, ": ", (mark_cut(Acc))/binary>>}
+  after Left ->
+    catch port_close(Port),
     {error, <<"Command timed out">>}
   end.
+
+keep(Acc, _Data) when byte_size(Acc) > ?MAX_BYTES -> Acc;
+keep(Acc, Data) ->
+  Room = ?MAX_BYTES - byte_size(Acc),
+  case Data of
+    <<Kept:Room/binary, _/binary>> -> <<Acc/binary, Kept/binary, "!">>;
+    _ -> <<Acc/binary, Data/binary>>
+  end.
+
+%% One byte past the limit marks a cut output.
+mark_cut(Acc) when byte_size(Acc) > ?MAX_BYTES ->
+  <<Kept:?MAX_BYTES/binary, _/binary>> = Acc,
+  <<Kept/binary, "\n[output cut at 64 KiB]">>;
+mark_cut(Acc) -> Acc.

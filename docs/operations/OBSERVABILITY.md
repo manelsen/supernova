@@ -100,13 +100,13 @@ COMPOSE_PROFILES=computador,observabilidade
 
 Then `docker compose up -d`. Each container is limited to 512 MB of memory.
 
-Both listen only on the host's loopback (`127.0.0.1:3000` for Grafana, `127.0.0.1:9090` for Prometheus), never on the public network. From your own computer, open an SSH tunnel to the server and keep it open:
+Both listen only on the host's loopback (`127.0.0.1:3001` for Grafana, so it runs beside WhatsApp's GOWA on 3000; `127.0.0.1:9090` for Prometheus), never on the public network. From your own computer, open an SSH tunnel to the server and keep it open:
 
 ```sh
-ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 user@server
+ssh -N -L 3001:127.0.0.1:3001 -L 9090:127.0.0.1:9090 user@server
 ```
 
-Then open <http://localhost:3000> in the browser. The user is `admin`; the password is `SUPERNOVA_GRAFANA_PASSWORD` from `.env`, or `admin` if it is not set, and Grafana asks for a new one on the first login. Prometheus itself (<http://localhost:9090>) is only needed to write your own queries.
+Then open <http://localhost:3001> in the browser. The user is `admin`; the password is `SUPERNOVA_GRAFANA_PASSWORD` from `.env`, or `admin` if it is not set, and Grafana asks for a new one on the first login. Prometheus itself (<http://localhost:9090>) is only needed to write your own queries.
 
 The dashboard has four parts. The time range in the top right corner (24 hours by default) applies to all of them.
 
