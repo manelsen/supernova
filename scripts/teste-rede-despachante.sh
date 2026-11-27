@@ -74,9 +74,11 @@ lacks() { # description unexpected actual
   if [[ "$3" != *"$2"* ]]; then echo "ok   $1"; else echo "FAIL $1: got $3"; fail=1; fi
 }
 
-check "Supernova reaches Ana's computer through the dispatcher" '"auth":"Bearer interno"' \
+# Each computer gets its own token, derived from the master (never the master).
+own_token() { printf 'computador:%s' "$1" | openssl dgst -sha256 -hmac interno -r | cut -d' ' -f1; }
+check "Supernova reaches Ana's computer through the dispatcher, with Ana's token" "\"auth\":\"Bearer $(own_token "$ana")\"" \
   "$(probe "${tag}-sn" "http://despachante:7071/v1/pessoas/$ana/run" POST 90000)"
-check "Supernova reaches Bia's computer through the dispatcher" '"auth":"Bearer interno"' \
+check "Supernova reaches Bia's computer through the dispatcher, with Bia's token" "\"auth\":\"Bearer $(own_token "$bia")\"" \
   "$(probe "${tag}-sn" "http://despachante:7071/v1/pessoas/$bia/run" POST 90000)"
 
 ip_of() { docker inspect -f "{{(index .NetworkSettings.Networks \"$2\").IPAddress}}" "$1"; }
