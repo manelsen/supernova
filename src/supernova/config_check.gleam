@@ -26,11 +26,12 @@ pub type ConfigIssue {
 pub fn known_tool_names() -> List(String) {
   [
     "safe_shell",
-    "browser",
     "canvas",
-    // Retired (PRD-E, E-05); still accepted so older capability lists that
-    // deny it stay valid.
+    // Retired (gateway: PRD-E, E-05; browser: Qwen 4, A1, the person's
+    // computer browses instead); still accepted so older capability lists
+    // that deny them stay valid.
     "gateway",
+    "browser",
     "process",
     "github",
     "web",

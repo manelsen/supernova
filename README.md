@@ -278,8 +278,8 @@ What a person can send to their agent:
 | `file_system` | The person's workspace |
 | `agenda` | Do something later, or on a schedule |
 | `buscar_conversa` | Search the whole conversation history |
-| `web`, `browser` | Fetch pages; drive a headless browser |
-| `computador` | The agent's own computer, with approvals |
+| `web` (`web_fetch`) | Fetch a page as text |
+| `computador` | The agent's own computer, with approvals; its browser is the only one |
 | `github`, `git_inspect` | Read repositories |
 | `safe_shell`, `process` | Restricted commands and processes on the host |
 | `canvas` | Structured blocks |

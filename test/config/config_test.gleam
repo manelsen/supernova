@@ -16,14 +16,13 @@ import supernova/config.{
   TypeMismatch, ValidationError, WechatWorkConfig as WechatWorkConfigRecord,
   WhatsAppConfig as WhatsAppConfigRecord, YamlParseError, Zhipu, ZhipuCoding,
   apply_env_overrides, default_budgets_config, default_config,
-  default_provider_config, default_tools_config, error_to_string, get_provider,
-  is_discord_enabled, is_google_chat_enabled, is_lark_enabled, is_matrix_enabled,
+  default_provider_config, error_to_string, get_provider, is_discord_enabled,
+  is_google_chat_enabled, is_lark_enabled, is_matrix_enabled,
   is_mattermost_enabled, is_slack_enabled, is_telegram_enabled,
   is_wechat_work_enabled, is_whatsapp_enabled, load, load_from_file, load_unsafe,
   parse_yaml, provider_default_model, provider_requires_api_key,
   provider_runtime_name, validate,
 }
-import test_env
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -1106,34 +1105,6 @@ pub fn provider_default_model_maps_supported_providers_test() {
   provider_default_model(ZhipuCoding) |> should_equal("glm-5.1")
   provider_default_model(Minimax) |> should_equal("MiniMax-M2.7")
   provider_default_model(Ollama) |> should_equal("llama3")
-}
-
-pub fn tools_browser_allow_evaluate_defaults_to_false_test() {
-  use <- test_env.without_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE")
-  default_tools_config().browser.allow_evaluate |> should_equal(False)
-  default_config().tools.browser.allow_evaluate |> should_equal(False)
-
-  let assert Ok(cfg) = parse_yaml("app_name: supernova\n")
-  cfg.tools.browser.allow_evaluate |> should_equal(False)
-}
-
-pub fn tools_browser_allow_evaluate_enabled_via_yaml_test() {
-  use <- test_env.without_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE")
-  let yaml =
-    "
-app_name: supernova
-tools:
-  browser:
-    allow_evaluate: true
-"
-  let assert Ok(cfg) = load(yaml)
-  cfg.tools.browser.allow_evaluate |> should_equal(True)
-}
-
-pub fn tools_browser_allow_evaluate_overridden_by_env_test() {
-  use <- test_env.with_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE", "true")
-  let assert Ok(cfg) = load("app_name: supernova\n")
-  cfg.tools.browser.allow_evaluate |> should_equal(True)
 }
 
 pub fn tools_timeouts_are_read_in_seconds_test() {

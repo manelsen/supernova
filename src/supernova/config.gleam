@@ -493,19 +493,9 @@ pub type ChannelSupport {
   Experimental
 }
 
-/// Browser tool configuration
-pub type BrowserToolsConfig {
-  BrowserToolsConfig(
-    /// Allow arbitrary JS evaluation via browser evaluate (disabled by default)
-    allow_evaluate: Bool,
-  )
-}
-
 /// Tools configuration section
 pub type ToolsConfig {
   ToolsConfig(
-    /// Browser tool configuration
-    browser: BrowserToolsConfig,
     /// `tools.timeouts`: seconds per tool name, and `default` for the rest
     /// (PRD-E, D3). Empty means the built-in limits.
     timeouts: Dict(String, Int),
@@ -676,7 +666,7 @@ pub fn default_capabilities_config() -> CapabilitiesConfig {
         // K23): members get it, and with it the code probe.
         "computador",
       ],
-      denied: ["safe_shell", "process", "browser"],
+      denied: ["safe_shell", "process"],
     ),
     admin: RoleCapabilitiesConfig(allowed: ["*"], denied: []),
   )
@@ -726,10 +716,7 @@ pub fn default_drift_config() -> DriftConfig {
 }
 
 pub fn default_tools_config() -> ToolsConfig {
-  ToolsConfig(
-    browser: BrowserToolsConfig(allow_evaluate: False),
-    timeouts: dict.new(),
-  )
+  ToolsConfig(timeouts: dict.new())
 }
 
 /// Create a default budgets configuration
@@ -1547,18 +1534,7 @@ fn decode_config(root: yay.Node) -> Result(Config, ConfigError) {
 fn decode_tools(root: yay.Node) -> ToolsConfig {
   let default = default_tools_config()
   case yay.select_sugar(root, "tools") {
-    Ok(tools_node) -> {
-      let browser = case yay.select_sugar(tools_node, "browser") {
-        Ok(browser_node) ->
-          BrowserToolsConfig(allow_evaluate: get_bool_or(
-            browser_node,
-            "allow_evaluate",
-            default.browser.allow_evaluate,
-          ))
-        Error(_) -> default.browser
-      }
-      ToolsConfig(browser: browser, timeouts: decode_tool_timeouts(tools_node))
-    }
+    Ok(tools_node) -> ToolsConfig(timeouts: decode_tool_timeouts(tools_node))
     Error(_) -> default
   }
 }
@@ -1748,19 +1724,6 @@ pub fn apply_env_overrides(config: Config) -> Config {
   // Provider API key overrides (for each provider in config)
   let providers = apply_provider_env_overrides(config.providers)
 
-  // Tools overrides
-  let browser_allow_evaluate = case
-    get_env("SUPERNOVA_BROWSER_ALLOW_EVALUATE")
-  {
-    Some(value) ->
-      case string.lowercase(string.trim(value)) {
-        "true" -> True
-        "false" -> False
-        _ -> config.tools.browser.allow_evaluate
-      }
-    None -> config.tools.browser.allow_evaluate
-  }
-
   // Closed-group access overrides
   let access_mode = case
     get_env("SUPERNOVA_ACCESS_MODE")
@@ -1875,10 +1838,7 @@ pub fn apply_env_overrides(config: Config) -> Config {
     reflection: config.reflection,
     drift: config.drift,
     data_dir: data_dir,
-    tools: ToolsConfig(
-      browser: BrowserToolsConfig(allow_evaluate: browser_allow_evaluate),
-      timeouts: config.tools.timeouts,
-    ),
+    tools: config.tools,
   )
 }
 

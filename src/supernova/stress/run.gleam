@@ -292,10 +292,11 @@ pub fn build_config(
     tools: case o.tool_mix {
       False -> base.tools
       True ->
-        config.ToolsConfig(
-          ..base.tools,
-          timeouts: dict.insert(base.tools.timeouts, "trava", 2),
-        )
+        config.ToolsConfig(timeouts: dict.insert(
+          base.tools.timeouts,
+          "trava",
+          2,
+        ))
     },
     data_dir: data_dir,
     providers: dict.from_list([

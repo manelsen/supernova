@@ -10,7 +10,6 @@ import gleeunit/should
 import supernova/core/executor
 import supernova/llm/provider
 import supernova/llm/stream
-import supernova/tools/browser
 import supernova/tools/canvas as canvas_tool
 import supernova/tools/github as github_tool
 import supernova/tools/process as process_tool
@@ -126,10 +125,11 @@ pub fn invalid_tool_arguments_returns_error_message_test() {
   }
 }
 
-pub fn builtin_tools_include_browser_test() {
+// Qwen 4, A1: the host's browser is retired; the person's computer browses.
+pub fn builtin_tools_no_longer_include_browser_test() {
   executor.builtin_tools()
   |> list.any(fn(tool) { tool.name == "browser" })
-  |> should.equal(True)
+  |> should.equal(False)
 }
 
 pub fn builtin_tools_include_canvas_test() {
@@ -172,26 +172,6 @@ pub fn builtin_tools_include_file_system_test() {
   executor.builtin_tools()
   |> list.any(fn(tool) { tool.name == "file_system" })
   |> should.equal(True)
-}
-
-pub fn invalid_browser_tool_arguments_returns_error_message_test() {
-  let calls = [
-    provider.ToolCall(
-      id: "c1",
-      name: "browser",
-      arguments: "{\"url\":\"https://example.com\"}",
-    ),
-  ]
-  let tools = [browser.tool()]
-
-  let messages = executor.execute_tool_calls_for_test(calls, tools)
-
-  case messages {
-    [msg] ->
-      string.starts_with(msg.content, "ERROR: Invalid arguments for browser")
-      |> should.equal(True)
-    _ -> should.fail()
-  }
 }
 
 pub fn invalid_canvas_tool_arguments_returns_error_message_test() {

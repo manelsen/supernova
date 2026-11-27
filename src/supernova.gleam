@@ -80,7 +80,6 @@ import supernova/self/forget
 import supernova/self/reflection
 import supernova/self/tasks
 import supernova/sondas/sonda
-import supernova/tools/browser
 import supernova/tools/computador as computador_tool
 import supernova/tracing/actor as tracing_actor
 import supernova/tracing/global as tracing_global
@@ -240,7 +239,6 @@ fn start_services(
   cfg: config.Config,
   clock: fn() -> Int,
 ) -> Result(Runtime, String) {
-  browser.set_evaluate_allowed(cfg.tools.browser.allow_evaluate)
   tool_limits.configure(tool_limits.from_seconds(cfg.tools.timeouts))
   use _ <- result.try(prompt_log.validate(cfg))
   use _ <- result.try(config.validate_recall(cfg))

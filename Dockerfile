@@ -43,6 +43,16 @@ RUN sed -i "s/{with_body, true}/{with_body, true}, {recv_timeout, 120000}/" /app
  && erlc -o /app/build/dev/erlang/gleam_hackney/ebin /app/build/packages/gleam_hackney/src/gleam_hackney_ffi.erl \
  && erlc -o /app/build/packages/gleam_hackney/src /app/build/packages/gleam_hackney/src/gleam_hackney_ffi.erl
 
+# Not root (Qwen 4, A1): the BEAM holds every secret, so it runs as an
+# unprivileged user that owns only what it writes: /data (the volume) and
+# workspaces/. A new volume takes this ownership from the image; an old one,
+# made when Supernova ran as root, is handed over once (DEPLOY.md).
+RUN addgroup -S -g 10001 supernova \
+ && adduser -S -D -H -u 10001 -G supernova supernova \
+ && mkdir -p /data /app/workspaces \
+ && chown supernova:supernova /data /app/workspaces
+USER supernova
+
 # Run the BEAM itself as PID 1, not under `gleam run`: as PID 1, `gleam run`
 # ignores the SIGTERM of `docker stop`, and the container was killed after the
 # grace period without draining its chat lanes. The BEAM handles SIGTERM, and
