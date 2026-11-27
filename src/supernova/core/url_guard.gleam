@@ -7,9 +7,9 @@
 //// forms other than canonical ones (decimal, octal, hex, short dotted) and
 //// single-label names (Docker service names) are blocked outright.
 ////
-//// Residual risk: the name may resolve differently between this check and
-//// the connection (DNS rebinding). The network layout is the defence
-//// against that (PRD-E, risks).
+//// The name may resolve differently between this check and the connection
+//// (DNS rebinding): web_fetch resolves it again, checks those addresses
+//// too, and connects to the one it checked (supernova_web_fetch_ffi).
 
 import gleam/list
 import gleam/string

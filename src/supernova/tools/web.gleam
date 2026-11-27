@@ -17,9 +17,12 @@ pub const max_body_bytes = 2_097_152
 pub type GetError {
   TooLarge
   Network
+  /// The name resolved to an internal address when the connection was
+  /// about to open (Qwen 4, M7).
+  Blocked
 }
 
-@external(erlang, "supernova_web_fetch_ffi", "get")
+@external(erlang, "supernova_web_fetch_ffi", "get_public")
 fn http_get(url: String, max_bytes: Int) -> Result(#(Int, BitArray), GetError)
 
 /// Fetch content from a URL (with SSRF protection).
@@ -42,6 +45,8 @@ pub fn fetch_with(
       Error("HTTP " <> int.to_string(status) <> " from " <> url)
     Error(TooLarge) -> Error("Page larger than 2 MB: " <> url)
     Error(Network) -> Error("Network error fetching " <> url)
+    Error(Blocked) ->
+      Error("Blocked URL targeting internal/reserved network: " <> url)
   }
 }
 
