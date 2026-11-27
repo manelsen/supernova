@@ -21,6 +21,7 @@ import supernova/adapters/model_picker
 import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
+import supernova/aprovacao/pedido
 import supernova/aprovacao/permissoes
 import supernova/aprovacao/servico as aprovacao_servico
 import supernova/channel/catalog as channel_catalog
@@ -491,7 +492,19 @@ fn run_executor_for_context(
                       Error("computador não é permitido para você")
                     Some(asked), True ->
                       ask_for_site(turn.principal_id, msg, asked)
-                    None, _ -> invoke(name, arguments)
+                    // What the browser gate refused becomes a request to the
+                    // person (PRD-K, K-06).
+                    None, _ ->
+                      invoke(name, arguments)
+                      |> result.map(fn(text) {
+                        case computador_tool.gate_refusal(text) {
+                          Some(refusal) ->
+                            text
+                            <> "\n\n"
+                            <> ask_for_gate(turn.principal_id, msg, refusal)
+                          None -> text
+                        }
+                      })
                   }
                 _ -> invoke(name, arguments)
               }
@@ -537,6 +550,68 @@ fn is_synthetic(message_id: String) -> Bool {
   string.starts_with(message_id, "agenda:")
   || string.starts_with(message_id, "tarefa:")
   || string.starts_with(message_id, "aprovacao:")
+}
+
+/// The browser gate refused (K-06): the person is asked, in private, with a
+/// first sentence the code writes from what was refused (K7, K-I5).
+fn ask_for_gate(
+  principal: String,
+  msg: port.ChannelMessage,
+  refusal: computador_tool.Refusal,
+) -> String {
+  let draft = case refusal.tipo {
+    "envio" ->
+      Ok(aprovacoes.Draft(
+        kind: aprovacoes.Send,
+        target: "envio:" <> refusal.site,
+        summary: pedido.first_sentence(case refusal.campos {
+          "" -> "Enviar o formulário em " <> refusal.site <> "."
+          campos ->
+            "Enviar o formulário em " <> refusal.site <> ": " <> campos <> "."
+        }),
+        explanation: "",
+        task: None,
+        approve: aprovacoes.Once,
+        always: False,
+        origin: aprovacoes.Chat(msg.channel, msg.channel_id, msg.user_id),
+      ))
+    "site" ->
+      Ok(aprovacoes.Draft(
+        kind: aprovacoes.Send,
+        target: "site:" <> refusal.site,
+        summary: pedido.first_sentence(
+          "Usar o site "
+          <> refusal.site
+          <> ", que quer receber dados da página (buscas, cliques, carrinho).",
+        ),
+        explanation: "",
+        task: None,
+        approve: aprovacoes.Window(aprovacoes.one_hour_ms),
+        always: True,
+        origin: aprovacoes.Chat(msg.channel, msg.channel_id, msg.user_id),
+      ))
+    _ -> Error(Nil)
+  }
+  case draft, aprovacao_servico.get() {
+    Ok(draft), Some(context) ->
+      case
+        aprovacao_servico.pedir(
+          context,
+          principal,
+          draft,
+          in_group: !closed_group_pure.is_private_chat(
+            msg.channel,
+            msg.channel_id,
+          ),
+        )
+      {
+        Ok(note) -> note
+        Error(reason) -> "Não consegui pedir aprovação: " <> reason
+      }
+    Error(Nil), _ -> "O portão barrou o envio."
+    Ok(_), None ->
+      "O portão barrou o envio, e aprovações não estão disponíveis agora."
+  }
 }
 
 /// `pedir_site`: the person is asked, in private, to let the shell reach a

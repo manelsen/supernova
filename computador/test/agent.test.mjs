@@ -157,7 +157,9 @@ test('http: UTF-8 split across request chunks survives', async () => {
 test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, async () => {
   const html = '<title>Teste</title><h1>Olá</h1><button onclick="document.title=\'clicado\'">ok</button>';
   // goto refuses non-http URLs, so serve the page from a local server.
-  const pageServer = (await import('node:http')).createServer((_, res) => {
+  const pageServer = (await import('node:http')).createServer((req, res) => {
+    // A page that never answers, to hang the browser.
+    if (req.url === '/pendura') return;
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(html);
   });
@@ -184,7 +186,7 @@ test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, a
     const limit = LIMITS.browserOpMs;
     LIMITS.browserOpMs = 3_000;
     try {
-      await assert.rejects(run({ op: 'evaluate', script: 'new Promise(() => {})' }), /restarted/);
+      await assert.rejects(run({ op: 'goto', url: url + 'pendura' }), /restarted/);
     } finally {
       LIMITS.browserOpMs = limit;
     }
