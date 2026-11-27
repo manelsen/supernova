@@ -89,3 +89,15 @@ pub fn the_computer_image_is_built_and_never_run_here_test() {
   let assert Ok(pc) = list.key_find(services(), "computador")
   yay.select_sugar(pc, "deploy.replicas") |> should.equal(Ok(yay.NodeInt(0)))
 }
+
+pub fn the_tunnel_holds_nothing_but_its_config_test() {
+  let assert Ok(tunnel) = list.key_find(services(), "cloudflared")
+  mounts_socket(tunnel) |> should.be_false
+  strings(tunnel, "networks") |> should.equal(["default"])
+  strings(tunnel, "volumes")
+  |> list.all(fn(volume) {
+    string.starts_with(volume, "./cloudflared/")
+    && string.ends_with(volume, ":ro")
+  })
+  |> should.be_true
+}

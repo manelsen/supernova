@@ -101,6 +101,21 @@ The vault is `<data>/agents/<person>/self/cofre.json`, sealed with AES-256-GCM u
 
 To log in, the agent opens the site's login page and calls `entrar` with the site. Entering an account asks the person first, unless they said "sempre" for that site. The password goes to the computer only in that call; the computer fills the form, sends it, and answers without it. Sessions (cookies) stay in the browser profile, in the person's volume, across turns and restarts; `sair_do_site` clears a site's cookies; `/esquecer` deletes the vault and the volume.
 
+## The screen (`pedir_tela`) and the tunnel
+
+When a page shows a captcha (the computer detects the common ones and tells the agent) or needs something only the person can do, the agent calls `pedir_tela` (K15). The computer opens a screen: a virtual display (Xvfb), a VNC server on it (x11vnc, local only, with a random password only the service's user reads) and noVNC; the browser reopens on it with the same profile, on the same page, still behind the gate. The person gets a link in private (K16): **one use, 15 minutes, their computer only**; they may forward it to whoever helps them. The first visit uses it and sets a cookie for that browser; any other visit finds it used. The VNC password goes in the link's fragment (`#…`), never to a server. When the link ends, or the agent calls `devolver_tela`, the screen closes and the browser goes back to headless. An open screen keeps the computer on.
+
+The link is served by the dispatcher's screen server (port 7073, Supernova's network) through a Cloudflare tunnel (K17): HTTPS, no port opened on the host, and `cloudflared/config.yml` publishes `/tela/*` and nothing else (`scripts/teste-tunel.sh` asks cloudflared itself; CI runs it). To turn it on:
+
+```sh
+cloudflared tunnel login
+cloudflared tunnel create supernova-tela          # writes the credentials
+cloudflared tunnel route dns supernova-tela tela.example.org
+cp ~/.cloudflared/<id>.json cloudflared/credentials.json
+```
+
+and in `.env`: `COMPOSE_PROFILES=computador,tela` and `SUPERNOVA_TELA_URL=https://tela.example.org`. Without it, `pedir_tela` answers that the screen is not set up.
+
 The request's first sentence is written by the code from what the gate saw, at most 140 characters (what a screen reader says first). When the gate refuses inside a background task, no request is made: the agent asks in the conversation.
 
 `scripts/teste-saida.sh` checks all this with real computers on gVisor (internet needed): the shell reaches pip and npm and an approved site, not others; a site Ana approved does not open for Bia; there is no way out around the proxy; the shell finds the credential nowhere; the browser goes out.

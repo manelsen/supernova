@@ -16,6 +16,7 @@ import os from 'node:os';
 import net from 'node:net';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { docker as dockerClient } from './docker.mjs';
+import { screens, createScreenServer, SCREEN_MS } from './tela.mjs';
 
 // The person's hash Supernova uses (PRD-S, S19): 16 hex digits.
 export const PERSON = /^[0-9a-f]{16}$/;
@@ -76,6 +77,7 @@ export function fixedAddresses(subnet) {
 
 export class UserError extends Error {}
 export class NoPlace extends Error {}
+export class NoScreen extends Error {}
 
 const labels = (person) => ({ [LABEL]: '1', 'supernova.pessoa': person });
 
@@ -356,6 +358,21 @@ export function computers(config) {
     }
   }
 
+  /// Keep a computer on while its screen is open (K-09): it counts as a
+  /// call in flight. Returns how to let go.
+  async function hold(person) {
+    await ligar(person);
+    const state = live.get(person);
+    state.inflight += 1;
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      state.inflight -= 1;
+      state.lastUsed = clock();
+    };
+  }
+
   /// Turn off what was idle 15 minutes (K18).
   async function reap() {
     const idle = [...live.entries()]
@@ -383,6 +400,7 @@ export function computers(config) {
   return {
     ligar,
     use,
+    hold,
     reap,
     adopt,
     async desligar(person) {
@@ -497,19 +515,36 @@ function forward(config, person, path, body) {
 }
 
 const CALL = /^\/v1\/pessoas\/([^/]+)\/(run|mcp)$/;
+const SCREEN = /^\/v1\/pessoas\/([^/]+)\/tela(\/fechar)?$/;
 
-export function createServer(config, pcs = computers(config)) {
+export function createServer(config, pcs = computers(config), held = screens(config)) {
+  /// Open the person's screen and make its link (K-09).
+  async function openScreen(person) {
+    if (!config.screenBase) throw new NoScreen('the screen is not set up here (DESPACHANTE_TELA_URL)');
+    const answer = await pcs.use(person, () => forward(config, person, '/v1/run', Buffer.from('{"op":"tela_abrir"}')));
+    let opened;
+    try { opened = JSON.parse(answer.body.toString('utf8')); } catch { opened = {}; }
+    if (!opened.ok || typeof opened.senha !== 'string') throw new Error(opened.error || 'the screen did not open');
+    const release = held.has(person) ? () => {} : await pcs.hold(person);
+    const token = held.issue(person, opened.senha, () => {
+      release();
+      forward(config, person, '/v1/run', Buffer.from('{"op":"tela_fechar"}')).catch(() => {});
+    });
+    return { url: `${config.screenBase.replace(/\/$/, '')}/tela/${token}/`, expira_ms: config.screenMs || SCREEN_MS };
+  }
   const SITES = /^\/v1\/pessoas\/([^/]+)\/sites$/;
   const actions = {
     '/v1/ligar': pcs.ligar,
     '/v1/desligar': pcs.desligar,
-    '/v1/apagar': pcs.apagar,
+    // Forgetting ends the person's screen link too (K-I7).
+    '/v1/apagar': (person) => { held.end(person); return pcs.apagar(person); },
   };
   return http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true });
     const call = req.url.match(CALL);
     const sitesCall = req.url.match(SITES);
-    const known = req.url in actions || req.url === '/v1/estado' || call || sitesCall;
+    const screenCall = req.url.match(SCREEN);
+    const known = req.url in actions || req.url === '/v1/estado' || call || sitesCall || screenCall;
     if (!known) return send(res, 404, { ok: false, error: 'not found' });
     if (req.headers['origin'] !== undefined) return send(res, 403, { ok: false, error: 'requests from a browser are refused' });
     if (!authorized(req, config.token)) return send(res, 401, { ok: false, error: 'unauthorized' });
@@ -517,6 +552,15 @@ export function createServer(config, pcs = computers(config)) {
       if (req.url === '/v1/estado') {
         if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'GET only' });
         return send(res, 200, { ok: true, ...(await pcs.estado()) });
+      }
+      if (screenCall) {
+        const person = checkPerson(screenCall[1]);
+        if (req.method === 'DELETE' || (req.method === 'POST' && screenCall[2])) {
+          held.end(person);
+          return send(res, 200, { ok: true, aberta: false });
+        }
+        if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'POST or DELETE' });
+        return send(res, 200, { ok: true, ...(await openScreen(person)) });
       }
       if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'POST only' });
       const raw = await readBody(req);
@@ -534,7 +578,7 @@ export function createServer(config, pcs = computers(config)) {
       return send(res, 200, { ok: true, ...(await actions[req.url](personOf(body))) });
     } catch (e) {
       const message = String(e && e.message ? e.message : e).split('\n')[0].slice(0, 500);
-      const status = e instanceof UserError ? 400 : e instanceof NoPlace ? 503 : 502;
+      const status = e instanceof UserError ? 400 : (e instanceof NoPlace || e instanceof NoScreen) ? 503 : 502;
       return send(res, status, { ok: false, error: message });
     }
   });
@@ -597,6 +641,10 @@ export function configFromEnv(env) {
       master: required('SAIDA_CREDENCIAL'),
     },
     computerUrl: (person) => `http://${containerName(person)}:7070`,
+    screenUrl: (person) => `http://${containerName(person)}:6080`,
+    // Where the tunnel publishes the screens (K17); unset, no screens.
+    screenBase: (env.DESPACHANTE_TELA_URL || '').trim(),
+    screenPort: Number(env.DESPACHANTE_TELA_PORTA || 7073),
     self: os.hostname(),
   };
 }
@@ -614,12 +662,13 @@ async function main() {
   config.resolvConf = await resolvConfSource(config);
   const addresses = await listenAddresses(config);
   const pcs = computers(config);
+  const held = screens(config);
   await pcs.adopt();
   setInterval(() => {
     pcs.reap().catch((e) => console.error(`despachante: reap: ${e.message}`));
   }, 60_000).unref();
   for (const address of addresses) {
-    const server = createServer(config, pcs);
+    const server = createServer(config, pcs, held);
     server.on('error', (e) => {
       console.error(`despachante: cannot listen on ${address}:${config.port}: ${e.message}`);
       process.exit(1);
@@ -627,6 +676,15 @@ async function main() {
     server.listen(config.port, address, () => {
       console.log(`despachante: listening on ${address}:${config.port}, computers run ${config.image}`);
     });
+    // The screens, for the tunnel: /tela/* only (K-09).
+    if (config.screenBase) {
+      const screen = createScreenServer(config, held);
+      screen.on('error', (e) => {
+        console.error(`despachante: cannot serve screens on ${address}:${config.screenPort}: ${e.message}`);
+        process.exit(1);
+      });
+      screen.listen(config.screenPort, address);
+    }
   }
 }
 

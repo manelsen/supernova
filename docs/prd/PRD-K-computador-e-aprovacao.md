@@ -402,8 +402,8 @@ pessoa (K16), pelo `cloudflared` (K17); ao fim, volta ao sem tela. Captcha
 detectado ou relatado pela agente leva a esse caminho (K15).
 
 **Aceite:**
-- [ ] Link expira, não abre duas vezes, só abre a tela daquela pessoa.
-- [ ] O túnel publica só `/tela/*` (teste do roteamento).
+- [x] Link expira, não abre duas vezes, só abre a tela daquela pessoa.
+- [x] O túnel publica só `/tela/*` (teste do roteamento).
 - [ ] Commit: `feat(computador): tela assumível por link`.
 
 #### K-10: Gasto

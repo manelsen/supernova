@@ -1,0 +1,17 @@
+# The tunnel of the people's screens (PRD-K, K17, K-09). It publishes the
+# dispatcher's screen server under /tela/ and nothing else: no Supernova,
+# no API, no port opened on the host. A locally managed tunnel, so these
+# rules are the ones that apply (see docs/operations/COMPUTADOR.md):
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create supernova-tela      # writes the credentials
+#   cloudflared tunnel route dns supernova-tela tela.example.org
+#
+# and copy the credentials file to cloudflared/credentials.json.
+tunnel: supernova-tela
+credentials-file: /etc/cloudflared/credentials.json
+no-autoupdate: true
+ingress:
+  - path: ^/tela/[A-Za-z0-9_-]+/
+    service: http://despachante:7073
+  - service: http_status:404

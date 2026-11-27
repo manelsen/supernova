@@ -8,6 +8,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 python3-pip python3-venv git curl jq unzip zip less file \
       ca-certificates locales tzdata tini \
+      xvfb x11vnc novnc websockify \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/computador
@@ -16,7 +17,7 @@ RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 # The Playwright MCP needs the alpha Playwright it was built with (PRD-S,
 # S24); that version's headless Chromium is installed next to the base's.
 RUN npx playwright install chromium-headless-shell
-COPY agent.mjs mcp.mjs rede.mjs shell.mjs lancador.mjs portao.mjs ./
+COPY agent.mjs mcp.mjs rede.mjs shell.mjs lancador.mjs portao.mjs tela.mjs ./
 COPY test ./test
 
 # Two users (PRD-K, K-05, K-07): pwuser (uid 1001, comes with the Playwright

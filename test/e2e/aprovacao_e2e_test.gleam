@@ -640,3 +640,86 @@ pub fn a_password_never_reaches_the_model_or_the_disk_test() {
     session_supervisor.stop(sessions)
   })
 }
+
+/// PRD-K, K-09 (K15, K16): a captcha is the person's; the agent calls them
+/// to the screen and the one-use link goes to their private chat.
+pub fn the_screen_link_goes_to_the_person_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  let fake =
+    start_computer(fn(body) {
+      case string.contains(body, "{}") {
+        True -> #(
+          200,
+          "{\"ok\":true,\"url\":\"https://tela.example.org/tela/abcdefabcdefabcdefabcdefabcdefab/\",\"expira_ms\":900000}",
+        )
+        False -> #(200, "{\"ok\":true}")
+      }
+    })
+  let _ =
+    envoy.set(
+      "SUPERNOVA_COMPUTER_URL",
+      "http://127.0.0.1:" <> string.inspect(computer_port(1, fake)),
+    )
+  use <- exception.defer(fn() {
+    envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
+    envoy.unset("SUPERNOVA_COMPUTER_URL")
+    stop_computer(fake)
+    servico.clear()
+  })
+  let admin_cfg =
+    config.Config(
+      ..support.channel_config(),
+      access: config.AccessConfig(
+        ..support.access_config(["sim:carol"], []),
+        allowed_chats: [],
+      ),
+    )
+  support.with_runtime_root(admin_cfg, fn(root) {
+    let llm =
+      provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      )
+    let private_sent = process.new_subject()
+    servico.configure(
+      servico.Context(
+        data_dir: root,
+        clock: fn() { 1000 },
+        send_private: fn(principal, text, _) {
+          process.send(private_sent, #(principal, text))
+          Ok(Nil)
+        },
+        inject: fn(_) { Ok(Nil) },
+      ),
+    )
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
+    let assert Ok(sessions) = session_supervisor.start_with_history(store)
+    let assert Ok(router) =
+      channel_router.start_with_session_supervisor("sim", sessions, llm)
+    let _ = say(router, "dm-carol", "oi")
+    let _ = say(router, "dm-carol", "Lua")
+    let _ = say(router, "dm-carol", "sim")
+    let _ = say(router, "dm-carol", "marca [mock-tela O site pede um captcha.]")
+    let assert [#("sim:carol", text)] = drain(private_sent)
+    string.contains(text, "O site pede um captcha.") |> should.be_true
+    string.contains(
+      text,
+      "https://tela.example.org/tela/abcdefabcdefabcdefabcdefabcdefab/",
+    )
+    |> should.be_true
+    string.contains(text, "15 minutos") |> should.be_true
+    computer_requests(fake)
+    |> list.any(fn(raw) {
+      string.starts_with(raw, "POST /v1/pessoas/")
+      && string.contains(raw, "/tela ")
+    })
+    |> should.be_true
+    session_supervisor.stop(sessions)
+  })
+}
