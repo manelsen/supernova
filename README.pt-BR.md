@@ -275,7 +275,7 @@ O que uma pessoa pode mandar para a sua agente:
 | `web` (`web_fetch`) | Ler uma página como texto |
 | `computador` | O computador próprio da agente, com aprovações; o único navegador é o dele |
 | `github`, `git_inspect` | Ler repositórios |
-| `safe_shell`, `process` | Comandos restritos e processos no servidor |
+| `safe_shell` | Comandos só de leitura no servidor (ls, cat, git log...) |
 | `canvas` | Blocos estruturados |
 
 Servidores MCP podem somar mais ferramentas.
