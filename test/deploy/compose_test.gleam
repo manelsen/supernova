@@ -73,6 +73,18 @@ pub fn only_the_search_engine_goes_out_through_the_old_network_test() {
   |> should.equal(["searxng"])
 }
 
+pub fn only_the_proxy_is_on_its_way_out_test() {
+  services()
+  |> list.filter(fn(service) {
+    list.contains(strings(service.1, "networks"), "saida_net")
+  })
+  |> list.map(fn(service) { service.0 })
+  |> should.equal(["saida"])
+  // And it holds no Docker socket.
+  let assert Ok(saida) = list.key_find(services(), "saida")
+  mounts_socket(saida) |> should.be_false
+}
+
 pub fn the_computer_image_is_built_and_never_run_here_test() {
   let assert Ok(pc) = list.key_find(services(), "computador")
   yay.select_sugar(pc, "deploy.replicas") |> should.equal(Ok(yay.NodeInt(0)))

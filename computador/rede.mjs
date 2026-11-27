@@ -5,9 +5,12 @@
 // up to this check. Both browsers (`agent.mjs` and the probes' contexts in
 // `mcp.mjs`) route every request through `guard`.
 //
-// A name is resolved here and again by Chromium; a name that changes
-// address in between (DNS rebinding) can slip through. The per-person
-// egress proxy of PRD-K closes that.
+// Without the egress proxy, a name is resolved here and again by Chromium,
+// and a name that changes address in between (DNS rebinding) can slip
+// through. With it (PRD-K, K-05), the computer cannot resolve or reach
+// anything itself: names go to the proxy, which resolves them once and
+// refuses internal addresses; here only literal addresses and localhost
+// are checked.
 
 import dns from 'node:dns/promises';
 import net from 'node:net';
@@ -62,6 +65,7 @@ export async function hostBlocked(hostname) {
   if (allowInternal(host)) return false;
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
   if (net.isIP(host)) return internalAddress(host);
+  if (process.env.SAIDA_URL) return false;
   const hit = cache.get(host);
   if (hit && hit.until > Date.now()) return hit.blocked;
   let blocked;
@@ -73,6 +77,13 @@ export async function hostBlocked(hostname) {
   }
   cache.set(host, { blocked, until: Date.now() + CACHE_MS });
   return blocked;
+}
+
+/// The way out for the browsers, when the computer has one (PRD-K, K-05):
+/// the proxy, with the person's credential.
+export function proxyOption(env = process.env) {
+  if (!env.SAIDA_URL) return {};
+  return { proxy: { server: env.SAIDA_URL, username: env.SAIDA_USUARIO || '', password: env.SAIDA_SENHA || '' } };
 }
 
 /// Route every request of a browser context through the check. Non-network

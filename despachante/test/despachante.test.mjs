@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -18,6 +18,8 @@ const people = ['1', '2', '3', '4', '5'].map((c) => c.repeat(16));
 // A fake Docker Engine on a Unix socket: containers, volumes and networks
 // in memory, every request recorded.
 async function fakeDocker() {
+  if (saida) saida.close();
+  saida = await fakeSaida();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'docker-'));
   const socketPath = path.join(dir, 'docker.sock');
   const state = {
@@ -47,7 +49,11 @@ async function fakeDocker() {
         if (store.has(body.Name)) {
           return url.pathname.startsWith('/networks') ? reply(409, {}) : reply(201, { Name: body.Name });
         }
-        store.set(body.Name, { Labels: body.Labels || {}, Options: body.Options || {}, members: new Set() });
+        const n = store.size + 20;
+        store.set(body.Name, {
+          Labels: body.Labels || {}, Options: body.Options || {}, Internal: !!body.Internal,
+          subnet: `172.${n}.0.0/16`, members: new Map(),
+        });
         return reply(201, { Name: body.Name });
       }
       if ((m = url.pathname.match(/^\/networks\/([^/]+)\/(connect|disconnect)$/))) {
@@ -55,7 +61,7 @@ async function fakeDocker() {
         if (!n) return reply(404, {});
         if (m[2] === 'connect') {
           if (n.members.has(body.Container)) return reply(403, {});
-          n.members.add(body.Container);
+          n.members.set(body.Container, body.EndpointConfig && body.EndpointConfig.IPAMConfig && body.EndpointConfig.IPAMConfig.IPv4Address);
         } else n.members.delete(body.Container);
         return reply(200);
       }
@@ -63,7 +69,8 @@ async function fakeDocker() {
         const store = m[1] === 'volumes' ? state.volumes : state.networks;
         if (req.method === 'GET') {
           if (!store.has(m[2])) return reply(404, {});
-          return reply(200, { Name: m[2], Labels: store.get(m[2]).Labels });
+          const found = store.get(m[2]);
+          return reply(200, { Name: m[2], Labels: found.Labels, IPAM: { Config: [{ Subnet: found.subnet }] } });
         }
         if (req.method === 'DELETE') return reply(store.delete(m[2]) ? 204 : 404, {});
       }
@@ -146,6 +153,29 @@ async function fakeComputers() {
   };
 }
 
+// A fake proxy admin door: what the dispatcher told it.
+async function fakeSaida() {
+  const told = new Map();
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      calls.push({ method: req.method, url: req.url, auth: req.headers.authorization });
+      const person = req.url.split('/').pop();
+      if (req.method === 'PUT') told.set(person, JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      if (req.method === 'DELETE') told.delete(person);
+      res.end('{"ok":true}');
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  return { url: `http://127.0.0.1:${server.address().port}`, told, calls, close: () => server.close() };
+}
+
+let saida;
+after(() => { if (saida) saida.close(); });
+
 function setup(fake, pcs, extra = {}) {
   let now = 1_000_000;
   const cfg = {
@@ -157,6 +187,7 @@ function setup(fake, pcs, extra = {}) {
     computerUrl: pcs.url,
     self: 'eu',
     clock: () => now,
+    saida: { container: 'saida', admin: saida.url, token: 'adm', master: 'mestre' },
     pollMs: 5,
     waitMs: 300,
     ...extra,
@@ -192,7 +223,10 @@ test('a person hash and nothing else', () => {
 });
 
 test('a computer is made with the fixed parameters only, on its own network', () => {
-  const spec = computerSpec({ image: 'sha256:abc', computerToken: 't', runtime: 'runsc', resolvConf: '/srv/r.conf' }, ANA);
+  const spec = computerSpec({
+    image: 'sha256:abc', computerToken: 't', runtime: 'runsc', resolvConf: '/srv/r.conf',
+    saida: { master: 'mestre' }, saidaAddress: '172.20.0.2',
+  }, ANA);
   assert.equal(spec.Image, 'sha256:abc');
   assert.equal(spec.HostConfig.Runtime, 'runsc');
   assert.equal(spec.HostConfig.Memory, 1536 * 1024 * 1024);
@@ -223,11 +257,23 @@ test('two people, two computers, two volumes, two networks (K-I4)', async () => 
     assert.deepEqual(pcs.calls.map((c) => [c.person, c.url]), [[ANA, '/v1/run'], [BIA, '/v1/mcp']]);
     // The computer's token, which Supernova does not have.
     assert.ok(pcs.calls.every((c) => c.auth === 'Bearer do-computador'));
+    // The proxy knows whose address is whose.
+    assert.deepEqual([...saida.told.keys()].sort(), [ANA, BIA]);
+    const ana = fake.state.containers.get(`computador-${ANA}`).spec;
+    const proxyAt = saida.told.get(ANA).endereco;
+    assert.ok(ana.Env.includes(`SAIDA_URL=http://${proxyAt}:3128`));
+    assert.ok(ana.Env.includes(`SAIDA_USUARIO=${ANA}`));
+    assert.ok(ana.Env.some((e) => e.startsWith('SAIDA_SENHA=') && e.length > 30));
+    assert.deepEqual(ana.HostConfig.CapAdd, ['CHOWN', 'SETUID', 'SETGID', 'KILL']);
+    assert.ok(saida.calls.every((c) => c.auth === 'Bearer adm'));
     assert.deepEqual([...fake.state.volumes.keys()].sort(), [`computador-${ANA}`, `computador-${BIA}`]);
     assert.deepEqual([...fake.state.networks.keys()].sort(), [`computador-${ANA}`, `computador-${BIA}`]);
     for (const [name, n] of fake.state.networks) {
-      // Each network holds its computer and the dispatcher, nothing else.
-      assert.deepEqual([...n.members], ['eu']);
+      // Each network: internal (no way out but the proxy), with the proxy
+      // at .2 and the dispatcher at .3; nothing else joined.
+      assert.equal(n.Internal, true);
+      const base = n.subnet.split('.').slice(0, 2).join('.');
+      assert.deepEqual([...n.members.entries()], [['saida', `${base}.0.2`], ['eu', `${base}.0.3`]]);
       assert.equal(n.Labels[LABEL], '1');
       assert.ok(n.Options['com.docker.network.bridge.name'].startsWith('brc-'), name);
       const owner = name.slice('computador-'.length);
@@ -355,6 +401,7 @@ test('delete: container, volume and network go; the others stay', async () => {
     assert.equal(fake.state.containers.has(`computador-${ANA}`), false);
     assert.equal(fake.state.volumes.has(`computador-${ANA}`), false);
     assert.equal(fake.state.networks.has(`computador-${ANA}`), false);
+    assert.equal(saida.told.has(ANA), false);
     assert.equal(fake.state.containers.has(`computador-${BIA}`), true);
     assert.equal((await api.call('POST', '/v1/apagar', { pessoa: ANA })).status, 200);
     const estado = (await api.call('GET', '/v1/estado')).body;
@@ -418,10 +465,12 @@ test('at boot, running computers are adopted and their networks joined', async (
     const first = computers(cfg);
     await first.ligar(ANA);
     fake.state.networks.get(`computador-${ANA}`).members.clear();
+    saida.told.clear();
     const after = computers(cfg);
     await after.adopt();
     assert.equal(after.live.has(ANA), true);
-    assert.deepEqual([...fake.state.networks.get(`computador-${ANA}`).members], ['eu']);
+    assert.equal(saida.told.has(ANA), true);
+    assert.deepEqual([...fake.state.networks.get(`computador-${ANA}`).members.keys()], ['saida', 'eu']);
     // Not used since the restart: it may give its place at once, so more
     // than four on after a restart never blocks the queue.
     for (const p of people.slice(0, 3)) await after.ligar(p);
@@ -453,8 +502,30 @@ test('the image is pinned by id at boot', async () => {
   } finally { fake.close(); }
 });
 
+test('the person\'s sites reach the proxy, plain hosts only', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
+  const api = await serve(cfg);
+  try {
+    // Before the computer is on, kept for when it is.
+    assert.equal((await api.call('POST', `/v1/pessoas/${ANA}/sites`, { sites: ['Exemplo.com'] })).status, 200);
+    assert.equal(saida.told.has(ANA), false);
+    await api.call('POST', `/v1/pessoas/${ANA}/run`, {});
+    assert.deepEqual(saida.told.get(ANA).sites, ['exemplo.com']);
+    await api.call('POST', `/v1/pessoas/${ANA}/sites`, { sites: ['exemplo.com', 'outro.org'] });
+    assert.deepEqual(saida.told.get(ANA).sites, ['exemplo.com', 'outro.org']);
+    for (const bad of [{ sites: ['10.0.0.1'] }, { sites: ['http://a.com'] }, { sites: 'a.com' }, { sites: [], x: 1 }]) {
+      assert.equal((await api.call('POST', `/v1/pessoas/${ANA}/sites`, bad)).status, 400, JSON.stringify(bad));
+    }
+  } finally { api.close(); pcs.close(); fake.close(); }
+});
+
 test('configuration: tokens and image are required', () => {
-  const env = { DESPACHANTE_TOKEN: 'a', COMPUTADOR_TOKEN: 'b', DESPACHANTE_IMAGEM: 'img' };
+  const env = {
+    DESPACHANTE_TOKEN: 'a', COMPUTADOR_TOKEN: 'b', DESPACHANTE_IMAGEM: 'img',
+    SAIDA_TOKEN: 'c', SAIDA_CREDENCIAL: 'd',
+  };
   const cfg = configFromEnv(env);
   assert.equal(cfg.runtime, 'runsc');
   assert.equal(cfg.computerUrl(ANA), `http://computador-${ANA}:7070`);

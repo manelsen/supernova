@@ -17,6 +17,7 @@ import supernova/core/session/history_store
 import supernova/core/session/supervisor as session_supervisor
 import supernova/llm/provider
 import supernova/self/aprovacoes.{Draft, ForTask, Send}
+import supernova/tools/computador as computador_tool
 
 fn cfg() -> config.Config {
   config.Config(
@@ -214,3 +215,77 @@ fn clear_prompts() -> Nil
 
 @external(erlang, "supernova_mock_ffi", "prompts")
 fn prompt_texts() -> List(String)
+
+/// PRD-K, K-05 (K21): the agent asks for a site for the shell; the person
+/// says yes; the site is on their list for good.
+pub fn a_site_for_the_shell_is_asked_and_approved_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  // The tool is offered only with a computer configured; nothing is called.
+  let _ = envoy.set("SUPERNOVA_COMPUTER_URL", "http://127.0.0.1:9")
+  use <- exception.defer(fn() {
+    envoy.unset("SUPERNOVA_CONSTELLATION_PATH")
+    envoy.unset("SUPERNOVA_COMPUTER_URL")
+    servico.clear()
+  })
+  let admin_cfg =
+    config.Config(
+      ..support.channel_config(),
+      access: config.AccessConfig(
+        ..support.access_config(["sim:carol"], []),
+        allowed_chats: [],
+      ),
+    )
+  support.with_runtime_root(admin_cfg, fn(root) {
+    let llm =
+      provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      )
+    let private_sent = process.new_subject()
+    let context =
+      servico.Context(
+        data_dir: root,
+        clock: fn() { 1000 },
+        send_private: fn(principal, text, _) {
+          process.send(private_sent, #(principal, text))
+          Ok(Nil)
+        },
+        inject: fn(_) { Ok(Nil) },
+      )
+    servico.configure(context)
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
+    let assert Ok(sessions) = session_supervisor.start_with_history(store)
+    let assert Ok(router) =
+      channel_router.start_with_session_supervisor("sim", sessions, llm)
+    let _ = say(router, "dm-carol", "oi")
+    let _ = say(router, "dm-carol", "Lua")
+    let _ = say(router, "dm-carol", "sim")
+
+    let answer =
+      say(router, "dm-carol", "instala a lib [mock-site Exemplo.com]")
+    let sent = drain(private_sent)
+    case sent {
+      [_] -> Nil
+      _ -> panic as { "nothing asked; the turn said: " <> answer }
+    }
+    let assert [#("sim:carol", text)] = sent
+    // The first sentence is the code's, from the real site.
+    string.starts_with(
+      text,
+      "Liberar o site exemplo.com para o shell do seu computador baixar arquivos.",
+    )
+    |> should.be_true
+    string.contains(text, "Para instalar a biblioteca.") |> should.be_true
+
+    let reply = say(router, "dm-carol", "sim")
+    string.starts_with(reply, "Aprovado") |> should.be_true
+    computador_tool.shell_sites("sim:carol") |> should.equal(["exemplo.com"])
+    session_supervisor.stop(sessions)
+  })
+}

@@ -20,7 +20,7 @@ ana=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
 bia=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
 cleanup() {
-  docker rm -f "${tag}-sn" "${tag}-desp" "computador-$ana" "computador-$bia" >/dev/null 2>&1 || true
+  docker rm -f "${tag}-sn" "${tag}-desp" "${tag}-saida" "computador-$ana" "computador-$bia" >/dev/null 2>&1 || true
   docker network rm "computador-$ana" "computador-$bia" "$lado" >/dev/null 2>&1 || true
   docker volume rm "computador-$ana" "computador-$bia" >/dev/null 2>&1 || true
   docker image rm -f "$image" >/dev/null 2>&1 || true
@@ -35,6 +35,11 @@ EOF
 
 docker network create "$lado" >/dev/null
 
+# The proxy, as in the compose file (its own way out is not needed here).
+docker build -q -t sn-saida saida >/dev/null
+docker run -d --name "${tag}-saida" --network "$lado" --network-alias saida \
+  --cap-drop ALL --read-only -e SAIDA_TOKEN=adm -e SAIDA_CREDENCIAL=mestre sn-saida >/dev/null
+
 # "Supernova": a small HTTP server on its own network only.
 docker run -d --name "${tag}-sn" --network "$lado" --network-alias supernova \
   node:24.13.0-alpine3.23 node -e \
@@ -46,6 +51,8 @@ docker run -d --name "${tag}-desp" --network "$lado" --network-alias despachante
   -v "$(cd "$(dirname "$0")/.." && pwd)/computador/resolv.conf:/etc/computador/resolv.conf:ro" \
   -e DESPACHANTE_TOKEN="$token" -e COMPUTADOR_TOKEN=interno \
   -e DESPACHANTE_IMAGEM="$image" -e DESPACHANTE_RUNTIME="${DESPACHANTE_RUNTIME:-runc}" \
+  -e DESPACHANTE_SAIDA="${tag}-saida" -e DESPACHANTE_SAIDA_ADMIN=http://saida:7072 \
+  -e SAIDA_TOKEN=adm -e SAIDA_CREDENCIAL=mestre \
   sn-despachante >/dev/null
 
 probe() { # container url method -> prints the answer or FAIL
@@ -79,7 +86,10 @@ sn_ip=$(ip_of "${tag}-sn" "$lado")
 desp_lado=$(ip_of "${tag}-desp" "$lado")
 desp_ana=$(ip_of "${tag}-desp" "computador-$ana")
 
-check "Ana's computer reaches the internet (public DNS)" "Example Domain" "$(probe "computador-$ana" "https://example.com/" GET 15000)"
+check "Ana's computer has no way out but the proxy" FAIL "$(probe "computador-$ana" "https://example.com/" GET 8000)"
+saida_ip=$(ip_of "${tag}-saida" "computador-$ana")
+check "the proxy is on Ana's network at its fixed address" ".0.2" "$saida_ip"
+check "Ana's computer does not reach the proxy's admin door" FAIL "$(probe "computador-$ana" "http://$saida_ip:7072/health" GET)"
 check "Supernova does not reach Ana's computer directly" FAIL "$(probe "${tag}-sn" "http://$ana_ip:7070/" GET)"
 check "Ana's computer does not reach Bia's computer" FAIL "$(probe "computador-$ana" "http://$bia_ip:7070/" GET)"
 check "Ana's computer does not reach Bia's computer by name" FAIL "$(probe "computador-$ana" "http://computador-$bia:7070/" GET)"

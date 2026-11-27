@@ -11,14 +11,15 @@
 // answers {"ok": true}. POST /v1/mcp opens, calls and closes the MCP
 // servers of Supernova's probes (see mcp.mjs), behind the same checks.
 
-import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { mcp, McpUserError, sweepIdle } from './mcp.mjs';
-import { guard } from './rede.mjs';
+import { guard, proxyOption } from './rede.mjs';
+import { clip, runAs } from './shell.mjs';
 
 export const LIMITS = {
   bodyBytes: 4 * 1024 * 1024,
@@ -40,10 +41,7 @@ const VIEWPORT = { width: 1280, height: 800 };
 
 // ---------------------------------------------------------------- helpers
 
-export function clip(text, max) {
-  if (text.length <= max) return { text, truncated: false };
-  return { text: text.slice(0, max), truncated: true };
-}
+export { clip };
 
 export function resolvePath(p) {
   if (typeof p !== 'string' || p.trim() === '') throw new UserError('path is required');
@@ -66,57 +64,31 @@ function requireNumber(args, name) {
 
 // ------------------------------------------------------------------ shell
 
+/// Run a shell command. In the image, the launcher runs it as user sh
+/// (no proxy credential, the person's folder read-only, PRD-K, K-05, K-07);
+/// outside it (tests, development), as this process, without the token.
 export function runShell(command, timeoutS) {
-  const limit = Math.min(Math.max(Number(timeoutS) || LIMITS.execDefaultS, 1), LIMITS.execMaxS);
+  const socketPath = process.env.COMPUTADOR_SHELL_SOCK;
+  if (socketPath) return viaLauncher(socketPath, command, timeoutS);
+  return runAs(command, timeoutS, {
+    cwd: WORK_DIR,
+    env: { ...process.env, COMPUTADOR_TOKEN: '', SAIDA_SENHA: '' },
+  });
+}
+
+function viaLauncher(socketPath, command, timeoutS) {
   return new Promise((resolve) => {
-    const child = spawn('bash', ['-lc', command], {
-      cwd: WORK_DIR,
-      env: { ...process.env, COMPUTADOR_TOKEN: '' },
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+    const socket = net.connect(socketPath);
+    let answer = '';
+    socket.setEncoding('utf8');
+    socket.on('connect', () => socket.end(JSON.stringify({ command, timeout_s: timeoutS }) + '\n'));
+    socket.on('data', (d) => { answer += d; });
+    socket.on('end', () => {
+      try { resolve(JSON.parse(answer)); } catch {
+        resolve({ exit_code: -1, signal: null, timed_out: false, stdout: '', stderr: 'the shell did not answer', truncated: false });
+      }
     });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const cap = LIMITS.outputChars * 2;
-    // Decode as UTF-8 across chunk boundaries.
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (d) => { if (stdout.length < cap) stdout += d; });
-    child.stderr.on('data', (d) => { if (stderr.length < cap) stderr += d; });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
-    }, limit * 1000);
-    // Resolve when the command itself ends, not when every process that
-    // inherited its output does: a server started in the background
-    // (`nohup ... &`) keeps running and must not hold the answer.
-    let settled = false;
-    const finish = (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.stdout.destroy();
-      child.stderr.destroy();
-      const out = clip(stdout, LIMITS.outputChars);
-      const err = clip(stderr, LIMITS.outputChars);
-      resolve({
-        exit_code: code === null ? -1 : code,
-        signal: signal || null,
-        timed_out: timedOut,
-        stdout: out.text,
-        stderr: err.text,
-        truncated: out.truncated || err.truncated,
-      });
-    };
-    child.on('exit', (code, signal) => setTimeout(() => finish(code, signal), 100));
-    child.on('close', (code, signal) => finish(code, signal));
-    child.on('error', (e) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ exit_code: -1, signal: null, timed_out: false, stdout: '', stderr: String(e.message), truncated: false });
-    });
+    socket.on('error', (e) => resolve({ exit_code: -1, signal: null, timed_out: false, stdout: '', stderr: String(e.message), truncated: false }));
   });
 }
 
@@ -232,6 +204,8 @@ async function page(gen) {
         locale: 'pt-BR',
         timezoneId: process.env.TZ || 'America/Sao_Paulo',
         args: ['--no-sandbox', '--disable-dev-shm-usage'],
+        // Out only through the proxy, with the person's credential (K-05).
+        ...proxyOption(),
         // Past our own deadline: the deadline must win, so a slow launch is
         // reported as a restart and closed by the generation check below.
         timeout: LIMITS.browserOpMs + CLOSE_WAIT_MS,

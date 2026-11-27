@@ -43,6 +43,8 @@ What this first version does **not** do yet:
    SUPERNOVA_COMPUTER_URL=http://despachante:7071
    SUPERNOVA_COMPUTER_TOKEN=<output of: openssl rand -hex 24>
    SUPERNOVA_COMPUTADOR_TOKEN_INTERNO=<another output of: openssl rand -hex 24>
+   SUPERNOVA_SAIDA_TOKEN=<another>
+   SUPERNOVA_SAIDA_CREDENCIAL=<another>
    ```
 
    Supernova talks to the **dispatcher** (`despachante`) with the first token; the dispatcher talks to the computer with the second, which Supernova never sees. See [The dispatcher](#the-dispatcher-despachante).
@@ -70,7 +72,16 @@ These two rules close that path. They match only traffic that enters from a comp
 - **Its browsers reach nothing internal.** Every request of the computer's browser and of the probes' browser contexts goes through `computador/rede.mjs`: loopback (`localhost`, `127.0.0.0/8`, `::1`), `0.0.0.0`, private and link-local ranges (IPv4 and IPv6, including IPv4 written inside IPv6), carrier-grade NAT and multicast are refused, by address or by what a name resolves to. Docker's own names (`supernova`, `searxng`) do not resolve in the computer, which asks public DNS.
 - **The service refuses to start without `COMPUTADOR_TOKEN`**, and an empty token refuses every request.
 
-The shell (`exec`, admins only) goes straight to the internet for now; PRD-K sends its traffic through an egress proxy (K-05).
+## The way out (`saida`)
+
+Each computer's network is **internal**: no route out. The only way out is the proxy `saida/` (PRD-K, K-05), which the dispatcher puts on every computer's network at a fixed address (`.2`). It has no Docker socket and reaches the internet through a network of its own.
+
+- **The browser** (the service's user, `svc`) goes out with the person's proxy credential (derived from `SUPERNOVA_SAIDA_CREDENCIAL`): any public site, any method. What it may *send* is the browser gate's business (K-06).
+- **The shell** runs as another user, `sh`, without the credential. Through the proxy it may only read and download (`CONNECT`, `GET`, `HEAD`) from the factory list (pip, npm, apt, GitHub, crates, Go, RubyGems) and the sites the person approved. The agent asks for a site with `pedir_site`; the person answers in private; an approved site stays on that person's list only (`/permissoes` lists and revokes it).
+- **Nothing internal, whatever the credential:** the proxy resolves names itself, once, refuses loopback, private, link-local and similar addresses, and connects to the address it checked.
+- **The credential stays with `svc`.** A launcher starts as root with only `CHOWN`, `SETUID`, `SETGID` and `KILL`, hands the service to `svc` and each shell command to `sh`, which gets no token, no credential, and a scratch folder of its own (`~/rascunho`). `sh` cannot read another user's environment.
+
+`scripts/teste-saida.sh` checks all this with real computers on gVisor (internet needed): the shell reaches pip and npm and an approved site, not others; a site Ana approved does not open for Bia; there is no way out around the proxy; the shell finds the credential nowhere; the browser goes out.
 
 SearXNG is attached to two networks: it leaves for the internet through `br-computador` (`gw_priority` in `docker-compose.yml`, which needs Docker Engine 28 and Compose 2.33.1 or newer), and Supernova asks it on its own network. No computer is on either.
 
@@ -100,7 +111,7 @@ curl -sI https://example.com | head -1        # internet still works
 
 - **Which are on:** `docker ps --filter label=supernova.despachante=1`. Each is `computador-<hash>`, where `<hash>` is the first 16 hex digits of the SHA-256 of the person's id.
 - **Logs:** `docker compose logs despachante`; one computer's: `docker logs computador-<hash>`.
-- **Files and browser profile:** volume `computador-<hash>`, mounted at `/home/pwuser`. Relative paths used by the agent live in `~/trabalho`; the probes' files in `~/pessoas/<hash>/`.
+- **Files and browser profile:** volume `computador-<hash>`, mounted at `/home/pwuser`. The file actions' relative paths live in `~/trabalho`; shell commands run in `~/rascunho` (user `sh`); the probes' files are in `~/pessoas/<hash>/`.
 - **Start one person over:** `/esquecer` does it (container, volume and network go). By hand: `POST /v1/apagar` to the dispatcher.
 - **DNS:** Docker's embedded DNS (`127.0.0.11`) does not answer inside gVisor on a user-defined network, so the dispatcher mounts `computador/resolv.conf` over each computer's `/etc/resolv.conf`, read-only. It points at public resolvers (1.1.1.1, 8.8.8.8); edit it to use your own, then restart the computers.
 - **Limits:** 1.5 GB of RAM per computer (the probes' browser shares it, PRD-S S23), 2 CPUs, 512 processes, 4 computers on at once. Commands run for at most 300 s. Long output is cut at 20,000 characters, page text at 15,000.
@@ -137,7 +148,7 @@ ok   Bia's computer is still there
 
 **Upgrading from the shared computer:**
 
-1. Add `SUPERNOVA_COMPUTADOR_TOKEN_INTERNO` to `.env` and change `SUPERNOVA_COMPUTER_URL` to `http://despachante:7071`.
+1. Add `SUPERNOVA_COMPUTADOR_TOKEN_INTERNO`, `SUPERNOVA_SAIDA_TOKEN` and `SUPERNOVA_SAIDA_CREDENCIAL` to `.env` (each `openssl rand -hex 24`) and change `SUPERNOVA_COMPUTER_URL` to `http://despachante:7071`.
 2. `docker compose up -d --build --remove-orphans`. The old shared container goes; its volume stays.
 3. Move each person's files to their own volume: `scripts/migrar-computadores-por-pessoa.sh`. It copies `~/pessoas/<hash>/` from the old volume (`<project>_computador_home`) to `computador-<hash>`. The shared `~/trabalho` and browser profile are not moved.
 4. Apply the firewall rules above (`brc+`).
