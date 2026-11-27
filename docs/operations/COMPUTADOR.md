@@ -19,7 +19,7 @@ The shell and the browser inside the computer are deliberately not restricted. T
 | Keys and people's data stay out of the computer | A page that tricks the agent cannot take what is not there. |
 | gVisor (`runsc`) | Code inside the computer talks to a user-space kernel, not to the host kernel. |
 | The service refuses requests that come from a browser (an `Origin` header, or a body that is not JSON) | The computer's own browser can reach the service on `127.0.0.1`, so a malicious page cannot use it to run commands. |
-| Capabilities config | Members are denied `computador` by default; admins (`"*"`) get it. |
+| Capabilities config | Everyone has `computador` by default, members included (PRD-K, K23): each person's computer is theirs alone, behind the gate. An instance may still deny it to members. |
 | A network per computer (bridges `brc-*`) plus the host firewall rules below | The computer reaches the internet, but not the host, your LAN, Supernova or anyone else's computer. |
 | Tool description and answer header | Content from the computer is data. The agent asks before acting outside it. |
 
@@ -57,7 +57,7 @@ What this first version does **not** do yet:
 
    The first build pulls the Playwright image (`v1.65.0-noble`), about 2 GB, and installs the headless Chromium of the alpha Playwright the Playwright MCP needs.
 
-4. Confirm that the agent sees the tool. Ask it, in a chat as admin: "roda `uname -a` no seu computador". The answer should mention `gvisor`.
+4. Confirm that the agent sees the tool. Ask it, in a chat: "roda `uname -a` no seu computador". The answer should mention `gvisor`.
 
 Without `SUPERNOVA_COMPUTER_URL` the tool is not offered at all. To use plain Docker instead of gVisor, set `SUPERNOVA_COMPUTER_RUNTIME=runc`. Isolation is much weaker that way, so use it only for local testing.
 

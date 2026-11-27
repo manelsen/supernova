@@ -207,10 +207,14 @@ pub fn computer_needs_the_callers_identity_test() {
   |> should.equal(Error("computador needs the caller's identity"))
 }
 
-pub fn members_are_denied_the_computer_by_default_test() {
-  config.default_capabilities_config().member.denied
+/// PRD-K, K23: each person has a computer of their own, behind the gate.
+pub fn members_have_the_computer_by_default_test() {
+  config.default_capabilities_config().member.allowed
   |> list.contains("computador")
   |> should.be_true
+  config.default_capabilities_config().member.denied
+  |> list.contains("computador")
+  |> should.be_false
 }
 
 pub fn computer_is_a_known_capability_test() {

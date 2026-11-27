@@ -184,17 +184,19 @@ pub fn a_member_sends_a_web_probe_test() {
     let _ = route(router, message("m2", "Lua"))
     let _ = route(router, message("m3", "sim"))
 
-    // A member may not send the code probe.
+    // A member may send the code probe: each person has a computer of
+    // their own (PRD-K, K23). It answers now; its report comes later.
     route(router, message("m4", "[mock-sonda codigo rode os testes]"))
-    |> should.equal("Mock tool error")
-    process.receive(deliveries, 300) |> should.be_error
+    |> should.equal("Mock response")
+    let assert Ok(code) = process.receive(deliveries, 10_000)
+    string.starts_with(code.content, "[Sonda codigo #1]") |> should.be_true
 
     // The web probe answers now; the report comes later.
     route(router, message("m5", "[mock-sonda web procure o que é Gleam]"))
     |> should.equal("Mock response")
     let assert Ok(delivered) = process.receive(deliveries, 10_000)
     delivered.channel_id |> should.equal("carol")
-    string.starts_with(delivered.content, "[Sonda web #1] concluída:")
+    string.starts_with(delivered.content, "[Sonda web #2] concluída:")
     |> should.be_true
     string.contains(
       delivered.content,

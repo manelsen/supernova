@@ -672,8 +672,11 @@ pub fn default_capabilities_config() -> CapabilitiesConfig {
       allowed: [
         "web", "web_fetch", "file_system", "canvas", "github", "agenda",
         "buscar_conversa", "lembrar", "tarefa", "sonda", "permissoes",
+        // Each person has a computer of their own, behind the gate (PRD-K,
+        // K23): members get it, and with it the code probe.
+        "computador",
       ],
-      denied: ["safe_shell", "process", "browser", "computador"],
+      denied: ["safe_shell", "process", "browser"],
     ),
     admin: RoleCapabilitiesConfig(allowed: ["*"], denied: []),
   )

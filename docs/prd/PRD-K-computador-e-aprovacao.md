@@ -422,7 +422,7 @@ ferramentas reescritas (a máquina agora é de fato da pessoa; o que pede
 aprovação; o que fazer num captcha).
 
 **Aceite:**
-- [ ] Config padrão e `config_check` atualizados.
+- [x] Config padrão e `config_check` atualizados.
 - [ ] Commit: `feat(computador): para todos os membros`.
 
 #### K-12: Esquecimento, telemetria, harness e docs
