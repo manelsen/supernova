@@ -1812,6 +1812,205 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 39,
+      "type": "row",
+      "title": "Aprovações e computadores",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 99
+      },
+      "panels": []
+    },
+    {
+      "id": 40,
+      "type": "timeseries",
+      "title": "Pedidos de aprovação por desfecho",
+      "description": "Pedidos abertos e como terminaram (aprovado, recusado, expirado), por tipo, na última hora.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 100
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (kind, outcome) (increase(approvals_total[1h]))",
+          "legendFormat": "{{kind}} {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Tempo até a resposta",
+      "description": "Quanto a pessoa leva para responder a um pedido (mediana e p90).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 100
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(approval_answer_seconds_bucket[6h])))",
+          "legendFormat": "mediana",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(approval_answer_seconds_bucket[6h])))",
+          "legendFormat": "p90",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Computadores ligados e vagas",
+      "description": "Computadores de pessoas ligados agora, e vagas livres (até 4 ligados).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 100
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "computadores_ligados",
+          "legendFormat": "ligados",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "computadores_vagas",
+          "legendFormat": "vagas",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "Permissões revogadas",
+      "description": "Permissões permanentes revogadas, por tipo, por dia.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 108
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (kind) (increase(approvals_revoked_total[1d]))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

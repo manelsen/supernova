@@ -1,3 +1,5 @@
+import envoy
+import exception
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None}
@@ -254,3 +256,31 @@ fn read_file(path: String) -> Result(String, String)
 
 @external(erlang, "supernova_file_system_ffi", "file_exists")
 fn file_exists(path: String) -> Result(Bool, String)
+
+/// PRD-K, K-12: approvals in the harness. The agent asks for two sites;
+/// the person says yes to one and no to the other, in private; only the
+/// approved one is among their permissions.
+pub fn approval_scenario_yes_and_no_test() {
+  // The tool is offered with a computer configured; pedir_site calls none.
+  envoy.set("SUPERNOVA_COMPUTER_URL", "http://127.0.0.1:9")
+  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_COMPUTER_URL") })
+  test_workspace.with_isolated_workspace("harness-engine-aprovacao", fn(root) {
+    let output = run(root, "aprovacao_site")
+    let outputs =
+      list.filter_map(output.events, fn(event) {
+        case event {
+          transcript.Output(content: content, ..) -> Ok(content)
+          _ -> Error(Nil)
+        }
+      })
+    let said = fn(text) { list.any(outputs, string.contains(_, text)) }
+    said("Liberar o site exemplo.com para o shell") |> should.be_true()
+    said("Liberar o site outro.example.org para o shell") |> should.be_true()
+    said("Aprovado para sempre: Liberar o site exemplo.com") |> should.be_true()
+    said("Recusado: Liberar o site outro.example.org") |> should.be_true()
+    let assert Ok(listing) =
+      list.find(outputs, string.contains(_, "Suas permissões permanentes"))
+    string.contains(listing, "exemplo.com") |> should.be_true()
+    string.contains(listing, "outro.example.org") |> should.be_false()
+  })
+}

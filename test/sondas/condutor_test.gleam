@@ -177,3 +177,24 @@ fn clear_prompts() -> Nil
 
 @external(erlang, "supernova_mock_ffi", "prompts")
 fn prompts() -> List(String)
+
+/// PRD-K, K-I8: when the probe's model stops (here, it answers without a
+/// tool: "it makes no sense to go on"), that is the result. One call to the
+/// model, no "continue", nothing reopened.
+pub fn stopping_is_a_result_test() {
+  let seen = process.new_subject()
+  clear_prompts()
+  let assert Ok(#(condutor.Concluded, report)) =
+    condutor.run(
+      condutor.Web,
+      "[mock-sem-ferramenta] Não faz sentido continuar esta busca.",
+      condutor.default_limits(condutor.Web),
+      hands(seen),
+      executor.empty_run_context(),
+      mock(),
+      free(),
+    )
+  string.starts_with(report, "concluída:") |> should.be_true
+  list.length(prompts()) |> should.equal(1)
+  drain(seen, []) |> list.contains(Called("buscar")) |> should.be_false
+}

@@ -434,7 +434,7 @@ computadores ligados, vagas); painel; cenário de harness com aprovação
 aprovar"), escrito para leitor de tela.
 
 **Aceite:**
-- [ ] K-I7, K-I8 e K-I9 testados.
+- [x] K-I7, K-I8 e K-I9 testados.
 - [ ] Commit: `feat(computador): esquecimento, telemetria e docs`.
 
 #### K-13: Piloto manual

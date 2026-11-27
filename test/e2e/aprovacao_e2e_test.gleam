@@ -373,8 +373,14 @@ pub fn a_send_the_gate_refused_is_asked_and_spent_test() {
 
     let reply = say(router, "dm-carol", "sim")
     string.starts_with(reply, "Aprovado") |> should.be_true
-    // The next click carries the yes, the computer uses it, it is spent.
-    let _ = say(router, "dm-carol", "de novo [mock-clique #enviar]")
+    // The next click carries the yes, the computer uses it, it is spent;
+    // the person hears it from the gate's register (K-I9).
+    let sent = say(router, "dm-carol", "de novo [mock-clique #enviar]")
+    string.contains(
+      sent,
+      "Registro do portão: formulário enviado em saude.gov.br.",
+    )
+    |> should.be_true
     drain(private_sent) |> should.equal([])
     let clicks =
       computer_requests(fake)
@@ -719,6 +725,40 @@ pub fn the_screen_link_goes_to_the_person_test() {
       string.starts_with(raw, "POST /v1/pessoas/")
       && string.contains(raw, "/tela ")
     })
+    |> should.be_true
+    session_supervisor.stop(sessions)
+  })
+}
+
+/// PRD-K, K-I9: a reply that says something was sent, with nothing in the
+/// gate's register, comes with the code's correction.
+pub fn a_send_the_register_does_not_have_is_corrected_test() {
+  let _ =
+    envoy.set(
+      "SUPERNOVA_CONSTELLATION_PATH",
+      "test/fixtures/constellation_small.json",
+    )
+  use <- exception.defer(fn() { envoy.unset("SUPERNOVA_CONSTELLATION_PATH") })
+  support.with_runtime_root(cfg(), fn(root) {
+    let llm =
+      provider.ProviderConfig(
+        name: "mock",
+        api_key: None,
+        base_url: None,
+        default_model: "mock-model",
+      )
+    let store = history_store.HistoryStore(data_dir: root, limit: 40)
+    let assert Ok(sessions) = session_supervisor.start_with_history(store)
+    let assert Ok(router) =
+      channel_router.start_with_session_supervisor("sim", sessions, llm)
+    let _ = say(router, "dm-carol", "oi")
+    let _ = say(router, "dm-carol", "Lua")
+    let _ = say(router, "dm-carol", "sim")
+    let reply = say(router, "dm-carol", "[mock-eco] enviei o formulário")
+    string.contains(
+      reply,
+      "Registro do portão: nada foi enviado para fora do computador nesta conversa.",
+    )
     |> should.be_true
     session_supervisor.stop(sessions)
   })

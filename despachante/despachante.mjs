@@ -550,7 +550,7 @@ export function createServer(config, pcs = computers(config), held = screens(con
     if (!authorized(req, config.token)) return send(res, 401, { ok: false, error: 'unauthorized' });
     try {
       if (req.url === '/v1/estado') {
-        if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'GET only' });
+        if (req.method !== 'GET' && req.method !== 'POST') return send(res, 405, { ok: false, error: 'GET or POST' });
         return send(res, 200, { ok: true, ...(await pcs.estado()) });
       }
       if (screenCall) {

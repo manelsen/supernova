@@ -29,6 +29,8 @@ The conversation survives a restart: each person's conversation in each chat is 
 | `/transcricao` | Members and admins | Your own voice notes also come back transcribed. A forwarded audio always comes back transcribed. |
 | `/curto`, `/longo`, `/cego` | Members and admins | How much detail descriptions of images, videos and documents carry; `/cego` turns the complete audio description on and off. |
 | `/agenda` | Members and admins | Lists what you asked your agent to do later. `/agenda remover <id>` removes one entry. |
+| `/permissoes` | Members and admins, in private | The permissions you gave for good (a site, a login, a site for the shell). `/permissoes revogar <n>` takes one back. |
+| `/senha` | Members and admins, in private, by text | `/senha <site> <usuário> <senha>` keeps a password in your vault, out of the agent's reach; `/senha` lists the sites; `/senha apagar <site>`. See [COMPUTADOR.md](COMPUTADOR.md). |
 | `/uso` | Members and admins | Your own spending. |
 | `/model` | Members and admins | Chooses the provider and model with buttons (inline keyboard on Telegram, components on Discord). |
 | `/help`, `/status` | Members and admins | Help and session status. |
@@ -45,8 +47,20 @@ The agent decides when to use its tools. Admins can use every tool. For members,
 - **The agenda.** "Me lembra amanhã às 9h", or "todo dia às 3h". At that hour the agent receives an `[Agenda]` message, and whatever it answers is sent to the person.
 - **The web, a browser, GitHub, git inspection.**
 - **Tasks in the background** (`tarefa`). For something that may take long (a page, a search, a command), the agent can start another of its tools in the background, answer at once, and get the result later as a `[Tarefa]` message in the same chat; then it tells the person. At most 7 at once per agent, each up to 30 minutes. The instant tools (`agenda`, `file_system`, `canvas`) do not run in the background. The background call is authorized, charged and audited like any tool call of that person. A result that arrives when the person has no budget waits for their next message. `/esquecer` stops the person's tasks and drops their results. A task running when Supernova restarts is not run again: the agent is told it was interrupted and tells the person. Members get `tarefa` by default; a `supernova.yaml` with its own `capabilities.member.allowed` list must add it.
-- **Probes** (`sonda`), when the computer is on. The agent sends a machine to do one job for the person while it keeps talking: a **web** probe searches (SearXNG, or Tavily) and reads pages in the computer's browser; a **disco** probe reads and organizes the files kept for the person in the computer; a **codigo** probe writes, runs and tests code there (only for who has the computer, today admins). The probe sees only the instructions the agent wrote, never the conversation. Its report arrives as a `[Sonda web #N]` message; the whole result stays in `resultado.md`, in the probe's folder in the computer. Limits per probe: web 30 min, disco 2 min, codigo 15 min, US$ 0.20, 40 model rounds; at most 5 web probes at once in the instance. Probes count among the person's 7 tasks and are listed and cancelled with `tarefa`. `/esquecer` stops them and deletes the person's folder in the computer.
-- **Its own computer** (`computador`), when enabled: a shell, files and a browser it sees through screenshots. It runs in a separate gVisor container that holds no secrets. See [COMPUTADOR.md](COMPUTADOR.md).
+- **Probes** (`sonda`), when the computer is on. The agent sends a machine to do one job for the person while it keeps talking: a **web** probe searches (SearXNG, or Tavily) and reads pages in the computer's browser; a **disco** probe reads and organizes the files kept for the person in the computer; a **codigo** probe writes, runs and tests code there. The probe sees only the instructions the agent wrote, never the conversation. Its report arrives as a `[Sonda web #N]` message; the whole result stays in `resultado.md`, in the probe's folder in the computer. Limits per probe: web 30 min, disco 2 min, codigo 15 min, US$ 0.20 (the agent may declare up to US$ 5.00; above US$ 0.50 the person approves first), 40 model rounds; at most 5 web probes at once in the instance. Probes count among the person's 7 tasks and are listed and cancelled with `tarefa`. `/esquecer` stops them and deletes the person's folder in the computer.
+- **Its person's computer** (`computador`), when enabled, for everyone (PRD-K): each person has a computer of their own, with a shell, their files and a browser that keeps their sessions, in a gVisor container that holds no secrets. See [COMPUTADOR.md](COMPUTADOR.md).
+
+## Approvals
+
+Some things the agent cannot do without the person's yes (PRD-K): sending a form, using a site (sending data in the background), logging in to an account, overwriting or deleting the person's files, a new site for the shell, and a probe above US$ 0.50. The **code**, not the model, asks and reads the answer:
+
+- The request goes to the person's **private chat**, even when it was born in a group; the group only hears that a confirmation was asked in private.
+- Its **first sentence is the code's**, from the real action (site, file, amount), at most 140 characters; the agent's explanation comes after.
+- The person answers with a **button** (where the channel has them: Telegram, Discord, Slack), or **by text or voice**: `sim`, `não`, `sim sempre` (for good, where offered). For a site: `sim` is one hour, `sim 24 horas` a day, `sim sempre` for good. With several requests waiting, the number goes along: `sim 2`, also spoken ("sim, dois"). A forwarded voice note never counts; an answer in a group never decides.
+- A request waits up to **24 hours**, with one reminder at 3 hours, then counts as refused. The agent hears the outcome as an `[Aprovação N]` message.
+- What the person hears about a send, a login or a file changed comes from the gate's **register**, not from the agent; if the agent says it sent something and the register has nothing, a line of the code says so.
+
+A short guide for people, in Portuguese and written for screen readers, is in [docs/guia/como-aprovar.md](../guia/como-aprovar.md).
 
 ## Troubleshooting
 
