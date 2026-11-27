@@ -27,6 +27,7 @@ import supernova/agenda/runtime as agenda_runtime
 import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/sweeper as agenda_sweeper
 import supernova/aprovacao/servico as aprovacao_servico
+import supernova/channel/apagar_mensagem
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/channel_kit
 import supernova/channel/health as channel_health
@@ -466,6 +467,9 @@ fn start_services(
   // tasks a restart cut short are told as interrupted (D6), and results
   // not delivered yet are delivered.
   start_approvals(cfg, clock, channel_reg, channel_handler)
+  // A message with a password is deleted where the channel allows it
+  // (PRD-K, K-08): Telegram.
+  apagar_mensagem.configure(registry.message_deleter(cfg))
   start_forget_retries(cfg, session_sup)
 
   start_tasks(cfg, clock, fn(message) {

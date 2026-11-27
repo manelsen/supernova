@@ -93,6 +93,14 @@ What the browser may **send** is decided in the computer, request by request (PR
 
 **The person's files** (K22, K-07): the shell (`sh`) reads `~/trabalho` and cannot change it; it writes in `~/rascunho`. The file actions (`write_file`, `delete_file`) run as `svc`: creating a file passes; overwriting or deleting one asks the person every time, and a yes lets that one change through.
 
+## Passwords and sessions (`/senha`, `entrar`)
+
+A person gives a password to the vault in private, by text: `/senha <site> <user> <password>` (`/senha` lists the sites, never the passwords; `/senha apagar <site>` deletes one). The code takes it before anything else reads the message: it never reaches the model, the history, the inbox log or a file in clear (K-I3; a test seeds a marked password and searches every prompt and file). On Telegram the message with the password is deleted; on other channels the person is asked to delete it. A voice note with a password is refused: transcription goes to an outside service.
+
+The vault is `<data>/agents/<person>/self/cofre.json`, sealed with AES-256-GCM under `SUPERNOVA_COFRE_KEY` (`openssl rand -hex 32` in `.env`; without it, `/senha` keeps nothing). Losing the key loses the passwords: people send them again.
+
+To log in, the agent opens the site's login page and calls `entrar` with the site. Entering an account asks the person first, unless they said "sempre" for that site. The password goes to the computer only in that call; the computer fills the form, sends it, and answers without it. Sessions (cookies) stay in the browser profile, in the person's volume, across turns and restarts; `sair_do_site` clears a site's cookies; `/esquecer` deletes the vault and the volume.
+
 The request's first sentence is written by the code from what the gate saw, at most 140 characters (what a screen reader says first). When the gate refuses inside a background task, no request is made: the agent asks in the conversation.
 
 `scripts/teste-saida.sh` checks all this with real computers on gVisor (internet needed): the shell reaches pip and npm and an approved site, not others; a site Ana approved does not open for Bia; there is no way out around the proxy; the shell finds the credential nowhere; the browser goes out.

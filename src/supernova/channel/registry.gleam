@@ -236,6 +236,20 @@ fn starters(
   ]
 }
 
+/// Delete a person's message, where the channel can (PRD-K, K-08: the
+/// message that carried a password). Only Telegram here.
+pub fn message_deleter(
+  cfg: config.Config,
+) -> fn(String, String, String) -> Result(Nil, String) {
+  fn(channel, chat_id, message_id) {
+    case channel {
+      "telegram" ->
+        telegram_channel.delete_message(cfg.telegram, chat_id, message_id)
+      _ -> Error("this channel does not delete messages")
+    }
+  }
+}
+
 /// Send a reply through a specific channel.
 ///
 /// Returns Ok(Nil) on success, or the appropriate error.

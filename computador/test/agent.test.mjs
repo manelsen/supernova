@@ -235,3 +235,48 @@ test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, a
     pageServer.close();
   }
 });
+
+test('login from the vault: filled, sent, nothing comes back; the session survives a restart', { timeout: 180_000 }, async () => {
+  const SENHA = 'SENHA-MARCADA-7f3a';
+  const loginServer = (await import('node:http')).createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString('utf8');
+      const logged = /sessao=ok/.test(req.headers.cookie || '');
+      if (req.method === 'POST' && req.url === '/login') {
+        const ok = body.includes('usuario=ana') && body.includes(`senha=${SENHA}`);
+        res.writeHead(303, ok ? { location: '/conta', 'set-cookie': 'sessao=ok; Max-Age=86400; Path=/' } : { location: '/login' });
+        return res.end();
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      if (req.url === '/conta') return res.end(`<title>Conta</title>${logged ? 'Olá, logada' : 'Entre primeiro'}`);
+      res.end('<title>Login</title><form method="post" action="/login"><input name="usuario"><input type="password" name="senha"><button>Entrar</button></form>');
+    });
+  });
+  loginServer.listen(0, '127.0.0.1');
+  await once(loginServer, 'listening');
+  setInternalAllowed((host) => host === '127.0.0.1');
+  const base = `http://127.0.0.1:${loginServer.address().port}`;
+  try {
+    await run({ op: 'goto', url: `${base}/login` });
+    // Another site's page: refused before anything is filled.
+    await assert.rejects(run({ op: 'entrar', site: 'gov.br', usuario: 'ana', senha: SENHA }), /open gov\.br/);
+    const entered = await run({ op: 'entrar', site: '127.0.0.1', usuario: 'ana', senha: SENHA });
+    assert.equal(entered.preenchido, true);
+    assert.equal(JSON.stringify(entered).includes(SENHA), false);
+    assert.match((await run({ op: 'text' })).text, /Olá, logada/);
+    // The browser closes (the computer turned off) and opens again.
+    await run({ op: 'close' });
+    await run({ op: 'goto', url: `${base}/conta` });
+    assert.match((await run({ op: 'text' })).text, /Olá, logada/);
+    // Leaving the site takes its cookies.
+    await run({ op: 'sair_do_site', site: '127.0.0.1' });
+    await run({ op: 'goto', url: `${base}/conta` });
+    assert.match((await run({ op: 'text' })).text, /Entre primeiro/);
+  } finally {
+    await run({ op: 'close' }).catch(() => {});
+    loginServer.close();
+    setInternalAllowed(() => false);
+  }
+});

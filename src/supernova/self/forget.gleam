@@ -24,6 +24,7 @@ import supernova/core/session/history_store
 import supernova/core/session/supervisor as session_supervisor
 import supernova/self/aprovacoes
 import supernova/self/audit
+import supernova/self/cofre
 import supernova/self/desk
 import supernova/self/epoch
 import supernova/self/incidents
@@ -68,6 +69,8 @@ pub fn forget(
   use _ <- result.try(delete_file(tasks.path(data_dir, principal)))
   // Pending requests, grants and permissions go with the person (PRD-K).
   use _ <- result.try(delete_file(aprovacoes.path(data_dir, principal)))
+  // The person's passwords (PRD-K, K-08).
+  use _ <- result.try(delete_file(cofre.path(data_dir, principal)))
   // The person's computer, with its files and browser sessions (PRD-K).
   let computer_left = forget_computer(principal)
 

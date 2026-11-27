@@ -32,6 +32,9 @@ services:
       # dispatcher's token; the computer's own token stays in the dispatcher.
       SUPERNOVA_COMPUTER_URL: ${SUPERNOVA_COMPUTER_URL:-}
       SUPERNOVA_COMPUTER_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
+      # The vault of the people's passwords (PRD-K, K-08): its key. Without
+      # it, /senha keeps nothing.
+      SUPERNOVA_COFRE_KEY: ${SUPERNOVA_COFRE_KEY:-}
       # The probes' web search (PRD-S, S17): SearXNG by default, Tavily as
       # the second option. The Tavily key stays here, never in the computer.
       SUPERNOVA_SEARCH_PROVIDER: ${SUPERNOVA_SEARCH_PROVIDER:-searxng}

@@ -1676,6 +1676,25 @@ pub fn file_url(config: Config, file_id: String) -> Result(String, String) {
 // API Methods - sendMessage
 // ============================================================================
 
+/// Delete a message (PRD-K, K-08: the person's message with a password).
+/// Telegram lets a bot delete messages in a private chat for 48 hours.
+pub fn delete_message(
+  config: Config,
+  chat_id: String,
+  message_id: String,
+) -> Result(Nil, TelegramError) {
+  let body =
+    json.object([
+      #("chat_id", json.string(chat_id)),
+      #("message_id", case int.parse(message_id) {
+        Ok(id) -> json.int(id)
+        Error(Nil) -> json.string(message_id)
+      }),
+    ])
+    |> json.to_string
+  api_post(config, "deleteMessage", body) |> result.replace(Nil)
+}
+
 /// Send a simple text message
 pub fn send_message(
   config: Config,
