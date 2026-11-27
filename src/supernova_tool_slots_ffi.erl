@@ -13,11 +13,20 @@
 %% Take one slot of Key if fewer than Limit are taken. true when taken.
 take(Key, Limit) ->
     ensure_table(),
-    case ets:update_counter(?TABLE, Key, {2, 1}, {Key, 0}) of
-        N when N =< Limit -> true;
-        _ ->
-            ets:update_counter(?TABLE, Key, {2, -1}),
-            false
+    ets:insert_new(?TABLE, {Key, 0}),
+    take_free(Key, Limit).
+
+%% Compare and swap: the counter only moves from N to N + 1 while N is
+%% under Limit, so a refused try never shows as one more running call.
+take_free(Key, Limit) ->
+    case ets:lookup(?TABLE, Key) of
+        [{_, N}] when N < Limit ->
+            Swap = [{{Key, N}, [], [{const, {Key, N + 1}}]}],
+            case ets:select_replace(?TABLE, Swap) of
+                1 -> true;
+                0 -> take_free(Key, Limit)
+            end;
+        _ -> false
     end.
 
 give_back(Key) ->
