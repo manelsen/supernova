@@ -320,7 +320,7 @@ fn wait_within(condition: fn() -> Bool, left: Int) -> Nil {
 }
 
 /// /esquecer deletes the person's folder in the computer (S19).
-pub fn esquecer_deletes_the_folder_in_the_computer_test() {
+pub fn esquecer_deletes_the_person_s_computer_test() {
   let fake = start_fake(fake_computer)
   envoy.set(
     "SUPERNOVA_COMPUTER_URL",
@@ -333,10 +333,14 @@ pub fn esquecer_deletes_the_folder_in_the_computer_test() {
   let dir = test_workspace.create_temp_dir("sonda-forget")
   use <- exception.defer(fn() { test_workspace.remove_dir_recursive(dir) })
   let assert Ok(_) = forget.forget(dir, "sim:ana", None)
+  // The dispatcher deletes the computer, its volume and its network.
   requests(fake)
   |> list.any(fn(raw) {
-    string.contains(raw, "\"acao\":\"apagar_pessoa\"")
-    && string.contains(raw, computer.person_hash("sim:ana"))
+    string.starts_with(raw, "POST /v1/apagar ")
+    && string.contains(
+      raw,
+      "{\"pessoa\":\"" <> computer.person_hash("sim:ana") <> "\"}",
+    )
   })
   |> should.be_true
 }

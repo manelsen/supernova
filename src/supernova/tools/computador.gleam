@@ -17,6 +17,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import supernova/adapters/mcp/computer
 import supernova/llm/provider
 import supernova/llm/tool_images
 
@@ -304,11 +305,9 @@ fn run_ffi(
   timeout_ms: Int,
 ) -> Result(#(Int, String, String), String)
 
-/// Run a tool call on the computer. `principal` is the person the agent is
-/// working for; this first version has one computer for the instance, so it
-/// is not used yet.
+/// Run a tool call on the computer of `principal`, the person the agent is
+/// working for (PRD-K, K-04), through the dispatcher.
 pub fn execute(principal: String, args_json: String) -> Result(String, String) {
-  let _ = principal
   case base_url() {
     None -> Error("computador unavailable: SUPERNOVA_COMPUTER_URL is not set")
     Some(url) -> {
@@ -317,7 +316,9 @@ pub fn execute(principal: String, args_json: String) -> Result(String, String) {
         Ok(value) -> string.trim(value)
         Error(_) -> ""
       }
-      case run_ffi(endpoint(url), token, request.body, request.timeout_ms) {
+      let target =
+        computer.person_endpoint(url, computer.person_hash(principal), "run")
+      case run_ffi(target, token, request.body, request.timeout_ms) {
         Error(reason) ->
           Error("computador unreachable: " <> string.slice(reason, 0, 200))
         Ok(#(status, body, image)) -> render(status, body, image)
@@ -333,13 +334,6 @@ fn result_try(
   case result {
     Ok(value) -> next(value)
     Error(reason) -> Error(reason)
-  }
-}
-
-fn endpoint(base: String) -> String {
-  case string.ends_with(base, "/") {
-    True -> base <> "v1/run"
-    False -> base <> "/v1/run"
   }
 }
 

@@ -1,15 +1,15 @@
 name: despachante
 
-# The dispatcher (despachante/, PRD-K, K-03): its tests against a fake
-# Docker, then the network test with real Docker: a computer reaches
-# neither Supernova nor the dispatcher; Supernova reaches the computer only
-# through the dispatcher.
+# The dispatcher (despachante/, PRD-K, K-03, K-04): its tests against a
+# fake Docker, then the network test with real Docker (runc; CI has no
+# gVisor): two people's computers, made by the dispatcher, reach neither
+# Supernova, nor the dispatcher, nor each other; forgetting leaves nothing.
 on:
   push:
     branches: [master]
-    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "docker-compose.yml", ".github/workflows/despachante.yml"]
+    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "computador/resolv.conf", "docker-compose.yml", ".github/workflows/despachante.yml"]
   pull_request:
-    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "docker-compose.yml", ".github/workflows/despachante.yml"]
+    paths: ["despachante/**", "scripts/teste-rede-despachante.sh", "computador/resolv.conf", "docker-compose.yml", ".github/workflows/despachante.yml"]
 
 permissions:
   contents: read

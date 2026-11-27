@@ -62,14 +62,18 @@ pub fn supernova_is_not_on_the_computers_network_test() {
   strings(supernova, "networks") |> should.equal(["default"])
 }
 
-pub fn the_computers_network_holds_no_secret_holder_test() {
-  // On the computers' network: the computer, the dispatcher (listening only
-  // on Supernova's side) and the search engine. Nothing else.
+pub fn only_the_search_engine_goes_out_through_the_old_network_test() {
+  // People's computers have networks of their own, made by the dispatcher
+  // (K-04); the fixed network is SearXNG's way out. Nothing else is on it.
   services()
   |> list.filter(fn(service) {
     list.contains(strings(service.1, "networks"), "computador_net")
   })
   |> list.map(fn(service) { service.0 })
-  |> list.sort(string.compare)
-  |> should.equal(["computador", "despachante", "searxng"])
+  |> should.equal(["searxng"])
+}
+
+pub fn the_computer_image_is_built_and_never_run_here_test() {
+  let assert Ok(pc) = list.key_find(services(), "computador")
+  yay.select_sugar(pc, "deploy.replicas") |> should.equal(Ok(yay.NodeInt(0)))
 }

@@ -57,8 +57,7 @@ services:
 
   # The dispatcher (PRD-K, K20): the only container with the Docker socket.
   # It turns people's computers on and off and deletes them, with the
-  # parameters fixed in its code, and carries Supernova's calls to them. It
-  # sits on both networks but listens only on Supernova's side.
+  # parameters fixed in its code, and carries Supernova's calls to them.
   despachante:
     profiles: ["computador"]
     container_name: supernova-despachante
@@ -67,9 +66,7 @@ services:
       DESPACHANTE_TOKEN: ${SUPERNOVA_COMPUTER_TOKEN:-}
       COMPUTADOR_TOKEN: ${SUPERNOVA_COMPUTADOR_TOKEN_INTERNO:-}
       DESPACHANTE_IMAGEM: supernova-computador:latest
-      DESPACHANTE_REDE: supernova_computador
       DESPACHANTE_RUNTIME: ${SUPERNOVA_COMPUTER_RUNTIME:-runsc}
-      DESPACHANTE_COMPUTADOR_URL: http://computador:7070
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true
@@ -77,36 +74,24 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      default: {}
-      computador_net: {}
+      # Handed to every computer, read-only: Docker's DNS does not answer
+      # inside gVisor on the computers' networks.
+      - ./computador/resolv.conf:/etc/computador/resolv.conf:ro
+    # Each person's computer has a network of its own, which the dispatcher
+    # makes and joins (K-I4); it listens only here, on Supernova's network.
+    networks: [default]
 
-  # The agent's computer: a Linux machine with a shell and a browser, apart
-  # from Supernova and holding none of its secrets. Off unless the
-  # "computador" profile is on (COMPOSE_PROFILES=computador in .env). Runs on
-  # gVisor (runsc) by default: see docs/operations/COMPUTADOR.md.
+  # The image of people's computers: a Linux machine with a shell and a
+  # browser, apart from Supernova and holding none of its secrets. Built
+  # here, never run here: the dispatcher makes each person's computer from
+  # it (PRD-K, K-04), on gVisor. Off unless the "computador" profile is on
+  # (COMPOSE_PROFILES=computador in .env). See docs/operations/COMPUTADOR.md.
   computador:
     profiles: ["computador"]
-    container_name: supernova-computador
     build: ./computador
-    # The dispatcher makes people's computers from this image (K-04).
     image: supernova-computador:latest
-    runtime: ${SUPERNOVA_COMPUTER_RUNTIME:-runsc}
-    environment:
-      # Only the dispatcher knows it; Supernova has the dispatcher's token.
-      COMPUTADOR_TOKEN: ${SUPERNOVA_COMPUTADOR_TOKEN_INTERNO:-}
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    mem_limit: 3g
-    cpus: 2
-    pids_limit: 512
-    shm_size: 1g
-    restart: unless-stopped
-    volumes:
-      - computador_home:/home/pwuser
-      # Docker's DNS does not answer inside gVisor on this network.
-      - ./computador/resolv.conf:/etc/resolv.conf:ro
-    networks: [computador_net]
+    deploy:
+      replicas: 0
 
   # SearXNG (AGPL-3.0, unmodified): the probes' web search (PRD-S, S17,
   # S18). On the computer's network, so it reaches the internet but not the
@@ -226,11 +211,10 @@ services:
     networks: [default]
 
 networks:
-  # The computer's own network. Its bridge has a fixed name so a host
-  # firewall rule can keep the computer away from the host and the local
-  # network (docs/operations/COMPUTADOR.md).
+  # SearXNG's way out. Its bridge has a fixed name so the host firewall
+  # rules keep it away from the host and the LAN, like the computers'
+  # (`brc-*`, one per person, made by the dispatcher).
   computador_net:
-    # A fixed name: the dispatcher attaches people's computers to it.
     name: supernova_computador
     driver_opts:
       com.docker.network.bridge.name: br-computador
@@ -239,6 +223,5 @@ volumes:
   supernova_data:
   gowa_storages:
   gowa_statics:
-  computador_home:
   prometheus_data:
   grafana_data:

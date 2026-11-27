@@ -32,6 +32,8 @@ fn computer_at(fake: Fake) -> computer.Computer {
   )
 }
 
+const hash_ana = "5d407def0bd4d7b8"
+
 /// A computer whose MCP server is well behaved.
 fn good_computer(body: String) -> #(Int, String) {
   let action = json.parse(body, decode.at(["acao"], decode.string))
@@ -41,7 +43,10 @@ fn good_computer(body: String) -> #(Int, String) {
   case action, method, id {
     Ok("abrir"), _, _ -> #(200, "{\"ok\":true}")
     Ok("fechar"), _, _ -> #(200, "{\"ok\":true,\"fechada\":true}")
-    Ok("apagar_pessoa"), _, _ -> #(200, "{\"ok\":true}")
+    _, _, _ if body == "{\"pessoa\":\"" <> hash_ana <> "\"}" -> #(
+      200,
+      "{\"ok\":true,\"apagado\":true}",
+    )
     Ok("chamar"), Ok("initialize"), Ok(id) ->
       answer(id, "{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{}}")
     Ok("chamar"), Ok("notifications/initialized"), _ -> #(200, "{\"ok\":true}")
@@ -107,6 +112,14 @@ pub fn open_list_call_close_test() {
   })
   |> should.be_true
   list.any(sent, fn(raw) { string.contains(raw, "\"acao\":\"fechar\"") })
+  |> should.be_true
+  // Every call goes to the person's computer, at the dispatcher.
+  list.all(sent, fn(raw) {
+    string.starts_with(
+      raw,
+      "POST /v1/pessoas/" <> computer.person_hash("telegram:42") <> "/mcp ",
+    )
+  })
   |> should.be_true
   stop(fake)
 }
