@@ -31,12 +31,7 @@ fn address_blocked(address: String) -> Bool
 
 /// Validate that a URL is safe to fetch (no SSRF).
 pub fn validate_url(url: String) -> Result(String, String) {
-  check(url, False, resolve)
-}
-
-/// Validate URL with optional data: scheme support (for browser tool).
-pub fn validate_url_allow_data(url: String) -> Result(String, String) {
-  check(url, True, resolve)
+  check(url, resolve)
 }
 
 /// `validate_url` with the name resolution injected (tests).
@@ -44,30 +39,24 @@ pub fn validate_url_with_resolver(
   url: String,
   resolver: fn(String) -> Result(List(String), Nil),
 ) -> Result(String, String) {
-  check(url, False, resolver)
+  check(url, resolver)
 }
 
 fn check(
   url: String,
-  allow_data: Bool,
   resolver: fn(String) -> Result(List(String), Nil),
 ) -> Result(String, String) {
   let lower = string.lowercase(url)
-  case allow_data && string.starts_with(lower, "data:") {
-    // data: URLs make no network request.
-    True -> Ok(url)
-    False ->
-      case
-        string.starts_with(lower, "http://")
-        || string.starts_with(lower, "https://")
-      {
-        False -> Error("Blocked URL scheme (only http/https allowed): " <> url)
-        True ->
-          case host_allowed(extract_host(lower), resolver) {
-            True -> Ok(url)
-            False ->
-              Error("Blocked URL targeting internal/reserved network: " <> url)
-          }
+  case
+    string.starts_with(lower, "http://")
+    || string.starts_with(lower, "https://")
+  {
+    False -> Error("Blocked URL scheme (only http/https allowed): " <> url)
+    True ->
+      case host_allowed(extract_host(lower), resolver) {
+        True -> Ok(url)
+        False ->
+          Error("Blocked URL targeting internal/reserved network: " <> url)
       }
   }
 }

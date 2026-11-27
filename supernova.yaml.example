@@ -170,12 +170,6 @@ budgets:
 
 # Tools
 # tools:
-#   browser:
-#     # SECURITY WARNING: Enables arbitrary JavaScript execution in the browser
-#     # page context via globalThis.eval(). Prompt injection against the LLM
-#     # could run arbitrary JS in visited pages. Keep false unless required.
-#     # Env override: SUPERNOVA_BROWSER_ALLOW_EVALUATE=true
-#     allow_evaluate: false
 #   # Seconds a tool may run before it is stopped and the model is told so.
 #   # Built in: 60 for every tool, 300 for computador. Tool results longer
 #   # than 20,000 characters are cut, with a notice, whatever the tool.
@@ -208,7 +202,7 @@ budget:
 capabilities:
   member:
     allowed: ["web", "web_fetch", "file_system", "canvas", "github", "agenda", "buscar_conversa", "lembrar", "tarefa", "sonda", "permissoes", "computador"]
-    denied: ["safe_shell", "process", "browser"]
+    denied: ["safe_shell", "process"]
   admin:
     allowed: ["*"]
     denied: []

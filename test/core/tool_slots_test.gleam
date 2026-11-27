@@ -23,7 +23,7 @@ fn in_slot(tool: String, agent: String, wait_ms: Int, work) {
 pub fn limits_follow_d2_test() {
   tool_slots.limits_for("computador")
   |> should.equal(tool_slots.Limits(per_agent: 2, instance: 8))
-  tool_slots.limits_for("browser")
+  tool_slots.limits_for("web")
   |> should.equal(tool_slots.Limits(per_agent: 4, instance: 32))
   tool_slots.limits_for("web_fetch")
   |> should.equal(tool_slots.Limits(per_agent: 4, instance: 32))

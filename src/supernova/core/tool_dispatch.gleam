@@ -15,7 +15,6 @@ import supernova/self/tasks
 import supernova/sondas/ferramenta as sonda_ferramenta
 import supernova/stress/fake_tools
 import supernova/tools/agenda
-import supernova/tools/browser
 import supernova/tools/buscar_conversa
 import supernova/tools/canvas
 import supernova/tools/computador
@@ -53,7 +52,6 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
   }
   [
     safe_shell.tool(),
-    browser.tool(),
     canvas.tool(),
     process_tool.tool(),
     github.tool(),
@@ -88,7 +86,6 @@ pub fn execute(name: String, args_json: String) -> Result(String, String) {
 fn execute_named(name: String, args_json: String) -> Result(String, String) {
   case name {
     "safe_shell" -> execute_safe_shell(args_json)
-    "browser" -> browser.execute(args_json)
     "canvas" -> canvas.execute(args_json)
     "process" -> process_tool.execute(args_json)
     "github" -> github.execute(args_json)

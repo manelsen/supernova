@@ -138,15 +138,6 @@ pub fn an_unknown_access_mode_keeps_the_yaml_test() {
   cfg.access.mode |> should.equal(config.Allowlist)
 }
 
-pub fn browser_evaluate_follows_the_environment_test() {
-  use <- with_env([#("SUPERNOVA_BROWSER_ALLOW_EVALUATE", " TRUE ")])
-  config.apply_env_overrides(yaml("data_dir: d\n")).tools.browser.allow_evaluate
-  |> should.equal(True)
-  use <- with_env([#("SUPERNOVA_BROWSER_ALLOW_EVALUATE", "talvez")])
-  config.apply_env_overrides(yaml("data_dir: d\n")).tools.browser.allow_evaluate
-  |> should.equal(False)
-}
-
 pub fn without_variables_the_yaml_stands_test() {
   let base = yaml("data_dir: d\ndiscord:\n  enabled: false\n")
   use <- with_env([#("SUPERNOVA_DISCORD_ENABLED", "")])

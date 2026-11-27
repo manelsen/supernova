@@ -272,8 +272,8 @@ O que uma pessoa pode mandar para a sua agente:
 | `file_system` | O espaço de trabalho da pessoa |
 | `agenda` | Fazer algo depois, ou com hora marcada |
 | `buscar_conversa` | Buscar no histórico inteiro da conversa |
-| `web`, `browser` | Buscar páginas; dirigir um navegador sem tela |
-| `computador` | O computador próprio da agente, com aprovações |
+| `web` (`web_fetch`) | Ler uma página como texto |
+| `computador` | O computador próprio da agente, com aprovações; o único navegador é o dele |
 | `github`, `git_inspect` | Ler repositórios |
 | `safe_shell`, `process` | Comandos restritos e processos no servidor |
 | `canvas` | Blocos estruturados |

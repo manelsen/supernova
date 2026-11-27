@@ -50,14 +50,11 @@ pub fn strips_userinfo_before_blocklist_check_test() {
   }
 }
 
-pub fn data_urls_are_allowed_only_in_allow_data_mode_test() {
+pub fn data_urls_are_blocked_test() {
   case url_guard.validate_url("data:text/plain,hello") {
-    Ok(_) -> panic as "Expected data URL to be blocked in strict mode"
+    Ok(_) -> panic as "Expected data URL to be blocked"
     Error(_) -> Nil
   }
-
-  url_guard.validate_url_allow_data("data:text/plain,hello")
-  |> should.equal(Ok("data:text/plain,hello"))
 }
 
 // PRD-E, E-02: the guard resolves the name and checks every address.
