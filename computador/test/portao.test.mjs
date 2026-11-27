@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
 import { chromium } from 'playwright';
-import { guard, setInternalAllowed } from '../rede.mjs';
-import { newGate, allow, account, decide, beforeClick, siteOf, summarizeFields, fieldsOf } from '../portao.mjs';
+import { createHash } from 'node:crypto';
+import { guard, setInternalAllowed, contextOptions } from '../rede.mjs';
+import { newGate, allow, account, decide, decideSocket, beforeClick, siteOf, summarizeFields, fieldsOf } from '../portao.mjs';
 
 test('the site is what a person recognises', () => {
   assert.equal(siteOf('www.consultas.saude.gov.br'), 'saude.gov.br');
@@ -13,6 +14,16 @@ test('the site is what a person recognises', () => {
   assert.equal(siteOf('example.com'), 'example.com');
   assert.equal(siteOf('a.b.example.co.uk'), 'example.co.uk');
   assert.equal(siteOf('127.0.0.1'), '127.0.0.1');
+});
+
+test('a site on shared hosting is its owner, not the whole platform', () => {
+  assert.equal(siteOf('meublog.wordpress.com'), 'meublog.wordpress.com');
+  assert.equal(siteOf('www.meublog.wordpress.com'), 'meublog.wordpress.com');
+  assert.equal(siteOf('ana.github.io'), 'ana.github.io');
+  assert.equal(siteOf('loja.netlify.app'), 'loja.netlify.app');
+  assert.equal(siteOf('x.blogspot.com.br'), 'x.blogspot.com.br');
+  assert.equal(siteOf('github.io'), 'github.io');
+  assert.equal(siteOf('wordpress.com'), 'wordpress.com');
 });
 
 test('what a form sends, secrets masked', () => {
@@ -27,6 +38,7 @@ test('what a form sends, secrets masked', () => {
 
 async function site() {
   const posts = [];
+  const sockets = [];
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -41,14 +53,36 @@ async function site() {
           </form>
           <button id="curtir" onclick="fetch('/curtir',{method:'POST',body:'x'}).then(()=>document.title='curtido').catch(()=>document.title='barrado')">Curtir</button>
           <a id="comprar" href="/produto">Comprar</a>`);
+      } else if (req.url === '/socket') {
+        res.end(`<title>Socket</title><script>
+          const ws = new WebSocket(location.origin.replace('http', 'ws') + '/ws');
+          ws.onopen = () => { ws.send('curtir'); document.title = 'aberto'; };
+          ws.onclose = () => { if (document.title === 'Socket') document.title = 'fechado'; };
+        </script>`);
+      } else if (req.url === '/worker') {
+        res.end(`<title>Worker</title><script>
+          navigator.serviceWorker.register('/sw.js')
+            .then(() => { document.title = 'registrado'; })
+            .catch(() => { document.title = 'barrado'; });
+        </script>`);
+      } else if (req.url === '/sw.js') {
+        res.writeHead(200, { 'content-type': 'text/javascript' });
+        res.end("self.addEventListener('install', () => fetch('/curtir', { method: 'POST', body: 'sw' }));");
       } else {
         res.end('<title>Ok</title>ok');
       }
     });
   });
+  // A WebSocket handshake, by hand: enough to count who got through.
+  server.on('upgrade', (req, socket) => {
+    sockets.push(req.url);
+    const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+    socket.on('error', () => {});
+  });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  return { url: `http://127.0.0.1:${server.address().port}`, posts, close: () => server.close() };
+  return { url: `http://127.0.0.1:${server.address().port}`, posts, sockets, close: () => { server.closeAllConnections?.(); server.close(); } };
 }
 
 test('reading is free; background posts need the site; a send needs a yes each time', { timeout: 120_000 }, async () => {
@@ -140,6 +174,70 @@ test('a probe never sends, and never asks', { timeout: 120_000 }, async () => {
     await page.waitForTimeout(500);
     assert.equal(s.posts.length, 0);
     assert.ok(account(gate).portao.recusas.every((r) => r.tipo === 'sonda'));
+  } finally {
+    await browser.close();
+    s.close();
+    setInternalAllowed(() => false);
+  }
+});
+
+test('a WebSocket needs the site, like any other write; a probe never opens one', { timeout: 120_000 }, async () => {
+  setInternalAllowed((h) => h === '127.0.0.1');
+  const s = await site();
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  try {
+    const context = await browser.newContext(contextOptions());
+    const gate = newGate();
+    await guard(context, (request) => decide(gate, request), (url) => decideSocket(gate, url));
+    const page = await context.newPage();
+
+    allow(gate, {});
+    await page.goto(`${s.url}/socket`);
+    await page.waitForFunction(() => document.title !== 'Socket');
+    assert.equal(await page.title(), 'fechado');
+    assert.equal(s.sockets.length, 0);
+    const refusal = account(gate).portao.recusas[0];
+    assert.equal(refusal.tipo, 'site');
+    assert.equal(refusal.metodo, 'WEBSOCKET');
+
+    allow(gate, { sites: ['127.0.0.1'] });
+    await page.goto(`${s.url}/socket`);
+    await page.waitForFunction(() => document.title !== 'Socket');
+    assert.equal(await page.title(), 'aberto');
+    assert.equal(s.sockets.length, 1);
+
+    const probeContext = await browser.newContext(contextOptions());
+    const probe = newGate({ probe: true });
+    await guard(probeContext, (request) => decide(probe, request), (url) => decideSocket(probe, url));
+    allow(probe, { sites: ['127.0.0.1'] });
+    const probePage = await probeContext.newPage();
+    await probePage.goto(`${s.url}/socket`);
+    await probePage.waitForFunction(() => document.title !== 'Socket');
+    assert.equal(await probePage.title(), 'fechado');
+    assert.equal(s.sockets.length, 1);
+    assert.equal(account(probe).portao.recusas[0].tipo, 'sonda');
+  } finally {
+    await browser.close();
+    s.close();
+    setInternalAllowed(() => false);
+  }
+});
+
+test('a page cannot install a service worker to send behind the gate', { timeout: 120_000 }, async () => {
+  setInternalAllowed((h) => h === '127.0.0.1');
+  const s = await site();
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  try {
+    const context = await browser.newContext(contextOptions());
+    const gate = newGate();
+    await guard(context, (request) => decide(gate, request), (url) => decideSocket(gate, url));
+    allow(gate, {});
+    const page = await context.newPage();
+    await page.goto(`${s.url}/worker`);
+    await page.waitForFunction(() => document.title !== 'Worker');
+    await page.waitForTimeout(1000);
+    assert.equal(context.serviceWorkers().length, 0);
+    assert.equal(s.posts.length, 0);
   } finally {
     await browser.close();
     s.close();

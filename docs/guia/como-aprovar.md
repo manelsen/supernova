@@ -65,7 +65,7 @@ Para ouvir os sites guardados, mande /senha. Para apagar, mande /senha apagar e 
 
 Alguns sites pedem para provar que você não é um robô. A agente não resolve esse teste.
 
-Ela manda um link no seu privado. O link abre a tela do seu computador por 15 minutos, uma vez só. Você pode passar o link para quem ajuda você.
+Ela manda um link no seu privado. O link abre uma página com um botão: Abrir a tela. Ao tocar no botão, a tela do seu computador abre por 15 minutos, uma vez só, naquele aparelho. Você pode passar o link para quem ajuda você; vale para quem tocar no botão primeiro.
 
 ## Como saber o que foi feito
 

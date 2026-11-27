@@ -18,8 +18,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { mcp, McpUserError, sweepIdle } from './mcp.mjs';
-import { guard, proxyOption } from './rede.mjs';
-import { newGate, allow, account, decide, beforeClick, siteOf } from './portao.mjs';
+import { guard, proxyOption, contextOptions } from './rede.mjs';
+import { newGate, allow, account, decide, decideSocket, beforeClick, siteOf } from './portao.mjs';
 import { clip, runAs } from './shell.mjs';
 import * as tela from './tela.mjs';
 
@@ -246,7 +246,7 @@ async function page(gen) {
     // No await between this check and the launch below.
     if (gen !== generation) throw new Error('abandoned operation');
     const attempt = (async () => {
-      const launched = await chromium.launchPersistentContext(PROFILE_DIR, {
+      const launched = await chromium.launchPersistentContext(PROFILE_DIR, contextOptions({
         // Headless, unless the person's screen is open (K-09).
         ...tela.launchOptions(),
         viewport: VIEWPORT,
@@ -258,14 +258,14 @@ async function page(gen) {
         // Past our own deadline: the deadline must win, so a slow launch is
         // reported as a restart and closed by the generation check below.
         timeout: LIMITS.browserOpMs + CLOSE_WAIT_MS,
-      });
+      }));
       if (gen !== generation) {
         // This operation already timed out; do not let its browser linger.
         closing = closeBounded(launched);
         throw new Error('abandoned launch');
       }
       // Nothing internal: this machine, the Docker networks, the LAN.
-      await guard(launched, (request) => decide(agentGate, request));
+      await guard(launched, (request) => decide(agentGate, request), (url) => decideSocket(agentGate, url));
       launched.setDefaultTimeout(LIMITS.browserTimeoutMs);
       launched.on('close', () => { if (browserContext === launched) browserContext = null; });
       browserContext = launched;

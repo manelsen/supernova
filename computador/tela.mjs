@@ -56,13 +56,24 @@ export async function open() {
     store.on('error', reject);
   });
   fs.chmodSync(passFile, 0o600);
-  const xvfb = start('Xvfb', [DISPLAY, '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], env);
+  // The display wants a cookie only svc can read: the shell's user (sh)
+  // could otherwise watch the screen or type into it while the person
+  // types a password.
+  const authFile = path.join(dir, 'Xauthority');
+  const cookie = randomBytes(16).toString('hex');
+  await new Promise((resolve, reject) => {
+    const add = spawn('xauth', ['-q', '-f', authFile, 'add', DISPLAY, '.', cookie], { stdio: 'ignore' });
+    add.on('exit', (code) => (code === 0 ? resolve() : reject(new Error('could not set the screen cookie'))));
+    add.on('error', reject);
+  });
+  fs.chmodSync(authFile, 0o600);
+  const xvfb = start('Xvfb', [DISPLAY, '-screen', '0', '1280x800x24', '-nolisten', 'tcp', '-auth', authFile], env);
   const socket = `/tmp/.X11-unix/X${DISPLAY.slice(1)}`;
   await waitFor(() => fs.existsSync(socket), 10_000);
-  const vnc = start('x11vnc', ['-display', DISPLAY, '-localhost', '-rfbport', String(VNC_PORT),
+  const vnc = start('x11vnc', ['-display', DISPLAY, '-auth', authFile, '-localhost', '-rfbport', String(VNC_PORT),
     '-rfbauth', passFile, '-forever', '-shared', '-quiet', '-noxdamage'], env);
   const web = start('websockify', ['--web', '/usr/share/novnc', String(WEB_PORT), `localhost:${VNC_PORT}`], env);
-  stack = { xvfb, vnc, web, dir, password };
+  stack = { xvfb, vnc, web, dir, password, authFile };
   // Give the VNC server a moment to listen.
   await new Promise((r) => setTimeout(r, 500));
   return { senha: password };
@@ -81,7 +92,7 @@ export function close() {
 /// The browser's launch options while the screen is open.
 export function launchOptions() {
   if (!stack) return { headless: true };
-  return { headless: false, env: { ...process.env, DISPLAY } };
+  return { headless: false, env: { ...process.env, DISPLAY, XAUTHORITY: stack.authFile } };
 }
 
 /// Whether the page shows a captcha (K15): the agent must not solve it.

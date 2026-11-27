@@ -53,6 +53,12 @@ export function credentialFor(master, person) {
   return createHmac('sha256', master).update(`saida:${person}`).digest('hex');
 }
 
+/// A computer's own service token, derived from the dispatcher's master.
+/// Each computer holds only its own: one that leaks it opens no other.
+export function computerTokenFor(master, person) {
+  return createHmac('sha256', master).update(`computador:${person}`).digest('hex');
+}
+
 const HOST = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
 /// The sites a person approved for the shell (K21): plain host names.
@@ -87,7 +93,7 @@ export function computerSpec(config, person) {
   return {
     Image: config.image,
     Env: [
-      `COMPUTADOR_TOKEN=${config.computerToken}`,
+      `COMPUTADOR_TOKEN=${computerTokenFor(config.computerToken, person)}`,
       // The only way out (K-05): the proxy on the person's network. The
       // launcher gives the credential to the browser's user, never the
       // shell's.
@@ -501,7 +507,7 @@ function forward(config, person, path, body) {
       headers: {
         'content-type': 'application/json',
         'content-length': body.length,
-        authorization: `Bearer ${config.computerToken}`,
+        authorization: `Bearer ${computerTokenFor(config.computerToken, person)}`,
       },
     }, (res) => {
       const chunks = [];

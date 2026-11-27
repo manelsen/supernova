@@ -27,6 +27,18 @@ function rfbSecurity() {
   });
 }
 
+function x11Answer() {
+  // The X11 connection setup with no authorization: little endian,
+  // protocol 11.0, empty name and data. The first byte of the answer:
+  // 0 refused, 1 accepted.
+  return new Promise((resolve, reject) => {
+    const socket = net.connect('/tmp/.X11-unix/X99');
+    socket.on('connect', () => socket.write(Buffer.from([0x6c, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0])));
+    socket.once('data', (d) => { socket.destroy(); resolve(d[0]); });
+    socket.on('error', reject);
+  });
+}
+
 test('the screen opens with a password, shows the page, and closes', { timeout: 180_000 }, async () => {
   const server = http.createServer((_, res) => {
     res.writeHead(200, { 'content-type': 'text/html' });
@@ -49,6 +61,9 @@ test('the screen opens with a password, shows the page, and closes', { timeout: 
     const types = await rfbSecurity();
     assert.ok(types.includes(2));
     assert.ok(!types.includes(1));
+    // The display wants its cookie: another user on this computer (the
+    // shell's) cannot watch it or type into it.
+    assert.equal(await x11Answer(), 0);
     // The browser is on the screen, on the same page.
     const shot = await run({ op: 'screenshot' });
     assert.equal(shot.title, 'Captcha');

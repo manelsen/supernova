@@ -201,6 +201,7 @@ O que o desenho garante:
 - **Um computador por pessoa.** Liga no primeiro uso, desliga depois de 15 minutos parado, no máximo quatro ligados ao mesmo tempo. Uma pessoa nunca vê os arquivos de outra.
 - **Nenhum segredo lá dentro.** Chaves de API, tokens e senhas nunca entram no computador. Para entrar num site, a senha vem de um cofre cifrado, fora do alcance da agente.
 - **Ler é livre; agir pergunta.** Um portão no navegador deixa a agente ler qualquer página. Usar um site que recebe dados pede uma vez, por um prazo; enviar um formulário pede toda vez, com um resumo dos campos e as senhas mascaradas.
+- **O portão guarda ações, não sigilo.** Ler é livre, e um endereço pode levar dados para fora, então uma agente manipulada poderia vazar o que consegue ler. Por isso senhas e chaves nunca entram no computador, e o computador de cada pessoa só tem os arquivos dela.
 - **Os arquivos da pessoa ficam protegidos.** O shell roda como outro usuário, que lê a pasta da pessoa mas não a altera. Sobrescrever ou apagar um arquivo pergunta.
 - **O que aconteceu fica registrado.** O portão anota o que de fato saiu do computador, e esse registro vai no fim da resposta.
 

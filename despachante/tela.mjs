@@ -64,9 +64,38 @@ export function screens(config) {
   };
 }
 
+const HEADERS = {
+  'content-type': 'text/html; charset=utf-8',
+  'cache-control': 'no-store',
+  'referrer-policy': 'no-referrer',
+};
+
 function page(res, status, text) {
-  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+  res.writeHead(status, HEADERS);
   res.end(`<!doctype html><html lang="pt-BR"><title>Tela</title><p>${text}</p></html>`);
+}
+
+// What the link shows: one button. Opening the link uses nothing, so a chat
+// app's link preview (which fetches it from its own servers) cannot burn
+// it; the button, which no preview presses, does.
+function landing(res) {
+  res.writeHead(200, HEADERS);
+  res.end(`<!doctype html><html lang="pt-BR"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tela do seu computador</title>
+<style>body{font:1.25rem system-ui,sans-serif;margin:2rem auto;max-width:32rem;padding:0 1rem}
+button{font:inherit;padding:1rem 2rem;min-width:12rem}</style>
+<h1>Tela do seu computador</h1>
+<p>Este link abre a tela uma vez só, neste aparelho, por 15 minutos.</p>
+<form method="post"><button type="submit" autofocus>Abrir a tela</button></form></html>`);
+}
+
+// After the button: the page goes to noVNC with the password in the
+// fragment. It rides in this page's body, never in a header.
+function opening(res, cookie, target) {
+  res.writeHead(200, { ...HEADERS, 'set-cookie': cookie });
+  const json = JSON.stringify(target).replace(/</g, '\\u003c');
+  res.end(`<!doctype html><html lang="pt-BR"><title>Abrindo a tela</title>
+<p>Abrindo a tela…</p><script>location.replace(${json});</script></html>`);
 }
 
 function cookieOf(req, name) {
@@ -94,22 +123,22 @@ function route(url) {
 export function createScreenServer(config, held) {
   const server = http.createServer((req, res) => {
     const r = route(req.url);
-    if (!r || req.method !== 'GET') return page(res, 404, 'Não há nada aqui.');
+    const opens = req.method === 'POST' && r && r.rest === '';
+    if (!r || (req.method !== 'GET' && !opens)) return page(res, 404, 'Não há nada aqui.');
     const s = held.get(r.token);
     if (!s) return page(res, 410, 'Este link não vale mais. Peça um novo à sua agente.');
     const cookie = `tela_${r.token.slice(0, 8)}`;
     if (!s.session) {
-      // The first visit uses the link, for this browser only.
       if (r.rest !== '') return page(res, 403, 'Abra o link que você recebeu.');
+      if (!opens) return landing(res);
+      // The button uses the link, for this browser only.
       s.session = randomBytes(24).toString('base64url');
       const target = `/tela/${r.token}/vnc.html#autoconnect=true&resize=scale&reconnect=true&path=tela/${r.token}/websockify&password=${encodeURIComponent(s.password)}`;
-      res.writeHead(302, {
-        location: target,
-        'set-cookie': `${cookie}=${s.session}; Path=/tela/${r.token}/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.ceil(SCREEN_MS / 1000)}`,
-        'cache-control': 'no-store',
-      });
-      return res.end();
+      return opening(res,
+        `${cookie}=${s.session}; Path=/tela/${r.token}/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.ceil(SCREEN_MS / 1000)}`,
+        target);
     }
+    if (opens) return page(res, 403, 'Este link já foi aberto.');
     if (!same(cookieOf(req, cookie), s.session)) return page(res, 403, 'Este link já foi aberto.');
     // noVNC's files, from the person's computer.
     const target = new URL(`/${r.rest.split('#')[0]}`, config.screenUrl(s.person));
