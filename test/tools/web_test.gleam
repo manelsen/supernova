@@ -52,3 +52,19 @@ pub fn the_guard_runs_before_any_download_test() {
   })
   |> should.equal(Error("blocked"))
 }
+
+// Qwen 4, M7: the guard saw a public address, but the name answers an
+// internal one when the connection opens (DNS rebinding). The download
+// checks the addresses it connects to and refuses.
+pub fn a_name_that_turns_internal_is_refused_at_connect_test() {
+  web.fetch_with("http://localhost:8080/admin", allow, get_public)
+  |> should.equal(Error(
+    "Blocked URL targeting internal/reserved network: http://localhost:8080/admin",
+  ))
+}
+
+@external(erlang, "supernova_web_fetch_ffi", "get_public")
+fn get_public(
+  url: String,
+  max_bytes: Int,
+) -> Result(#(Int, BitArray), web.GetError)

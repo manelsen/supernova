@@ -119,3 +119,27 @@ pub fn safe_shell_reports_unknown_executable_test() {
 
 @external(erlang, "supernova_safe_shell_ffi", "run_command")
 fn run_argv(argv: List(String)) -> Result(String, String)
+
+// Qwen 4, B5: a big file comes back cut, not whole into the BEAM.
+pub fn safe_shell_cuts_a_big_output_test() {
+  let path = "build/safe_shell_big.txt"
+  let assert Ok(_) = write_file(path, string.repeat("abcdefghij\n", 20_000))
+  let assert Ok(output) = safe_shell.execute("cat " <> path)
+  let _ = delete_file(path)
+  string.ends_with(output, "[output cut at 64 KiB]") |> should.be_true
+  { string.byte_size(output) < 66_000 } |> should.be_true
+}
+
+pub fn safe_shell_keeps_a_small_output_whole_test() {
+  let path = "build/safe_shell_small.txt"
+  let assert Ok(_) = write_file(path, "pequeno\n")
+  let assert Ok(output) = safe_shell.execute("cat " <> path)
+  let _ = delete_file(path)
+  output |> should.equal("pequeno")
+}
+
+@external(erlang, "supernova_file_system_ffi", "write_file")
+fn write_file(path: String, content: String) -> Result(Nil, String)
+
+@external(erlang, "supernova_file_system_ffi", "delete_file")
+fn delete_file(path: String) -> Result(Nil, String)

@@ -39,7 +39,10 @@ RUN gleam build
 
 # Patch hackney FFI to increase recv_timeout to 120s (30s for Telegram poller)
 # The FFI source lives in build/packages, beam gets compiled to build/dev/erlang
+# The build fails if the patch did not apply (Qwen 4, B8): a new gleam_hackney
+# that changes the text would otherwise bring back the default timeout.
 RUN sed -i "s/{with_body, true}/{with_body, true}, {recv_timeout, 120000}/" /app/build/packages/gleam_hackney/src/gleam_hackney_ffi.erl \
+ && grep -q "{recv_timeout, 120000}" /app/build/packages/gleam_hackney/src/gleam_hackney_ffi.erl \
  && erlc -o /app/build/dev/erlang/gleam_hackney/ebin /app/build/packages/gleam_hackney/src/gleam_hackney_ffi.erl \
  && erlc -o /app/build/packages/gleam_hackney/src /app/build/packages/gleam_hackney/src/gleam_hackney_ffi.erl
 

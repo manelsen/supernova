@@ -209,7 +209,7 @@ Supernova's probes (PRD-S) use MCP servers that run here, behind the same token 
 
 ### The probes' search (`buscar`)
 
-Web probes search with `buscar`. By default it asks **SearXNG**, a self-hosted metasearch engine (AGPL-3.0, used unmodified) that the `computador` profile starts as the `searxng` container, with `searxng/settings.yml`. It sits on the computer's network: it reaches the internet but not the host or the LAN (the firewall rules above cover it too), and no port is published. Optionally set a secret in `.env`:
+Web probes search with `buscar`. By default it asks **SearXNG**, a self-hosted metasearch engine (AGPL-3.0, used unmodified) that the `computador` profile starts as the `searxng` container, with `searxng/settings.yml`. It sits on the computer's network: it reaches the internet but not the host or the LAN (the firewall rules above cover it too), and no port is published. Without a secret in `.env`, a random one is drawn at each start (SearXNG would otherwise run with an empty one); to keep a fixed one:
 
 ```sh
 SUPERNOVA_SEARXNG_SECRET=<output of: openssl rand -hex 24>
