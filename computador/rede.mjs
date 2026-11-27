@@ -86,10 +86,27 @@ export function proxyOption(env = process.env) {
   return { proxy: { server: env.SAIDA_URL, username: env.SAIDA_USUARIO || '', password: env.SAIDA_SENHA || '' } };
 }
 
+/// Options every browser context of the computer is made with. Service
+/// workers are blocked: what a worker fetches does not pass `route`, so a
+/// page could send through one behind the gate.
+export function contextOptions(extra = {}) {
+  return { ...extra, serviceWorkers: 'block' };
+}
+
 /// Route every request of a browser context through the check. Non-network
 /// schemes (data:, blob:, about:) pass; http(s) to an internal host is
-/// aborted; then `gate` decides (the browser gate).
-export async function guard(context, gate = () => true) {
+/// aborted; then `gate` decides (the browser gate). WebSockets do not pass
+/// `route`: they get the same internal check and then `socketGate`, and a
+/// refused one is closed before it reaches the server.
+export async function guard(context, gate = () => true, socketGate = () => true) {
+  await context.routeWebSocket(/.*/, async (ws) => {
+    let url;
+    try { url = new URL(ws.url()); } catch { return ws.close({ code: 1008, reason: 'blocked' }); }
+    if (url.protocol !== 'ws:' && url.protocol !== 'wss:') return ws.close({ code: 1008, reason: 'blocked' });
+    if (await hostBlocked(url.hostname)) return ws.close({ code: 1008, reason: 'blocked' });
+    if (!socketGate(url)) return ws.close({ code: 1008, reason: 'blocked' });
+    ws.connectToServer();
+  });
   await context.route('**/*', async (route) => {
     let url;
     try { url = new URL(route.request().url()); } catch { return route.abort('blockedbyclient'); }

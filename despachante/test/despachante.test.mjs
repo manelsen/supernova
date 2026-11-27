@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import {
-  createServer, computers, computerSpec, personOf, listenAddresses, pinImage,
+  createServer, computers, computerSpec, computerTokenFor, personOf, listenAddresses, pinImage,
   configFromEnv, bridgeName, resolvConfSource, UserError, LIMITS, LABEL,
 } from '../despachante.mjs';
 import { docker } from '../docker.mjs';
@@ -244,6 +244,9 @@ test('a computer is made with the fixed parameters only, on its own network', ()
   assert.equal(spec.HostConfig.Binds, undefined);
   assert.equal(spec.HostConfig.Privileged, undefined);
   assert.equal(spec.Labels[LABEL], '1');
+  // The computer gets its own token, never the master one.
+  assert.ok(spec.Env.includes(`COMPUTADOR_TOKEN=${computerTokenFor('t', ANA)}`));
+  assert.ok(!spec.Env.includes('COMPUTADOR_TOKEN=t'));
   assert.ok(bridgeName(ANA).length <= 15);
   assert.ok(bridgeName(ANA).startsWith('brc-'));
 });
@@ -257,8 +260,12 @@ test('two people, two computers, two volumes, two networks (K-I4)', async () => 
     assert.deepEqual((await api.call('POST', `/v1/pessoas/${ANA}/run`, { op: 'exec' })).body, { ok: true, pessoa: ANA });
     assert.deepEqual((await api.call('POST', `/v1/pessoas/${BIA}/mcp`, { acao: 'abrir' })).body, { ok: true, pessoa: BIA });
     assert.deepEqual(pcs.calls.map((c) => [c.person, c.url]), [[ANA, '/v1/run'], [BIA, '/v1/mcp']]);
-    // The computer's token, which Supernova does not have.
-    assert.ok(pcs.calls.every((c) => c.auth === 'Bearer do-computador'));
+    // Each computer's own token, which Supernova does not have: a computer
+    // that leaks its token opens no other computer.
+    const tokenOf = (person) => computerTokenFor('do-computador', person);
+    assert.ok(pcs.calls.every((c) => c.auth === `Bearer ${tokenOf(c.person)}`));
+    assert.notEqual(tokenOf(ANA), tokenOf(BIA));
+    assert.ok(!pcs.calls.some((c) => c.auth === 'Bearer do-computador'));
     // The proxy knows whose address is whose.
     assert.deepEqual([...saida.told.keys()].sort(), [ANA, BIA]);
     const ana = fake.state.containers.get(`computador-${ANA}`).spec;

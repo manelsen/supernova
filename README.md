@@ -207,6 +207,7 @@ What the design guarantees:
 - **One computer per person.** Started on first use, stopped after 15 idle minutes, at most four running at once. One person never sees another's files.
 - **No secrets inside.** API keys, tokens and passwords never enter the computer. Logging in fills the password from an encrypted vault, outside the agent's reach.
 - **Reading is free, acting asks.** A browser gate lets the agent read any page. Using a site that takes input asks once for a time window; sending a form asks every time, with a summary of the fields and passwords masked.
+- **The gate guards actions, not secrecy.** Reading is free, and a URL can carry data out, so a manipulated agent could leak what it can read. That is why passwords and keys never enter the computer, and why each person's computer holds only that person's files.
 - **The person's files are protected.** The shell runs as a separate user that can read the person's folder but not change it. Overwriting or deleting a file asks.
 - **What happened is on record.** The gate writes what actually left the computer, and that record is appended to the reply.
 

@@ -22,10 +22,27 @@ const SENSITIVE = /(senha|password|passwd|pass|pwd|token|secret|segredo|cvv|cvc|
 const SECOND_LEVEL = new Set(['com', 'gov', 'org', 'net', 'edu', 'co', 'ac', 'mil', 'nom', 'art', 'blog', 'app', 'leg', 'jus', 'mp', 'ind', 'inf', 'eco', 'tv']);
 export const SEND_WORDS = /^\s*(enviar|envie|mandar|confirmar|confirme|concluir|finalizar|pagar|comprar|agendar|marcar|assinar|cadastrar|registrar|publicar|postar|submeter|solicitar|transferir|send|submit|confirm|pay|buy|order|book|sign up|register|post|publish|place order|checkout)\b/i;
 
+// Shared hosting: under these, each name is someone else's site, so
+// approving one blog never approves the whole platform. Not the whole
+// Public Suffix List; the platforms a person meets most.
+const SHARED = [
+  'github.io', 'gitlab.io', 'wordpress.com', 'blogspot.com', 'blogspot.com.br', 'tumblr.com',
+  'medium.com', 'substack.com', 'wixsite.com', 'weebly.com', 'webnode.page', 'neocities.org',
+  'netlify.app', 'vercel.app', 'pages.dev', 'workers.dev', 'web.app', 'firebaseapp.com',
+  'herokuapp.com', 'onrender.com', 'fly.dev', 'glitch.me', 'repl.co', 'surge.sh',
+  'azurewebsites.net', 'cloudfront.net', 's3.amazonaws.com', 'appspot.com', 'myshopify.com',
+  'carrd.co', 'notion.site', 'sites.google.com', 'webflow.io', 'framer.website',
+];
+
 /// The site of a host: what a person recognises and approves.
 export function siteOf(host) {
   const bare = String(host || '').toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
   if (net.isIP(bare)) return bare;
+  const shared = SHARED.find((suffix) => bare.endsWith(`.${suffix}`));
+  if (shared) {
+    const owner = bare.slice(0, -(shared.length + 1)).split('.').pop();
+    return `${owner}.${shared}`;
+  }
   const labels = bare.split('.');
   if (labels.length <= 2) return labels.join('.');
   const last = labels[labels.length - 1];
@@ -117,6 +134,20 @@ export function decide(gate, request) {
   }
   if (gate.sites.has(site)) return true;
   gate.refused.push({ tipo: 'site', site, metodo: method, url: `${url.origin}${url.pathname}` });
+  return false;
+}
+
+/// Decide one WebSocket. It can carry anything both ways, so it is a
+/// write: it needs the site, like a background request. A probe never
+/// opens one. true: let it connect.
+export function decideSocket(gate, url) {
+  const site = siteOf(url.hostname);
+  if (gate.probe) {
+    gate.refused.push({ tipo: 'sonda', site, metodo: 'WEBSOCKET' });
+    return false;
+  }
+  if (gate.sites.has(site) || gate.armed.has(site)) return true;
+  gate.refused.push({ tipo: 'site', site, metodo: 'WEBSOCKET', url: `${url.origin}${url.pathname}` });
   return false;
 }
 

@@ -33,8 +33,8 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { guard, proxyOption } from './rede.mjs';
-import { newGate, decide } from './portao.mjs';
+import { guard, proxyOption, contextOptions } from './rede.mjs';
+import { newGate, decide, decideSocket } from './portao.mjs';
 
 export const MCP_LIMITS = {
   idleMs: 5 * 60_000,
@@ -202,15 +202,15 @@ async function openPlaywright(person, probe) {
   const folder = probeDir(person, probe);
   await fs.mkdir(folder, { recursive: true });
   const shared = await browser();
-  const context = await shared.newContext({
+  const context = await shared.newContext(contextOptions({
     viewport: { width: 1280, height: 800 },
     locale: 'pt-BR',
     timezoneId: process.env.TZ || 'America/Sao_Paulo',
-  });
+  }));
   // Nothing internal: this machine, the Docker networks, the LAN.
   // The probes never send anything, and never ask (PRD-K, section 3.3).
   const probeGate = newGate({ probe: true });
-  await guard(context, (request) => decide(probeGate, request));
+  await guard(context, (request) => decide(probeGate, request), (url) => decideSocket(probeGate, url));
   // At most two tabs: a third closes the oldest.
   context.on('page', () => {
     const pages = context.pages();

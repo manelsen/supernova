@@ -64,19 +64,33 @@ test('the link opens once, for one browser, on that person\'s screen', async () 
   const { held, base, port } = await setup();
   let ended = 0;
   const token = held.issue(ANA, 'abc12345', () => { ended += 1; });
-  const first = await get(`${base}/tela/${token}/`);
-  assert.equal(first.status, 302);
-  const location = first.headers.get('location');
-  assert.match(location, new RegExp(`^/tela/${token}/vnc\\.html#.*password=abc12345`));
-  // The password rides in the fragment: never sent to a server.
-  assert.equal(location.split('#')[0], `/tela/${token}/vnc.html`);
+  // Opening the link shows a button and uses nothing: a chat app's link
+  // preview fetches it first, and must not burn it.
+  for (let i = 0; i < 2; i += 1) {
+    const landing = await get(`${base}/tela/${token}/`);
+    assert.equal(landing.status, 200);
+    assert.equal(landing.headers.get('set-cookie'), null);
+    const html = await landing.text();
+    assert.match(html, /<form method="post"/);
+    assert.match(html, /Abrir a tela/);
+    assert.doesNotMatch(html, /abc12345/);
+  }
+  // The button uses the link, for this browser only. The password goes in
+  // the page, never in a header.
+  const first = await fetch(`${base}/tela/${token}/`, { method: 'POST', redirect: 'manual' });
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('location'), null);
+  assert.equal(first.headers.get('referrer-policy'), 'no-referrer');
+  const opened = await first.text();
+  assert.match(opened, new RegExp(`/tela/${token}/vnc\\.html#[^"']*password=abc12345`));
   const cookie = first.headers.get('set-cookie').split(';')[0];
   assert.match(first.headers.get('set-cookie'), /HttpOnly; Secure; SameSite=Strict/);
   // This browser gets Ana's screen.
   const files = await get(`${base}/tela/${token}/vnc.html`, cookie);
   assert.equal(await files.text(), 'ana:/vnc.html');
   assert.match(await upgrade(port, `/tela/${token}/websockify`, cookie), /vnc-de-ana/);
-  // Opened again, from anywhere: used.
+  // Used: no second browser gets in, by the button or otherwise.
+  assert.equal((await fetch(`${base}/tela/${token}/`, { method: 'POST' })).status, 403);
   assert.equal((await get(`${base}/tela/${token}/`)).status, 403);
   assert.equal((await get(`${base}/tela/${token}/vnc.html`)).status, 403);
   assert.doesNotMatch(await upgrade(port, `/tela/${token}/websockify`), /vnc-de/);
@@ -102,7 +116,7 @@ test('a new link replaces the old one; the screen goes on', async () => {
   const old = held.issue(ANA, 'p', () => { ended += 1; });
   const fresh = held.issue(ANA, 'p', () => { ended += 100; });
   assert.equal((await get(`${base}/tela/${old}/`)).status, 410);
-  assert.equal((await get(`${base}/tela/${fresh}/`)).status, 302);
+  assert.equal((await get(`${base}/tela/${fresh}/`)).status, 200);
   held.end(ANA);
   // The first end (the screen's) runs once.
   assert.equal(ended, 1);
@@ -113,6 +127,8 @@ test('only /tela/<token>/ is served', async () => {
   for (const path of ['/', '/v1/estado', '/tela/', '/tela/curto/', '/vnc.html', '/tela/../v1/ligar']) {
     assert.equal((await get(base + path)).status, 404, path);
   }
+  const put = await fetch(`${base}/tela/${'x'.repeat(32)}/`, { method: 'PUT' });
+  assert.equal(put.status, 404);
   const post = await fetch(`${base}/tela/${'x'.repeat(32)}/`, { method: 'POST' });
-  assert.equal(post.status, 404);
+  assert.equal(post.status, 410);
 });
