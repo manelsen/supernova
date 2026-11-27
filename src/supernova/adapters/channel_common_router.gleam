@@ -2716,7 +2716,7 @@ fn maybe_handle_forget(
                   }
                   let next_state = drop_forget_pending(state, profile.agent_id)
                   case result {
-                    Ok(_) -> Some(#(next_state, "Esqueci."))
+                    Ok(counts) -> Some(#(next_state, forget.receipt(counts)))
                     Error(_) ->
                       Some(#(
                         next_state,
