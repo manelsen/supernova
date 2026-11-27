@@ -412,7 +412,7 @@ Teto declarado acima de US$ 0,50 numa `tarefa` ou `sonda` pede aprovação
 antes de começar (K8, seção 3.3).
 
 **Aceite:**
-- [ ] Testes com o mock do LLM.
+- [x] Testes com o mock do LLM.
 - [ ] Commit: `feat(aprovacao): teto de gasto por tarefa`.
 
 #### K-11: Para todos os membros
