@@ -12,7 +12,6 @@ import supernova/llm/provider
 import supernova/llm/stream
 import supernova/tools/canvas as canvas_tool
 import supernova/tools/github as github_tool
-import supernova/tools/process as process_tool
 import supernova/tools/safe_shell
 
 pub fn execute_text_response_test() {
@@ -144,10 +143,11 @@ pub fn builtin_tools_no_longer_include_gateway_test() {
   |> should.equal(False)
 }
 
-pub fn builtin_tools_include_process_test() {
+// Qwen 4, B4: retired; it killed any process of Supernova's container.
+pub fn builtin_tools_no_longer_include_process_test() {
   executor.builtin_tools()
   |> list.any(fn(tool) { tool.name == "process" })
-  |> should.equal(True)
+  |> should.equal(False)
 }
 
 pub fn builtin_tools_include_github_test() {
@@ -189,22 +189,6 @@ pub fn invalid_canvas_tool_arguments_returns_error_message_test() {
   case messages {
     [msg] ->
       string.starts_with(msg.content, "ERROR: Invalid arguments for canvas")
-      |> should.equal(True)
-    _ -> should.fail()
-  }
-}
-
-pub fn invalid_process_tool_arguments_returns_error_message_test() {
-  let calls = [
-    provider.ToolCall(id: "c1", name: "process", arguments: "{\"pid\":123}"),
-  ]
-  let tools = [process_tool.tool()]
-
-  let messages = executor.execute_tool_calls_for_test(calls, tools)
-
-  case messages {
-    [msg] ->
-      string.starts_with(msg.content, "ERROR: Invalid arguments for process")
       |> should.equal(True)
     _ -> should.fail()
   }

@@ -23,7 +23,6 @@ import supernova/tools/git_inspect
 import supernova/tools/github
 import supernova/tools/lembrar
 import supernova/tools/permissoes
-import supernova/tools/process as process_tool
 import supernova/tools/safe_shell
 import supernova/tools/tarefa
 import supernova/tools/web
@@ -53,7 +52,6 @@ pub fn builtin_tools() -> List(provider.ToolDefinition) {
   [
     safe_shell.tool(),
     canvas.tool(),
-    process_tool.tool(),
     github.tool(),
     web.tool(),
     git_inspect.tool(),
@@ -87,7 +85,6 @@ fn execute_named(name: String, args_json: String) -> Result(String, String) {
   case name {
     "safe_shell" -> execute_safe_shell(args_json)
     "canvas" -> canvas.execute(args_json)
-    "process" -> process_tool.execute(args_json)
     "github" -> github.execute(args_json)
     "web_fetch" -> execute_web_fetch(args_json)
     "git_inspect" -> execute_git_inspect(args_json)

@@ -28,8 +28,9 @@ pub fn known_tool_names() -> List(String) {
     "safe_shell",
     "canvas",
     // Retired (gateway: PRD-E, E-05; browser: Qwen 4, A1, the person's
-    // computer browses instead); still accepted so older capability lists
-    // that deny them stay valid.
+    // computer browses instead; process: Qwen 4, B4, it could kill any
+    // process of Supernova's container); still accepted so older capability
+    // lists that deny them stay valid.
     "gateway",
     "browser",
     "process",

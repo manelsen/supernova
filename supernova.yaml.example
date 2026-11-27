@@ -202,7 +202,7 @@ budget:
 capabilities:
   member:
     allowed: ["web", "web_fetch", "file_system", "canvas", "github", "agenda", "buscar_conversa", "lembrar", "tarefa", "sonda", "permissoes", "computador"]
-    denied: ["safe_shell", "process"]
+    denied: ["safe_shell"]
   admin:
     allowed: ["*"]
     denied: []

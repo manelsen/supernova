@@ -666,7 +666,7 @@ pub fn default_capabilities_config() -> CapabilitiesConfig {
         // K23): members get it, and with it the code probe.
         "computador",
       ],
-      denied: ["safe_shell", "process"],
+      denied: ["safe_shell"],
     ),
     admin: RoleCapabilitiesConfig(allowed: ["*"], denied: []),
   )
