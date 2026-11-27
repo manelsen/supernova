@@ -242,3 +242,46 @@ pub fn waiting_calls_are_shown_test() {
   await_metric(metrics, "tool_waiting{tool=\"computador\"} 0", 200)
   |> should.be_true
 }
+
+/// A full instance stays at its limit while others keep trying: a refused
+/// try never shows as a ninth call, not even for an instant.
+pub fn a_refused_try_never_shows_above_the_limit_test() {
+  let held =
+    list.repeat(Nil, 8)
+    |> list.index_map(fn(_, i) {
+      let assert Ok(slot) =
+        tool_slots.try_take("computador", "cheio-" <> int.to_string(i))
+      slot
+    })
+  let done = process.new_subject()
+  list.repeat(Nil, 16)
+  |> list.index_map(fn(_, i) {
+    process.spawn(fn() {
+      list.repeat(Nil, 3000)
+      |> list.each(fn(_) {
+        let _ = tool_slots.try_take("computador", "tenta-" <> int.to_string(i))
+        Nil
+      })
+      process.send(done, Nil)
+    })
+  })
+  |> list.length
+  |> should.equal(16)
+  let highest = sample_until_done(done, 16, 0)
+  list.each(held, tool_slots.give_back)
+  highest |> should.equal(8)
+  tool_slots.running("computador") |> should.equal(0)
+}
+
+fn sample_until_done(done, left: Int, highest: Int) -> Int {
+  case left {
+    0 -> highest
+    _ -> {
+      let highest = int.max(highest, tool_slots.running("computador"))
+      case process.receive(done, 0) {
+        Ok(Nil) -> sample_until_done(done, left - 1, highest)
+        Error(Nil) -> sample_until_done(done, left, highest)
+      }
+    }
+  }
+}
