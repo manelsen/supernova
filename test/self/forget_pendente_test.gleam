@@ -12,6 +12,8 @@ import gleeunit/should
 import supernova/adapters/mcp/computer
 import supernova/channel/inbox
 import supernova/channel/port
+import supernova/self/aprovacoes
+import supernova/self/cofre
 import supernova/self/forget
 import test_workspace
 
@@ -125,3 +127,57 @@ pub fn an_unreadable_note_means_everything_is_left_test() {
 
 @external(erlang, "supernova_file_system_ffi", "write_file")
 fn write(path: String, content: String) -> Result(Nil, String)
+
+/// PRD-K, K-I7: after /esquecer, nothing of the person's is left: no
+/// request, grant or permission, no vault, and the computer (container,
+/// volume with the browser sessions, network) deleted at the dispatcher.
+pub fn nothing_of_the_person_is_left_test() {
+  let dir = test_workspace.create_temp_dir("forget_nada_sobra")
+  let assert Ok(_) =
+    aprovacoes.ask(
+      dir,
+      "sim:ana",
+      0,
+      aprovacoes.Draft(
+        kind: aprovacoes.Send,
+        target: "site:a.com",
+        summary: "Usar o site a.com.",
+        explanation: "",
+        task: None,
+        approve: aprovacoes.Window(aprovacoes.one_hour_ms),
+        always: True,
+        origin: aprovacoes.Chat("sim", "dm-ana", "ana"),
+      ),
+    )
+  let assert Ok(_) =
+    aprovacoes.decide(
+      dir,
+      "sim:ana",
+      0,
+      1,
+      aprovacoes.Approve(aprovacoes.Permanent),
+    )
+  let assert Ok(Nil) =
+    cofre.guardar(dir, "sim:ana", "chave", "gov.br", "123", "segredo")
+  let fake = start_fake(fn(_) { #(200, "{\"ok\":true,\"apagado\":true}") })
+  envoy.set(
+    "SUPERNOVA_COMPUTER_URL",
+    "http://127.0.0.1:" <> int.to_string(port_of(1, fake)),
+  )
+  use <- exception.defer(fn() {
+    envoy.unset("SUPERNOVA_COMPUTER_URL")
+    stop(fake)
+  })
+  let assert Ok(counts) = forget.forget(dir, "sim:ana", None)
+  counts.pendente |> should.equal([])
+  file_exists(aprovacoes.path(dir, "sim:ana")) |> should.equal(Ok(False))
+  file_exists(cofre.path(dir, "sim:ana")) |> should.equal(Ok(False))
+  aprovacoes.permissions(dir, "sim:ana") |> should.equal(Ok([]))
+  cofre.sites(dir, "sim:ana") |> should.equal(Ok([]))
+  requests(fake)
+  |> list.any(fn(raw) {
+    string.starts_with(raw, "POST /v1/apagar ")
+    && string.contains(raw, computer.person_hash("sim:ana"))
+  })
+  |> should.be_true
+}

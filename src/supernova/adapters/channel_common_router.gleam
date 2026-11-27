@@ -23,6 +23,7 @@ import supernova/agenda/schedule as agenda_schedule
 import supernova/agenda/store as agenda_store
 import supernova/aprovacao/pedido
 import supernova/aprovacao/permissoes
+import supernova/aprovacao/registro
 import supernova/aprovacao/senha
 import supernova/aprovacao/servico as aprovacao_servico
 import supernova/channel/apagar_mensagem
@@ -551,9 +552,21 @@ fn run_executor_for_context(
             False -> tool
           }
         })
-      let result =
+      let outcome =
         executor.run_with_context(messages, llm_config, offered, recorded)
-      #(result, list.append(task_rounds(msg.id), drain_rounds(rounds, [])))
+      let turn_rounds = drain_rounds(rounds, [])
+      // Effects outside the machine are told from the gate's register
+      // (PRD-K, K-I9).
+      let effects = registro.effects(list.map(turn_rounds, fn(r) { r.result }))
+      let used_agenda = list.any(turn_rounds, fn(r) { r.name == "agenda" })
+      let outcome =
+        result.map(outcome, fn(response) {
+          provider.ChatResponse(
+            ..response,
+            content: registro.note(response.content, effects, used_agenda),
+          )
+        })
+      #(outcome, list.append(task_rounds(msg.id), turn_rounds))
     }
     _, _ -> #(ungoverned_run(messages, llm_config, tools), [])
   }
@@ -631,6 +644,9 @@ fn log_in(
           {
             Ok(True) ->
               computador_tool.entrar(principal, site, usuario, password)
+              |> result.map(fn(text) {
+                text <> "\n" <> registro.line <> "entrou na conta em " <> site
+              })
             Ok(False) ->
               aprovacao_servico.pedir(
                 context,

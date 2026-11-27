@@ -81,6 +81,7 @@ import supernova/self/reflection
 import supernova/self/tasks
 import supernova/sondas/sonda
 import supernova/tools/browser
+import supernova/tools/computador as computador_tool
 import supernova/tracing/actor as tracing_actor
 import supernova/tracing/global as tracing_global
 import supernova/tracing/types as tracing_types
@@ -471,6 +472,7 @@ fn start_services(
   // (PRD-K, K-08): Telegram.
   apagar_mensagem.configure(registry.message_deleter(cfg))
   start_forget_retries(cfg, session_sup)
+  start_computer_gauges(cfg)
 
   start_tasks(cfg, clock, fn(message) {
     registry.inject(channel_reg, channel_handler, port.inbound_message(message))
@@ -1132,6 +1134,29 @@ fn print_channel_status(name: String, enabled: Bool) -> Nil {
     True -> io.println("    - " <> name <> ": enabled")
     False -> io.println("    - " <> name <> ": disabled")
   }
+}
+
+/// Computers on and places free, as gauges, every minute (PRD-K, K-12).
+fn start_computer_gauges(cfg: config.Config) -> Nil {
+  case cfg.environment == "harness" || !computador_tool.configured() {
+    True -> Nil
+    False -> {
+      process.spawn_unlinked(fn() { computer_gauges_loop() })
+      Nil
+    }
+  }
+}
+
+fn computer_gauges_loop() -> Nil {
+  case computador_tool.estado() {
+    Ok(#(on, free)) -> {
+      record.gauge("computadores_ligados", on, [])
+      record.gauge("computadores_vagas", free, [])
+    }
+    Error(_) -> Nil
+  }
+  process.sleep(60_000)
+  computer_gauges_loop()
 }
 
 /// What /esquecer could not finish (the computer down, the inbox log not

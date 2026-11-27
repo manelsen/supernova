@@ -19,6 +19,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import supernova/adapters/mcp/computer
+import supernova/aprovacao/registro
 import supernova/aprovacao/servico as aprovacao_servico
 import supernova/llm/provider
 import supernova/llm/tool_images
@@ -461,6 +462,21 @@ fn execute_on(
           let gate = gate_account(answer)
           spend(principal, gate.usados)
           use text <- result_try(render(status, answer, image))
+          // What the gate let through, for the person to hear (K-I9).
+          let text =
+            list.fold(gate.usados, text, fn(text, item) {
+              text
+              <> "\n"
+              <> registro.line
+              <> case string.starts_with(item, "/") {
+                True ->
+                  case string.contains(answer, "\"apagado\":true") {
+                    True -> "arquivo apagado: " <> item
+                    False -> "arquivo sobrescrito: " <> item
+                  }
+                False -> "formulário enviado em " <> item
+              }
+            })
           // A captcha is the person's (K15).
           let text = case string.contains(answer, "\"captcha\":true") {
             True ->
@@ -539,6 +555,38 @@ fn result_then(
   case value {
     Ok(v) -> next(v)
     Error(e) -> Error(e)
+  }
+}
+
+/// How many computers are on and how many places are free (PRD-K, K-12),
+/// from the dispatcher.
+pub fn estado() -> Result(#(Int, Int), String) {
+  case base_url() {
+    None -> Error("no computer configured")
+    Some(url) -> {
+      let token = case envoy.get(token_env) {
+        Ok(value) -> string.trim(value)
+        Error(_) -> ""
+      }
+      let target = case string.ends_with(url, "/") {
+        True -> url <> "v1/estado"
+        False -> url <> "/v1/estado"
+      }
+      case run_ffi(target, token, "{}", 10_000) {
+        Ok(#(200, answer, _)) -> {
+          let decoder = {
+            use computers <- decode.field(
+              "computadores",
+              decode.list(decode.at(["ligado"], decode.bool)),
+            )
+            use places <- decode.field("vagas", decode.int)
+            decode.success(#(list.count(computers, fn(on) { on }), places))
+          }
+          json.parse(answer, decoder) |> result.replace_error("bad state")
+        }
+        _ -> Error("the dispatcher did not answer")
+      }
+    }
   }
 }
 
