@@ -253,6 +253,18 @@ O `run` monta o mesmo volume nomeado que o serviço usa, qualquer que seja o
 nome do projeto Compose; o `ls -l` confirma que os arquivos chegaram ao
 destino. Reinicie o serviço depois.
 
+A Supernova roda como o usuário `supernova` (uid 10001), sem capabilities.
+Um volume criado quando ela ainda rodava como root precisa ser entregue a
+esse usuário uma vez, antes de subir a versão nova:
+
+```bash
+docker compose run --rm --no-deps --user root --cap-add CHOWN supernova \
+  chown -R supernova:supernova /data
+```
+
+Sem isso ela não consegue gravar em `/data` (`access.json`, ledger,
+auditoria). Um volume novo já nasce com o dono certo.
+
 ### Grupos e servidores
 
 Conversas privadas com principals autorizados passam sempre. Grupos e

@@ -101,3 +101,44 @@ pub fn the_tunnel_holds_nothing_but_its_config_test() {
   })
   |> should.be_true
 }
+
+// Qwen 4, A1: the process with every secret runs without privileges.
+pub fn supernova_runs_without_privileges_test() {
+  let assert Ok(supernova) = list.key_find(services(), "supernova")
+  strings(supernova, "cap_drop") |> should.equal(["ALL"])
+  strings(supernova, "cap_add") |> should.equal([])
+  strings(supernova, "security_opt")
+  |> should.equal(["no-new-privileges:true"])
+  let assert Ok(dockerfile) = read("Dockerfile")
+  string.contains(dockerfile, "\nUSER supernova\n") |> should.be_true
+}
+
+// Qwen 4, M6: Grafana never gets Supernova's bot token, not even as a
+// fallback for the alerts' own.
+pub fn grafana_never_gets_supernovas_bot_token_test() {
+  let assert Ok(grafana) = list.key_find(services(), "grafana")
+  let assert Ok(yay.NodeMap(env)) = yay.select_sugar(grafana, "environment")
+  list.any(env, fn(pair) {
+    case pair {
+      #(_, yay.NodeStr(value)) ->
+        string.contains(value, "SUPERNOVA_TELEGRAM_TOKEN")
+      _ -> False
+    }
+  })
+  |> should.be_false
+}
+
+// Qwen 4, M2: `COPY . .` never takes a secret into the image.
+pub fn the_image_leaves_the_secrets_out_test() {
+  let assert Ok(ignore) = read(".dockerignore")
+  let lines = string.split(ignore, "\n") |> list.map(string.trim)
+  [
+    ".env", "supernova.yaml", "cloudflared/credentials.json", "*.pem", "*.key",
+    "data", "workspaces",
+  ]
+  |> list.filter(fn(entry) { !list.contains(lines, entry) })
+  |> should.equal([])
+}
+
+@external(erlang, "supernova_file_system_ffi", "read_file")
+fn read(path: String) -> Result(String, String)

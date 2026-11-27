@@ -53,6 +53,10 @@ services:
     volumes:
       - ./supernova.yaml:/config/supernova.yaml:ro
       - supernova_data:/data
+    # The process with every secret gets no privilege it does not need
+    # (Qwen 4, A1): no Linux capabilities, no way to gain them.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     # Not on the computers' network (PRD-K, section 3.3): a computer cannot
     # open a connection to Supernova. The dispatcher carries the calls. And
     # no Docker socket here, ever (K-I6).
@@ -242,12 +246,12 @@ services:
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/supernova.json
-      # Alerts on Telegram, once a chat is set; until then they only show on
-      # Grafana's Alerting page. By default they come from Supernova's own
-      # bot; a separate bot keeps them out of the agent's chat
-      # (docs/operations/OBSERVABILITY.md).
+      # Alerts on Telegram, from a bot of their own: once its token and a
+      # chat are set; until then they only show on Grafana's Alerting page.
+      # Never Supernova's bot (Qwen 4, M6): Grafana would hold the token of
+      # the agent's conversations (docs/operations/OBSERVABILITY.md).
       SUPERNOVA_ALERT_TELEGRAM_CHAT: ${SUPERNOVA_ALERT_TELEGRAM_CHAT:-}
-      SUPERNOVA_ALERT_TELEGRAM_TOKEN: ${SUPERNOVA_ALERT_TELEGRAM_TOKEN:-${SUPERNOVA_TELEGRAM_TOKEN:-}}
+      SUPERNOVA_ALERT_TELEGRAM_TOKEN: ${SUPERNOVA_ALERT_TELEGRAM_TOKEN:-}
       SUPERNOVA_ALERT_DAILY_USD: ${SUPERNOVA_ALERT_DAILY_USD:-4}
     mem_limit: 512m
     restart: unless-stopped

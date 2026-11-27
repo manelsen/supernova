@@ -30,7 +30,7 @@ if [ -z "$chat" ]; then
 elif ! printf '%s' "$chat" | grep -Eq '^-?[0-9]+$'; then
   telegram_off "SUPERNOVA_ALERT_TELEGRAM_CHAT must be a numeric chat id"
 elif ! printf '%s' "$token" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
-  telegram_off "no valid bot token for alerts"
+  telegram_off "no valid bot token for alerts (SUPERNOVA_ALERT_TELEGRAM_TOKEN: a bot of their own, never Supernova's)"
 else
   sed -e "s|__CHAT__|$chat|g" -e "s|__TOKEN__|$token|g" \
     "$src/telegram.yml" > "$dst/supernova-telegram.yml"

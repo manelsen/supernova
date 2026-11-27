@@ -133,17 +133,18 @@ Grafana checks five rules every minute:
 | Canal sem conexão | A channel failed to fetch messages three or more times in 10 minutes, for 5 minutes |
 | Custo do dia | The last 24 hours cost more than `SUPERNOVA_ALERT_DAILY_USD` (4 by default) |
 
-They always show on Grafana's **Alerting** page. To receive them on Telegram, set the chat in `.env` and run `docker compose up -d`:
+They always show on Grafana's **Alerting** page. To receive them on Telegram, they need a bot of their own: create one with @BotFather, send it any message once, set its token and the chat in `.env` and run `docker compose up -d`:
 
 ```sh
-SUPERNOVA_ALERT_TELEGRAM_CHAT=123456789   # your Telegram user id, from /eu
+SUPERNOVA_ALERT_TELEGRAM_TOKEN=123456:ABC...   # the alerts' bot, never Supernova's
+SUPERNOVA_ALERT_TELEGRAM_CHAT=123456789        # your Telegram user id, from /eu
 ```
 
 The message says what fired, and a second message says when it stopped (✅). The same alert is repeated every 4 hours while it lasts.
 
-Telegram only lets a bot write to someone who has opened a private chat with it. With the default bot, the chat id must be yours and you must have talked to the agent in private at least once; an id seen only in a group is not enough.
+Telegram only lets a bot write to someone who has opened a private chat with it, so the chat id must be of someone who has written to the alerts' bot; an id seen only in a group is not enough.
 
-By default the alerts come from Supernova's own bot, so they land in the same chat as the agent; they do not reach the agent or its history. To keep them apart, create another bot with @BotFather, send it any message once, and set `SUPERNOVA_ALERT_TELEGRAM_TOKEN` to its token.
+Grafana never gets Supernova's own bot token: whoever reached Grafana would hold the agent's conversations. Before, the alerts fell back to that bot when `SUPERNOVA_ALERT_TELEGRAM_TOKEN` was empty; now, without it, Grafana's log says `no valid bot token for alerts` and the alerts stay on the Alerting page.
 
 Removing `SUPERNOVA_ALERT_TELEGRAM_CHAT` and running `docker compose up -d` turns delivery off again: the start script provisions the removal of the Telegram contact point, which Grafana would otherwise keep.
 

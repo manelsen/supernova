@@ -7,3 +7,17 @@ test
 tasks
 .env
 *.log
+
+# Secrets and runtime data never enter the image (Qwen 4, M2): `COPY . .`
+# would otherwise put them in a layer of whoever builds on a live host.
+.env.*
+!.env.example
+supernova.yaml
+*.local.yaml
+harness.yaml
+cloudflared/credentials.json
+*.pem
+*.key
+data
+workspaces
+node_modules
