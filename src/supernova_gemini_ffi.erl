@@ -2,7 +2,7 @@
 %% Gemini adapter: the key goes in a header, never in the URL; large files
 %% go up in 8 MiB parts (resumable upload), read from disk piece by piece.
 -module(supernova_gemini_ffi).
--export([request/5, upload_resumable/5]).
+-export([request/5, upload_resumable/5, to_json/1, raw/1]).
 
 %% Used only when the API does not announce its granularity.
 -define(PART, 8388608).
@@ -109,3 +109,13 @@ send_parts(Fd, UploadUrl, Key, Offset, Size, Part) ->
             {error, iolist_to_binary(["upload status ", integer_to_list(Status), ": ", Body])};
         {error, Reason} -> {error, iolist_to_binary(io_lib:format("~p", [Reason]))}
     end.
+
+%% The Gemini chat provider (providers/gemini): a functionCall's arguments
+%% come as a JSON object; the rest of Supernova reads them as JSON text.
+to_json(Term) ->
+    iolist_to_binary(json:encode(Term)).
+
+%% JSON text Gleam already parsed as an object, used as gleam_json's Json
+%% (iodata) without a second encoding.
+raw(Text) when is_binary(Text) ->
+    Text.

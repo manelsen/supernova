@@ -99,6 +99,13 @@ pub fn known_providers() -> List(ProviderInfo) {
       env_var: "MISTRAL_API_KEY",
     ),
     ProviderInfo(
+      key: "gemini",
+      label: "Gemini",
+      description: "Google Gemini, through the Gemini API (generateContent)",
+      default_model: "gemini-3.8-flash",
+      env_var: "GEMINI_API_KEY",
+    ),
+    ProviderInfo(
       key: "ollama",
       label: "Ollama",
       description: "Local/self-hosted models",

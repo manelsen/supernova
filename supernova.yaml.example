@@ -74,6 +74,12 @@ providers:
     api_key: "${SUPERNOVA_PROVIDER_MINIMAX_API_KEY}"
     model: "MiniMax-M2.7"
 
+  # https://ai.google.dev (Gemini API itself, generateContent; the key goes
+  # in the x-goog-api-key header, only to Google's API)
+  gemini:
+    api_key: "${SUPERNOVA_PROVIDER_GEMINI_API_KEY}"
+    model: "gemini-3.8-flash"
+
   # https://ollama.com (local/self-hosted models)
   ollama:
     api_key: "${SUPERNOVA_PROVIDER_OLLAMA_API_KEY}"
