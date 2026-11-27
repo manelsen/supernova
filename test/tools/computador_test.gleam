@@ -177,7 +177,9 @@ pub fn execute_posts_to_the_service_and_splits_the_image_test() {
   request |> string.contains("{\"op\":\"screenshot\"") |> should.be_true
   // Browser actions carry what the person allowed (K-06); nothing here.
   request
-  |> string.contains("\"liberado\":{\"sites\":[],\"envios\":[]}")
+  |> string.contains(
+    "\"liberado\":{\"sites\":[],\"envios\":[],\"arquivos\":[]}",
+  )
   |> should.be_true
 
   let #(shown, images) = tool_images.split(text)

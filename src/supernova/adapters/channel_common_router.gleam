@@ -590,6 +590,23 @@ fn ask_for_gate(
         always: True,
         origin: aprovacoes.Chat(msg.channel, msg.channel_id, msg.user_id),
       ))
+    "arquivo" ->
+      Ok(aprovacoes.Draft(
+        kind: aprovacoes.Overwrite,
+        target: refusal.caminho,
+        summary: pedido.first_sentence(case refusal.acao {
+          "apagar" -> "Apagar o arquivo " <> refusal.caminho <> "."
+          _ ->
+            "Sobrescrever o arquivo "
+            <> refusal.caminho
+            <> " com um texto novo."
+        }),
+        explanation: "",
+        task: None,
+        approve: aprovacoes.Once,
+        always: False,
+        origin: aprovacoes.Chat(msg.channel, msg.channel_id, msg.user_id),
+      ))
     _ -> Error(Nil)
   }
   case draft, aprovacao_servico.get() {

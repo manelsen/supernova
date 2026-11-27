@@ -91,6 +91,8 @@ What the browser may **send** is decided in the computer, request by request (PR
 - **The probes** never send anything and never ask.
 - **No `evaluate`:** the agent cannot run JavaScript in the page (K11).
 
+**The person's files** (K22, K-07): the shell (`sh`) reads `~/trabalho` and cannot change it; it writes in `~/rascunho`. The file actions (`write_file`, `delete_file`) run as `svc`: creating a file passes; overwriting or deleting one asks the person every time, and a yes lets that one change through.
+
 The request's first sentence is written by the code from what the gate saw, at most 140 characters (what a screen reader says first). When the gate refuses inside a background task, no request is made: the agent asks in the conversation.
 
 `scripts/teste-saida.sh` checks all this with real computers on gVisor (internet needed): the shell reaches pip and npm and an approved site, not others; a site Ana approved does not open for Bia; there is no way out around the proxy; the shell finds the credential nowhere; the browser goes out.
