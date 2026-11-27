@@ -1,5 +1,7 @@
 # Supernova
 
+**English** · [Português](README.pt-BR.md)
+
 **An operating system for AI agents, built on the BEAM, and home to companion agents that each belong to one person.**
 
 [![Test Suite](https://github.com/manelsen/supernova/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/manelsen/supernova/actions/workflows/test.yml)
