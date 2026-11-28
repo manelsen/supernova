@@ -207,7 +207,7 @@ budget:
 # Tools available to each role
 capabilities:
   member:
-    allowed: ["web", "web_fetch", "file_system", "canvas", "github", "agenda", "buscar_conversa", "lembrar", "tarefa", "sonda", "permissoes", "computador"]
+    allowed: ["web", "web_fetch", "file_system", "canvas", "github", "agenda", "buscar_conversa", "lembrar", "tarefa", "sonda", "permissoes", "computador", "proativa"]
     denied: ["safe_shell"]
   admin:
     allowed: ["*"]
