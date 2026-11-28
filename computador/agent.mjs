@@ -284,6 +284,26 @@ async function where(p) {
   return { url: p.url(), title };
 }
 
+/// How long a login's next page may take to show its password field.
+const STEP_MS = 15_000;
+
+/// The user-name field of a login: one named like it, or the last visible
+/// text field before the password (or the first, on a page without one).
+async function userField(p, password) {
+  const handle = await p.evaluateHandle((pw) => {
+    const fields = [...document.querySelectorAll('input')].filter((f) => {
+      const t = (f.type || 'text').toLowerCase();
+      return ['text', 'email', 'tel', ''].includes(t) && f.offsetParent !== null;
+    });
+    const named = fields.find((f) => /user|login|email|identifier|cpf|usuario|conta|account/i.test(`${f.name} ${f.id} ${f.autocomplete} ${f.type}`));
+    if (named) return named;
+    if (!pw) return fields[0] || null;
+    const before = fields.filter((f) => f.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return before[before.length - 1] || null;
+  }, password);
+  return handle.asElement();
+}
+
 const BROWSER_OPS = {
   async goto(p, args) {
     const url = requireString(args, 'url');
@@ -302,30 +322,40 @@ const BROWSER_OPS = {
   },
   /// Log in on the page that is open (PRD-K, K-08): fill the user name and
   /// the password from the vault, and send. Nothing of them comes back,
-  /// not even in an error. The person approved this login, so the send
-  /// goes through the gate.
+  /// not even in an error. The person approved this login, so the sends
+  /// of this call go through the gate. A login in two pages (the user name,
+  /// then the password, as Google's) is followed within the same call: the
+  /// approval covers the whole login, not only its last page.
   async entrar(p, args) {
     const site = requireString(args, 'site').toLowerCase();
     const usuario = requireString(args, 'usuario');
     const senha = requireString(args, 'senha');
     const here = siteOf(new URL(p.url()).hostname);
     if (here !== site) throw new UserError(`the open page is on ${here || 'nothing'}; open ${site}'s login page first`);
-    const password = await p.$('input[type=password]:visible');
-    if (!password) throw new UserError('no password field on this page');
-    const user = await password.evaluateHandle((pw) => {
-      const fields = [...document.querySelectorAll('input')].filter((f) => {
-        const t = (f.type || 'text').toLowerCase();
-        return ['text', 'email', 'tel', ''].includes(t) && f.offsetParent !== null;
-      });
-      const before = fields.filter((f) => f.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING);
-      const named = fields.find((f) => /user|login|email|cpf|usuario|conta|account/i.test(`${f.name} ${f.id} ${f.autocomplete}`));
-      return named || before[before.length - 1] || null;
-    });
-    const userField = user.asElement();
+    agentGate.armed.add(site);
+    let password = await p.$('input[type=password]:visible');
+    let userFilled = false;
+    if (!password) {
+      const first = await userField(p, null);
+      if (!first) throw new UserError('no login field on this page');
+      try {
+        await first.fill(usuario);
+        await Promise.all([p.waitForLoadState('domcontentloaded').catch(() => {}), first.press('Enter')]);
+      } catch {
+        throw new Error('could not fill the login form');
+      }
+      userFilled = true;
+      password = await p.waitForSelector('input[type=password]:visible', { timeout: STEP_MS }).catch(() => null);
+      if (!password) {
+        throw new UserError('after the user name the site did not ask for a password (it may ask for a code, a captcha or another step: look at the page)');
+      }
+    }
     try {
-      if (userField) await userField.fill(usuario);
+      if (!userFilled) {
+        const user = await userField(p, password);
+        if (user) { await user.fill(usuario); userFilled = true; }
+      }
       await password.fill(senha);
-      agentGate.armed.add(site);
       await Promise.all([
         p.waitForLoadState('domcontentloaded').catch(() => {}),
         password.press('Enter'),
@@ -334,7 +364,7 @@ const BROWSER_OPS = {
     } catch {
       throw new Error('could not fill the login form');
     }
-    return { preenchido: true, usuario_preenchido: Boolean(userField) };
+    return { preenchido: true, usuario_preenchido: userFilled };
   },
   /// Log out of a site: its cookies go (PRD-K, K14).
   async sair_do_site(p, args) {

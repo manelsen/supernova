@@ -236,6 +236,53 @@ test('browser: open a page, read it, click, screenshot', { timeout: 120_000 }, a
   }
 });
 
+// Google's login: the user name on one page, the password on the next. One
+// approval covers both: the first send is not a new request (homologação,
+// 27/11/2026).
+test('entrar follows a login in two pages within one approval', async () => {
+  const SENHA = 'SENHA-DOIS-PASSOS-9c1e';
+  const server = (await import('node:http')).createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString('utf8');
+      const logged = /sessao=ok/.test(req.headers.cookie || '');
+      if (req.method === 'POST' && req.url === '/identificar') {
+        const ok = body.includes('identifier=ana%40exemplo.com') || body.includes('identifier=ana@exemplo.com');
+        res.writeHead(303, { location: ok ? '/senha' : '/login' });
+        return res.end();
+      }
+      if (req.method === 'POST' && req.url === '/entrar') {
+        const ok = body.includes(`Passwd=${SENHA}`);
+        res.writeHead(303, ok ? { location: '/conta', 'set-cookie': 'sessao=ok; Max-Age=86400; Path=/' } : { location: '/senha' });
+        return res.end();
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      if (req.url === '/conta') return res.end(`<title>Conta</title>${logged ? 'Olá, logada' : 'Entre primeiro'}`);
+      if (req.url === '/senha') return res.end('<title>Senha</title><form method="post" action="/entrar"><input type="password" name="Passwd"><button>Avançar</button></form>');
+      res.end('<title>Login</title><form method="post" action="/identificar"><input type="email" name="identifier"><button>Avançar</button></form>');
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  setInternalAllowed((host) => host === '127.0.0.1');
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    await run({ op: 'goto', url: `${base}/login` });
+    const entered = await run({ op: 'entrar', site: '127.0.0.1', usuario: 'ana@exemplo.com', senha: SENHA });
+    assert.equal(entered.preenchido, true);
+    assert.equal(entered.usuario_preenchido, true);
+    assert.equal(JSON.stringify(entered).includes(SENHA), false);
+    // No send was refused along the way: one approval, both pages.
+    assert.equal(JSON.stringify(entered).includes('recusas'), false);
+    assert.match((await run({ op: 'text' })).text, /Olá, logada/);
+  } finally {
+    await run({ op: 'close' }).catch(() => {});
+    server.close();
+    setInternalAllowed(() => false);
+  }
+});
+
 test('login from the vault: filled, sent, nothing comes back; the session survives a restart', { timeout: 180_000 }, async () => {
   const SENHA = 'SENHA-MARCADA-7f3a';
   const loginServer = (await import('node:http')).createServer((req, res) => {
