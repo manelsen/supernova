@@ -347,7 +347,10 @@ export function computers(config) {
   }
 
   /// Run a call on the person's computer, turning it on first if needed.
-  async function use(person, work) {
+  /// A computer whose container is gone (removed by hand, or lost while the
+  /// dispatcher was down) is made again, once, instead of failing every call
+  /// (homologação, 27/11/2026).
+  async function use(person, work, again = true) {
     let state;
     // Deleted or turned off between turning on and using: turn on again.
     while (!state) {
@@ -358,6 +361,13 @@ export function computers(config) {
     state.lastUsed = clock();
     try {
       return await work();
+    } catch (e) {
+      if (again && !(await container(person))) {
+        if (live.get(person) === state) live.delete(person);
+        wake();
+        return use(person, work, false);
+      }
+      throw e;
     } finally {
       state.inflight -= 1;
       state.lastUsed = clock();

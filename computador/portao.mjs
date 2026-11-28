@@ -176,8 +176,11 @@ export async function beforeClick(gate, page, target) {
     return { name, action, fields };
   }, SEND_WORDS.source).catch(() => null);
   if (!info) return null;
-  let site;
-  try { site = siteOf(new URL(info.action).hostname); } catch { site = siteOf(new URL(page.url()).hostname); }
+  // A form whose action has no host (`javascript:`, as Google's login has)
+  // sends from the page itself: its site is the page's, never empty.
+  let site = '';
+  try { site = siteOf(new URL(info.action).hostname); } catch { /* the page's below */ }
+  if (!site) site = siteOf(new URL(page.url()).hostname);
   if (gate.envios.has(site)) {
     gate.envios.delete(site);
     gate.armed.add(site);

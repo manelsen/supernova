@@ -279,7 +279,7 @@ pub fn a_site_for_the_shell_is_asked_and_approved_test() {
     // The first sentence is the code's, from the real site.
     string.starts_with(
       text,
-      "Liberar o site exemplo.com para o shell do seu computador baixar arquivos.",
+      "Pedido 1: Liberar o site exemplo.com para o shell do seu computador baixar arquivos.",
     )
     |> should.be_true
     string.contains(text, "Para instalar a biblioteca.") |> should.be_true
@@ -365,9 +365,11 @@ pub fn a_send_the_gate_refused_is_asked_and_spent_test() {
     let _ = say(router, "dm-carol", "marca a consulta [mock-clique #enviar]")
     let assert [#("sim:carol", text)] = drain(private_sent)
     // The first sentence is the code's, from what the gate saw.
-    string.starts_with(
+    // What is asked comes first, after the request's number.
+    string.starts_with(text, "Pedido ") |> should.be_true
+    string.contains(
       text,
-      "Enviar o formulário em saude.gov.br: nome = Carol; senha = ••••.",
+      ": Enviar o formulário em saude.gov.br: nome = Carol; senha = ••••.",
     )
     |> should.be_true
 
@@ -470,9 +472,10 @@ pub fn overwriting_a_file_asks_and_the_yes_is_spent_test() {
         "reescreve [mock-arquivo /home/pwuser/trabalho/nota.txt]",
       )
     let assert [#("sim:carol", text)] = drain(private_sent)
-    string.starts_with(
+    string.starts_with(text, "Pedido ") |> should.be_true
+    string.contains(
       text,
-      "Sobrescrever o arquivo /home/pwuser/trabalho/nota.txt com um texto novo.",
+      ": Sobrescrever o arquivo /home/pwuser/trabalho/nota.txt com um texto novo.",
     )
     |> should.be_true
     let _ = say(router, "dm-carol", "sim")
@@ -624,9 +627,10 @@ pub fn a_password_never_reaches_the_model_or_the_disk_test() {
     // Logging in asks first, then fills.
     let _ = say(router, "dm-carol", "entra [mock-entrar saude.gov.br]")
     let assert [#("sim:carol", asked)] = drain(private_sent)
-    string.starts_with(
+    string.starts_with(asked, "Pedido ") |> should.be_true
+    string.contains(
       asked,
-      "Entrar na sua conta em saude.gov.br (usuário carol).",
+      ": Entrar na sua conta em saude.gov.br (usuário carol).",
     )
     |> should.be_true
     let _ = say(router, "dm-carol", "sim")

@@ -304,7 +304,7 @@ pub fn a_costly_probe_asks_first_test() {
     let assert Ok(#("sim:carol", asked)) = process.receive(private_sent, 1000)
     string.starts_with(
       asked,
-      "Gastar até US$ 1,50 numa sonda de web: procure Erlang.",
+      "Pedido 1: Gastar até US$ 1,50 numa sonda de web: procure Erlang.",
     )
     |> should.be_true
     process.receive(deliveries, 300) |> should.be_error

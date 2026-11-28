@@ -489,6 +489,33 @@ test('at boot, running computers are adopted and their networks joined', async (
   } finally { pcs.close(); fake.close(); }
 });
 
+// Homologação, 27/11/2026: the dispatcher restarted, adopted a running
+// computer, and its container was removed by hand. The next call must make
+// the computer again, not fail with "did not answer" forever.
+test('a computer whose container is gone is made again on the next call', async () => {
+  const fake = await fakeDocker();
+  const pcs = await fakeComputers();
+  const { cfg } = setup(fake, pcs);
+  try {
+    const first = computers(cfg);
+    await first.ligar(ANA);
+    const after = computers(cfg);
+    await after.adopt();
+    fake.state.containers.delete(`computador-${ANA}`);
+    let calls = 0;
+    const answer = await after.use(ANA, async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('the computer did not answer');
+      return 'ok';
+    });
+    assert.equal(answer, 'ok');
+    assert.equal(calls, 2);
+    assert.equal(fake.state.containers.has(`computador-${ANA}`), true);
+    // A failure with the container there is a real failure: no retry.
+    await assert.rejects(after.use(ANA, async () => { throw new Error('boom'); }), /boom/);
+  } finally { pcs.close(); fake.close(); }
+});
+
 test('it listens only off the computers\' networks', async () => {
   const fake = await fakeDocker();
   try {

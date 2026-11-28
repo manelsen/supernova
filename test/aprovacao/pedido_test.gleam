@@ -30,9 +30,10 @@ fn request(id: Int, always: Bool) {
 
 pub fn the_first_sentence_is_the_code_s_test() {
   let text = pedido.message(request(3, True), alone: True)
+  // What is asked and how to answer, first: a screen reader starts there.
   text
   |> string.starts_with(
-    "Enviar o formulário de agendamento em consultas.saude.gov.br.",
+    "Pedido 3: Enviar o formulário de agendamento em consultas.saude.gov.br. Responda sim",
   )
   |> should.be_true
   string.contains(text, "É para marcar a consulta de terça.") |> should.be_true
