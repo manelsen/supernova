@@ -488,7 +488,7 @@ fn run_executor_for_context(
               let result = case name {
                 _ if fora_da_proativa ->
                   Error(
-                    "numa conversa por iniciativa sua, só conversa e pesquisa (web_fetch, buscar_conversa, lembrar, sonda de web até US$ 0,50)",
+                    "numa conversa por iniciativa sua, só conversa e pesquisa (web_fetch, buscar_conversa, lembrar, agenda só para consultar, sonda de web até US$ 0,50)",
                   )
                 _ if name == tarefa.name ->
                   case may_start_tasks {

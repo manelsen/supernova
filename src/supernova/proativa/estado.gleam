@@ -26,6 +26,11 @@ pub const teto_maximo = 6
 /// Answers in a row that raise the ceiling by one.
 pub const respostas_para_subir = 3
 
+/// After the agent speaks on its own, it waits at least this long before it
+/// does again, even when the person answers at once: the day's slots are
+/// not all spent in the morning.
+pub const intervalo_minimo_ms = 10_800_000
+
 /// A proactive message unanswered this long counts as ignored.
 pub const ignorada_apos_ms = 86_400_000
 
@@ -172,9 +177,14 @@ pub fn janela(
       case em_silencio(minuto, estado.silencio_de, estado.silencio_ate) {
         True -> Fechada("silêncio")
         False ->
-          case estado.aguardando {
-            True -> Fechada("aguardando resposta")
-            False ->
+          case
+            estado.aguardando,
+            estado.ultima_at > 0
+            && now_ms - estado.ultima_at < intervalo_minimo_ms
+          {
+            True, _ -> Fechada("aguardando resposta")
+            False, True -> Fechada("intervalo")
+            False, False ->
               case estado.tentativas >= estado.teto {
                 True -> Fechada("teto do dia")
                 False ->

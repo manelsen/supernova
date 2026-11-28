@@ -94,6 +94,13 @@ pub fn a_proactive_turn_only_talks_and_looks_up_test() {
   relogio.ferramenta_permitida("web_fetch", "{}") |> should.be_true
   relogio.ferramenta_permitida("lembrar", "{}") |> should.be_true
   relogio.ferramenta_permitida("computador", "{}") |> should.be_false
+  // The agenda: read, as the decision did; never add or remove.
+  relogio.ferramenta_permitida("agenda", "{\"action\":\"list\"}")
+  |> should.be_true
+  relogio.ferramenta_permitida("agenda", "{\"action\":\"add\"}")
+  |> should.be_false
+  relogio.ferramenta_permitida("agenda", "{\"action\":\"remove\"}")
+  |> should.be_false
   relogio.ferramenta_permitida("agenda", "{}") |> should.be_false
   relogio.ferramenta_permitida("file_system", "{}") |> should.be_false
   relogio.ferramenta_permitida("tarefa", "{}") |> should.be_false

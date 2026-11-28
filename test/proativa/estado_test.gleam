@@ -140,3 +140,12 @@ pub fn it_is_kept_on_disk_test() {
 
 @external(erlang, "file", "del_dir_r")
 fn delete_dir(path: String) -> a
+
+// The day's slots are not all spent in the morning: after speaking, three
+// hours pass before the next, even when the person answers at once.
+pub fn three_hours_between_two_test() {
+  let respondeu = estado.pessoa_falou(estado.falou(hoje(), em(10, 0)))
+  estado.janela(respondeu, em(12, 59), offset, "ana")
+  |> should.equal(Fechada("intervalo"))
+  estado.janela(respondeu, em(21, 0), offset, "ana") |> should.equal(Aberta)
+}
