@@ -1,9 +1,9 @@
 [PRD]
 # PRD Q: a agente que puxa assunto
 
-> **Situação em 27/11/2026:** rascunho com as decisões do mantenedor de
-> 27/11 (seção 3). Os pontos marcados **[proposta]** são padrões sugeridos
-> que ele ainda confirma; o resto é execução.
+> **Situação em 27/11/2026:** aprovada pelo mantenedor, com todas as
+> decisões da seção 3 (D3 e D5 confirmadas como propostas). O que resta é
+> execução.
 >
 > **Depende de:** agenda e tarefas (PRD-F), sondas e `buscar` (PRD-S),
 > canais com entrega no privado (PRD-C).
@@ -53,7 +53,7 @@ código são o teto; o modelo decide dentro dele.
 - **D2. Ligada por padrão, desligável.** A pessoa desliga com uma frase
   ("para de me mandar mensagem sozinha") ou com `/proativa não`, e religa
   com `/proativa sim`.
-- **D3. Quanto: [proposta] adaptativo, com teto.**
+- **D3. Quanto: adaptativo, com teto.**
   - Até **3 mensagens proativas por dia** no começo, contando os eventos
     fluidos e o heartbeat. Os eventos fixos de prazo não contam no teto,
     mas também respeitam o silêncio.
@@ -69,7 +69,7 @@ código são o teto; o modelo decide dentro dele.
   modelo barato responde "vale a pena falar agora? sobre o quê?" e pode
   dizer que não. O texto sai do modelo da agente, na voz dela.
 - **D5. Assuntos sensíveis: configurável por pessoa.** Saúde, luto,
-  dinheiro, relações. **[proposta]** Por padrão, a agente pode perguntar
+  dinheiro, relações. Por padrão, a agente pode perguntar
   de leve como a pessoa está ("como você está se sentindo hoje?"), mas não
   volta ao detalhe sensível por conta própria. A pessoa libera
   (`/proativa assuntos livres`) ou fecha de vez
