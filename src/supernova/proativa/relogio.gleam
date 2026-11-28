@@ -38,12 +38,22 @@ pub fn declare_metrics() -> Nil {
 /// The tools a conversation the agent started may use: talk and look things
 /// up (Q-I3). No computer, no agenda, no files, nothing that asks for an
 /// approval.
-pub const ferramentas = ["web_fetch", "buscar_conversa", "lembrar", "sonda"]
+pub const ferramentas = [
+  "web_fetch", "buscar_conversa", "lembrar", "sonda", "agenda",
+]
 
-/// A call allowed in such a turn: a web probe only, up to US$ 0.50, which
-/// never asks the person (above that, a probe asks first).
+/// A call allowed in such a turn: the agenda only to read it (what the
+/// decision saw, the turn sees too); a web probe only, up to US$ 0.50,
+/// which never asks the person (above that, a probe asks first).
 pub fn ferramenta_permitida(name: String, arguments: String) -> Bool {
   case name {
+    "agenda" -> {
+      let decoder = {
+        use action <- decode.field("action", decode.string)
+        decode.success(action)
+      }
+      json.parse(arguments, decoder) == Ok("list")
+    }
     "sonda" -> {
       let decoder = {
         use tipo <- decode.optional_field("tipo", "", decode.string)
@@ -102,7 +112,7 @@ pub fn texto(assunto: Assunto, estado: Estado) -> String {
     "" -> "."
     ideia -> ". Ideia: " <> ideia
   }
-  <> "\nSe valer, pesquise antes (web_fetch, ou uma sonda de web até US$ 0,50) para trazer algo novo e verdadeiro. "
+  <> "\nSe valer, pesquise antes (web_fetch, ou uma sonda de web até US$ 0,50) para trazer algo novo e verdadeiro; a agenda você pode consultar (list). "
   <> "Escreva UMA mensagem curta, que começa pelo essencial e termina numa pergunta fácil de responder por voz. "
   <> "Não peça aprovação, não use o computador, não mande mais de uma mensagem. "
   <> estado.regra_dos_assuntos(estado.assuntos)

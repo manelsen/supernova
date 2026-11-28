@@ -94,6 +94,13 @@ pub fn a_proactive_turn_only_talks_and_looks_up_test() {
   relogio.ferramenta_permitida("web_fetch", "{}") |> should.be_true
   relogio.ferramenta_permitida("lembrar", "{}") |> should.be_true
   relogio.ferramenta_permitida("computador", "{}") |> should.be_false
+  // The agenda: read, as the decision did; never add or remove.
+  relogio.ferramenta_permitida("agenda", "{\"action\":\"list\"}")
+  |> should.be_true
+  relogio.ferramenta_permitida("agenda", "{\"action\":\"add\"}")
+  |> should.be_false
+  relogio.ferramenta_permitida("agenda", "{\"action\":\"remove\"}")
+  |> should.be_false
   relogio.ferramenta_permitida("agenda", "{}") |> should.be_false
   relogio.ferramenta_permitida("file_system", "{}") |> should.be_false
   relogio.ferramenta_permitida("tarefa", "{}") |> should.be_false
@@ -151,6 +158,13 @@ pub fn the_person_sets_it_through_the_tool_test() {
       "{\"acao\":\"silencio\",\"de\":21,\"ate\":9}",
     )
   estado.carregar(d, ana).silencio_de |> should.equal(21)
+  let assert Ok(_) = proativa_tool.execute_for(d, ana, "{\"acao\":\"ligar\"}")
+  let assert Ok(resumo) =
+    proativa_tool.execute_for(d, ana, "{\"acao\":\"intervalo\",\"horas\":6}")
+  string.contains(resumo, "6 horas") |> should.be_true
+  estado.carregar(d, ana).intervalo_horas |> should.equal(6)
+  proativa_tool.execute_for(d, ana, "{\"acao\":\"intervalo\",\"horas\":24}")
+  |> should.be_error
   proativa_tool.execute_for(
     d,
     ana,
