@@ -47,6 +47,8 @@ pub type Provider {
   ZaiCoding
   /// Mistral API (OpenAI-compatible), which also serves DeepSeek models
   Mistral
+  /// Google Gemini, through the Gemini API itself (generateContent)
+  Gemini
   /// Deterministic mock provider (tests and CI harness)
   Mock
 }
@@ -763,12 +765,13 @@ fn parse_provider(s: String) -> Result(Provider, ConfigError) {
     "zai" -> Ok(Zai)
     "zai_coding" -> Ok(ZaiCoding)
     "mistral" -> Ok(Mistral)
+    "gemini" -> Ok(Gemini)
     "mock" -> Ok(Mock)
     _ ->
       Error(InvalidField(
         "provider",
         s,
-        "must be openai, anthropic, openrouter, opencode_zen, zhipu, zhipu_coding, minimax, ollama, zai, zai_coding, or mistral",
+        "must be openai, anthropic, openrouter, opencode_zen, zhipu, zhipu_coding, minimax, ollama, zai, zai_coding, mistral, or gemini",
       ))
   }
 }
@@ -2136,6 +2139,7 @@ pub fn provider_requires_api_key(provider: Provider) -> Bool {
     Zai -> True
     ZaiCoding -> True
     Mistral -> True
+    Gemini -> True
     Mock -> False
   }
 }
@@ -2154,6 +2158,7 @@ pub fn provider_runtime_name(provider: Provider) -> String {
     Zai -> "zai"
     ZaiCoding -> "zai_coding"
     Mistral -> "mistral"
+    Gemini -> "gemini"
     Mock -> "mock"
   }
 }
@@ -2172,6 +2177,7 @@ pub fn provider_default_model(provider: Provider) -> String {
     Zai -> "glm-5"
     ZaiCoding -> "glm-5.1"
     Mistral -> "deepseek-v4-1-flash-1017"
+    Gemini -> "gemini-3.8-flash"
     Mock -> "mock-model"
   }
 }

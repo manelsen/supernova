@@ -19,6 +19,7 @@ import gleam/result
 import gleam/string
 import supernova/llm/provider
 import supernova/llm/providers/anthropic
+import supernova/llm/providers/gemini
 import supernova/llm/providers/minimax
 import supernova/llm/providers/ollama
 import supernova/llm/providers/openai
@@ -112,6 +113,7 @@ pub fn chat(
         base_url: option.unwrap(config.base_url, mistral_chat_url),
         extra_headers: [],
       )
+    "gemini" -> gemini.chat(messages, config, tools)
     _ -> Error(provider.ProviderNotFound(name: config.name))
   }
 }
