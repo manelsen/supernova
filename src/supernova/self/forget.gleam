@@ -22,6 +22,7 @@ import supernova/core/introspection/self_state
 import supernova/core/preferences
 import supernova/core/session/history_store
 import supernova/core/session/supervisor as session_supervisor
+import supernova/proativa/estado as proativa_estado
 import supernova/self/aprovacoes
 import supernova/self/audit
 import supernova/self/cofre
@@ -130,8 +131,12 @@ pub fn forget(
           )),
         ),
       )
-      // How the person asked to be answered (/transcricao, /voz) goes too.
+      // How the person asked to be answered (/transcricao, /voz) goes too,
+      // and how the agent starts conversations with them (PRD-Q, Q-02).
       use _ <- result.try(delete_file(preferences.path(data_dir, principal)))
+      use _ <- result.try(
+        delete_file(proativa_estado.path(data_dir, principal)),
+      )
       let state = self_state.from_dir(self_dir)
       self_state.save_in(
         self_dir,

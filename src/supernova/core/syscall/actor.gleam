@@ -43,6 +43,7 @@ import supernova/tools/computador
 import supernova/tools/file_system
 import supernova/tools/lembrar
 import supernova/tools/permissoes
+import supernova/tools/proativa
 
 // ============================================================================
 // FFI — Timestamp (Erlang)
@@ -457,6 +458,9 @@ fn claimed_executor(
     }
     "permissoes", _ -> fn(_name, args) {
       permissoes.execute(reservation.principal_id, args)
+    }
+    "proativa", _ -> fn(_name, args) {
+      proativa.execute(reservation.principal_id, args)
     }
     "computador", _ -> fn(_name, args) {
       computador.execute(reservation.principal_id, args)

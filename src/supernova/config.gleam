@@ -662,6 +662,8 @@ pub fn default_capabilities_config() -> CapabilitiesConfig {
       allowed: [
         "web", "web_fetch", "file_system", "canvas", "github", "agenda",
         "buscar_conversa", "lembrar", "tarefa", "sonda", "permissoes",
+        // How the agent starts conversations on its own (PRD-Q).
+        "proativa",
         // Each person has a computer of their own, behind the gate (PRD-K,
         // K23): members get it, and with it the code probe.
         "computador",

@@ -62,6 +62,8 @@ import supernova/llm/providers/openai_compatible
 import supernova/llm/stream as llm_stream
 import supernova/memory/gate as memory_gate
 import supernova/memory/metrics as memory_metrics
+import supernova/proativa/estado as proativa_estado
+import supernova/proativa/relogio as proativa_relogio
 import supernova/self/aprovacoes
 import supernova/self/audit as self_audit
 import supernova/self/birth
@@ -472,12 +474,22 @@ fn run_executor_for_context(
           computer: mcp_computer.from_env(),
         )
       }
+      // A conversation the agent started on its own (PRD-Q): talk and look
+      // things up, nothing else (Q-I3).
+      let proativa_turn = proativa_relogio.e_proativa(msg.id)
       let recorded =
         executor.RunContext(
           ..run_context,
           invoke_tool: option.map(run_context.invoke_tool, fn(invoke) {
             fn(name, arguments) {
+              let fora_da_proativa =
+                proativa_turn
+                && !proativa_relogio.ferramenta_permitida(name, arguments)
               let result = case name {
+                _ if fora_da_proativa ->
+                  Error(
+                    "numa conversa por iniciativa sua, só conversa e pesquisa (web_fetch, buscar_conversa, lembrar, sonda de web até US$ 0,50)",
+                  )
                 _ if name == tarefa.name ->
                   case may_start_tasks {
                     True -> tarefa.execute(origin, arguments, invoke)
@@ -539,13 +551,21 @@ fn run_executor_for_context(
             }
           }),
         )
-      // The person wrote: results that waited for budget go now (D5).
+      // The person wrote: results that waited for budget go now (D5), and
+      // an answer to the agent's own message counts (PRD-Q, D3).
       case is_synthetic(msg.id) {
         True -> Nil
-        False -> tasks.person_active(agent_id)
+        False -> {
+          tasks.person_active(agent_id)
+          proativa_pessoa_falou(turn.principal_id)
+        }
       }
       let offered =
         closed_group_runtime.tools_for(runtime, turn.role, tools)
+        |> list.filter(fn(tool) {
+          !proativa_turn
+          || list.contains(proativa_relogio.ferramentas, tool.name)
+        })
         |> list.map(fn(tool) {
           case tool.name == sonda.name {
             True -> sonda.tool(may_code)
@@ -572,10 +592,26 @@ fn run_executor_for_context(
   }
 }
 
+/// The person wrote: if the agent's last message on its own waits for an
+/// answer, this is it (PRD-Q, D3). Without a data directory, nothing.
+fn proativa_pessoa_falou(principal: String) -> Nil {
+  case agenda_runtime.get() {
+    None -> Nil
+    Some(context) -> {
+      let _ =
+        proativa_estado.mudar(context.data_dir, principal, fn(atual) {
+          Ok(proativa_estado.pessoa_falou(atual))
+        })
+      Nil
+    }
+  }
+}
+
 /// Messages the core made itself: an agenda entry, a task result, an
-/// approval's outcome.
+/// approval's outcome, a conversation the agent starts on its own.
 fn is_synthetic(message_id: String) -> Bool {
-  string.starts_with(message_id, "agenda:")
+  proativa_relogio.e_proativa(message_id)
+  || string.starts_with(message_id, "agenda:")
   || string.starts_with(message_id, "tarefa:")
   || string.starts_with(message_id, "aprovacao:")
 }

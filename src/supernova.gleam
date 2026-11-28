@@ -74,6 +74,8 @@ import supernova/memory/boot as memory_boot
 import supernova/metrics/actor as metrics_actor
 import supernova/metrics/global as metrics_global
 import supernova/metrics/record
+import supernova/proativa/decisor as proativa_decisor
+import supernova/proativa/relogio as proativa_relogio
 import supernova/self/aprovacoes
 import supernova/self/desk
 import supernova/self/forget
@@ -442,13 +444,38 @@ fn start_services(
       ))
       case cfg.environment == "harness" {
         True -> Nil
-        False ->
+        False -> {
           agenda_sweeper.start(
             cfg.data_dir,
             agenda_offset,
             clock,
             deliver_agenda,
           )
+          // The agent starts conversations on its own (PRD-Q), through the
+          // same delivery as the agenda.
+          case default_channel_llm_config(cfg) {
+            Error(_) -> Nil
+            Ok(llm) ->
+              proativa_relogio.start(
+                cfg.data_dir,
+                agenda_offset,
+                clock,
+                fn(principal, estado) {
+                  proativa_decisor.decidir(
+                    llm,
+                    proativa_decisor.contexto(
+                      cfg.data_dir,
+                      principal,
+                      estado,
+                      clock(),
+                      agenda_offset,
+                    ),
+                  )
+                },
+                deliver_agenda,
+              )
+          }
+        }
       }
       fn() {
         agenda_sweeper.sweep(
