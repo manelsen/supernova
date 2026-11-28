@@ -26,10 +26,15 @@ pub const teto_maximo = 6
 /// Answers in a row that raise the ceiling by one.
 pub const respostas_para_subir = 3
 
-/// After the agent speaks on its own, it waits at least this long before it
-/// does again, even when the person answers at once: the day's slots are
-/// not all spent in the morning.
-pub const intervalo_minimo_ms = 10_800_000
+/// After the agent speaks on its own, it waits at least this many hours
+/// before it does again, even when the person answers at once: the day's
+/// slots are not all spent in the morning. Per person, within these bounds;
+/// the agent sets it with the `proativa` tool.
+pub const intervalo_inicial = 3
+
+pub const intervalo_minimo = 1
+
+pub const intervalo_maximo = 12
 
 /// A proactive message unanswered this long counts as ignored.
 pub const ignorada_apos_ms = 86_400_000
@@ -63,6 +68,8 @@ pub type Estado {
     respondidas: Int,
     /// The unanswered one already lowered the ceiling.
     penalizada: Bool,
+    /// Hours between two proactive messages.
+    intervalo_horas: Int,
   )
 }
 
@@ -79,6 +86,7 @@ pub fn inicial() -> Estado {
     ultima_at: 0,
     respondidas: 0,
     penalizada: False,
+    intervalo_horas: intervalo_inicial,
   )
 }
 
@@ -180,7 +188,7 @@ pub fn janela(
           case
             estado.aguardando,
             estado.ultima_at > 0
-            && now_ms - estado.ultima_at < intervalo_minimo_ms
+            && now_ms - estado.ultima_at < estado.intervalo_horas * 3_600_000
           {
             True, _ -> Fechada("aguardando resposta")
             False, True -> Fechada("intervalo")
@@ -313,6 +321,13 @@ pub fn silencio(estado: Estado, de: Int, ate: Int) -> Result(Estado, String) {
   }
 }
 
+pub fn intervalo(estado: Estado, horas: Int) -> Result(Estado, String) {
+  case horas >= intervalo_minimo && horas <= intervalo_maximo {
+    True -> Ok(Estado(..estado, intervalo_horas: horas))
+    False -> Error("o intervalo vai de 1 a 12 horas")
+  }
+}
+
 pub fn com_assuntos(estado: Estado, assuntos: Assuntos) -> Estado {
   Estado(..estado, assuntos: assuntos)
 }
@@ -357,7 +372,13 @@ pub fn resumo(estado: Estado) -> String {
       <> int.to_string(estado.silencio_de)
       <> "h e "
       <> int.to_string(estado.silencio_ate)
-      <> "h, e nunca duas vezes seguidas sem você responder. Assuntos sensíveis: "
+      <> "h, com pelo menos "
+      <> int.to_string(estado.intervalo_horas)
+      <> case estado.intervalo_horas {
+        1 -> " hora"
+        _ -> " horas"
+      }
+      <> " entre uma e outra, e nunca duas vezes seguidas sem você responder. Assuntos sensíveis: "
       <> case estado.assuntos {
         Leve -> "só pergunto de leve como você está."
         Livres -> "liberados."
@@ -417,6 +438,7 @@ fn encode(estado: Estado) -> json.Json {
     #("ultima_at", json.int(estado.ultima_at)),
     #("respondidas", json.int(estado.respondidas)),
     #("penalizada", json.bool(estado.penalizada)),
+    #("intervalo_horas", json.int(estado.intervalo_horas)),
   ])
 }
 
@@ -433,6 +455,11 @@ fn decoder() -> decode.Decoder(Estado) {
   use ultima_at <- decode.optional_field("ultima_at", 0, decode.int)
   use respondidas <- decode.optional_field("respondidas", 0, decode.int)
   use penalizada <- decode.optional_field("penalizada", False, decode.bool)
+  use intervalo_horas <- decode.optional_field(
+    "intervalo_horas",
+    intervalo_inicial,
+    decode.int,
+  )
   decode.success(Estado(
     ligada: ligada,
     teto: int.clamp(teto, teto_minimo, teto_maximo),
@@ -445,6 +472,11 @@ fn decoder() -> decode.Decoder(Estado) {
     ultima_at: ultima_at,
     respondidas: respondidas,
     penalizada: penalizada,
+    intervalo_horas: int.clamp(
+      intervalo_horas,
+      intervalo_minimo,
+      intervalo_maximo,
+    ),
   ))
 }
 

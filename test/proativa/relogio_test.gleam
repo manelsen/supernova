@@ -158,6 +158,13 @@ pub fn the_person_sets_it_through_the_tool_test() {
       "{\"acao\":\"silencio\",\"de\":21,\"ate\":9}",
     )
   estado.carregar(d, ana).silencio_de |> should.equal(21)
+  let assert Ok(_) = proativa_tool.execute_for(d, ana, "{\"acao\":\"ligar\"}")
+  let assert Ok(resumo) =
+    proativa_tool.execute_for(d, ana, "{\"acao\":\"intervalo\",\"horas\":6}")
+  string.contains(resumo, "6 horas") |> should.be_true
+  estado.carregar(d, ana).intervalo_horas |> should.equal(6)
+  proativa_tool.execute_for(d, ana, "{\"acao\":\"intervalo\",\"horas\":24}")
+  |> should.be_error
   proativa_tool.execute_for(
     d,
     ana,
