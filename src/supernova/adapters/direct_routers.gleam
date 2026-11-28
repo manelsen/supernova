@@ -15,6 +15,7 @@ import supernova/adapters/matrix_router
 import supernova/adapters/sim_router
 import supernova/adapters/slack_router
 import supernova/adapters/telegram_router
+import supernova/adapters/whatsapp_router
 import supernova/channel/catalog as channel_catalog
 import supernova/channel/port
 import supernova/core/session/supervisor
@@ -54,6 +55,8 @@ fn handler_for(
     "matrix" ->
       Some(matrix_router.direct_handler(session_supervisor, llm_config))
     "sim" -> Some(sim_router.direct_handler(session_supervisor, llm_config))
+    "whatsapp" ->
+      Some(whatsapp_router.direct_handler(session_supervisor, llm_config))
     _ -> None
   }
 }
