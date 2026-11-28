@@ -53,6 +53,10 @@ async function site() {
           </form>
           <button id="curtir" onclick="fetch('/curtir',{method:'POST',body:'x'}).then(()=>document.title='curtido').catch(()=>document.title='barrado')">Curtir</button>
           <a id="comprar" href="/produto">Comprar</a>`);
+      } else if (req.url === '/js-form') {
+        res.end(`<title>Login</title>
+          <form action="javascript:void(0)"><input type="email" name="identifier" value="ana@exemplo.com">
+            <button id="avancar">Avançar</button></form>`);
       } else if (req.url === '/socket') {
         res.end(`<title>Socket</title><script>
           const ws = new WebSocket(location.origin.replace('http', 'ws') + '/ws');
@@ -124,6 +128,13 @@ test('reading is free; background posts need the site; a send needs a yes each t
     assert.equal(refusal.botao, 'Enviar');
     assert.match(refusal.campos, /nome = Ana; senha = ••••/);
     assert.equal(s.posts.length, 1);
+    // A form whose action has no host (Google's login): the refusal names
+    // the page's site, never an empty one (homologação, 27/11/2026).
+    await page.goto(`${s.url}/js-form`);
+    const jsRefusal = await beforeClick(gate, page, await page.$('#avancar'));
+    assert.equal(jsRefusal.tipo, 'envio');
+    assert.equal(jsRefusal.site, '127.0.0.1');
+    await page.goto(`${s.url}/form`);
     // Pressing Enter in the form is refused at the network too.
     await page.focus('input[name=nome]');
     await page.keyboard.press('Enter');

@@ -71,7 +71,8 @@ pub fn a_request_goes_to_the_private_chat_once_test() {
   string.contains(note, "Pedi aprovação (1)") |> should.be_true
   string.contains(note, "privado") |> should.be_true
   let assert [Private("telegram:100", text, True)] = drain(sent)
-  string.starts_with(text, "Enviar o formulário em a.com.") |> should.be_true
+  string.starts_with(text, "Pedido 1: Enviar o formulário em a.com.")
+  |> should.be_true
 
   // Asking again for the same thing sends nothing new.
   let assert Ok(_) =

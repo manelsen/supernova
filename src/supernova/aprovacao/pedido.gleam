@@ -83,10 +83,19 @@ pub fn message(request: Request, alone alone: Bool) -> String {
       <> suffix
     False -> ". Responda sim" <> suffix <> " ou não" <> suffix <> always
   }
+  // What is asked and how to answer come first: a screen reader reads from
+  // the top, and on a channel without buttons (WhatsApp) the answer is
+  // typed or spoken (homologação, 27/11/2026). The why comes after.
   [
-    request.summary,
+    "Pedido "
+      <> number
+      <> ": "
+      <> request.summary
+      <> " "
+      <> string.drop_start(how, 2)
+      <> ", por texto ou voz.",
     request.explanation,
-    "Pedido " <> number <> how <> ", por texto ou voz. Espero até 24 horas.",
+    "Espero até 24 horas.",
   ]
   |> list.map(string.trim)
   |> list.filter(fn(part) { part != "" })
@@ -245,7 +254,9 @@ pub fn asked_note(request: Request, in_group in_group: Bool) -> String {
   <> "): "
   <> request.summary
   <> where
-  <> " Espere a resposta; ela chega como mensagem."
+  <> " A pessoa recebeu o pedido numa mensagem à parte e responde sim ou não ("
+  <> int.to_string(request.id)
+  <> "), por texto ou voz, ou com um botão onde o canal tem. Não fale de botão nem de aviso na tela: diga só que mandou o pedido e que ela pode responder sim. Espere a resposta; ela chega como mensagem."
 }
 
 /// The outcome, injected into the chat the request was born in.
